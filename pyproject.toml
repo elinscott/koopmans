@@ -48,13 +48,23 @@ license-files = [
     "LICENSE",
 ]
 
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "more_itertools", # missing from itertools in stdlib
     "tqdm", # progress bars
     "click",
     "more_click",
     "typing-extensions",
+    "aiida-core>=2.7.3",
+    "aiida-quantumespresso>=4.6.0",
+    "aiida-wannier90>=2.2.0",
+    "pydantic>=2.12.5",
+    "wannier90-input",
+    "pydantic-espresso",
+    "ipdb>=0.13.13",
+    "aiida-koopmans",
+    "aiida-workgraph>=0.8.1",
+    "pyyaml>=6.0.3",
 ]
 
 # see https://peps.python.org/pep-0735/ and https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups
@@ -68,7 +78,7 @@ docs = [
     "sphinx-rtd-theme>=3.0","sphinx-click", 
     "sphinx_automodapi",
     # Include if your project uses Pydantic:
-    # "autodoc_pydantic",
+    "autodoc_pydantic",
     # To include LaTeX comments easily in your docs.
     # If you uncomment this, don't forget to do the same in docs/conf.py
     # texext
@@ -263,3 +273,8 @@ replace = "VERSION = \"{new_version}\""
 filename = "CITATION.cff"
 search = "version: {current_version}"
 replace = "version: {new_version}"
+
+[tool.uv.sources]
+wannier90-input = { path = "../wannier90-input" }
+pydantic-espresso = { path = "../pydantic_espresso" }
+aiida-koopmans = { path = "../aiida-koopmans2" }

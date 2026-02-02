@@ -8,12 +8,16 @@ Uses the same approach as `verdi presto` for profile and computer setup.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from aiida.orm import Computer, InstalledCode
@@ -36,6 +40,152 @@ QE_EXECUTABLES: dict[str, str] = {
 
 PROFILE_NAME = "koopmans"
 COMPUTER_LABEL = "localhost"
+
+
+def ensure_pseudo_family_installed(pseudo_family: str) -> None:
+    """Ensure a pseudopotential family is installed, installing it if necessary.
+
+    Supports PseudoDojo families with labels like:
+        'PseudoDojo/0.4/LDA/SR/standard/upf'
+
+    And SSSP families with labels like:
+        'SSSP/1.3/PBEsol/efficiency'
+
+    Args:
+        pseudo_family: The label of the pseudopotential family.
+
+    Raises:
+        ValueError: If the family format is not recognized or installation fails.
+    """
+    from aiida.common.exceptions import NotExistent
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
+
+    # Check if already installed
+    try:
+        PseudoPotentialFamily.collection.get(label=pseudo_family)
+        logger.debug("Pseudo family '%s' already installed", pseudo_family)
+        return  # Already installed
+    except NotExistent:
+        pass
+
+    logger.info("Installing pseudo family '%s'...", pseudo_family)
+
+    # Parse the family label and install
+    install_pseudo_family(pseudo_family)
+
+    logger.info("Successfully installed pseudo family '%s'", pseudo_family)
+
+def install_pseudo_family(pseudo_family: str) -> None:
+    parts = pseudo_family.split("/")
+
+    if parts[0] == "PseudoDojo" and len(parts) == 6:
+        _install_pseudo_dojo_family(pseudo_family, parts)
+    elif parts[0] == "SSSP" and len(parts) == 4:
+        _install_sssp_family(pseudo_family, parts)
+    else:
+        raise ValueError(
+            f"Unrecognized pseudo family format: '{pseudo_family}'. "
+            "Expected 'PseudoDojo/version/functional/relativistic/protocol/format' "
+            "or 'SSSP/version/functional/protocol'.")
+
+
+def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
+    """Install a PseudoDojo pseudopotential family.
+
+    Args:
+        label: The full label for the family.
+        parts: The parsed parts of the label.
+    """
+    from aiida_pseudo.cli.install import download_pseudo_dojo, install_pseudo_dojo
+    from aiida_pseudo.data.pseudo import UpfData, PsmlData, Psp8Data, JthXmlData
+    from aiida_pseudo.groups.family import PseudoDojoConfiguration
+
+    # Parse: PseudoDojo/version/functional/relativistic/protocol/format
+    _, version, functional, relativistic, protocol, pseudo_format = parts
+
+    # Map format string to pseudo type class
+    format_to_type = {
+        "upf": UpfData,
+        "psp8": Psp8Data,
+        "psml": PsmlData,
+        "jthxml": JthXmlData,
+    }
+
+    pseudo_type = format_to_type.get(pseudo_format.lower())
+    if pseudo_type is None:
+        raise ValueError(
+            f"Unknown pseudo format '{pseudo_format}'. "
+            f"Supported formats: {list(format_to_type.keys())}"
+        )
+
+    configuration = PseudoDojoConfiguration(
+        version=version,
+        functional=functional,
+        relativistic=relativistic,
+        protocol=protocol,
+        pseudo_format=pseudo_format,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath_archive = Path(tmpdir) / "archive.tar.gz"
+        filepath_metadata = Path(tmpdir) / "metadata.json"
+
+        download_pseudo_dojo(
+            configuration=configuration,
+            filepath_archive=filepath_archive,
+            filepath_metadata=filepath_metadata,
+            traceback=True,
+        )
+
+        logger.debug("Installing downloaded archive")
+        install_pseudo_dojo(
+            configuration=configuration,
+            filepath_archive=filepath_archive,
+            filepath_metadata=filepath_metadata,
+            pseudo_type=pseudo_type,
+            label=label,
+            traceback=True,
+        )
+
+
+def _install_sssp_family(label: str, parts: list[str]) -> None:
+    """Install an SSSP pseudopotential family.
+
+    Args:
+        label: The full label for the family.
+        parts: The parsed parts of the label.
+    """
+    from aiida_pseudo.cli.install import download_sssp, install_sssp
+    from aiida_pseudo.groups.family import SsspConfiguration
+
+    # Parse: SSSP/version/functional/protocol
+    _, version, functional, protocol = parts
+
+    configuration = SsspConfiguration(
+        version=version,
+        functional=functional,
+        protocol=protocol,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath_archive = Path(tmpdir) / "archive.tar.gz"
+        filepath_metadata = Path(tmpdir) / "metadata.json"
+
+        download_sssp(
+            configuration=configuration,
+            filepath_archive=filepath_archive,
+            filepath_metadata=filepath_metadata,
+            traceback=True,
+        )
+
+        logger.debug("Installing SSSP family from downloaded archive")
+        install_sssp(
+            filepath_archive=filepath_archive,
+            filepath_metadata=filepath_metadata,
+            label=label,
+            traceback=True,
+        )
+        logger.info("Successfully installed pseudo family '%s'", label)
 
 
 def profile_exists() -> bool:

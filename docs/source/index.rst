@@ -48,6 +48,7 @@ following:
 
     installation
     usage
+    input_file
     cli
 
 ********************

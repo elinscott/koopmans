@@ -14,15 +14,19 @@ executed twice:
     https://click.palletsprojects.com/en/8.1.x/setuptools/#setuptools-integration
 """
 
+import logging
+import sys
+
 import click
 
-from koopmans.aiida_setup import (
+from koopmans.aiida.setup import (
     list_codes,
     load_koopmans_profile,
     print_status,
     setup_computers,
     setup_profile,
 )
+from koopmans.input_file import read_input_file
 
 __all__ = [
     "main",
@@ -32,21 +36,100 @@ __all__ = [
 
 @click.group()
 @click.version_option()
-def cli() -> None:
+@click.option(
+    "--pdb",
+    is_flag=True,
+    default=False,
+    help="Drop into ipdb debugger on unhandled exceptions.",
+)
+@click.option(
+    "-l",
+    "--logging",
+    "enable_logging",
+    is_flag=True,
+    default=False,
+    help="Enable logging to koopmans.log file.",
+)
+def cli(pdb: bool, enable_logging: bool) -> None:
     """Automated Koopmans functional calculations and workflows."""
+    if pdb:
+        from koopmans.debugging import enable_pdb
+
+        enable_pdb()
+
+    if enable_logging:
+        logging.basicConfig(
+            filename="koopmans.log",
+            level=logging.DEBUG,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
 
 
 @cli.command()
 @click.argument("input_file", type=click.Path(exists=True))
-def run(input_file: str) -> None:
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Parse input and build workgraph without submitting.",
+)
+def run(input_file: str, dry_run: bool) -> None:
     """Run a koopmans calculation from an input file.
 
-    INPUT_FILE is the path to a YAML input file describing the calculation.
+    INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
     """
-    load_koopmans_profile()
+    from aiida import orm
+
+    from aiida_koopmans.workgraphs import scf_bands_workgraph
+    from koopmans.aiida import convert_koopmans_input
+    from koopmans.input_file.workflow import Task
+
+    # Print the header
+    click.echo(header())
+
+    # Parse input file
     click.echo(f"Loading input from {input_file}...")
-    click.echo("Running koopmans calculation...")
-    # TODO: Implement actual calculation logic
+    koopmans_input = read_input_file(input_file)
+
+    # Load AiiDA profile
+    load_koopmans_profile()
+
+    # Get the pw.x code
+    try:
+        code = orm.load_code("pw@localhost")
+    except Exception as exc:
+        raise click.ClickException(
+            f"Could not load pw.x code: {exc}\n"
+            "Please run 'koopmans install' first to set up the AiiDA backend."
+        ) from exc
+
+    # Convert input to AiiDA data nodes
+    click.echo("Converting input to AiiDA data nodes...")
+    aiida_data = convert_koopmans_input(koopmans_input)
+
+    # Build the appropriate workgraph based on task
+    task = koopmans_input.workflow.task
+    click.echo(f"Building workgraph for task: {task.value}")
+
+    if task in (Task.WANNIERIZE, Task.DFT_BANDS):
+        wg = scf_bands_workgraph.build(
+            code=code,
+            **aiida_data,
+        )
+    else:
+        raise click.ClickException(
+            f"Task '{task.value}' is not yet implemented. "
+            f"Supported tasks: wannierize, dft_bands"
+        )
+
+    if dry_run:
+        click.echo(f"Dry run: workgraph '{wg.name}' built successfully.")
+        click.echo(f"  Tasks: {[t.name for t in wg.tasks]}")
+        return
+
+    wg.to_html("test.html")
+
+    wg.run()
 
 
 @cli.command()
@@ -92,6 +175,26 @@ def main() -> None:
     """Entry point for the CLI."""
     cli()
 
+
+def header() -> str:
+    """Return the output header."""
+    from koopmans.version import VERSION
+
+    lines = [
+        "",
+        click.style("koopmans", bold=True),
+        click.style("Koopmans spectral functional calculations with Quantum ESPRESSO", italic=True),
+        "",
+        f"📦 Version: {click.style(VERSION, italic=True)}",
+        "🧑 Authors: Edward Linscott, Nicola Colonna, Riccardo De Gennaro, Ngoc Linh Nguyen, "
+        "Giovanni Borghi, Andrea Ferretti, Ismaila Dabo, and Nicola Marzari",
+        "📚 Documentation: https://koopmans-functionals.org",
+        "❓ Support: https://groups.google.com/g/koopmans-users",
+        "🐛 Report a bug: https://github.com/epfl-theos/koopmans/issues/new",
+        "",
+    ]
+
+    return "\n".join(lines)
 
 if __name__ == "__main__":
     main()
