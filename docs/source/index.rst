@@ -47,9 +47,8 @@ following:
     :name: start
 
     installation
-    usage
-    input_file
     cli
+    input_file
 
 ********************
  Indices and Tables

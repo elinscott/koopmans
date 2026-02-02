@@ -15,7 +15,6 @@ executed twice:
 """
 
 import logging
-import sys
 
 import click
 
@@ -29,8 +28,8 @@ from koopmans.aiida.setup import (
 from koopmans.input_file import read_input_file
 
 __all__ = [
-    "main",
     "cli",
+    "main",
 ]
 
 
@@ -79,8 +78,8 @@ def run(input_file: str, dry_run: bool) -> None:
     INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
     """
     from aiida import orm
-
     from aiida_koopmans.workgraphs import scf_bands_workgraph
+
     from koopmans.aiida import convert_koopmans_input
     from koopmans.input_file.workflow import Task
 
@@ -118,8 +117,7 @@ def run(input_file: str, dry_run: bool) -> None:
         )
     else:
         raise click.ClickException(
-            f"Task '{task.value}' is not yet implemented. "
-            f"Supported tasks: wannierize, dft_bands"
+            f"Task '{task.value}' is not yet implemented. Supported tasks: wannierize, dft_bands"
         )
 
     if dry_run:
@@ -183,9 +181,11 @@ def header() -> str:
     lines = [
         "",
         click.style("koopmans", bold=True),
-        click.style("Koopmans spectral functional calculations with Quantum ESPRESSO", italic=True),
+        click.style(  # type: ignore[call-arg]
+            "Koopmans spectral functional calculations with Quantum ESPRESSO", italic=True
+        ),
         "",
-        f"📦 Version: {click.style(VERSION, italic=True)}",
+        f"📦 Version: {VERSION}",
         "🧑 Authors: Edward Linscott, Nicola Colonna, Riccardo De Gennaro, Ngoc Linh Nguyen, "
         "Giovanni Borghi, Andrea Ferretti, Ismaila Dabo, and Nicola Marzari",
         "📚 Documentation: https://koopmans-functionals.org",
@@ -195,6 +195,7 @@ def header() -> str:
     ]
 
     return "\n".join(lines)
+
 
 if __name__ == "__main__":
     main()

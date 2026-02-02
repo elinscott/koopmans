@@ -1,5 +1,0 @@
-#######
- Usage
-#######
-
-.. automodapi:: koopmans.cli

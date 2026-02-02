@@ -1,2 +1,9 @@
-from pydantic_espresso.models.develop.pw2wannier90 import \
-    InputppNamelist as PW2Wannier90InputParameters
+"""Input parameters for ``pw2wannier90.x`` calculations."""
+
+from koopmans.base import BaseModel
+
+
+class PW2Wannier90InputParameters(BaseModel):
+    """Input parameters for ``pw2wannier90.x`` calculations."""
+
+    pass

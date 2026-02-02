@@ -25,13 +25,9 @@ def _convert_paths_to_strings(obj: Any) -> Any:
         return tuple(_convert_paths_to_strings(item) for item in obj)
     return obj
 
+
 if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
-    from koopmans.input_file.cell_parameters import (
-        CellParametersViaAlat,
-        CellParametersViaIbrav,
-        CellParametersViaVectors,
-    )
     from koopmans.input_file.input_file import AtomsInput, KpointsInput
 
 # Bohr to Angstrom conversion factor
@@ -98,7 +94,11 @@ def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
                 c * (cos_alpha - cos_beta * cos_gamma) / sin_gamma,
                 c
                 * math.sqrt(
-                    1 - cos_alpha**2 - cos_beta**2 - cos_gamma**2 + 2 * cos_alpha * cos_beta * cos_gamma
+                    1
+                    - cos_alpha**2
+                    - cos_beta**2
+                    - cos_gamma**2
+                    + 2 * cos_alpha * cos_beta * cos_gamma
                 )
                 / sin_gamma,
             ],
@@ -144,7 +144,7 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
         pbc = (pbc, pbc, pbc)
 
     # Create structure
-    structure = orm.StructureData(cell=cell, pbc=pbc)
+    structure = orm.StructureData(cell=cell, pbc=pbc)  # type: ignore[no-untyped-call]
 
     # Add atoms
     units = positions.units
@@ -154,9 +154,7 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
 
         if units == "crystal":
             # Convert fractional to Cartesian
-            cart_coords = [
-                sum(coords[j] * cell[j][i] for j in range(3)) for i in range(3)
-            ]
+            cart_coords = [sum(coords[j] * cell[j][i] for j in range(3)) for i in range(3)]
         elif units == "bohr":
             cart_coords = [c * BOHR_TO_ANGSTROM for c in coords]
         elif units in ("ang", "angstrom"):
@@ -164,7 +162,7 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
         else:
             raise ValueError(f"Unknown atomic position units: {units}")
 
-        structure.append_atom(position=cart_coords, symbols=symbol)
+        structure.append_atom(position=cart_coords, symbols=symbol)  # type: ignore[no-untyped-call]
 
     return structure
 
@@ -179,8 +177,109 @@ def kpoints_input_to_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData:
         AiiDA KpointsData node with k-point mesh.
     """
     kpts = orm.KpointsData()
-    kpts.set_kpoints_mesh(list(kpoints.grid), offset=list(kpoints.offset))
+    kpts.set_kpoints_mesh(list(kpoints.grid), offset=list(kpoints.offset))  # type: ignore[no-untyped-call]
     return kpts
+
+
+def _parse_kpoints_path_string(
+    path_string: str, point_coords: dict[str, list[float]]
+) -> list[tuple[str, str]]:
+    """Parse a user-specified k-path string into a list of segment tuples.
+
+    Args:
+        path_string: Path string like ``"GXMG"`` or ``"GXMG,YZ"`` where ``,`` indicates a break.
+        point_coords: Dict mapping special point labels to their coordinates.
+
+    Returns:
+        List of (start_label, end_label) tuples defining path segments.
+
+    Raises:
+        ValueError: If an unknown special point is found in the path string.
+    """
+    path = []
+
+    # Build set of available labels, adding "G" as alias for "GAMMA"
+    available_labels = set(point_coords.keys())
+    if "GAMMA" in available_labels:
+        available_labels.add("G")
+    sorted_labels = sorted(available_labels, key=len, reverse=True)
+
+    # Split by comma to get continuous segments
+    for segment in path_string.split(","):
+        segment = segment.strip()
+        if not segment:
+            continue
+
+        # Parse labels by matching against known point names (longest first)
+        labels = []
+        remaining = segment
+
+        while remaining:
+            matched = False
+            for label in sorted_labels:
+                if remaining.startswith(label):
+                    actual_label = "GAMMA" if label == "G" else label
+                    labels.append(actual_label)
+                    remaining = remaining[len(label) :]
+                    matched = True
+                    break
+            if not matched:
+                raise ValueError(
+                    f"Unknown special point starting at '{remaining}' "
+                    f"in k-path segment '{segment}'. "
+                    f"Available points: {sorted(point_coords.keys())}"
+                )
+
+        # Build path tuples for this segment
+        for i in range(len(labels) - 1):
+            path.append((labels[i], labels[i + 1]))
+
+    return path
+
+
+def _calculate_kpoints_along_path(
+    path: list[tuple[str, str]],
+    point_coords: dict[str, list[float]],
+    density: float,
+) -> tuple[list[list[float]], list[tuple[int, str]]]:
+    """Calculate k-points along a path with the specified density.
+
+    Args:
+        path: List of (start_label, end_label) tuples defining path segments.
+        point_coords: Dict mapping special point labels to their coordinates.
+        density: Number of k-points per reciprocal space unit.
+
+    Returns:
+        Tuple of (kpoint_list, label_list) where kpoint_list contains coordinates
+        and label_list contains (index, label) tuples for special points.
+    """
+    import numpy as np
+
+    kpoint_list: list[list[float]] = []
+    label_list: list[tuple[int, str]] = []
+
+    for segment_idx, (start_label, end_label) in enumerate(path):
+        start_coord = np.array(point_coords[start_label])
+        end_coord = np.array(point_coords[end_label])
+
+        segment_length = np.linalg.norm(end_coord - start_coord)
+        n_points = max(2, int(np.ceil(segment_length * density)))
+
+        for i in range(n_points):
+            if i == 0 and segment_idx > 0:
+                # Skip first point of segments after the first to avoid duplicates
+                continue
+
+            t = i / (n_points - 1) if n_points > 1 else 0.0
+            coord = start_coord + t * (end_coord - start_coord)
+            kpoint_list.append(coord.tolist())
+
+            if i == 0:
+                label_list.append((len(kpoint_list) - 1, start_label))
+            elif i == n_points - 1:
+                label_list.append((len(kpoint_list) - 1, end_label))
+
+    return kpoint_list, label_list
 
 
 def kpoints_input_to_kpoints_path(
@@ -199,91 +298,18 @@ def kpoints_input_to_kpoints_path(
     Returns:
         AiiDA KpointsData node with k-point path.
     """
-    import numpy as np
-
-    # Get seekpath result for special point coordinates and default path
-    result = get_kpoints_path(structure, method="seekpath")
+    result = get_kpoints_path(structure, method="seekpath")  # type: ignore[no-untyped-call]
     point_coords: dict[str, list[float]] = result["parameters"].dict["point_coords"]
 
     if kpoints.path is not None:
-        # Parse the user-specified path string (e.g., "GXMG" or "GXMG,YZ")
-        # Labels are concatenated without separators; "," indicates a break in the path
-        path = []
-
-        # Split by comma to get continuous segments
-        segments = kpoints.path.split(",")
-
-        for segment in segments:
-            segment = segment.strip()
-            if not segment:
-                continue
-
-            # Parse labels from the segment by matching against known point names
-            # Sort by length descending to match longer labels first (e.g., "GAMMA" before "G")
-            # Also include "G" as an alias for "GAMMA"
-            available_labels = set(point_coords.keys())
-            if "GAMMA" in available_labels:
-                available_labels.add("G")
-            sorted_labels = sorted(available_labels, key=len, reverse=True)
-            labels = []
-            remaining = segment
-
-            while remaining:
-                matched = False
-                for label in sorted_labels:
-                    if remaining.startswith(label):
-                        # Map "G" to "GAMMA"
-                        actual_label = "GAMMA" if label == "G" else label
-                        labels.append(actual_label)
-                        remaining = remaining[len(label):]
-                        matched = True
-                        break
-                if not matched:
-                    raise ValueError(
-                        f"Unknown special point starting at '{remaining}' in k-path segment '{segment}'. "
-                        f"Available points: {sorted(point_coords.keys())}"
-                    )
-
-            # Build path tuples for this segment
-            for i in range(len(labels) - 1):
-                path.append((labels[i], labels[i + 1]))
+        path = _parse_kpoints_path_string(kpoints.path, point_coords)
     else:
-        # Use the default path from seekpath
         path = result["parameters"].dict["path"]
 
-    # Calculate k-points along the path with the specified density
-    kpoint_list = []
-    label_list = []
+    kpoint_list, label_list = _calculate_kpoints_along_path(path, point_coords, kpoints.density)
 
-    for segment_idx, (start_label, end_label) in enumerate(path):
-        start_coord = np.array(point_coords[start_label])
-        end_coord = np.array(point_coords[end_label])
-
-        # Calculate distance in reciprocal space (approximate)
-        segment_length = np.linalg.norm(end_coord - start_coord)
-
-        # Number of points based on density
-        n_points = max(2, int(np.ceil(segment_length * kpoints.density)))
-
-        # Generate points along this segment
-        for i in range(n_points):
-            if i == 0 and segment_idx > 0:
-                # Skip first point of segments after the first to avoid duplicates
-                continue
-
-            t = i / (n_points - 1) if n_points > 1 else 0.0
-            coord = start_coord + t * (end_coord - start_coord)
-            kpoint_list.append(coord.tolist())
-
-            # Add labels for first and last points of segments
-            if i == 0:
-                label_list.append((len(kpoint_list) - 1, start_label))
-            elif i == n_points - 1:
-                label_list.append((len(kpoint_list) - 1, end_label))
-
-    # Create KpointsData with explicit k-points
     kpts = orm.KpointsData()
-    kpts.set_kpoints(kpoint_list)
+    kpts.set_kpoints(kpoint_list)  # type: ignore[no-untyped-call]
     kpts.labels = label_list
 
     return kpts
@@ -302,7 +328,7 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> orm.Dict:
     pw_params = calc_params.pw
 
     # Build parameters dict
-    parameters: dict = {
+    parameters: dict[str, dict[str, Any]] = {
         "CONTROL": {
             "calculation": "scf",
         },
@@ -329,7 +355,7 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> orm.Dict:
     # Ensure all Path objects are converted to strings for JSON serialization
     parameters = _convert_paths_to_strings(parameters)
 
-    return orm.Dict(parameters)
+    return orm.Dict(parameters)  # type: ignore[no-untyped-call]
 
 
 def get_pseudos_from_family(
@@ -353,12 +379,12 @@ def get_pseudos_from_family(
 
     ensure_pseudo_family_installed(pseudo_family)
     family = PseudoPotentialFamily.collection.get(label=pseudo_family)
-    return family.get_pseudos(structure=structure)
+    return family.get_pseudos(structure=structure)  # type: ignore[no-any-return]
 
 
 def convert_koopmans_input(
     koopmans_input: KoopmansInput,
-) -> dict:
+) -> dict[str, Any]:
     """Convert KoopmansInput to a dictionary of AiiDA data nodes.
 
     Args:

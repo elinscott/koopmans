@@ -65,6 +65,7 @@ dependencies = [
     "aiida-koopmans",
     "aiida-workgraph>=0.8.1",
     "pyyaml>=6.0.3",
+    "types-pyyaml>=6.0.12.20250915",
 ]
 
 # see https://peps.python.org/pep-0735/ and https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups
@@ -216,6 +217,10 @@ ignore = [
 "docs/source/conf.py" = ["ERA001"]
 # Prints are okay in notebooks
 "notebooks/**/*.ipynb" = ["T201"]
+# Allow assert statements in tests
+"tests/**/*.py" = ["S101"]
+# Allow long lines in input file definitions (Field descriptions)
+"src/koopmans/input_file/*.py" = ["E501"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"

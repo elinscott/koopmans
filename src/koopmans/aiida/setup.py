@@ -75,7 +75,12 @@ def ensure_pseudo_family_installed(pseudo_family: str) -> None:
 
     logger.info("Successfully installed pseudo family '%s'", pseudo_family)
 
+
 def install_pseudo_family(pseudo_family: str) -> None:
+    """Install a pseudopotential family.
+
+    Parse the label and dispatch to the appropriate installer.
+    """
     parts = pseudo_family.split("/")
 
     if parts[0] == "PseudoDojo" and len(parts) == 6:
@@ -86,7 +91,8 @@ def install_pseudo_family(pseudo_family: str) -> None:
         raise ValueError(
             f"Unrecognized pseudo family format: '{pseudo_family}'. "
             "Expected 'PseudoDojo/version/functional/relativistic/protocol/format' "
-            "or 'SSSP/version/functional/protocol'.")
+            "or 'SSSP/version/functional/protocol'."
+        )
 
 
 def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
@@ -97,10 +103,10 @@ def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
         parts: The parsed parts of the label.
     """
     from aiida_pseudo.cli.install import download_pseudo_dojo, install_pseudo_dojo
-    from aiida_pseudo.data.pseudo import UpfData, PsmlData, Psp8Data, JthXmlData
+    from aiida_pseudo.data.pseudo import JthXmlData, PsmlData, Psp8Data, UpfData
     from aiida_pseudo.groups.family import PseudoDojoConfiguration
 
-    # Parse: PseudoDojo/version/functional/relativistic/protocol/format
+    # Unpack the label parts
     _, version, functional, relativistic, protocol, pseudo_format = parts
 
     # Map format string to pseudo type class
@@ -158,7 +164,7 @@ def _install_sssp_family(label: str, parts: list[str]) -> None:
     from aiida_pseudo.cli.install import download_sssp, install_sssp
     from aiida_pseudo.groups.family import SsspConfiguration
 
-    # Parse: SSSP/version/functional/protocol
+    # Unpack the label parts
     _, version, functional, protocol = parts
 
     configuration = SsspConfiguration(
@@ -192,7 +198,7 @@ def profile_exists() -> bool:
     """Check if the koopmans profile already exists."""
     from aiida.manage.configuration import get_config
 
-    config = get_config()
+    config = get_config()  # type: ignore[no-untyped-call]
     return PROFILE_NAME in config.profile_names
 
 
@@ -215,21 +221,31 @@ def setup_profile(*, use_postgres: bool = False) -> None:
 
     click.echo(f"Creating AiiDA profile '{PROFILE_NAME}'...")
 
-    config = get_config()
+    config = get_config()  # type: ignore[no-untyped-call]
 
     # Storage configuration - reuse presto's detection for postgres
     if use_postgres:
         click.echo("  Detecting PostgreSQL configuration...")
         try:
-            from aiida.cmdline.commands.cmd_presto import detect_postgres_config
+            from aiida.cmdline.commands.cmd_presto import (
+                detect_postgres_config,
+                get_default_presto_profile_name,
+            )
 
-            storage_config = detect_postgres_config()
+            storage_config = detect_postgres_config(
+                profile_name=get_default_presto_profile_name(),  # type: ignore[no-untyped-call]
+                postgres_hostname="localhost",
+                postgres_port=5432,
+                postgres_username="postgres",
+                postgres_password="",
+                non_interactive=False,
+            )
+
             storage_backend = "core.psql_dos"
             click.echo("  PostgreSQL configured successfully.")
         except ConnectionError as exc:
             raise click.ClickException(
-                f"PostgreSQL detection failed: {exc}. "
-                "Ensure PostgreSQL is running and accessible."
+                f"PostgreSQL detection failed: {exc}. Ensure PostgreSQL is running and accessible."
             ) from exc
     else:
         storage_backend = "core.sqlite_dos"
@@ -311,7 +327,7 @@ def get_localhost_computer() -> Computer:
 
     click.echo(f"Creating computer '{COMPUTER_LABEL}'...")
 
-    config = get_config()
+    config = get_config()  # type: ignore[no-untyped-call]
 
     # Create workdir in the same location as verdi presto
     workdir = Path(config.dirpath) / "scratch" / PROFILE_NAME
@@ -361,10 +377,17 @@ def get_executable_version(path: str) -> str | None:
     Returns:
         Version string if detected, None otherwise.
     """
+    import os
     import re
 
+    # Security: validate path is an absolute path to an existing executable
+    # The path comes from shutil.which() via find_executable(), which only
+    # returns paths to actual executables found in PATH
+    if not os.path.isabs(path) or not os.path.isfile(path) or not os.access(path, os.X_OK):
+        return None
+
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - path validated above
             [path, "--version"],
             capture_output=True,
             text=True,
@@ -428,17 +451,17 @@ def setup_code(
     return code
 
 
-def setup_computers() -> None:
-    """Detect and set up computers and codes for koopmans.
+def _get_codes_to_register(computer: Computer) -> tuple[list[str], dict[str, str]]:
+    """Check which codes already exist and which need to be registered.
 
-    This function:
-    1. Creates a localhost computer if it doesn't exist (presto-style)
-    2. Scans PATH for Quantum ESPRESSO executables (only for codes not yet registered)
-    3. Registers found executables as AiiDA codes
+    Args:
+        computer: The AiiDA computer to check codes on.
+
+    Returns:
+        A tuple of (existing_codes, codes_to_find) where existing_codes is a list
+        of executable names already registered and codes_to_find is a dict mapping
+        executable names to their plugins.
     """
-    computer = get_localhost_computer()
-
-    # First, check which codes already exist (fast database lookup)
     existing_codes = []
     codes_to_find = {}
     for executable, plugin in QE_EXECUTABLES.items():
@@ -448,19 +471,21 @@ def setup_computers() -> None:
             existing_codes.append(executable)
         else:
             codes_to_find[executable] = plugin
+    return existing_codes, codes_to_find
 
-    if existing_codes:
-        click.echo(f"\n{len(existing_codes)} code(s) already registered, skipping:")
-        for code in existing_codes:
-            click.echo(f"  - {code}")
 
-    if not codes_to_find:
-        click.echo("\nAll codes already registered. Nothing to do.")
-        return
+def _scan_and_register_codes(
+    codes_to_find: dict[str, str], computer: Computer
+) -> tuple[list[str], list[str]]:
+    """Scan PATH for executables and register them as AiiDA codes.
 
-    # Only search PATH for codes that don't exist yet
-    click.echo(f"\nScanning for {len(codes_to_find)} missing executable(s)...")
+    Args:
+        codes_to_find: Dict mapping executable names to their plugins.
+        computer: The AiiDA computer to register codes on.
 
+    Returns:
+        A tuple of (found_codes, missing_codes) listing executables found and not found.
+    """
     found_codes = []
     missing_codes = []
 
@@ -476,7 +501,19 @@ def setup_computers() -> None:
         else:
             missing_codes.append(executable)
 
-    # Summary
+    return found_codes, missing_codes
+
+
+def _print_setup_summary(
+    existing_codes: list[str], found_codes: list[str], missing_codes: list[str]
+) -> None:
+    """Print a summary of the setup process.
+
+    Args:
+        existing_codes: Codes that were already registered.
+        found_codes: Codes that were newly registered.
+        missing_codes: Codes that were not found on PATH.
+    """
     click.echo("\n" + "=" * 60)
     click.echo("Setup Summary")
     click.echo("=" * 60)
@@ -496,13 +533,38 @@ def setup_computers() -> None:
     all_registered = existing_codes + found_codes
     missing_essential = [e for e in essential if e not in all_registered]
     if missing_essential:
-        click.echo(
-            "\nWarning: Essential executable(s) not found: "
-            + ", ".join(missing_essential)
-        )
+        click.echo("\nWarning: Essential executable(s) not found: " + ", ".join(missing_essential))
         click.echo("Please ensure Quantum ESPRESSO is installed and in your PATH.")
     else:
         click.echo("\nAll essential executables found. Ready to run calculations!")
+
+
+def setup_computers() -> None:
+    """Detect and set up computers and codes for koopmans.
+
+    This function:
+    1. Creates a localhost computer if it doesn't exist (presto-style)
+    2. Scans PATH for Quantum ESPRESSO executables (only for codes not yet registered)
+    3. Registers found executables as AiiDA codes
+    """
+    computer = get_localhost_computer()
+
+    existing_codes, codes_to_find = _get_codes_to_register(computer)
+
+    if existing_codes:
+        click.echo(f"\n{len(existing_codes)} code(s) already registered, skipping:")
+        for code in existing_codes:
+            click.echo(f"  - {code}")
+
+    if not codes_to_find:
+        click.echo("\nAll codes already registered. Nothing to do.")
+        return
+
+    click.echo(f"\nScanning for {len(codes_to_find)} missing executable(s)...")
+
+    found_codes, missing_codes = _scan_and_register_codes(codes_to_find, computer)
+
+    _print_setup_summary(existing_codes, found_codes, missing_codes)
 
 
 def verify_installation() -> dict[str, bool]:

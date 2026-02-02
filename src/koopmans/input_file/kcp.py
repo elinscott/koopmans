@@ -1,19 +1,25 @@
-"""Input parameters for kcpw.x
+"""Input parameters for ``kcp.x``.
 
 For the moment, only a subset of the keywords are uncommented and can therefore be set by the user.
-The majority are untested and commented out for safety."""
+The majority are untested and commented out for safety.
+"""
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
-from typing_extensions import Literal
 
 from koopmans.base import BaseModel
 
+# ruff: noqa: ERA001
+
 
 class ControlNamelist(BaseModel):
-    calculation: Literal["scf", "nscf", "bands", "relax", "md", "vc-relax",
-                         "vc-md"] = Field("scf", description="A string describing the task to be performed.")
+    """``CONTROL`` namelist parameters for ``kcp.x``."""
+
+    calculation: Literal["scf", "nscf", "bands", "relax", "md", "vc-relax", "vc-md"] = Field(
+        "scf", description="A string describing the task to be performed."
+    )
     title: str | None = Field(None, description="reprinted on output.")
     verbosity: Literal["high", "low"] = Field(
         "low",
@@ -29,15 +35,15 @@ class ControlNamelist(BaseModel):
     dt: float = 1.0
     ndr: int = 50
     ndw: int = 50
-    outdir: Path = Field(default=".")
+    outdir: Path = Field(default_factory=lambda: Path("."))
     prefix: str = "cp"
-    pseudo_dir: Path = Field(default=".")
+    pseudo_dir: Path = Field(default_factory=lambda: Path("."))
     # refg: float = 0.05
-    max_seconds: float = 1.E+7
-    ekin_conv_thr: float = 1.E-6
-    etot_conv_thr: float = 1.E-4
-    forc_conv_thr: float = 1.E-3
-    disk_io: Literal['default'] = 'default'
+    max_seconds: float = 1.0e7
+    ekin_conv_thr: float = 1.0e-6
+    etot_conv_thr: float = 1.0e-4
+    forc_conv_thr: float = 1.0e-3
+    disk_io: Literal["default"] = "default"
     evc_restart: bool = False
     # dipfield: bool = False
     # lberry: bool = False
@@ -54,6 +60,7 @@ class ControlNamelist(BaseModel):
 
 class SystemNamelist(BaseModel):
     """Valid keywords for the &SYSTEM namelist in kcp.x."""
+
     ibrav: int = -1
     celldm: dict[int, float] = Field(default_factory=dict)
     # a: float = 0.0
@@ -80,7 +87,7 @@ class SystemNamelist(BaseModel):
     nr1b: int | None = None
     nr2b: int | None = None
     nr3b: int | None = None
-    occupations: Literal['fixed'] = 'fixed'
+    occupations: Literal["fixed"] = "fixed"
     # smearing:  Literal['gaussian'] = 'gaussian'
     # degauss: float = 0.0
     nelup: int = 0
@@ -108,7 +115,7 @@ class SystemNamelist(BaseModel):
     # constrained_magnetization: Literal['none'] = 'none'
     # fixed_magnetization: float = 0.0
     # B_field: float = 0.0
-    assume_isolated: Literal['none'] = 'none'
+    assume_isolated: Literal["none"] = "none"
     # spline_ps: bool = False
     # real_space: bool = False
     # london: bool = False
@@ -131,7 +138,9 @@ class SystemNamelist(BaseModel):
     print_wfc_anion: bool = False
     index_empty_to_save: int = 1
     do_orbdep: bool = False
-    do_wf_cmplx: bool = True  # note this is not the default value for kcp.x; we set it to True for `koopmans`
+    do_wf_cmplx: bool = (
+        True  # note this is not the default value for kcp.x; we set it to True for `koopmans`
+    )
     do_ee: bool = False
     do_spinsym: bool = False
     f_cutoff: float = 0.01
@@ -148,6 +157,8 @@ class SystemNamelist(BaseModel):
 
 
 class ElectronsNamelist(BaseModel):
+    """``ELECTRONS`` namelist parameters for ``kcp.x``."""
+
     # emass: float = 400.0
     # emass_cutoff: float = 2.5
     # orthogonalization: Literal['ortho'] = 'ortho'
@@ -165,7 +176,7 @@ class ElectronsNamelist(BaseModel):
     # grease: float = 1.0
     # startingwfc: str = 'random'
     # startingpot: str = ' '
-    conv_thr: float = 1.E-6
+    conv_thr: float = 1.0e-6
     empty_states_maxstep: int = 100
     empty_states_ethr: float = 0.0
     # diis_size: int = 4
@@ -226,6 +237,8 @@ class ElectronsNamelist(BaseModel):
 
 
 class IonsNamelist(BaseModel):
+    """``IONS`` namelist parameters for ``kcp.x``."""
+
     # phase_space: Literal['full', 'coarse-grained'] = 'full'
     # ion_dynamics: Literal['sd', 'cg', 'damp', 'verlet', 'none', 'bfgs', 'beeman'] = 'none'
     # ion_radius: float = 0.5
@@ -279,6 +292,8 @@ class IonsNamelist(BaseModel):
 
 
 class CellNamelist(BaseModel):
+    """``CELL`` namelist parameters for ``kcp.x``."""
+
     # cell_parameters: Literal['default'] = 'default'
     # cell_dynamics: Literal['sd', 'pr', 'none', 'w', 'damp-pr', 'damp-w', 'bfgs'] = 'none'
     # cell_velocities: Literal['default', 'zero'] = 'default'
@@ -297,12 +312,16 @@ class CellNamelist(BaseModel):
 
 
 class EENamelist(BaseModel):
-    which_compensation: Literal['none'] = 'none'
+    """``EE`` namelist parameters for ``kcp.x``."""
+
+    which_compensation: Literal["none"] = "none"
     tcc_odd: bool = False
 
 
 class NKSICNamelist(BaseModel):
-    esic_conv_thr: float = 1.E-5
+    """``NKSIC`` namelist parameters for ``kcp.x``."""
+
+    esic_conv_thr: float = 1.0e-5
     # do_nk: bool = False
     do_pz: bool = False
     do_nki: bool = False
@@ -310,17 +329,26 @@ class NKSICNamelist(BaseModel):
     do_nkipz: bool = False
     do_innerloop: bool = Field(default=False, description="main switch of inner loop minimization")
     do_innerloop_empty: bool = Field(
-        default=False, description="main switch of inner loop minimization for empty states")
+        default=False, description="main switch of inner loop minimization for empty states"
+    )
     # l_comp_cmplxfctn_index: bool = Field(default=False, description="compute the complexification index")
-    do_innerloop_cg: bool = Field(default=False, description="main switch of cg inner loop minimization")
+    do_innerloop_cg: bool = Field(
+        default=False, description="main switch of cg inner loop minimization"
+    )
     innerloop_dd_nstep: int = Field(
-        default=50, description="number of outer loop damped dynamics steps between each inner loop minimization")
+        default=50,
+        description="number of outer loop damped dynamics steps between each inner loop minimization",
+    )
     innerloop_cg_nsd: int = Field(
-        default=20, description="number of initial steepest-descent steps in cg inner loop minimization")
+        default=20,
+        description="number of initial steepest-descent steps in cg inner loop minimization",
+    )
     innerloop_cg_nreset: int = Field(
-        default=10, description="number of cg steps after which the search direction is set to the steepest-descent direction in inner loop minimization")
+        default=10,
+        description="number of cg steps after which the search direction is set to the steepest-descent direction in inner loop minimization",
+    )
     innerloop_nmax: int = Field(default=10000, description="maximum number of inner loop steps")
-    innerloop_cg_ratio: float = Field(default=1.e-3)
+    innerloop_cg_ratio: float = Field(default=1.0e-3)
     # innerloop_init_n: int | None = None
     # innerloop_until: int = -1
     # innerloop_atleast: int = 0
@@ -345,6 +373,8 @@ class NKSICNamelist(BaseModel):
 
 
 class KCPInputParameters(BaseModel):
+    """Complete input parameters for ``kcp.x``."""
+
     control: ControlNamelist = Field(default_factory=lambda: ControlNamelist())
     system: SystemNamelist = Field(default_factory=lambda: SystemNamelist())
     electrons: ElectronsNamelist = Field(default_factory=lambda: ElectronsNamelist())
