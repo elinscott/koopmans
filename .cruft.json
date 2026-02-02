@@ -1,0 +1,31 @@
+{
+  "template": "https://github.com/cthoyt/cookiecutter-snekpack",
+  "commit": "d59632c93b5ae63cc8252e8008059c0444e9e7b0",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "package_name": "koopmans",
+      "package_name_stylized": "koopmans",
+      "short_description": "Automated Koopmans functional calculations and workflows",
+      "author_name": "Edward Linscott",
+      "author_github": "elinscott",
+      "author_email": "edwardlinscott@gmail.com",
+      "github_organization_name": "elinscott",
+      "github_repository_name": "koopmans",
+      "command_line_interface": true,
+      "gitlab": false,
+      "runner": "tox",
+      "__not_charlie": "true",
+      "__runner": "tox -e",
+      "__runner_uv": "--with tox-uv tox -e",
+      "__runner_pip": "tox tox-uv",
+      "__runner_install_uv": "uv tool install tox --with tox-uv",
+      "__runner_install_pip": "python3 -m pip install tox tox-uv",
+      "__runner_tests": "py",
+      "__gh_slug": "elinscott/koopmans",
+      "_template": "https://github.com/cthoyt/cookiecutter-snekpack",
+      "_commit": "d59632c93b5ae63cc8252e8008059c0444e9e7b0"
+    }
+  },
+  "directory": null
+}
