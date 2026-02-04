@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from aiida.orm import ProcessNode
 
-__all__ = ["suppress_aiida_logging", "get_node_label"]
+__all__ = ["suppress_aiida_logging", "suppress_stdout", "get_node_label"]
 
 
 def get_node_label(node: "ProcessNode", include_code: bool = True) -> str:
@@ -76,3 +76,21 @@ def suppress_aiida_logging():
         yield
     finally:
         aiida_logger.setLevel(original_level)
+
+
+@contextmanager
+def suppress_stdout():
+    """Context manager to suppress stdout output.
+
+    Useful for suppressing print statements from third-party libraries.
+    """
+    import os
+    import sys
+
+    original_stdout = sys.stdout
+    sys.stdout = open(os.devnull, "w")
+    try:
+        yield
+    finally:
+        sys.stdout.close()
+        sys.stdout = original_stdout

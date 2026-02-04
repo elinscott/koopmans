@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 
-from koopmans.aiida.utils import get_node_label
+from koopmans.aiida.utils import get_node_label, suppress_stdout
 
 if TYPE_CHECKING:
     from aiida.orm import ProcessNode
@@ -141,18 +141,18 @@ def run_with_progress(wg: "WorkGraph", refresh_interval: float = 2.0) -> None:
     from koopmans.aiida.setup import ensure_daemon_running
 
     console = Console()
-    console.print()  # Add blank line for spacing
+    console.print()
 
     # Ensure daemon is running before submitting
     ensure_daemon_running()
 
-    # Submit the workgraph
-    wg.submit()
+    # Submit the workgraph (suppress aiida-workgraph's print statements)
+    with suppress_stdout():
+        wg.submit()
 
-    # Wait for process to be created
-    while wg.process is None:
-        sleep(0.1)
-
+        # Wait for process to be created
+        while wg.process is None:
+            sleep(0.1)
 
     # Display live progress by querying actual process nodes
     pk = wg.process.pk

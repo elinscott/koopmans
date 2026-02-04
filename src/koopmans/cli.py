@@ -61,7 +61,6 @@ def cli(pdb: bool, enable_logging: bool) -> None:
     """Automated Koopmans functional calculations and workflows."""
     if pdb:
         from koopmans.debugging import enable_pdb
-
         enable_pdb()
 
     if enable_logging:
@@ -74,18 +73,7 @@ def cli(pdb: bool, enable_logging: bool) -> None:
 
 @cli.command()
 @click.argument("input_file", type=click.Path(exists=True))
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    default=False,
-    help="Parse input and build workgraph without submitting.",
-)
-@click.option(
-    "--cache/--no-cache",
-    default=False,
-    help="Enable AiiDA caching to reuse results from previous identical calculations.",
-)
-def run(input_file: str, dry_run: bool, cache: bool) -> None:
+def run(input_file: str) -> None:
     """Run a koopmans calculation from an input file.
 
     INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
@@ -131,34 +119,18 @@ def run(input_file: str, dry_run: bool, cache: bool) -> None:
             f"Task '{task.value}' is not yet implemented. Supported tasks: wannierize, dft_bands"
         )
 
-    if dry_run:
-        click.echo(f"Dry run: workgraph '{wg.name}' built successfully.")
-        click.echo(f"  Tasks: {[t.name for t in wg.tasks]}")
-        return
-
-    # Enable caching at the profile level if requested (context managers don't affect daemon)
-    config = None
-    profile_name = None
-    original_caching = None
-    if cache:
-        from aiida.manage import get_config
-
-        config = get_config()
-        profile_name = config.default_profile_name
-        original_caching = config.get_option("caching.default_enabled", scope=profile_name)
-        config.set_option("caching.default_enabled", True, scope=profile_name)
-        config.store()
-
-    try:
-        with suppress_aiida_logging():
-            run_with_progress(wg)
-    finally:
-        # Restore original caching setting
-        if config is not None and profile_name is not None:
-            config.set_option("caching.default_enabled", original_caching, scope=profile_name)
-            config.store()
+    with suppress_aiida_logging():
+        run_with_progress(wg)
 
     dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
+
+
+# Shared option for caching
+cache_option = click.option(
+    "--cache/--no-cache",
+    default=True,
+    help="Enable AiiDA caching to reuse results from previous identical calculations.",
+)
 
 
 @cli.command()
@@ -168,18 +140,25 @@ def run(input_file: str, dry_run: bool, cache: bool) -> None:
     default=False,
     help="Use PostgreSQL instead of SQLite for storage (recommended for production).",
 )
-def install(use_postgres: bool) -> None:
+@cache_option
+def install(use_postgres: bool, cache: bool) -> None:
     """Auto-install the AiiDA backend.
 
     This command:
     1. Creates an AiiDA profile with SQLite storage (or PostgreSQL with --use-postgres)
     2. Configures the localhost computer
     3. Detects and registers Quantum ESPRESSO executables on PATH
+    4. Starts the AiiDA daemon with caching enabled
     """
     click.echo("Setting up koopmans AiiDA backend...")
     click.echo("=" * 60)
     setup_profile(use_postgres=use_postgres)
     setup_computers()
+
+    # Start the daemon
+    click.echo("")
+    _start_daemon_with_caching(cache)
+
     click.echo("\nInstallation complete!")
 
 
@@ -205,18 +184,29 @@ def daemon() -> None:
     """Manage the AiiDA daemon."""
 
 
-@daemon.command(name="start")
-def daemon_start() -> None:
-    """Start the AiiDA daemon."""
+def _start_daemon_with_caching(cache: bool) -> None:
+    """Start the daemon with caching configuration (internal helper)."""
     load_koopmans_profile()
+
     if is_daemon_running():
         click.echo("Daemon is already running.")
+        if cache:
+            click.echo("Note: Caching is enabled. Restart the daemon for changes to take effect.")
         return
     click.echo("Starting daemon...")
-    if start_daemon(wait=True):
+    if cache:
+        click.echo("Caching: enabled")
+    if start_daemon(wait=True, cache=cache):
         click.echo("Daemon started successfully.")
     else:
         raise click.ClickException("Failed to start daemon.")
+
+
+@daemon.command(name="start")
+@cache_option
+def daemon_start(cache: bool) -> None:
+    """Start the AiiDA daemon."""
+    _start_daemon_with_caching(cache)
 
 
 @daemon.command(name="stop")
@@ -266,6 +256,13 @@ def uninstall(yes: bool) -> None:
             "This will permanently delete all koopmans AiiDA data. Continue?",
             abort=True,
         )
+
+    # Stop the daemon before uninstalling
+    load_koopmans_profile()
+    if is_daemon_running():
+        click.echo("Stopping daemon...")
+        stop_daemon()
+
     uninstall_backend()
 
 

@@ -136,7 +136,7 @@ def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
         pseudo_format=pseudo_format,
     )
 
-    click.echo(f"  Downloading pseudopotentials for '{label}'...")
+    click.echo(f"  Downloading '{label}' pseudopotentials")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # PseudoDojo uses .tgz archives for both pseudos and metadata
@@ -169,8 +169,6 @@ def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
 
         # Set the default stringency (required for get_recommended_cutoffs)
         family.set_default_stringency("normal")
-
-    click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")
 
 
 def _install_sssp_family(label: str, parts: list[str]) -> None:
@@ -386,7 +384,7 @@ def get_localhost_computer() -> Computer:
     computer.set_minimum_job_poll_interval(0.0)
     computer.set_default_mpiprocs_per_machine(1)
 
-    click.echo(f"Successfully created computer '{COMPUTER_LABEL}'.")
+    click.echo(f"Created computer '{COMPUTER_LABEL}'.")
     return computer
 
 
@@ -686,16 +684,23 @@ def is_daemon_running() -> bool:
         return False
 
 
-def start_daemon(wait: bool = True) -> bool:
+def start_daemon(wait: bool = True, cache: bool = True) -> bool:
     """Start the AiiDA daemon if it's not already running.
 
     Args:
         wait: If True, wait for the daemon to be fully started.
+        cache: If True, enable AiiDA caching for calculations.
 
     Returns:
         True if the daemon was started or was already running, False on failure.
     """
     from aiida.engine.daemon.client import get_daemon_client
+    from aiida.manage import get_config
+
+    # Set caching configuration before starting the daemon
+    config = get_config()
+    config.set_option("caching.default_enabled", cache)
+    config.store()
 
     if is_daemon_running():
         return True

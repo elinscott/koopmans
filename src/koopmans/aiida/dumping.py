@@ -96,12 +96,12 @@ def dump_workgraph(
     with suppress_aiida_logging():
         process.dump(output_path=output_path, include_inputs=True, include_outputs=True, overwrite=True)
 
-    # Strip pk numbers from all folder names (keeps AiiDA's original numbering)
+    # Strip pk numbers from all folder names
     _strip_pk_from_folder_names(output_path)
 
     # Simplify each CalcJobNode folder (merge node_inputs/outputs)
-    # CalcJob folders are identified by having an "inputs" subdirectory
     for folder in output_path.rglob("*"):
+        # CalcJob folders are identified by having an "inputs" subdirectory
         if folder.is_dir() and (folder / "inputs").exists():
             _simplify_calcjob_dump(folder)
 

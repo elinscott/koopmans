@@ -406,8 +406,8 @@ def convert_koopmans_input_for_builder(
         - options: dict (optional)
     """
     structure = atoms_input_to_structure(koopmans_input.atoms)
-    kpoints_scf = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
-    kpoints_bands = kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
+    # kpoints_scf = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
+    # kpoints_bands = kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
     parameters = input_to_pw_parameters(koopmans_input)
 
     # Build overrides for the builder pattern
@@ -447,37 +447,3 @@ def convert_koopmans_input_for_builder(
         result["options"] = options
 
     return result
-
-
-def convert_koopmans_input(
-    koopmans_input: KoopmansInput,
-) -> dict[str, Any]:
-    """Convert KoopmansInput to a dictionary of AiiDA data nodes.
-
-    This is the legacy conversion function that returns raw AiiDA nodes
-    for use with scf_bands_workgraph (not the builder pattern).
-
-    Args:
-        koopmans_input: The parsed koopmans input.
-
-    Returns:
-        Dictionary containing:
-        - structure: StructureData
-        - kpoints_scf: KpointsData (mesh for SCF)
-        - kpoints_bands: KpointsData (path for bands)
-        - parameters: Dict (PW parameters)
-        - pseudos: dict mapping element symbols to pseudopotential nodes
-    """
-    structure = atoms_input_to_structure(koopmans_input.atoms)
-    kpoints_scf = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
-    kpoints_bands = kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
-    parameters = input_to_pw_parameters(koopmans_input)
-    pseudos = get_pseudos_from_family(koopmans_input.workflow.pseudo_library, structure)
-
-    return {
-        "structure": structure,
-        "kpoints_scf": kpoints_scf,
-        "kpoints_bands": kpoints_bands,
-        "parameters": parameters,
-        "pseudos": pseudos,
-    }
