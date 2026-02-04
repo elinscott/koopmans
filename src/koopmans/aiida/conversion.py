@@ -346,12 +346,11 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> orm.Dict:
 
     # Merge with explicit PW parameters from input
     if pw_params.control:
-        parameters["CONTROL"].update(pw_params.control.model_dump(exclude_none=True))
+        parameters["CONTROL"].update(pw_params.control.model_dump(exclude_none=True, exclude_defaults=True))
     if pw_params.system:
-        parameters["SYSTEM"].update(pw_params.system.model_dump(exclude_none=True))
+        parameters["SYSTEM"].update(pw_params.system.model_dump(exclude_none=True, exclude_defaults=True))
     if pw_params.electrons:
-        parameters["ELECTRONS"].update(pw_params.electrons.model_dump(exclude_none=True))
-
+        parameters["ELECTRONS"].update(pw_params.electrons.model_dump(exclude_none=True, exclude_defaults=True))
     # Ensure all Path objects are converted to strings for JSON serialization
     parameters = _convert_paths_to_strings(parameters)
 
@@ -382,10 +381,81 @@ def get_pseudos_from_family(
     return family.get_pseudos(structure=structure)  # type: ignore[no-any-return]
 
 
+def convert_koopmans_input_for_builder(
+    koopmans_input: KoopmansInput,
+    protocol: str | None = None,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Convert KoopmansInput to inputs for PwBandsWorkChain via builder.
+
+    This function converts a KoopmansInput to the format expected by
+    PwBandsTaskViaBuilder / PwBandsWorkChain.get_builder_from_protocol().
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+        code: The AiiDA Code instance for pw.x.
+        protocol: Optional protocol name (e.g., "fast", "moderate", "precise").
+            If not specified, the default protocol will be used.
+        options: Optional dictionary of options for CalcJob metadata.options.
+
+    Returns:
+        Dictionary containing ScfBandsBuilderInputs:
+        - structure: StructureData
+        - protocol: str (optional)
+        - overrides: dict with custom parameters, kpoints, and pseudo_family
+        - options: dict (optional)
+    """
+    structure = atoms_input_to_structure(koopmans_input.atoms)
+    kpoints_scf = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
+    kpoints_bands = kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
+    parameters = input_to_pw_parameters(koopmans_input)
+
+    # Build overrides for the builder pattern
+    # The builder expects nested overrides for scf and bands sub-workflows
+    # pseudo_family must be specified in each sub-workflow's overrides
+    pseudo_family = koopmans_input.workflow.pseudo_library
+
+    # Ensure the pseudo family is installed before proceeding
+    from koopmans.aiida.setup import ensure_pseudo_family_installed
+
+    ensure_pseudo_family_installed(pseudo_family)
+
+    overrides: dict[str, Any] = {
+        "scf": {
+            "pseudo_family": pseudo_family,
+            "pw": {
+                "parameters": parameters.get_dict(),
+            },
+        },
+        "bands": {
+            "pseudo_family": pseudo_family,
+            "pw": {
+                "parameters": parameters.get_dict(),
+            },
+        },
+    }
+
+    result: dict[str, Any] = {
+        "structure": structure,
+        "overrides": overrides,
+    }
+
+    if protocol is not None:
+        result["protocol"] = protocol
+
+    if options is not None:
+        result["options"] = options
+
+    return result
+
+
 def convert_koopmans_input(
     koopmans_input: KoopmansInput,
 ) -> dict[str, Any]:
     """Convert KoopmansInput to a dictionary of AiiDA data nodes.
+
+    This is the legacy conversion function that returns raw AiiDA nodes
+    for use with scf_bands_workgraph (not the builder pattern).
 
     Args:
         koopmans_input: The parsed koopmans input.

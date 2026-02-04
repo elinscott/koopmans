@@ -102,6 +102,10 @@ def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
         label: The full label for the family.
         parts: The parsed parts of the label.
     """
+    import contextlib
+    import io
+    import warnings
+
     from aiida_pseudo.cli.install import download_pseudo_dojo, install_pseudo_dojo
     from aiida_pseudo.data.pseudo import JthXmlData, PsmlData, Psp8Data, UpfData
     from aiida_pseudo.groups.family import PseudoDojoConfiguration
@@ -132,26 +136,41 @@ def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
         pseudo_format=pseudo_format,
     )
 
+    click.echo(f"  Downloading pseudopotentials for '{label}'...")
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        filepath_archive = Path(tmpdir) / "archive.tar.gz"
-        filepath_metadata = Path(tmpdir) / "metadata.json"
+        # PseudoDojo uses .tgz archives for both pseudos and metadata
+        filepath_archive = Path(tmpdir) / "archive.tgz"
+        filepath_metadata = Path(tmpdir) / "metadata.tgz"
 
-        download_pseudo_dojo(
-            configuration=configuration,
-            filepath_archive=filepath_archive,
-            filepath_metadata=filepath_metadata,
-            traceback=True,
-        )
+        # Suppress verbose output and warnings from aiida-pseudo
+        with (
+            warnings.catch_warnings(),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            warnings.simplefilter("ignore")
 
-        logger.debug("Installing downloaded archive")
-        install_pseudo_dojo(
-            configuration=configuration,
-            filepath_archive=filepath_archive,
-            filepath_metadata=filepath_metadata,
-            pseudo_type=pseudo_type,
-            label=label,
-            traceback=True,
-        )
+            download_pseudo_dojo(
+                configuration=configuration,
+                filepath_archive=filepath_archive,
+                filepath_metadata=filepath_metadata,
+                traceback=False,
+            )
+
+            family = install_pseudo_dojo(
+                configuration=configuration,
+                filepath_archive=filepath_archive,
+                filepath_metadata=filepath_metadata,
+                pseudo_type=pseudo_type,
+                label=label,
+                traceback=False,
+            )
+
+        # Set the default stringency (required for get_recommended_cutoffs)
+        family.set_default_stringency("normal")
+
+    click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")
 
 
 def _install_sssp_family(label: str, parts: list[str]) -> None:
@@ -161,6 +180,10 @@ def _install_sssp_family(label: str, parts: list[str]) -> None:
         label: The full label for the family.
         parts: The parsed parts of the label.
     """
+    import contextlib
+    import io
+    import warnings
+
     from aiida_pseudo.cli.install import download_sssp, install_sssp
     from aiida_pseudo.groups.family import SsspConfiguration
 
@@ -173,25 +196,39 @@ def _install_sssp_family(label: str, parts: list[str]) -> None:
         protocol=protocol,
     )
 
+    click.echo(f"  Downloading pseudopotentials for '{label}'...")
+
     with tempfile.TemporaryDirectory() as tmpdir:
         filepath_archive = Path(tmpdir) / "archive.tar.gz"
         filepath_metadata = Path(tmpdir) / "metadata.json"
 
-        download_sssp(
-            configuration=configuration,
-            filepath_archive=filepath_archive,
-            filepath_metadata=filepath_metadata,
-            traceback=True,
-        )
+        # Suppress verbose output and warnings from aiida-pseudo
+        with (
+            warnings.catch_warnings(),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            warnings.simplefilter("ignore")
 
-        logger.debug("Installing SSSP family from downloaded archive")
-        install_sssp(
-            filepath_archive=filepath_archive,
-            filepath_metadata=filepath_metadata,
-            label=label,
-            traceback=True,
-        )
-        logger.info("Successfully installed pseudo family '%s'", label)
+            download_sssp(
+                configuration=configuration,
+                filepath_archive=filepath_archive,
+                filepath_metadata=filepath_metadata,
+                traceback=False,
+            )
+
+            install_sssp(
+                filepath_archive=filepath_archive,
+                filepath_metadata=filepath_metadata,
+                label=label,
+                traceback=False,
+            )
+
+    # Get the installed family to report the count
+    from aiida_pseudo.groups.family import SsspFamily
+
+    family = SsspFamily.collection.get(label=label)
+    click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")
 
 
 def profile_exists() -> bool:
@@ -577,6 +614,7 @@ def verify_installation() -> dict[str, bool]:
         "profile": False,
         "computer": False,
         "pw.x": False,
+        "daemon": False,
     }
 
     status["profile"] = profile_exists()
@@ -584,6 +622,7 @@ def verify_installation() -> dict[str, bool]:
     if status["profile"]:
         load_koopmans_profile()
         status["computer"] = computer_exists()
+        status["daemon"] = is_daemon_running()
 
         if status["computer"]:
             status["pw.x"] = code_exists(f"pw@{COMPUTER_LABEL}")
@@ -630,3 +669,142 @@ def list_codes() -> None:
             click.echo(f"  {label}: {description}")
     else:
         click.echo("  No codes registered.")
+
+
+def is_daemon_running() -> bool:
+    """Check if the AiiDA daemon is running.
+
+    Returns:
+        True if the daemon is running, False otherwise.
+    """
+    from aiida.engine.daemon.client import get_daemon_client
+
+    try:
+        client = get_daemon_client()
+        return client.is_daemon_running
+    except Exception:
+        return False
+
+
+def start_daemon(wait: bool = True) -> bool:
+    """Start the AiiDA daemon if it's not already running.
+
+    Args:
+        wait: If True, wait for the daemon to be fully started.
+
+    Returns:
+        True if the daemon was started or was already running, False on failure.
+    """
+    from aiida.engine.daemon.client import get_daemon_client
+
+    if is_daemon_running():
+        return True
+
+    try:
+        client = get_daemon_client()
+        response = client.start_daemon()
+
+        if wait:
+            # Wait for daemon to be fully operational
+            import time
+
+            for _ in range(30):  # Wait up to 30 seconds
+                if client.is_daemon_running:
+                    return True
+                time.sleep(1)
+            return False
+
+        return response is not None
+    except Exception as e:
+        logger.warning("Failed to start daemon: %s", e)
+        return False
+
+
+def stop_daemon() -> bool:
+    """Stop the AiiDA daemon.
+
+    Returns:
+        True if the daemon was stopped, False on failure.
+    """
+    from aiida.engine.daemon.client import get_daemon_client
+
+    if not is_daemon_running():
+        return True
+
+    try:
+        client = get_daemon_client()
+        client.stop_daemon(wait=True)
+        return True
+    except Exception as e:
+        logger.warning("Failed to stop daemon: %s", e)
+        return False
+
+
+def ensure_daemon_running() -> None:
+    """Ensure the AiiDA daemon is running, starting it if necessary.
+
+    Raises:
+        click.ClickException: If the daemon cannot be started.
+    """
+    if is_daemon_running():
+        return
+
+    click.echo("Starting AiiDA daemon...")
+    if start_daemon(wait=True):
+        click.echo("Daemon started successfully.")
+    else:
+        raise click.ClickException(
+            "Failed to start the AiiDA daemon. "
+            "This may be because RabbitMQ is not available. "
+            "Please check your installation with 'koopmans backend status'."
+        )
+
+
+def uninstall_backend() -> None:
+    """Completely remove the koopmans AiiDA backend.
+
+    This will:
+    1. Delete the AiiDA profile
+    2. Remove all associated storage (database, repository)
+    """
+    from aiida.manage.configuration import get_config
+
+    if not profile_exists():
+        click.echo(f"Profile '{PROFILE_NAME}' does not exist. Nothing to uninstall.")
+        return
+
+    config = get_config()  # type: ignore[no-untyped-call]
+    profile = config.get_profile(PROFILE_NAME)
+
+    # Get storage path before deleting
+    storage_config = profile.storage_config
+    storage_path = storage_config.get("filepath") if storage_config else None
+
+    click.echo(f"Deleting profile '{PROFILE_NAME}'...")
+
+    # Delete the profile (this also handles storage cleanup for sqlite_dos)
+    config.delete_profile(PROFILE_NAME, delete_storage=True)
+    config.store()
+
+    click.echo(f"  Profile '{PROFILE_NAME}' deleted.")
+
+    # Clean up any remaining storage directory
+    if storage_path:
+        storage_dir = Path(storage_path)
+        if storage_dir.exists():
+            shutil.rmtree(storage_dir)
+            click.echo(f"  Removed storage directory: {storage_dir}")
+
+    # Also clean up the profile directory if it exists
+    profile_dir = Path(config.dirpath) / PROFILE_NAME
+    if profile_dir.exists():
+        shutil.rmtree(profile_dir)
+        click.echo(f"  Removed profile directory: {profile_dir}")
+
+    # Clean up scratch directory
+    scratch_dir = Path(config.dirpath) / "scratch" / PROFILE_NAME
+    if scratch_dir.exists():
+        shutil.rmtree(scratch_dir)
+        click.echo(f"  Removed scratch directory: {scratch_dir}")
+
+    click.echo("\nUninstall complete. The AiiDA backend has been removed.")

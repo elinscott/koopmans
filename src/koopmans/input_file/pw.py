@@ -1,6 +1,6 @@
 """Input parameters for ``pw.x`` calculations."""
 
-from typing import Any, Literal
+from typing import Any, Literal, ClassVar
 
 from pydantic import Field, field_validator
 from pydantic_espresso.models.qe_7_4.pw import ControlNamelist as _ControlNamelist
@@ -11,6 +11,10 @@ from koopmans.base import BaseModel
 
 class ControlNamelist(_ControlNamelist):
     """``CONTROL`` namelist for ``pw.x`` calculations."""
+
+    pseudo_dir: ClassVar[str | None] = None  # Exclude this field
+    outdir: ClassVar[str | None] = None  # Exclude this field
+    prefix: ClassVar[str | None] = None  # Exclude this field
 
     @field_validator("verbosity", mode="before")
     @classmethod

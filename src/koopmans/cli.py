@@ -15,16 +15,24 @@ executed twice:
 """
 
 import logging
+from pathlib import Path
 
 import click
 
 from koopmans.aiida.setup import (
+    is_daemon_running,
     list_codes,
     load_koopmans_profile,
     print_status,
     setup_computers,
     setup_profile,
+    start_daemon,
+    stop_daemon,
+    uninstall_backend,
 )
+from koopmans.aiida.dumping import dump_workgraph
+from koopmans.aiida.progress import run_with_progress
+from koopmans.aiida.utils import suppress_aiida_logging
 from koopmans.input_file import read_input_file
 
 __all__ = [
@@ -72,23 +80,29 @@ def cli(pdb: bool, enable_logging: bool) -> None:
     default=False,
     help="Parse input and build workgraph without submitting.",
 )
-def run(input_file: str, dry_run: bool) -> None:
+@click.option(
+    "--cache/--no-cache",
+    default=False,
+    help="Enable AiiDA caching to reuse results from previous identical calculations.",
+)
+def run(input_file: str, dry_run: bool, cache: bool) -> None:
     """Run a koopmans calculation from an input file.
 
     INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
     """
     from aiida import orm
-    from aiida_koopmans.workgraphs import scf_bands_workgraph
+    from aiida_koopmans.workgraphs import PwBandsTaskViaBuilder
 
-    from koopmans.aiida import convert_koopmans_input
+    from koopmans.aiida import convert_koopmans_input_for_builder
     from koopmans.input_file.workflow import Task
+
+    input_path = Path(input_file)
 
     # Print the header
     click.echo(header())
 
     # Parse input file
-    click.echo(f"Loading input from {input_file}...")
-    koopmans_input = read_input_file(input_file)
+    koopmans_input = read_input_file(input_path)
 
     # Load AiiDA profile
     load_koopmans_profile()
@@ -103,15 +117,12 @@ def run(input_file: str, dry_run: bool) -> None:
         ) from exc
 
     # Convert input to AiiDA data nodes
-    click.echo("Converting input to AiiDA data nodes...")
-    aiida_data = convert_koopmans_input(koopmans_input)
+    aiida_data = convert_koopmans_input_for_builder(koopmans_input)
 
     # Build the appropriate workgraph based on task
     task = koopmans_input.workflow.task
-    click.echo(f"Building workgraph for task: {task.value}")
-
     if task in (Task.WANNIERIZE, Task.DFT_BANDS):
-        wg = scf_bands_workgraph.build(
+        wg = PwBandsTaskViaBuilder.build(
             code=code,
             **aiida_data,
         )
@@ -125,9 +136,29 @@ def run(input_file: str, dry_run: bool) -> None:
         click.echo(f"  Tasks: {[t.name for t in wg.tasks]}")
         return
 
-    wg.to_html("test.html")
+    # Enable caching at the profile level if requested (context managers don't affect daemon)
+    config = None
+    profile_name = None
+    original_caching = None
+    if cache:
+        from aiida.manage import get_config
 
-    wg.run()
+        config = get_config()
+        profile_name = config.default_profile_name
+        original_caching = config.get_option("caching.default_enabled", scope=profile_name)
+        config.set_option("caching.default_enabled", True, scope=profile_name)
+        config.store()
+
+    try:
+        with suppress_aiida_logging():
+            run_with_progress(wg)
+    finally:
+        # Restore original caching setting
+        if config is not None and profile_name is not None:
+            config.set_option("caching.default_enabled", original_caching, scope=profile_name)
+            config.store()
+
+    dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
 
 
 @cli.command()
@@ -167,6 +198,75 @@ def status() -> None:
 def codes() -> None:
     """List all registered codes."""
     list_codes()
+
+
+@backend.group()
+def daemon() -> None:
+    """Manage the AiiDA daemon."""
+
+
+@daemon.command(name="start")
+def daemon_start() -> None:
+    """Start the AiiDA daemon."""
+    load_koopmans_profile()
+    if is_daemon_running():
+        click.echo("Daemon is already running.")
+        return
+    click.echo("Starting daemon...")
+    if start_daemon(wait=True):
+        click.echo("Daemon started successfully.")
+    else:
+        raise click.ClickException("Failed to start daemon.")
+
+
+@daemon.command(name="stop")
+def daemon_stop() -> None:
+    """Stop the AiiDA daemon."""
+    load_koopmans_profile()
+    if not is_daemon_running():
+        click.echo("Daemon is not running.")
+        return
+    click.echo("Stopping daemon...")
+    if stop_daemon():
+        click.echo("Daemon stopped successfully.")
+    else:
+        raise click.ClickException("Failed to stop daemon.")
+
+
+@daemon.command(name="status")
+def daemon_status() -> None:
+    """Check if the AiiDA daemon is running."""
+    load_koopmans_profile()
+    if is_daemon_running():
+        click.echo("Daemon is running.")
+    else:
+        click.echo("Daemon is not running.")
+
+
+@backend.command()
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    default=False,
+    help="Skip confirmation prompt.",
+)
+def uninstall(yes: bool) -> None:
+    """Completely remove the AiiDA backend.
+
+    This will delete the AiiDA profile and all associated data including:
+    - The database (all calculation history)
+    - The file repository
+    - Registered computers and codes
+
+    This action cannot be undone!
+    """
+    if not yes:
+        click.confirm(
+            "This will permanently delete all koopmans AiiDA data. Continue?",
+            abort=True,
+        )
+    uninstall_backend()
 
 
 def main() -> None:

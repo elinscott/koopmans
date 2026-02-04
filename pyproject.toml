@@ -52,6 +52,7 @@ requires-python = ">=3.12"
 dependencies = [
     "more_itertools", # missing from itertools in stdlib
     "tqdm", # progress bars
+    "rich", # nice terminal output
     "click",
     "more_click",
     "typing-extensions",
@@ -66,6 +67,7 @@ dependencies = [
     "aiida-workgraph>=0.8.1",
     "pyyaml>=6.0.3",
     "types-pyyaml>=6.0.12.20250915",
+    "seekpath>=1.9.3",
 ]
 
 # see https://peps.python.org/pep-0735/ and https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups
@@ -283,3 +285,6 @@ replace = "version: {new_version}"
 wannier90-input = { path = "../wannier90-input" }
 pydantic-espresso = { path = "../pydantic_espresso" }
 aiida-koopmans = { path = "../aiida-koopmans2" }
+aiida-quantumespresso = { path = "../aiida-quantumespresso" }
+aiida-core = { path = "../aiida-core" }
+#aiida-core = { git = "https://github.com/Geigerj2/aiida-core", rev = "feature/dump-support-wg" }

@@ -22,11 +22,6 @@
     },
     "calculator_parameters": {
         "ecutwfc": 60.0,
-        "pw": {
-            "system": {
-                "nbnd": 20
-            }
-        },
         "wannier90": {
             "bands_plot": true,
             "projections": [[{"fractional_site": [ 0.25, 0.25, 0.25 ], "ang_mtm": "sp3"}],
