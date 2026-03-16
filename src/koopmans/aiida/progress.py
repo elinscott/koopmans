@@ -150,9 +150,9 @@ def run_with_progress(wg: "WorkGraph", refresh_interval: float = 2.0) -> None:
     with suppress_stdout():
         wg.submit()
 
-        # Wait for process to be created
-        while wg.process is None:
-            sleep(0.1)
+    # Wait for process to be created
+    while wg.process is None:
+        sleep(0.1)
 
     # Display live progress by querying actual process nodes
     pk = wg.process.pk

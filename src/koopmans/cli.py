@@ -78,11 +78,7 @@ def run(input_file: str) -> None:
 
     INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
     """
-    from aiida import orm
-    from aiida_koopmans.workgraphs import PwBandsTaskViaBuilder
-
-    from koopmans.aiida import convert_koopmans_input_for_builder
-    from koopmans.input_file.workflow import Task
+    from koopmans.aiida.workflows import build_workgraph
 
     input_path = Path(input_file)
 
@@ -95,34 +91,14 @@ def run(input_file: str) -> None:
     # Load AiiDA profile
     load_koopmans_profile()
 
-    # Get the pw.x code
-    try:
-        code = orm.load_code("pw@localhost")
-    except Exception as exc:
-        raise click.ClickException(
-            f"Could not load pw.x code: {exc}\n"
-            "Please run 'koopmans install' first to set up the AiiDA backend."
-        ) from exc
-
-    # Convert input to AiiDA data nodes
-    aiida_data = convert_koopmans_input_for_builder(koopmans_input)
-
     # Build the appropriate workgraph based on task
-    task = koopmans_input.workflow.task
-    if task in (Task.WANNIERIZE, Task.DFT_BANDS):
-        wg = PwBandsTaskViaBuilder.build(
-            code=code,
-            **aiida_data,
-        )
-    else:
-        raise click.ClickException(
-            f"Task '{task.value}' is not yet implemented. Supported tasks: wannierize, dft_bands"
-        )
+    wg = build_workgraph(koopmans_input)
 
     with suppress_aiida_logging():
         run_with_progress(wg)
 
-    dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
+    if wg.process is not None:
+        dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
 
 
 # Shared option for caching
@@ -154,6 +130,10 @@ def install(use_postgres: bool, cache: bool) -> None:
     click.echo("=" * 60)
     setup_profile(use_postgres=use_postgres)
     setup_computers()
+
+    # Clean up any input_tmp.in files created by QE executables during version detection
+    for tmp_file in Path.cwd().glob("input_tmp*.in"):
+        tmp_file.unlink()
 
     # Start the daemon
     click.echo("")
@@ -221,6 +201,15 @@ def daemon_stop() -> None:
         click.echo("Daemon stopped successfully.")
     else:
         raise click.ClickException("Failed to stop daemon.")
+
+
+@daemon.command(name="restart")
+@cache_option
+@click.pass_context
+def daemon_restart(ctx: click.Context, cache: bool) -> None:
+    """Restart the AiiDA daemon."""
+    ctx.invoke(daemon_stop)
+    ctx.invoke(daemon_start, cache=cache)
 
 
 @daemon.command(name="status")

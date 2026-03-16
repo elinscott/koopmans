@@ -57,8 +57,6 @@ dependencies = [
     "more_click",
     "typing-extensions",
     "aiida-core>=2.7.3",
-    "aiida-quantumespresso>=4.6.0",
-    "aiida-wannier90>=2.2.0",
     "pydantic>=2.12.5",
     "wannier90-input",
     "pydantic-espresso",
@@ -68,6 +66,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "types-pyyaml>=6.0.12.20250915",
     "seekpath>=1.9.3",
+    "aiida-quantumespresso",
 ]
 
 # see https://peps.python.org/pep-0735/ and https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups
@@ -284,7 +283,8 @@ replace = "version: {new_version}"
 [tool.uv.sources]
 wannier90-input = { path = "../wannier90-input" }
 pydantic-espresso = { path = "../pydantic_espresso" }
-aiida-koopmans = { path = "../aiida-koopmans2" }
-aiida-quantumespresso = { path = "../aiida-quantumespresso" }
 aiida-core = { path = "../aiida-core" }
+aiida-koopmans = { path = "../aiida-koopmans2", editable = true }
+aiida-quantumespresso = { path = "../aiida-quantumespresso", editable = true }
+aiida-workgraph = { path = "../aiida-workgraph", editable = true }
 #aiida-core = { git = "https://github.com/Geigerj2/aiida-core", rev = "feature/dump-support-wg" }
