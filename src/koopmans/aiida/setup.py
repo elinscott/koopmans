@@ -44,14 +44,18 @@ COMPUTER_LABEL = "localhost"
 # Codes that must always run in serial (no MPI).
 SERIAL_CODES: set[str] = set()
 
+
 def ensure_pseudo_family_installed(pseudo_family: str) -> None:
     """Ensure a pseudopotential family is installed, installing it if necessary.
 
     Supports PseudoDojo families with labels like:
         'PseudoDojo/0.4/LDA/SR/standard/upf'
 
-    And SSSP families with labels like:
+    SSSP families with labels like:
         'SSSP/1.3/PBEsol/efficiency'
+
+    And SG15 ONCV families with labels like:
+        'SG15/1.2/PBE/SR'
 
     Args:
         pseudo_family: The label of the pseudopotential family.
@@ -89,11 +93,14 @@ def install_pseudo_family(pseudo_family: str) -> None:
         _install_pseudo_dojo_family(pseudo_family, parts)
     elif parts[0] == "SSSP" and len(parts) == 4:
         _install_sssp_family(pseudo_family, parts)
+    elif parts[0] == "SG15" and len(parts) == 4:
+        _install_sg15_family(pseudo_family, parts)
     else:
         raise ValueError(
             f"Unrecognized pseudo family format: '{pseudo_family}'. "
-            "Expected 'PseudoDojo/version/functional/relativistic/protocol/format' "
-            "or 'SSSP/version/functional/protocol'."
+            "Expected 'PseudoDojo/version/functional/relativistic/protocol/format', "
+            "'SSSP/version/functional/protocol', "
+            "or 'SG15/version/functional/relativistic'."
         )
 
 
@@ -228,6 +235,106 @@ def _install_sssp_family(label: str, parts: list[str]) -> None:
     from aiida_pseudo.groups.family import SsspFamily
 
     family = SsspFamily.collection.get(label=label)
+    click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")
+
+
+# SG15 ONCV is published as a single frozen tarball on quantum-simulation.org. It
+# bundles every version x relativistic variant in one flat archive; the label's
+# version/relativistic parts select which subset of UPFs to install. There is no
+# upstream ``aiida-pseudo`` installer — upstream only ships SSSP/PseudoDojo (per
+# aiida-pseudo issue #78, SG15 lacks a blessed cutoff convergence study). We
+# therefore install as a plain ``CutoffsPseudoPotentialFamily`` so recommended
+# cutoffs can be attached later via ``family.set_cutoffs`` without a reinstall.
+_SG15_ARCHIVE_URL = (
+    "http://www.quantum-simulation.org/potentials/sg15_oncv/sg15_oncv_upf_2020-02-06.tar.gz"
+)
+_SG15_ARCHIVE_SHA256 = "3f3bd74aa5d6e0b038218a6051bb99ed9469dc03d0f05b3ec8a523f0f7a7dff0"
+_SG15_SUPPORTED_VERSIONS = {"1.0", "1.2"}
+_SG15_SUPPORTED_RELATIVISTIC = {"SR", "FR"}
+
+
+def _install_sg15_family(label: str, parts: list[str]) -> None:
+    """Install an SG15 ONCV pseudopotential family.
+
+    Downloads the frozen 2020-02-06 archive from ``quantum-simulation.org``,
+    extracts the UPFs that match the requested ``version`` / ``relativistic``
+    combination, renames them to ``<Element>.upf`` (required by
+    ``create_from_folder``), and installs them as a
+    ``CutoffsPseudoPotentialFamily``.
+
+    Args:
+        label: The full label for the family (e.g. ``SG15/1.2/PBE/SR``).
+        parts: The parsed label parts.
+    """
+    import hashlib
+    import io
+    import re
+    import tarfile
+    import urllib.request
+
+    from aiida_pseudo.data.pseudo import UpfData
+    from aiida_pseudo.groups.family import CutoffsPseudoPotentialFamily
+
+    _, version, functional, relativistic = parts
+
+    if functional != "PBE":
+        raise ValueError(f"SG15 only provides PBE pseudopotentials; got functional='{functional}'.")
+    if version not in _SG15_SUPPORTED_VERSIONS:
+        raise ValueError(
+            f"SG15 version '{version}' is not packaged in the 2020-02-06 archive. "
+            f"Supported versions: {sorted(_SG15_SUPPORTED_VERSIONS)}."
+        )
+    if relativistic not in _SG15_SUPPORTED_RELATIVISTIC:
+        raise ValueError(
+            f"SG15 relativistic variant '{relativistic}' is not supported. "
+            f"Expected one of: {sorted(_SG15_SUPPORTED_RELATIVISTIC)}."
+        )
+
+    # UPF names are <Element>_ONCV_PBE-<version>.upf for scalar-relativistic
+    # pseudos and <Element>_ONCV_PBE_FR-<version>.upf for fully-relativistic.
+    fr_suffix = "_FR" if relativistic == "FR" else ""
+    filename_re = re.compile(
+        rf"^(?P<element>[A-Z][a-z]?)_ONCV_PBE{fr_suffix}-{re.escape(version)}\.upf$"
+    )
+
+    click.echo(f"  Downloading '{label}' pseudopotentials")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+
+        with urllib.request.urlopen(_SG15_ARCHIVE_URL) as response:  # noqa: S310
+            archive_bytes = response.read()
+
+        digest = hashlib.sha256(archive_bytes).hexdigest()
+        if digest != _SG15_ARCHIVE_SHA256:
+            raise ValueError(
+                f"SG15 archive checksum mismatch: got {digest}, "
+                f"expected {_SG15_ARCHIVE_SHA256}. Upstream may have re-released "
+                f"{_SG15_ARCHIVE_URL}; pin a new hash after verifying the contents."
+            )
+
+        flat = tmp / "flat"
+        flat.mkdir()
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+            for member in tar.getmembers():
+                if not member.isfile():
+                    continue
+                match = filename_re.match(Path(member.name).name)
+                if match is None:
+                    continue
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    continue
+                (flat / f"{match.group('element')}.upf").write_bytes(extracted.read())
+
+        if not any(flat.iterdir()):
+            raise ValueError(
+                f"No UPF files matched '{label}' in {_SG15_ARCHIVE_URL}. "
+                "The archive layout may have changed."
+            )
+
+        family = CutoffsPseudoPotentialFamily.create_from_folder(flat, label, pseudo_type=UpfData)
+
     click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")
 
 
@@ -555,9 +662,7 @@ def _scan_and_register_codes(
     """
     explicit_codes = explicit_codes or {}
     # Build a lookup from label to explicit path
-    explicit_by_executable = {
-        f"{label}.x": path for label, path in explicit_codes.items()
-    }
+    explicit_by_executable = {f"{label}.x": path for label, path in explicit_codes.items()}
 
     found_codes = []
     missing_codes = []
