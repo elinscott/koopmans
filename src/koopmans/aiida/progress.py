@@ -22,7 +22,8 @@ STATUS_STYLES = {
     "waiting": "yellow",
     "running": "blue italic",
     "finished": "green",
-    "excepted": "red bold",
+    "failed": "red",
+    "excepted": "red bold italic",
     "killed": "red",
 }
 
@@ -87,6 +88,8 @@ def add_process_rows(
     # Get type and state
     node_type = get_node_type(process_node) if depth > 0 else "workgraph"
     state = get_process_state(process_node, node_type)
+    if state == "finished" and not process_node.is_finished_ok:
+        state = "failed"
     style = STATUS_STYLES.get(state, "")
     if style:
         status_text = f"[{style}]{state}[/{style}]"
@@ -158,7 +161,7 @@ def run_with_progress(wg: "WorkGraph", refresh_interval: float = 2.0) -> None:
     pk = wg.process.pk
     process_node = load_node(pk)
     with Live(make_progress_table(process_node), console=console, refresh_per_second=1) as live:
-        while not process_node.is_finished:
+        while not process_node.is_terminated:
             sleep(refresh_interval)
             # Reload the process node to get fresh state
             process_node = load_node(pk)
@@ -170,6 +173,10 @@ def run_with_progress(wg: "WorkGraph", refresh_interval: float = 2.0) -> None:
     # Print final status
     if process_node.is_finished_ok:
         console.print("\n[bold green]Workflow completed successfully![/bold green]")
+    elif process_node.is_excepted:
+        console.print("\n[bold red]Workflow excepted![/bold red]")
+    elif process_node.is_killed:
+        console.print("\n[bold red]Workflow was killed![/bold red]")
     else:
         console.print(
             f"\n[bold red]Workflow finished with status: {process_node.exit_status}[/bold red]"
