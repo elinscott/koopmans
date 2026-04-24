@@ -116,8 +116,21 @@ cache_option = click.option(
     default=False,
     help="Use PostgreSQL instead of SQLite for storage (recommended for production).",
 )
+@click.option(
+    "--nprocs",
+    type=int,
+    default=None,
+    help="Number of MPI processes per machine (default: auto-detect).",
+)
+@click.option(
+    "--code",
+    "code_overrides",
+    multiple=True,
+    metavar="NAME=PATH",
+    help="Specify an executable path for a code, e.g. --code pw=/opt/qe/bin/pw.x",
+)
 @cache_option
-def install(use_postgres: bool, cache: bool) -> None:
+def install(use_postgres: bool, nprocs: int | None, code_overrides: tuple[str, ...], cache: bool) -> None:
     """Auto-install the AiiDA backend.
 
     This command:
@@ -125,11 +138,26 @@ def install(use_postgres: bool, cache: bool) -> None:
     2. Configures the localhost computer
     3. Detects and registers Quantum ESPRESSO executables on PATH
     4. Starts the AiiDA daemon with caching enabled
+
+    Use --code to specify a custom executable path for a code, e.g.:
+
+        koopmans install --code pw=/opt/qe/bin/pw.x --code wannier90=/usr/local/bin/wannier90.x
     """
+    # Parse code overrides into a dict
+    explicit_codes: dict[str, str] = {}
+    for override in code_overrides:
+        if "=" not in override:
+            raise click.BadParameter(f"Expected NAME=PATH format, got '{override}'", param_hint="--code")
+        name, path = override.split("=", 1)
+        path = path.strip()
+        if not Path(path).is_file():
+            raise click.BadParameter(f"Executable not found: {path}", param_hint="--code")
+        explicit_codes[name.strip()] = path
+
     click.echo("Setting up koopmans AiiDA backend...")
     click.echo("=" * 60)
     setup_profile(use_postgres=use_postgres)
-    setup_computers()
+    setup_computers(nprocs=nprocs, explicit_codes=explicit_codes)
 
     # Clean up any input_tmp.in files created by QE executables during version detection
     for tmp_file in Path.cwd().glob("input_tmp*.in"):

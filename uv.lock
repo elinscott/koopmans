@@ -12,8 +12,7 @@ resolution-markers = [
 
 [[package]]
 name = "aiida-core"
-version = "2.7.3"
-source = { registry = "https://pypi.org/simple" }
+source = { directory = "../aiida-core" }
 dependencies = [
     { name = "alembic" },
     { name = "archive-path" },
@@ -43,12 +42,9 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "tabulate" },
     { name = "tqdm" },
+    { name = "typing-extensions" },
     { name = "upf-to-json" },
     { name = "wrapt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/f4/8af5fb6dc049ef089d0b77184abe2a20098a56c187861f1cb842ef236c2f/aiida_core-2.7.3.tar.gz", hash = "sha256:ea36c38af7c4d63fc575a8f0acaa00f4f40449d54fea922c8224683be89c8243", size = 1452355, upload-time = "2026-01-23T13:48:45.29Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/17/1f/04b9b5edfc7bc7a101e13f0adc5063e1d5b03db7d20abdc47ea6b91a4dd0/aiida_core-2.7.3-py3-none-any.whl", hash = "sha256:2b816aae34324bd5646827974036298785b7b4948a51181fd6d547a29b7c63ca", size = 1406906, upload-time = "2026-01-23T13:48:42.861Z" },
 ]
 
 [package.optional-dependencies]
@@ -62,18 +58,123 @@ atomic-tools = [
     { name = "spglib" },
 ]
 
+[package.metadata]
+requires-dist = [
+    { name = "aiida-core", extras = ["atomic-tools", "rest"], marker = "extra == 'tests'" },
+    { name = "aiida-core", extras = ["tests"], marker = "extra == 'pre-commit'" },
+    { name = "aiida-export-migration-tests", marker = "extra == 'tests'", specifier = "==0.9.0" },
+    { name = "alembic", specifier = "~=1.8" },
+    { name = "archive-path", specifier = "~=0.4.2" },
+    { name = "ase", marker = "extra == 'atomic-tools'", specifier = "~=3.21" },
+    { name = "asyncssh", specifier = "~=2.19.0" },
+    { name = "bpython", marker = "extra == 'bpython'", specifier = "~=0.20" },
+    { name = "chardet", marker = "sys_platform == 'win32'", specifier = "~=5.2.0" },
+    { name = "circus", specifier = "~=0.19.0" },
+    { name = "click", specifier = ">=8.1.0,<8.3" },
+    { name = "click-spinner", specifier = "~=0.1.8" },
+    { name = "disk-objectstore", specifier = "~=1.4.0" },
+    { name = "docstring-parser" },
+    { name = "docutils", marker = "extra == 'tests'", specifier = "~=0.20" },
+    { name = "flask", marker = "extra == 'rest'", specifier = "~=2.3.3" },
+    { name = "flask-cors", marker = "extra == 'rest'", specifier = "~=3.0" },
+    { name = "flask-restful", marker = "extra == 'rest'", specifier = "~=0.3.10" },
+    { name = "get-annotations", marker = "python_full_version < '3.10'", specifier = "~=0.1" },
+    { name = "graphviz", specifier = "~=0.19" },
+    { name = "gssapi", marker = "extra == 'ssh-kerberos'", specifier = "~=1.6" },
+    { name = "importlib-metadata", specifier = "~=6.0" },
+    { name = "ipython", specifier = ">=7.6" },
+    { name = "jedi", specifier = "<0.19" },
+    { name = "jinja2", specifier = "~=3.0" },
+    { name = "jupyter", marker = "extra == 'notebook'", specifier = "~=1.0" },
+    { name = "jupyter-client", marker = "extra == 'notebook'", specifier = "~=8.0" },
+    { name = "kiwipy", extras = ["rmq"], specifier = "~=0.8.4" },
+    { name = "matplotlib", marker = "extra == 'atomic-tools'", specifier = "~=3.3,>=3.3.4" },
+    { name = "mypy", marker = "extra == 'pre-commit'", specifier = "~=1.19.0" },
+    { name = "myst-nb", marker = "extra == 'docs'", specifier = "~=1.0.0" },
+    { name = "notebook", marker = "extra == 'notebook'", specifier = "~=6.1,>=6.1.5" },
+    { name = "numpy", specifier = ">=1.21,<3" },
+    { name = "packaging", marker = "extra == 'pre-commit'", specifier = "~=23.0" },
+    { name = "paramiko", specifier = "~=3.0" },
+    { name = "pg8000", marker = "extra == 'tests'", specifier = "~=1.13" },
+    { name = "pgsu", specifier = "~=0.3.0" },
+    { name = "pgtest", marker = "extra == 'tests'", specifier = "~=1.3,>=1.3.1" },
+    { name = "plumpy", specifier = "~=0.25.0" },
+    { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = "~=3.5" },
+    { name = "psutil", specifier = "~=7.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.0.2,<4" },
+    { name = "pyasn1", marker = "extra == 'ssh-kerberos'", specifier = "~=0.4.8" },
+    { name = "pycifrw", marker = "extra == 'atomic-tools'", specifier = "~=4.4" },
+    { name = "pydantic", specifier = "~=2.6" },
+    { name = "pydata-sphinx-theme", marker = "extra == 'docs'", specifier = "~=0.15.1" },
+    { name = "pymatgen", marker = "extra == 'atomic-tools'", specifier = ">=2024.3.1" },
+    { name = "pympler", marker = "extra == 'tests'", specifier = "~=1.0" },
+    { name = "pymysql", marker = "extra == 'atomic-tools'", specifier = "~=0.9.3" },
+    { name = "pyparsing", marker = "extra == 'rest'", specifier = "~=3.1" },
+    { name = "pytest", marker = "extra == 'tests'", specifier = "~=7.0" },
+    { name = "pytest-asyncio", marker = "extra == 'tests'", specifier = "~=0.12,<0.17" },
+    { name = "pytest-benchmark", marker = "extra == 'tests'", specifier = "~=4.0" },
+    { name = "pytest-cov", marker = "extra == 'tests'", specifier = "~=7.0" },
+    { name = "pytest-regressions", marker = "extra == 'tests'", specifier = "~=2.2" },
+    { name = "pytest-rerunfailures", marker = "extra == 'tests'", specifier = "~=12.0" },
+    { name = "pytest-timeout", marker = "extra == 'tests'", specifier = "~=2.0" },
+    { name = "pytest-xdist", marker = "extra == 'tests'", specifier = "~=3.6" },
+    { name = "python-memcached", marker = "extra == 'rest'", specifier = "~=1.59" },
+    { name = "pytz", specifier = "~=2021.1" },
+    { name = "pyyaml", specifier = "~=6.0" },
+    { name = "requests", specifier = "~=2.0" },
+    { name = "seekpath", marker = "extra == 'atomic-tools'", specifier = "~=1.9,>=1.9.3" },
+    { name = "seekpath", marker = "extra == 'rest'", specifier = "~=1.9,>=1.9.3" },
+    { name = "spglib", marker = "extra == 'atomic-tools'", specifier = ">=1.14,<3.0" },
+    { name = "sphinx", marker = "extra == 'docs'", specifier = "~=7.2.0" },
+    { name = "sphinx", marker = "extra == 'tests'", specifier = "~=7.2.0" },
+    { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = "~=0.5.0" },
+    { name = "sphinx-design", marker = "extra == 'docs'", specifier = "~=0.5.0" },
+    { name = "sphinx-intl", marker = "extra == 'docs'", specifier = "~=2.1.0" },
+    { name = "sphinx-notfound-page", marker = "extra == 'docs'", specifier = "~=1.0" },
+    { name = "sphinx-sqlalchemy", marker = "extra == 'docs'", specifier = "~=0.2.0" },
+    { name = "sphinxext-rediraffe", marker = "extra == 'docs'", specifier = "~=0.2.4" },
+    { name = "sqlalchemy", specifier = ">=2.0.20,<3" },
+    { name = "sqlalchemy", extras = ["mypy"], marker = "extra == 'pre-commit'", specifier = "~=2.0" },
+    { name = "tabulate", specifier = ">=0.9.0,<0.10.0" },
+    { name = "tomli", marker = "extra == 'pre-commit'" },
+    { name = "tqdm", specifier = "~=4.45" },
+    { name = "trogon", marker = "extra == 'tui'" },
+    { name = "types-click-spinner", marker = "extra == 'pre-commit'", specifier = "~=0.1.8" },
+    { name = "types-docutils", marker = "extra == 'pre-commit'", specifier = "~=0.20" },
+    { name = "types-paramiko", marker = "extra == 'pre-commit'", specifier = "~=3.0" },
+    { name = "types-psutil", marker = "extra == 'pre-commit'", specifier = "~=5.6" },
+    { name = "types-pytz", marker = "extra == 'pre-commit'", specifier = "~=2021.1" },
+    { name = "types-pyyaml", marker = "extra == 'pre-commit'", specifier = "~=6.0" },
+    { name = "types-requests", marker = "extra == 'pre-commit'", specifier = "~=2.0" },
+    { name = "types-tabulate", marker = "extra == 'pre-commit'", specifier = ">=0.9.0,<0.10.0" },
+    { name = "types-tqdm", marker = "extra == 'pre-commit'", specifier = "~=4.45" },
+    { name = "typing-extensions", specifier = "~=4.1" },
+    { name = "upf-to-json", specifier = "~=0.9.2" },
+    { name = "wrapt", specifier = "~=1.11" },
+]
+provides-extras = ["atomic-tools", "bpython", "docs", "notebook", "pre-commit", "rest", "ssh-kerberos", "tests", "tui"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "aiida-core", extras = ["atomic-tools", "rest", "tests", "pre-commit", "tests", "docs"] }]
+
 [[package]]
 name = "aiida-koopmans"
-source = { directory = "../aiida-koopmans2" }
+source = { editable = "../aiida-koopmans2" }
 dependencies = [
     { name = "aiida-core" },
+    { name = "aiida-quantumespresso" },
+    { name = "aiida-wannier90" },
+    { name = "aiida-wannier90-workflows" },
     { name = "aiida-workgraph" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiida-core", specifier = ">=2.7,<3" },
-    { name = "aiida-workgraph", specifier = ">=0.8.0" },
+    { name = "aiida-quantumespresso", specifier = ">=4.16.0" },
+    { name = "aiida-wannier90", specifier = ">=2.2.0" },
+    { name = "aiida-wannier90-workflows", editable = "../aiida-wannier90-workflows" },
+    { name = "aiida-workgraph", editable = "../aiida-workgraph" },
     { name = "furo", marker = "extra == 'docs'" },
     { name = "markupsafe", marker = "extra == 'docs'", specifier = "<2.1" },
     { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = "~=3.5" },
@@ -114,8 +215,7 @@ wheels = [
 
 [[package]]
 name = "aiida-quantumespresso"
-version = "4.16.0"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../aiida-quantumespresso" }
 dependencies = [
     { name = "aiida-core", extra = ["atomic-tools"] },
     { name = "aiida-pseudo" },
@@ -128,10 +228,36 @@ dependencies = [
     { name = "qe-tools" },
     { name = "xmlschema" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/10/7f/3cf6713e25f2722623ebce08654cee92cdae0110eee992d8d83e757ffc13/aiida_quantumespresso-4.16.0.tar.gz", hash = "sha256:ee429f382a3daba54cc65b1a1257d554a00214c93d66b85faef0817a11b39c42", size = 766645, upload-time = "2025-11-18T05:52:03.623Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/b4/0a2496be94257ef2296e74eb97522931ba69cc79becfa05751c060dcbef4/aiida_quantumespresso-4.16.0-py3-none-any.whl", hash = "sha256:89059b4c0c33d5ee7ddb85c542b4a60f6ce128572d482ae6c735844c1e11e10d", size = 866696, upload-time = "2025-11-18T05:52:01.631Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "aiida-core", extras = ["atomic-tools"], specifier = "~=2.3" },
+    { name = "aiida-pseudo", specifier = ">=1.7.2,<2" },
+    { name = "click", specifier = "~=8.0" },
+    { name = "importlib-resources" },
+    { name = "jsonschema" },
+    { name = "myst-parser", marker = "extra == 'docs'", specifier = "~=3.0.0" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pgtest", marker = "extra == 'tests'", specifier = "~=1.3" },
+    { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = ">=4.3.0" },
+    { name = "pydantic", specifier = "~=2.0" },
+    { name = "pytest", marker = "extra == 'tests'", specifier = "~=8.4" },
+    { name = "pytest-regressions", marker = "extra == 'tests'", specifier = "~=2.8" },
+    { name = "qe-tools", specifier = "~=2.0" },
+    { name = "sphinx", marker = "extra == 'docs'", specifier = "~=6.2.1" },
+    { name = "sphinx-autoapi", marker = "extra == 'docs'", specifier = "~=3.0.0" },
+    { name = "sphinx-book-theme", marker = "extra == 'docs'", specifier = "~=1.0.1" },
+    { name = "sphinx-click", marker = "extra == 'docs'", specifier = "~=4.4.0" },
+    { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = "~=0.5.2" },
+    { name = "sphinx-design", marker = "extra == 'docs'", specifier = "~=0.4.1" },
+    { name = "sphinxcontrib-details-directive", marker = "extra == 'docs'", specifier = "~=0.1.0" },
+    { name = "xmlschema", specifier = "~=2.0" },
 ]
+provides-extras = ["docs", "pre-commit", "tests"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "aiida-quantumespresso", extras = ["docs", "tests", "pre-commit"] }]
 
 [[package]]
 name = "aiida-shell"
@@ -159,9 +285,55 @@ wheels = [
 ]
 
 [[package]]
+name = "aiida-wannier90-workflows"
+source = { editable = "../aiida-wannier90-workflows" }
+dependencies = [
+    { name = "aiida-core" },
+    { name = "aiida-pseudo" },
+    { name = "aiida-quantumespresso" },
+    { name = "aiida-wannier90" },
+    { name = "click" },
+    { name = "colorama" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiida-core", specifier = ">=2.0,<3" },
+    { name = "aiida-core", marker = "extra == 'docs'", specifier = "~=2.5" },
+    { name = "aiida-pseudo", specifier = ">=0.6" },
+    { name = "aiida-quantumespresso", specifier = ">=4.4" },
+    { name = "aiida-wannier90", specifier = ">=2.2" },
+    { name = "click", specifier = ">=8.0" },
+    { name = "colorama" },
+    { name = "docutils", marker = "extra == 'docs'" },
+    { name = "furo", marker = "extra == 'docs'" },
+    { name = "markupsafe", marker = "extra == 'docs'" },
+    { name = "pandas", marker = "extra == 'analysis'" },
+    { name = "pgtest", marker = "extra == 'tests'" },
+    { name = "pre-commit", marker = "extra == 'pre-commit'" },
+    { name = "pylint", marker = "extra == 'pre-commit'", specifier = ">=3" },
+    { name = "pytest", marker = "extra == 'tests'" },
+    { name = "pytest-cov", marker = "extra == 'tests'" },
+    { name = "pytest-regressions", marker = "extra == 'tests'" },
+    { name = "rich", marker = "extra == 'dev'" },
+    { name = "scikit-learn", marker = "extra == 'analysis'" },
+    { name = "sphinx", marker = "extra == 'docs'" },
+    { name = "sphinx-book-theme", marker = "extra == 'docs'" },
+    { name = "sphinx-click", marker = "extra == 'docs'" },
+    { name = "sphinx-copybutton", marker = "extra == 'docs'" },
+    { name = "sphinxcontrib-contentui", marker = "extra == 'docs'" },
+    { name = "sphinxcontrib-details-directive", marker = "extra == 'docs'" },
+    { name = "tables", marker = "extra == 'analysis'" },
+    { name = "typer", marker = "extra == 'dev'" },
+    { name = "typer", extras = ["all"], marker = "extra == 'dev'" },
+    { name = "upf-tools", marker = "extra == 'dev'" },
+    { name = "upf-tools", marker = "extra == 'dev'", specifier = "~=0.1" },
+]
+provides-extras = ["analysis", "dev", "docs", "pre-commit", "tests"]
+
+[[package]]
 name = "aiida-workgraph"
-version = "0.8.1"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../aiida-workgraph" }
 dependencies = [
     { name = "aiida-core" },
     { name = "aiida-pythonjob" },
@@ -173,10 +345,44 @@ dependencies = [
     { name = "numpy" },
     { name = "scipy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/87/0a/90eea7ffc10e748e8135efe108a435c9a7b70969b20a34fac42293f658f2/aiida_workgraph-0.8.1.tar.gz", hash = "sha256:e30a9da73ffdd6643eee6217ff3a7a0b48a88c9bde358ad2d2e06230d93ebbbf", size = 62326, upload-time = "2026-01-26T15:31:47.086Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/53/173691a9630b32099ef114a29c30df3285c3d0a2f2066304302ff3b428d3/aiida_workgraph-0.8.1-py3-none-any.whl", hash = "sha256:75304b462a0bd5530f13c9df30c7f680654d5ada012f204d7c7d4589c01de6b7", size = 79173, upload-time = "2026-01-26T15:31:45.928Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "aiida-core", specifier = "~=2.7.1" },
+    { name = "aiida-core", marker = "extra == 'docs'", specifier = "~=2.7.1" },
+    { name = "aiida-pseudo", marker = "extra == 'docs'" },
+    { name = "aiida-pythonjob", specifier = "~=0.5.1" },
+    { name = "aiida-quantumespresso", marker = "extra == 'docs'" },
+    { name = "aiida-shell", specifier = "~=0.8" },
+    { name = "anywidget", marker = "extra == 'docs'" },
+    { name = "click", marker = "extra == 'docs'", specifier = "~=8.1.0" },
+    { name = "cloudpickle" },
+    { name = "furo", marker = "extra == 'docs'" },
+    { name = "httpx", marker = "extra == 'tests'" },
+    { name = "jsonschema" },
+    { name = "myst-nb", marker = "extra == 'docs'", specifier = "~=1.0.0" },
+    { name = "nbsphinx", marker = "extra == 'docs'" },
+    { name = "node-graph", specifier = "~=0.6.5" },
+    { name = "node-graph-widget", specifier = ">=0.0.5" },
+    { name = "numpy" },
+    { name = "pgtest", marker = "extra == 'tests'", specifier = "~=1.3" },
+    { name = "playwright", marker = "extra == 'tests'" },
+    { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = "~=4.3" },
+    { name = "pytest", marker = "extra == 'tests'", specifier = "~=7.0" },
+    { name = "pytest-cov", marker = "extra == 'tests'", specifier = "~=2.7,<2.11" },
+    { name = "pytest-xdist", marker = "extra == 'tests'", specifier = "~=3.8" },
+    { name = "scipy" },
+    { name = "sphinx", marker = "extra == 'docs'", specifier = "~=7.2" },
+    { name = "sphinx-autobuild", marker = "extra == 'docs'" },
+    { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = "~=0.5.0" },
+    { name = "sphinx-design", marker = "extra == 'docs'", specifier = "~=0.5.0" },
+    { name = "sphinx-gallery", marker = "extra == 'docs'" },
+    { name = "sphinx-intl", marker = "extra == 'docs'", specifier = "~=2.1.0" },
+    { name = "sphinx-notfound-page", marker = "extra == 'docs'", specifier = "~=1.0" },
+    { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=3.0" },
+    { name = "sphinxext-rediraffe", marker = "extra == 'docs'", specifier = "~=0.2.4" },
 ]
+provides-extras = ["docs", "pre-commit", "tests"]
 
 [[package]]
 name = "aio-pika"
@@ -884,15 +1090,15 @@ wheels = [
 
 [[package]]
 name = "disk-objectstore"
-version = "1.3.0"
+version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8c/f8/028d480ffe1f331ca47663dc407ae443303b3db6da16e310866472dd3343/disk_objectstore-1.3.0.tar.gz", hash = "sha256:f0653574990402fd91a5d91b0a64ea541fb349baed02edfe7e90cf7bf3d5270c", size = 7390310, upload-time = "2025-04-17T12:56:02.337Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/06/2f76aef59917d47e372158580db988bae1d09f73f5a22721cf88cb5b1dd1/disk_objectstore-1.4.0.tar.gz", hash = "sha256:4d9ea7617dd2de1c817255d7c8123f69e106f6daa0d4c0bdd09ab919ddbc49c8", size = 7390473, upload-time = "2025-10-06T08:35:53.392Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/d7/e1f178515454ca4ba7e437db3e19b07854bc7573c2130a2dbf3f1beb6362/disk_objectstore-1.3.0-py3-none-any.whl", hash = "sha256:a97fd6cbb9636ff8b6515d15f6d5d8c021910c701267805382ed32540d294e79", size = 70538, upload-time = "2025-04-17T12:56:00.414Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/95/fc379912f1c2b336de2af95331da764b6f09e3f8fabc6050cd7b71a6b895/disk_objectstore-1.4.0-py3-none-any.whl", hash = "sha256:e29d33e51a1196468062f30a79126b3d82ef9fcca6a505f7984cdfc8bed72f5e", size = 70636, upload-time = "2025-10-06T08:35:51.915Z" },
 ]
 
 [[package]]
@@ -1401,7 +1607,6 @@ dependencies = [
     { name = "aiida-core" },
     { name = "aiida-koopmans" },
     { name = "aiida-quantumespresso" },
-    { name = "aiida-wannier90" },
     { name = "aiida-workgraph" },
     { name = "click" },
     { name = "ipdb" },
@@ -1410,6 +1615,8 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-espresso" },
     { name = "pyyaml" },
+    { name = "rich" },
+    { name = "seekpath" },
     { name = "tqdm" },
     { name = "types-pyyaml" },
     { name = "typing-extensions" },
@@ -1465,11 +1672,10 @@ typing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiida-core", specifier = ">=2.7.3" },
-    { name = "aiida-koopmans", directory = "../aiida-koopmans2" },
-    { name = "aiida-quantumespresso", specifier = ">=4.6.0" },
-    { name = "aiida-wannier90", specifier = ">=2.2.0" },
-    { name = "aiida-workgraph", specifier = ">=0.8.1" },
+    { name = "aiida-core", directory = "../aiida-core" },
+    { name = "aiida-koopmans", editable = "../aiida-koopmans2" },
+    { name = "aiida-quantumespresso", editable = "../aiida-quantumespresso" },
+    { name = "aiida-workgraph", editable = "../aiida-workgraph" },
     { name = "click" },
     { name = "ipdb", specifier = ">=0.13.13" },
     { name = "more-click" },
@@ -1477,6 +1683,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-espresso", directory = "../pydantic_espresso" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "rich" },
+    { name = "seekpath", specifier = ">=1.9.3" },
     { name = "tqdm" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
     { name = "typing-extensions" },
@@ -1645,6 +1853,18 @@ wheels = [
 ]
 
 [[package]]
+name = "markdown-it-py"
+version = "4.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mdurl" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5b/f5/4ec618ed16cc4f8fb3b701563655a69816155e79e24a17b651541804721d/markdown_it_py-4.0.0.tar.gz", hash = "sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3", size = 73070, upload-time = "2025-08-11T12:57:52.854Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/54/e7d793b573f298e1c9013b8c4dade17d481164aa517d1d7148619c2cedbf/markdown_it_py-4.0.0-py3-none-any.whl", hash = "sha256:87327c59b172c5011896038353a81343b6754500a08cd7a4973bb48c6d578147", size = 87321, upload-time = "2025-08-11T12:57:51.923Z" },
+]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1771,6 +1991,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c7/74/97e72a36efd4ae2bccb3463284300f8953f199b5ffbc04cbbb0ec78f74b1/matplotlib_inline-0.2.1.tar.gz", hash = "sha256:e1ee949c340d771fc39e241ea75683deb94762c8fa5f2927ec57c83c4dffa9fe", size = 8110, upload-time = "2025-10-23T09:00:22.126Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/33/ee4519fa02ed11a94aef9559552f3b17bb863f2ecfe1a35dc7f548cde231/matplotlib_inline-0.2.1-py3-none-any.whl", hash = "sha256:d56ce5156ba6085e00a9d54fead6ed29a9c47e215cd1bba2e976ef39f5710a76", size = 9516, upload-time = "2025-10-23T09:00:20.675Z" },
+]
+
+[[package]]
+name = "mdurl"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
 ]
 
 [[package]]
@@ -2454,16 +2683,30 @@ wheels = [
 
 [[package]]
 name = "psutil"
-version = "5.9.8"
+version = "7.2.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/90/c7/6dc0a455d111f68ee43f27793971cf03fe29b6ef972042549db29eec39a2/psutil-5.9.8.tar.gz", hash = "sha256:6be126e3225486dff286a8fb9a06246a5253f4c7c53b475ea5f5ac934e64194c", size = 503247, upload-time = "2024-01-19T20:47:09.517Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/aa/c6/d1ddf4abb55e93cebc4f2ed8b5d6dbad109ecb8d63748dd2b20ab5e57ebe/psutil-7.2.2.tar.gz", hash = "sha256:0746f5f8d406af344fd547f1c8daa5f5c33dbc293bb8d6a16d80b4bb88f59372", size = 493740, upload-time = "2026-01-28T18:14:54.428Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/e3/07ae864a636d70a8a6f58da27cb1179192f1140d5d1da10886ade9405797/psutil-5.9.8-cp36-abi3-macosx_10_9_x86_64.whl", hash = "sha256:aee678c8720623dc456fa20659af736241f575d79429a0e5e9cf88ae0605cc81", size = 248702, upload-time = "2024-01-19T20:47:36.303Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/bd/28c5f553667116b2598b9cc55908ec435cb7f77a34f2bff3e3ca765b0f78/psutil-5.9.8-cp36-abi3-manylinux_2_12_i686.manylinux2010_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:8cb6403ce6d8e047495a701dc7c5bd788add903f8986d523e3e20b98b733e421", size = 285242, upload-time = "2024-01-19T20:47:39.65Z" },
-    { url = "https://files.pythonhosted.org/packages/c5/4f/0e22aaa246f96d6ac87fe5ebb9c5a693fbe8877f537a1022527c47ca43c5/psutil-5.9.8-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d06016f7f8625a1825ba3732081d77c94589dca78b7a3fc072194851e88461a4", size = 288191, upload-time = "2024-01-19T20:47:43.078Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/f5/2aa3a4acdc1e5940b59d421742356f133185667dd190b166dbcfcf5d7b43/psutil-5.9.8-cp37-abi3-win32.whl", hash = "sha256:bc56c2a1b0d15aa3eaa5a60c9f3f8e3e565303b465dbf57a1b730e7a2b9844e0", size = 251252, upload-time = "2024-01-19T20:47:52.88Z" },
-    { url = "https://files.pythonhosted.org/packages/93/52/3e39d26feae7df0aa0fd510b14012c3678b36ed068f7d78b8d8784d61f0e/psutil-5.9.8-cp37-abi3-win_amd64.whl", hash = "sha256:8db4c1b57507eef143a15a6884ca10f7c73876cdf5d51e713151c1236a0e68cf", size = 255090, upload-time = "2024-01-19T20:47:56.019Z" },
-    { url = "https://files.pythonhosted.org/packages/05/33/2d74d588408caedd065c2497bdb5ef83ce6082db01289a1e1147f6639802/psutil-5.9.8-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:d16bbddf0693323b8c6123dd804100241da461e41d6e332fb0ba6058f630f8c8", size = 249898, upload-time = "2024-01-19T20:47:59.238Z" },
+    { url = "https://files.pythonhosted.org/packages/51/08/510cbdb69c25a96f4ae523f733cdc963ae654904e8db864c07585ef99875/psutil-7.2.2-cp313-cp313t-macosx_10_13_x86_64.whl", hash = "sha256:2edccc433cbfa046b980b0df0171cd25bcaeb3a68fe9022db0979e7aa74a826b", size = 130595, upload-time = "2026-01-28T18:14:57.293Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/f5/97baea3fe7a5a9af7436301f85490905379b1c6f2dd51fe3ecf24b4c5fbf/psutil-7.2.2-cp313-cp313t-macosx_11_0_arm64.whl", hash = "sha256:e78c8603dcd9a04c7364f1a3e670cea95d51ee865e4efb3556a3a63adef958ea", size = 131082, upload-time = "2026-01-28T18:14:59.732Z" },
+    { url = "https://files.pythonhosted.org/packages/37/d6/246513fbf9fa174af531f28412297dd05241d97a75911ac8febefa1a53c6/psutil-7.2.2-cp313-cp313t-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1a571f2330c966c62aeda00dd24620425d4b0cc86881c89861fbc04549e5dc63", size = 181476, upload-time = "2026-01-28T18:15:01.884Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/b5/9182c9af3836cca61696dabe4fd1304e17bc56cb62f17439e1154f225dd3/psutil-7.2.2-cp313-cp313t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:917e891983ca3c1887b4ef36447b1e0873e70c933afc831c6b6da078ba474312", size = 184062, upload-time = "2026-01-28T18:15:04.436Z" },
+    { url = "https://files.pythonhosted.org/packages/16/ba/0756dca669f5a9300d0cbcbfae9a4c30e446dfc7440ffe43ded5724bfd93/psutil-7.2.2-cp313-cp313t-win_amd64.whl", hash = "sha256:ab486563df44c17f5173621c7b198955bd6b613fb87c71c161f827d3fb149a9b", size = 139893, upload-time = "2026-01-28T18:15:06.378Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/61/8fa0e26f33623b49949346de05ec1ddaad02ed8ba64af45f40a147dbfa97/psutil-7.2.2-cp313-cp313t-win_arm64.whl", hash = "sha256:ae0aefdd8796a7737eccea863f80f81e468a1e4cf14d926bd9b6f5f2d5f90ca9", size = 135589, upload-time = "2026-01-28T18:15:08.03Z" },
+    { url = "https://files.pythonhosted.org/packages/81/69/ef179ab5ca24f32acc1dac0c247fd6a13b501fd5534dbae0e05a1c48b66d/psutil-7.2.2-cp314-cp314t-macosx_10_15_x86_64.whl", hash = "sha256:eed63d3b4d62449571547b60578c5b2c4bcccc5387148db46e0c2313dad0ee00", size = 130664, upload-time = "2026-01-28T18:15:09.469Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/64/665248b557a236d3fa9efc378d60d95ef56dd0a490c2cd37dafc7660d4a9/psutil-7.2.2-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:7b6d09433a10592ce39b13d7be5a54fbac1d1228ed29abc880fb23df7cb694c9", size = 131087, upload-time = "2026-01-28T18:15:11.724Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/2e/e6782744700d6759ebce3043dcfa661fb61e2fb752b91cdeae9af12c2178/psutil-7.2.2-cp314-cp314t-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1fa4ecf83bcdf6e6c8f4449aff98eefb5d0604bf88cb883d7da3d8d2d909546a", size = 182383, upload-time = "2026-01-28T18:15:13.445Z" },
+    { url = "https://files.pythonhosted.org/packages/57/49/0a41cefd10cb7505cdc04dab3eacf24c0c2cb158a998b8c7b1d27ee2c1f5/psutil-7.2.2-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e452c464a02e7dc7822a05d25db4cde564444a67e58539a00f929c51eddda0cf", size = 185210, upload-time = "2026-01-28T18:15:16.002Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/2c/ff9bfb544f283ba5f83ba725a3c5fec6d6b10b8f27ac1dc641c473dc390d/psutil-7.2.2-cp314-cp314t-win_amd64.whl", hash = "sha256:c7663d4e37f13e884d13994247449e9f8f574bc4655d509c3b95e9ec9e2b9dc1", size = 141228, upload-time = "2026-01-28T18:15:18.385Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/fc/f8d9c31db14fcec13748d373e668bc3bed94d9077dbc17fb0eebc073233c/psutil-7.2.2-cp314-cp314t-win_arm64.whl", hash = "sha256:11fe5a4f613759764e79c65cf11ebdf26e33d6dd34336f8a337aa2996d71c841", size = 136284, upload-time = "2026-01-28T18:15:19.912Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/36/5ee6e05c9bd427237b11b3937ad82bb8ad2752d72c6969314590dd0c2f6e/psutil-7.2.2-cp36-abi3-macosx_10_9_x86_64.whl", hash = "sha256:ed0cace939114f62738d808fdcecd4c869222507e266e574799e9c0faa17d486", size = 129090, upload-time = "2026-01-28T18:15:22.168Z" },
+    { url = "https://files.pythonhosted.org/packages/80/c4/f5af4c1ca8c1eeb2e92ccca14ce8effdeec651d5ab6053c589b074eda6e1/psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl", hash = "sha256:1a7b04c10f32cc88ab39cbf606e117fd74721c831c98a27dc04578deb0c16979", size = 129859, upload-time = "2026-01-28T18:15:23.795Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/70/5d8df3b09e25bce090399cf48e452d25c935ab72dad19406c77f4e828045/psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9", size = 155560, upload-time = "2026-01-28T18:15:25.976Z" },
+    { url = "https://files.pythonhosted.org/packages/63/65/37648c0c158dc222aba51c089eb3bdfa238e621674dc42d48706e639204f/psutil-7.2.2-cp36-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b0726cecd84f9474419d67252add4ac0cd9811b04d61123054b9fb6f57df6e9e", size = 156997, upload-time = "2026-01-28T18:15:27.794Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/13/125093eadae863ce03c6ffdbae9929430d116a246ef69866dad94da3bfbc/psutil-7.2.2-cp36-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:fd04ef36b4a6d599bbdb225dd1d3f51e00105f6d48a28f006da7f9822f2606d8", size = 148972, upload-time = "2026-01-28T18:15:29.342Z" },
+    { url = "https://files.pythonhosted.org/packages/04/78/0acd37ca84ce3ddffaa92ef0f571e073faa6d8ff1f0559ab1272188ea2be/psutil-7.2.2-cp36-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:b58fabe35e80b264a4e3bb23e6b96f9e45a3df7fb7eed419ac0e5947c61e47cc", size = 148266, upload-time = "2026-01-28T18:15:31.597Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/90/e2159492b5426be0c1fef7acba807a03511f97c5f86b3caeda6ad92351a7/psutil-7.2.2-cp37-abi3-win_amd64.whl", hash = "sha256:eb7e81434c8d223ec4a219b5fc1c47d0417b12be7ea866e24fb5ad6e84b3d988", size = 137737, upload-time = "2026-01-28T18:15:33.849Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/c7/7bb2e321574b10df20cbde462a94e2b71d05f9bbda251ef27d104668306a/psutil-7.2.2-cp37-abi3-win_arm64.whl", hash = "sha256:8c233660f575a5a89e6d4cb65d9f938126312bca76d8fe087b947b3a1aaac9ee", size = 134617, upload-time = "2026-01-28T18:15:36.514Z" },
 ]
 
 [[package]]
@@ -3204,6 +3447,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ca/e6/eefcad2228f4124f17e01064428fbcd0ade06a274f3063ce3a126a569d6b/restructuredtext_lint-2.0.2.tar.gz", hash = "sha256:dd25209b9e0b726929d8306339faf723734a3137db382bcf27294fa18a6bc52b", size = 17494, upload-time = "2025-11-23T08:05:18.585Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/63/ac52b32b33ae62f2076ed5c4f6b00e065e3ccbb2063e9a2e813b2bfc95bf/restructuredtext_lint-2.0.2-py3-none-any.whl", hash = "sha256:374c0d3e7e0867b2335146a145343ac619400623716b211b9a010c94426bbed7", size = 14198, upload-time = "2025-11-23T08:05:23.267Z" },
+]
+
+[[package]]
+name = "rich"
+version = "14.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markdown-it-py" },
+    { name = "pygments" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/74/99/a4cab2acbb884f80e558b0771e97e21e939c5dfb460f488d19df485e8298/rich-14.3.2.tar.gz", hash = "sha256:e712f11c1a562a11843306f5ed999475f09ac31ffb64281f73ab29ffdda8b3b8", size = 230143, upload-time = "2026-02-01T16:20:47.908Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/45/615f5babd880b4bd7d405cc0dc348234c5ffb6ed1ea33e152ede08b2072d/rich-14.3.2-py3-none-any.whl", hash = "sha256:08e67c3e90884651da3239ea668222d19bea7b589149d8014a21c633420dbb69", size = 309963, upload-time = "2026-02-01T16:20:46.078Z" },
 ]
 
 [[package]]

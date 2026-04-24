@@ -41,6 +41,8 @@ QE_EXECUTABLES: dict[str, str] = {
 PROFILE_NAME = "koopmans"
 COMPUTER_LABEL = "localhost"
 
+# Codes that must always run in serial (no MPI).
+SERIAL_CODES: set[str] = set()
 
 def ensure_pseudo_family_installed(pseudo_family: str) -> None:
     """Ensure a pseudopotential family is installed, installing it if necessary.
@@ -349,16 +351,32 @@ def computer_exists() -> bool:
         return False
 
 
-def get_localhost_computer() -> Computer:
+def _detect_num_cores() -> int:
+    """Detect the number of available CPU cores."""
+    import os
+
+    return os.cpu_count() or 1
+
+
+def get_localhost_computer(nprocs: int | None = None) -> Computer:
     """Get or create the localhost computer.
 
     Uses the same configuration as `verdi presto`: local transport, direct scheduler.
+
+    Args:
+        nprocs: Number of MPI processes per machine. If None, auto-detects CPU count.
     """
     from aiida import orm
     from aiida.manage.configuration import get_config
 
+    if nprocs is None:
+        nprocs = _detect_num_cores()
+
     if computer_exists():
-        return orm.load_computer(COMPUTER_LABEL)
+        computer = orm.load_computer(COMPUTER_LABEL)
+        computer.set_default_mpiprocs_per_machine(nprocs)
+        click.echo(f"Computer '{COMPUTER_LABEL}' already exists (set nprocs={nprocs}).")
+        return computer
 
     click.echo(f"Creating computer '{COMPUTER_LABEL}'...")
 
@@ -382,9 +400,9 @@ def get_localhost_computer() -> Computer:
     # Configure with presto-style settings
     computer.configure()
     computer.set_minimum_job_poll_interval(0.0)
-    computer.set_default_mpiprocs_per_machine(1)
+    computer.set_default_mpiprocs_per_machine(nprocs)
 
-    click.echo(f"Created computer '{COMPUTER_LABEL}'.")
+    click.echo(f"Created computer '{COMPUTER_LABEL}' (nprocs={nprocs}).")
     return computer
 
 
@@ -453,6 +471,7 @@ def setup_code(
     executable_path: str,
     plugin: str,
     computer: Computer,
+    force: bool = False,
 ) -> InstalledCode | None:
     """Set up an AiiDA code for an executable.
 
@@ -461,18 +480,26 @@ def setup_code(
         executable_path: Absolute path to the executable.
         plugin: AiiDA plugin entry point (e.g., 'quantumespresso.pw').
         computer: The computer to associate the code with.
+        force: If True, replace an existing code with the same label.
 
     Returns:
-        The created Code object, or None if it already exists.
+        The created Code object, or None if skipped.
     """
+    from aiida import orm
     from aiida.orm import InstalledCode
 
     # Create a label from the executable name (remove .x suffix)
     label = executable_name.replace(".x", "")
+    full_label = f"{label}@{computer.label}"
 
-    if code_exists(f"{label}@{computer.label}"):
-        click.echo(f"  Code '{label}@{computer.label}' already exists, skipping.")
-        return None
+    if code_exists(full_label):
+        if not force:
+            click.echo(f"  Code '{full_label}' already exists, skipping.")
+            return None
+        # Delete the old code to replace it
+        old_code = orm.load_code(full_label)
+        old_code.base.extras.set("replaced", True)
+        old_code.label = f"{label}_old"
 
     code = InstalledCode(
         label=label,
@@ -480,9 +507,10 @@ def setup_code(
         filepath_executable=executable_path,
         default_calc_job_plugin=plugin,
         description=f"{executable_name} on {computer.label}",
+        with_mpi=label not in SERIAL_CODES,
     )
     code.store()
-    click.echo(f"  Registered code '{label}@{computer.label}' -> {executable_path}")
+    click.echo(f"  Registered code '{full_label}' -> {executable_path}")
     return code
 
 
@@ -510,29 +538,40 @@ def _get_codes_to_register(computer: Computer) -> tuple[list[str], dict[str, str
 
 
 def _scan_and_register_codes(
-    codes_to_find: dict[str, str], computer: Computer
+    codes_to_find: dict[str, str],
+    computer: Computer,
+    explicit_codes: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Scan PATH for executables and register them as AiiDA codes.
 
     Args:
         codes_to_find: Dict mapping executable names to their plugins.
         computer: The AiiDA computer to register codes on.
+        explicit_codes: Dict mapping code labels (e.g. "pw") to executable paths,
+            provided via --code CLI option. These take priority over PATH scanning.
 
     Returns:
         A tuple of (found_codes, missing_codes) listing executables found and not found.
     """
+    explicit_codes = explicit_codes or {}
+    # Build a lookup from label to explicit path
+    explicit_by_executable = {
+        f"{label}.x": path for label, path in explicit_codes.items()
+    }
+
     found_codes = []
     missing_codes = []
 
     for executable, plugin in codes_to_find.items():
-        path = find_executable(executable)
+        path = explicit_by_executable.get(executable) or find_executable(executable)
         if path:
             version = get_executable_version(path)
             version_str = f" (v{version})" if version else ""
-            click.echo(f"  Found {executable}{version_str}: {path}")
-            code = setup_code(executable, path, plugin, computer)
-            if code:
-                found_codes.append(executable)
+            source = "specified" if executable in explicit_by_executable else "found"
+            click.echo(f"  {source.capitalize()} {executable}{version_str}: {path}")
+            is_explicit = executable in explicit_by_executable
+            setup_code(executable, path, plugin, computer, force=is_explicit)
+            found_codes.append(executable)
         else:
             missing_codes.append(executable)
 
@@ -574,17 +613,33 @@ def _print_setup_summary(
         click.echo("\nAll essential executables found. Ready to run calculations!")
 
 
-def setup_computers() -> None:
+def setup_computers(
+    nprocs: int | None = None,
+    explicit_codes: dict[str, str] | None = None,
+) -> None:
     """Detect and set up computers and codes for koopmans.
 
     This function:
     1. Creates a localhost computer if it doesn't exist (presto-style)
     2. Scans PATH for Quantum ESPRESSO executables (only for codes not yet registered)
     3. Registers found executables as AiiDA codes
+
+    Args:
+        nprocs: Number of MPI processes per machine. If None, auto-detects CPU count.
+        explicit_codes: Dict mapping code labels (e.g. "pw") to executable paths.
     """
-    computer = get_localhost_computer()
+    computer = get_localhost_computer(nprocs=nprocs)
 
     existing_codes, codes_to_find = _get_codes_to_register(computer)
+
+    # If the user explicitly specified a code that already exists, re-register it
+    if explicit_codes:
+        for label in explicit_codes:
+            executable = f"{label}.x"
+            if executable in QE_EXECUTABLES and executable not in codes_to_find:
+                codes_to_find[executable] = QE_EXECUTABLES[executable]
+                if executable in existing_codes:
+                    existing_codes.remove(executable)
 
     if existing_codes:
         click.echo(f"\n{len(existing_codes)} code(s) already registered, skipping:")
@@ -597,7 +652,7 @@ def setup_computers() -> None:
 
     click.echo(f"\nScanning for {len(codes_to_find)} missing executable(s)...")
 
-    found_codes, missing_codes = _scan_and_register_codes(codes_to_find, computer)
+    found_codes, missing_codes = _scan_and_register_codes(codes_to_find, computer, explicit_codes)
 
     _print_setup_summary(existing_codes, found_codes, missing_codes)
 
