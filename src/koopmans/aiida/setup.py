@@ -36,6 +36,7 @@ QE_EXECUTABLES: dict[str, str] = {
     "wann2kc.x": "quantumespresso.wann2kc",
     "kc_screen.x": "quantumespresso.kc_screen",
     "kc_ham.x": "quantumespresso.kc_ham",
+    "kcp.x": "koopmans.kcp",
 }
 
 PROFILE_NAME = "koopmans"
