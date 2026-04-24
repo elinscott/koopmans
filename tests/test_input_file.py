@@ -7,15 +7,13 @@ import pytest
 from koopmans.input_file import KoopmansInput, read_input_file
 from koopmans.input_file.workflow import Task
 
-TUTORIALS_DIR = Path(__file__).parent.parent / "docs" / "source" / "tutorials"
-
 
 class TestInputFileParsing:
     """Test input file parsing."""
 
-    def test_parse_si_tutorial(self) -> None:
+    def test_parse_si_tutorial(self, tutorials_dir: Path) -> None:
         """Test that the silicon tutorial input file parses successfully."""
-        input_file = TUTORIALS_DIR / "si.json"
+        input_file = tutorials_dir / "si.json"
         assert input_file.exists(), f"Tutorial file not found: {input_file}"
 
         koopmans_input = read_input_file(input_file)
@@ -26,9 +24,9 @@ class TestInputFileParsing:
         assert koopmans_input.calculator_parameters.ecutwfc == 60.0
         assert koopmans_input.kpoints.grid == (2, 2, 2)
 
-    def test_parse_si_tutorial_via_classmethod(self) -> None:
+    def test_parse_si_tutorial_via_classmethod(self, tutorials_dir: Path) -> None:
         """Test parsing via the KoopmansInput.from_file classmethod."""
-        input_file = TUTORIALS_DIR / "si.json"
+        input_file = tutorials_dir / "si.json"
 
         koopmans_input = KoopmansInput.from_file(input_file)
 

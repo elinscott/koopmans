@@ -5,13 +5,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BeforeValidator, model_validator
 
 from koopmans.base import BaseModel
-
-
-def tidy_units(value: str) -> str:
-    """Normalize unit strings to a canonical form."""
-    value = value.lower()
-    value = value.replace("angstrom", "ang")
-    return value
+from koopmans.input_file._utils import tidy_units
 
 
 class CellParametersABC(BaseModel):
