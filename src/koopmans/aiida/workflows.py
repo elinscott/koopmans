@@ -178,11 +178,20 @@ def _build_wannierize_workgraph(
     Returns:
         A WorkGraph for Wannier90WorkChain.
     """
+    from aiida_wannier90_workflows.common.types import WannierProjectionType
+
     from aiida_koopmans.workgraphs.wannier90 import Wannier90TaskViaBuilder
 
     structure, pseudo_family, overrides = _prepare_common_inputs(
         koopmans_input, ["scf", "nscf"]
     )
+
+    # Check if external projectors are requested
+    pw2w_params = koopmans_input.calculator_parameters.pw2wannier90
+    extra_kwargs: dict[str, Any] = {}
+    if pw2w_params.atom_proj_ext:
+        extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
+        extra_kwargs["external_projectors_path"] = pw2w_params.atom_proj_dir
 
     return Wannier90TaskViaBuilder.build(
         codes=codes,
@@ -190,4 +199,5 @@ def _build_wannierize_workgraph(
         overrides=overrides,
         pseudo_family=pseudo_family,
         print_summary=False,
+        **extra_kwargs,
     )
