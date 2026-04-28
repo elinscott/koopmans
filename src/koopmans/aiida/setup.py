@@ -460,10 +460,54 @@ def computer_exists() -> bool:
 
 
 def _detect_num_cores() -> int:
-    """Detect the number of available CPU cores."""
+    """Detect the number of physical CPU cores available for MPI ranks.
+
+    Tightly-coupled MPI workloads like kcp.x typically lose performance
+    when oversubscribed onto hyperthreads, so we count physical cores —
+    not logical ones. Falls back to ``os.cpu_count()`` if the physical
+    count can't be determined.
+    """
     import os
 
+    physical = _physical_core_count()
+    if physical is not None:
+        return physical
     return os.cpu_count() or 1
+
+
+def _physical_core_count() -> int | None:
+    """Return the number of physical CPU cores, or None if undetectable.
+
+    Linux: parse ``/proc/cpuinfo`` for unique ``(physical id, core id)``
+    pairs. Other platforms: returns None and the caller falls back.
+    """
+    import platform
+
+    if platform.system() != "Linux":
+        return None
+    try:
+        with open("/proc/cpuinfo") as f:
+            text = f.read()
+    except OSError:
+        return None
+    physical: set[tuple[str, str]] = set()
+    current_phys = current_core = None
+    for line in text.splitlines():
+        if ":" not in line:
+            if current_phys is not None and current_core is not None:
+                physical.add((current_phys, current_core))
+            current_phys = current_core = None
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if key == "physical id":
+            current_phys = value
+        elif key == "core id":
+            current_core = value
+    if current_phys is not None and current_core is not None:
+        physical.add((current_phys, current_core))
+    return len(physical) or None
 
 
 def get_localhost_computer(nprocs: int | None = None) -> Computer:
@@ -474,11 +518,21 @@ def get_localhost_computer(nprocs: int | None = None) -> Computer:
     Args:
         nprocs: Number of MPI processes per machine. If None, auto-detects CPU count.
     """
+    import os
+
     from aiida import orm
     from aiida.manage.configuration import get_config
 
     if nprocs is None:
         nprocs = _detect_num_cores()
+        physical = _physical_core_count()
+        logical = os.cpu_count()
+        if physical is not None and logical is not None and physical != logical:
+            click.echo(
+                f"  Detected {physical} physical / {logical} logical cores; "
+                f"using {nprocs} MPI rank(s) per kcp.x run to avoid hyperthread "
+                f"oversubscription. Override with --nprocs."
+            )
 
     if computer_exists():
         computer = orm.load_computer(COMPUTER_LABEL)

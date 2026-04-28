@@ -63,6 +63,10 @@ dependencies = [
     "ipdb>=0.13.13",
     "aiida-koopmans",
     "aiida-workgraph>=0.8.1",
+    # TEMPORARY: direct dep so [tool.uv.sources] node-graph override is
+    # honoured. Drop this line once the upstream TaggedValue unwrap-at-
+    # graph-body fix is merged in node-graph and released to PyPI.
+    "node-graph",
     "pyyaml>=6.0.3",
     "types-pyyaml>=6.0.12.20250915",
     "seekpath>=1.9.3",
@@ -288,4 +292,5 @@ aiida-core = { path = "../aiida-core" }
 aiida-koopmans = { path = "../aiida-koopmans2", editable = true }
 aiida-quantumespresso = { path = "../aiida-quantumespresso", editable = true }
 aiida-workgraph = { path = "../aiida-workgraph", editable = true }
+node-graph = { path = "../node-graph", editable = true }
 #aiida-core = { git = "https://github.com/Geigerj2/aiida-core", rev = "feature/dump-support-wg" }

@@ -3,19 +3,19 @@ raw:
   action: NONE
   connectivity:
     child_node:
-      DFTCPTask:
-      - KcpCalculation
-      - graph_outputs
-      KcpCalculation:
+      dft_init:
+      - ki_final
       - graph_outputs
       graph_ctx: []
       graph_inputs:
-      - DFTCPTask
-      - KcpCalculation
+      - dft_init
+      - ki_final
       - graph_outputs
       graph_outputs: []
+      ki_final:
+      - graph_outputs
     input_node:
-      DFTCPTask:
+      dft_init:
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -23,46 +23,41 @@ raw:
       - graph_inputs
       - graph_inputs
       - graph_inputs
-      KcpCalculation:
-      - graph_inputs
-      - graph_inputs
-      - DFTCPTask
       graph_ctx: []
       graph_inputs: []
       graph_outputs:
-      - KcpCalculation
-      - KcpCalculation
-      - KcpCalculation
-      - KcpCalculation
+      - ki_final
+      - ki_final
+      - ki_final
+      - ki_final
+      ki_final:
+      - graph_inputs
+      - graph_inputs
+      - dft_init
     output_node:
-      DFTCPTask:
-      - KcpCalculation
-      KcpCalculation:
-      - graph_outputs
-      - graph_outputs
-      - graph_outputs
-      - graph_outputs
+      dft_init:
+      - ki_final
       graph_ctx: []
       graph_inputs:
-      - DFTCPTask
-      - DFTCPTask
-      - DFTCPTask
-      - DFTCPTask
-      - DFTCPTask
-      - DFTCPTask
-      - DFTCPTask
-      - KcpCalculation
-      - KcpCalculation
+      - dft_init
+      - dft_init
+      - dft_init
+      - dft_init
+      - dft_init
+      - dft_init
+      - dft_init
+      - ki_final
+      - ki_final
       graph_outputs: []
+      ki_final:
+      - graph_outputs
+      - graph_outputs
+      - graph_outputs
+      - graph_outputs
     zone:
-      DFTCPTask:
+      dft_init:
         children: []
         input_tasks:
-        - graph_inputs
-      KcpCalculation:
-        children: []
-        input_tasks:
-        - DFTCPTask
         - graph_inputs
       graph_ctx:
         children: []
@@ -73,7 +68,12 @@ raw:
       graph_outputs:
         children: []
         input_tasks:
-        - KcpCalculation
+        - ki_final
+      ki_final:
+        children: []
+        input_tasks:
+        - dft_init
+        - graph_inputs
   description: ''
   error: ''
   error_handlers: {}
@@ -89,57 +89,57 @@ raw:
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
-    to_task: DFTCPTask
+    to_task: dft_init
   - from_socket: structure
     from_task: graph_inputs
     to_socket: structure
-    to_task: DFTCPTask
+    to_task: dft_init
   - from_socket: pseudo_family
     from_task: graph_inputs
     to_socket: pseudo_family
-    to_task: DFTCPTask
+    to_task: dft_init
   - from_socket: ecutwfc
     from_task: graph_inputs
     to_socket: ecutwfc
-    to_task: DFTCPTask
+    to_task: dft_init
   - from_socket: ecutrho
     from_task: graph_inputs
     to_socket: ecutrho
-    to_task: DFTCPTask
+    to_task: dft_init
   - from_socket: nbnd
     from_task: graph_inputs
     to_socket: nbnd
-    to_task: DFTCPTask
+    to_task: dft_init
   - from_socket: nspin
     from_task: graph_inputs
     to_socket: nspin
-    to_task: DFTCPTask
+    to_task: dft_init
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
-    to_task: KcpCalculation
+    to_task: ki_final
   - from_socket: structure
     from_task: graph_inputs
     to_socket: structure
-    to_task: KcpCalculation
+    to_task: ki_final
   - from_socket: remote_folder
-    from_task: DFTCPTask
+    from_task: dft_init
     to_socket: parent_folder
-    to_task: KcpCalculation
+    to_task: ki_final
   - from_socket: output_parameters
-    from_task: KcpCalculation
+    from_task: ki_final
     to_socket: parameters
     to_task: graph_outputs
   - from_socket: output_eigenvalues
-    from_task: KcpCalculation
+    from_task: ki_final
     to_socket: eigenvalues
     to_task: graph_outputs
   - from_socket: output_lambdas
-    from_task: KcpCalculation
+    from_task: ki_final
     to_socket: lambdas
     to_task: graph_outputs
   - from_socket: remote_folder
-    from_task: KcpCalculation
+    from_task: ki_final
     to_socket: remote_folder
     to_task: graph_outputs
   max_iteration: 1000000
@@ -283,14 +283,6 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             is_metadata: true
-            required: false
-        mt_correction:
-          default: false
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
             required: false
         nbnd:
           dynamic: false
@@ -487,7 +479,7 @@ raw:
     schema_source: EMBEDDED
   state: CREATED
   tasks:
-    DFTCPTask:
+    dft_init:
       action: ''
       children: []
       description: ''
@@ -497,11 +489,13 @@ raw:
       identifier: <scrubbed:identifier>
       input_socket_meta: {}
       inputs:
+        metadata:
+          call_link_label: dft_init
         nspin: 2
       log: ''
       metadata:
         pk: <scrubbed:pk>
-      name: DFTCPTask
+      name: dft_init
       parent_task:
       - null
       position:
@@ -530,126 +524,6 @@ raw:
           non_function_outputs: []
         schema_source: handle
         task_type: GRAPH
-      state: PLANNED
-      uuid: <scrubbed:uuid>
-      wait: []
-    KcpCalculation:
-      action: ''
-      children: []
-      description: ''
-      error: ''
-      execution_count: 0
-      hash: <scrubbed:hash>
-      identifier: <scrubbed:identifier>
-      input_socket_meta: {}
-      inputs:
-        alphas:
-          __aiida_dict__:
-            empty:
-            - 0.6
-            - 0.6
-            filled:
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-            - 0.6
-        parameters:
-          __aiida_dict__:
-            CONTROL:
-              calculation: cp
-              disk_io: high
-              iprint: 1
-              ndr: 50
-              ndw: 60
-              restart_mode: restart
-              verbosity: low
-              write_hr: false
-            EE:
-              which_compensation: none
-            ELECTRONS:
-              conv_thr: 1.8000000000000002e-08
-              do_outerloop: false
-              do_outerloop_empty: false
-              electron_dynamics: cg
-              empty_states_maxstep: 300
-              esic_conv_thr: 1.8000000000000002e-08
-              maxiter: 300
-              ortho_para: 1
-              passop: 2.0
-            IONS:
-              ion_dynamics: none
-              ion_nstepe: 5
-            NKSIC:
-              do_bare_eigs: true
-              do_innerloop: true
-              do_innerloop_cg: true
-              do_innerloop_empty: false
-              esic_conv_thr: 1.8000000000000002e-08
-              hartree_only_sic: false
-              innerloop_cg_nreset: 20
-              innerloop_cg_nsd: 2
-              innerloop_init_n: 3
-              innerloop_nmax: 100
-              nkscalfact: 1.0
-              odd_nkscalfact: true
-              odd_nkscalfact_empty: true
-              which_orbdep: nki
-            SYSTEM:
-              do_ee: true
-              do_orbdep: true
-              do_wf_cmplx: true
-              ecutrho: 260.0
-              ecutwfc: 65.0
-              fixed_state: false
-              nbnd: 10
-              neldw: 9
-              nelec: 18
-              nelup: 9
-              nspin: 2
-        pseudos:
-          O:
-            __aiida_node__: UpfData
-      log: ''
-      metadata:
-        pk: <scrubbed:pk>
-      name: KcpCalculation
-      parent_task:
-      - null
-      position:
-      - 30
-      - 30
-      process: <scrubbed:process>
-      properties: {}
-      spec:
-        base_class_path: aiida_workgraph.tasks.aiida.AiiDAProcessTask
-        catalog: AIIDA
-        executor:
-          callable_kind: null
-          callable_name: KcpCalculation
-          graph_data: null
-          metadata: null
-          mode: module
-          module_path: aiida_koopmans.calculations.kcp
-          pickled_callable: null
-          source_code: ''
-        identifier: <scrubbed:identifier>
-        metadata: {}
-        schema_source: callable
-        task_type: CALCJOB
       state: PLANNED
       uuid: <scrubbed:uuid>
       wait: []
@@ -709,7 +583,6 @@ raw:
         functional: ki
         init_orbitals: kohn-sham
         initial_alpha: 0.6
-        mt_correction: false
         nbnd: 10
         nspin: 2
         pseudo_family: SG15/1.2/PBE/SR
@@ -844,14 +717,6 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 is_metadata: true
-                required: false
-            mt_correction:
-              default: false
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
                 required: false
             nbnd:
               dynamic: false
@@ -1082,11 +947,132 @@ raw:
       state: PLANNED
       uuid: <scrubbed:uuid>
       wait: []
+    ki_final:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs:
+        alphas:
+          __aiida_dict__:
+            empty:
+            - 0.6
+            - 0.6
+            filled:
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+            - 0.6
+        metadata:
+          call_link_label: ki_final
+        parameters:
+          __aiida_dict__:
+            CONTROL:
+              calculation: cp
+              disk_io: high
+              iprint: 1
+              ndr: 50
+              ndw: 60
+              restart_mode: restart
+              verbosity: low
+              write_hr: false
+            EE:
+              which_compensation: tcc
+            ELECTRONS:
+              conv_thr: 1.8000000000000002e-08
+              do_outerloop: false
+              do_outerloop_empty: false
+              electron_dynamics: cg
+              empty_states_maxstep: 300
+              maxiter: 300
+              ortho_para: 1
+              passop: 2.0
+            IONS:
+              ion_dynamics: none
+              ion_nstepe: 5
+            NKSIC:
+              do_bare_eigs: true
+              do_innerloop: false
+              do_innerloop_cg: true
+              do_innerloop_empty: false
+              esic_conv_thr: 1.8000000000000002e-08
+              hartree_only_sic: false
+              innerloop_cg_nreset: 20
+              innerloop_cg_nsd: 2
+              innerloop_init_n: 3
+              innerloop_nmax: 100
+              nkscalfact: 1.0
+              odd_nkscalfact: true
+              odd_nkscalfact_empty: true
+              which_orbdep: nki
+            SYSTEM:
+              do_ee: true
+              do_orbdep: true
+              do_wf_cmplx: true
+              ecutrho: 260.0
+              ecutwfc: 65.0
+              fixed_state: false
+              nbnd: 10
+              neldw: 9
+              nelec: 18
+              nelup: 9
+              nspin: 2
+        pseudos:
+          O:
+            __aiida_node__: UpfData
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: ki_final
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.aiida.AiiDAProcessTask
+        catalog: AIIDA
+        executor:
+          callable_kind: null
+          callable_name: KcpCalculation
+          graph_data: null
+          metadata: null
+          mode: module
+          module_path: aiida_koopmans.calculations.kcp
+          pickled_callable: null
+          source_code: ''
+        identifier: <scrubbed:identifier>
+        metadata: {}
+        schema_source: callable
+        task_type: CALCJOB
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
   uuid: <scrubbed:uuid>
 task_names:
-- DFTCPTask
-- KcpCalculation
+- dft_init
 - graph_ctx
 - graph_inputs
 - graph_outputs
+- ki_final
 workgraph_name: KoopmansDSCFTask

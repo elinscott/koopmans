@@ -50,8 +50,11 @@ def test_build_workgraph(
     # The root ``@task.graph`` is called KoopmansDSCFTask; inside we expect the
     # DFT initialization sub-graph plus a kcp.x call for the KI correction.
     assert snapshot["workgraph_name"].startswith("KoopmansDSCFTask"), snapshot["workgraph_name"]
-    assert "DFTCPTask" in snapshot["task_names"], snapshot["task_names"]
-    assert "KcpCalculation" in snapshot["task_names"], snapshot["task_names"]
+    # Sub-tasks carry the descriptive names threaded through ``call_link_label``
+    # so they show up sensibly in ``verdi process list`` and the koopmans
+    # progress display.
+    assert "dft_init" in snapshot["task_names"], snapshot["task_names"]
+    assert "ki_final" in snapshot["task_names"], snapshot["task_names"]
 
     data_regression.check(snapshot)
 
