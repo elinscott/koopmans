@@ -989,8 +989,6 @@ raw:
               calculation: cp
               disk_io: high
               iprint: 1
-              ndr: 50
-              ndw: 60
               restart_mode: restart
               verbosity: low
               write_hr: false
@@ -1001,7 +999,6 @@ raw:
               do_outerloop: false
               do_outerloop_empty: false
               electron_dynamics: cg
-              empty_states_maxstep: 300
               maxiter: 300
               ortho_para: 1
               passop: 2.0
