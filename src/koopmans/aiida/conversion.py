@@ -315,14 +315,12 @@ def kpoints_input_to_kpoints_path(
     return kpts
 
 
-def input_to_pw_parameters(koopmans_input: KoopmansInput) -> orm.Dict:
-    """Convert KoopmansInput to PW input parameters Dict.
+def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
+    """Convert KoopmansInput to a PW input-parameter namelist dict.
 
-    Args:
-        koopmans_input: The parsed koopmans input.
-
-    Returns:
-        AiiDA Dict node with PW parameters.
+    The dispatcher hands this straight into a builder ``overrides`` mapping;
+    aiida-workgraph wraps it into ``orm.Dict`` at the CalcJob socket. Returning
+    plain Python keeps the workflow layer free of orm round-trips.
     """
     calc_params = koopmans_input.calculator_parameters
     pw_params = calc_params.pw
@@ -346,15 +344,21 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> orm.Dict:
 
     # Merge with explicit PW parameters from input
     if pw_params.control:
-        parameters["CONTROL"].update(pw_params.control.model_dump(exclude_none=True, exclude_defaults=True))
+        parameters["CONTROL"].update(
+            pw_params.control.model_dump(exclude_none=True, exclude_defaults=True)
+        )
     if pw_params.system:
-        parameters["SYSTEM"].update(pw_params.system.model_dump(exclude_none=True, exclude_defaults=True))
+        parameters["SYSTEM"].update(
+            pw_params.system.model_dump(exclude_none=True, exclude_defaults=True)
+        )
     if pw_params.electrons:
-        parameters["ELECTRONS"].update(pw_params.electrons.model_dump(exclude_none=True, exclude_defaults=True))
+        parameters["ELECTRONS"].update(
+            pw_params.electrons.model_dump(exclude_none=True, exclude_defaults=True)
+        )
     # Ensure all Path objects are converted to strings for JSON serialization
     parameters = _convert_paths_to_strings(parameters)
 
-    return orm.Dict(parameters)  # type: ignore[no-untyped-call]
+    return parameters
 
 
 def get_pseudos_from_family(

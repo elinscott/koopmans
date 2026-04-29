@@ -135,7 +135,7 @@ def _prepare_common_inputs(
         key: {
             "pseudo_family": pseudo_family,
             "pw": {
-                "parameters": parameters.get_dict(),
+                "parameters": parameters,
             },
         }
         for key in override_keys
