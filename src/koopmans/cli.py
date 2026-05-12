@@ -19,7 +19,11 @@ from pathlib import Path
 
 import click
 
+from koopmans.aiida.dumping import dump_workgraph
+from koopmans.aiida.progress import run_with_progress
 from koopmans.aiida.setup import (
+    ensure_hq_running,
+    install_hq_binary,
     is_daemon_running,
     list_codes,
     load_koopmans_profile,
@@ -30,8 +34,6 @@ from koopmans.aiida.setup import (
     stop_daemon,
     uninstall_backend,
 )
-from koopmans.aiida.dumping import dump_workgraph
-from koopmans.aiida.progress import run_with_progress
 from koopmans.aiida.utils import suppress_aiida_logging
 from koopmans.input_file import read_input_file
 
@@ -61,6 +63,7 @@ def cli(pdb: bool, enable_logging: bool) -> None:
     """Automated Koopmans functional calculations and workflows."""
     if pdb:
         from koopmans.debugging import enable_pdb
+
         enable_pdb()
 
     if enable_logging:
@@ -117,10 +120,10 @@ cache_option = click.option(
     help="Use PostgreSQL instead of SQLite for storage (recommended for production).",
 )
 @click.option(
-    "--nprocs",
+    "--procs-per-calc",
     type=int,
     default=None,
-    help="Number of MPI processes per machine (default: auto-detect).",
+    help="MPI ranks each calc launches (default: auto-detect physical cores).",
 )
 @click.option(
     "--code",
@@ -129,15 +132,31 @@ cache_option = click.option(
     metavar="NAME=PATH",
     help="Specify an executable path for a code, e.g. --code pw=/opt/qe/bin/pw.x",
 )
+@click.option(
+    "--max-procs",
+    type=int,
+    default=None,
+    help=(
+        "Total MPI ranks allowed concurrently across all running calcs. "
+        "Default: physical core count."
+    ),
+)
 @cache_option
-def install(use_postgres: bool, nprocs: int | None, code_overrides: tuple[str, ...], cache: bool) -> None:
+def install(
+    use_postgres: bool,
+    procs_per_calc: int | None,
+    code_overrides: tuple[str, ...],
+    max_procs: int | None,
+    cache: bool,
+) -> None:
     """Auto-install the AiiDA backend.
 
     This command:
     1. Creates an AiiDA profile with SQLite storage (or PostgreSQL with --use-postgres)
-    2. Configures the localhost computer
-    3. Detects and registers Quantum ESPRESSO executables on PATH
-    4. Starts the AiiDA daemon with caching enabled
+    2. Downloads the bundled HyperQueue binary and starts the HQ server + worker
+    3. Configures the localhost computer (HyperQueue scheduler)
+    4. Detects and registers Quantum ESPRESSO executables on PATH
+    5. Starts the AiiDA daemon with caching enabled
 
     Use --code to specify a custom executable path for a code, e.g.:
 
@@ -147,7 +166,9 @@ def install(use_postgres: bool, nprocs: int | None, code_overrides: tuple[str, .
     explicit_codes: dict[str, str] = {}
     for override in code_overrides:
         if "=" not in override:
-            raise click.BadParameter(f"Expected NAME=PATH format, got '{override}'", param_hint="--code")
+            raise click.BadParameter(
+                f"Expected NAME=PATH format, got '{override}'", param_hint="--code"
+            )
         name, path = override.split("=", 1)
         path = path.strip()
         if not Path(path).is_file():
@@ -157,7 +178,20 @@ def install(use_postgres: bool, nprocs: int | None, code_overrides: tuple[str, .
     click.echo("Setting up koopmans AiiDA backend...")
     click.echo("=" * 60)
     setup_profile(use_postgres=use_postgres)
-    setup_computers(nprocs=nprocs, explicit_codes=explicit_codes)
+
+    # HyperQueue is required for the localhost backend — there is no
+    # ``core.direct`` fallback. ``install_hq_binary`` raises if the box
+    # isn't supported (non-Linux / non-x86_64) or the download fails,
+    # which surfaces to the user as a clear install failure.
+    click.echo("\nInstalling HyperQueue...")
+    install_hq_binary()
+    if not ensure_hq_running(resources=max_procs):
+        raise click.ClickException(
+            "Failed to start HyperQueue. The localhost backend requires HQ; "
+            "inspect the log under ${AIIDA_CONFIG}/koopmans/ for details."
+        )
+
+    setup_computers(nprocs=procs_per_calc, explicit_codes=explicit_codes)
 
     # Clean up any input_tmp.in files created by QE executables during version detection
     for tmp_file in Path.cwd().glob("input_tmp*.in"):
@@ -274,12 +308,10 @@ def uninstall(yes: bool) -> None:
             abort=True,
         )
 
-    # Stop the daemon before uninstalling
-    load_koopmans_profile()
-    if is_daemon_running():
-        click.echo("Stopping daemon...")
-        stop_daemon()
-
+    # ``uninstall_backend`` itself handles stopping the AiiDA daemon and
+    # the HyperQueue server + worker before deleting the profile. We do
+    # nothing here beyond the confirmation prompt so the call works even
+    # when the profile is already broken / partially-deleted.
     uninstall_backend()
 
 

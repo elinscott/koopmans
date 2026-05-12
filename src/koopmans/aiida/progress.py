@@ -28,7 +28,7 @@ STATUS_STYLES = {
 }
 
 
-def get_process_state(process_node: "ProcessNode", node_type: str = "") -> str:
+def get_process_state(process_node: ProcessNode, node_type: str = "") -> str:
     """Get the state of a process node.
 
     Args:
@@ -66,10 +66,26 @@ def get_node_type(node) -> str:
         return "process"
 
 
-def add_process_rows(
-    table: Table, process_node, depth: int = 0, max_depth: int = 5
-) -> None:
+def _is_process_function_node(node) -> bool:
+    """Return True for ``@calcfunction``/``@workfunction``/``@task`` PyFunctions.
+
+    These are internal plumbing — pseudo lookup, electron counts, alpha
+    generation, Map source builders, gather steps — and add visual noise
+    to the koopmans progress table. The koopmans flow's *user-meaningful*
+    rows are CalcJobs (kcp.x / pw.x) and the WorkGraph/sub-WorkGraph
+    branches; this predicate is the filter for everything else.
+    """
+    from aiida.orm import CalcFunctionNode, WorkFunctionNode
+
+    return isinstance(node, (CalcFunctionNode, WorkFunctionNode))
+
+
+def add_process_rows(table: Table, process_node, depth: int = 0, max_depth: int = 5) -> None:
     """Recursively add rows for a process and its children.
+
+    Skips ``@calcfunction`` / ``@workfunction`` / ``@task`` PyFunctions
+    (see :func:`_is_process_function_node`); those are internal helpers.
+    The root node is always rendered.
 
     Args:
         table: The Table to add rows to.
@@ -77,6 +93,9 @@ def add_process_rows(
         depth: Current indentation depth.
         max_depth: Maximum recursion depth.
     """
+    if depth > 0 and _is_process_function_node(process_node):
+        return
+
     indent = "  " * depth
 
     # Get label
@@ -105,11 +124,11 @@ def add_process_rows(
             called.sort(key=lambda n: n.ctime)
             for child in called:
                 add_process_rows(table, child, depth + 1, max_depth)
-        except Exception:
+        except Exception:  # noqa: S110 - progress UI must never raise
             pass
 
 
-def make_progress_table(process_node: "ProcessNode") -> Table:
+def make_progress_table(process_node: ProcessNode) -> Table:
     """Create a rich table showing workgraph progress.
 
     Queries the called children of the workgraph process to show their states.
@@ -129,7 +148,7 @@ def make_progress_table(process_node: "ProcessNode") -> Table:
     return table
 
 
-def run_with_progress(wg: "WorkGraph", refresh_interval: float = 2.0) -> None:
+def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     """Submit and run a workgraph with a live progress display.
 
     This function submits the workgraph and displays a live-updating

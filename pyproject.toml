@@ -62,6 +62,7 @@ dependencies = [
     "pydantic-espresso",
     "ipdb>=0.13.13",
     "aiida-koopmans",
+    "aiida-hyperqueue~=0.3.0",
     "aiida-workgraph>=0.8.1",
     # TEMPORARY: direct dep so [tool.uv.sources] node-graph override is
     # honoured. Drop this line once the upstream TaggedValue unwrap-at-

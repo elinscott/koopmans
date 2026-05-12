@@ -67,14 +67,19 @@ def _simplify_calcjob_dump(output_path: Path) -> None:
         node_outputs.rmdir()
 
     # Remove metadata files
-    for filename in ["README.md", "aiida_node_metadata.yaml", "aiida_dump_log.json", ".aiida_dump_safeguard"]:
+    for filename in [
+        "README.md",
+        "aiida_node_metadata.yaml",
+        "aiida_dump_log.json",
+        ".aiida_dump_safeguard",
+    ]:
         filepath = output_path / filename
         if filepath.exists():
             filepath.unlink()
 
 
 def dump_workgraph(
-    process: "orm.ProcessNode",
+    process: orm.ProcessNode,
     output_path: Path,
     overwrite: bool = True,
 ) -> Path:
@@ -92,9 +97,18 @@ def dump_workgraph(
     if overwrite and output_path.exists():
         shutil.rmtree(output_path)
 
-    # Use AiiDA's dump to create the initial structure
+    # Use AiiDA's dump to create the initial structure. ``dump_unsealed=True``
+    # so a workgraph killed by the progress UI's fast-fail path (or otherwise
+    # terminated without sealing) can still be inspected — the alternative is
+    # a hard ``ExportValidationError`` and no on-disk artifact at all.
     with suppress_aiida_logging():
-        process.dump(output_path=output_path, include_inputs=True, include_outputs=True, overwrite=True)
+        process.dump(
+            output_path=output_path,
+            include_inputs=True,
+            include_outputs=True,
+            overwrite=True,
+            dump_unsealed=True,
+        )
 
     # Strip pk numbers from all folder names
     _strip_pk_from_folder_names(output_path)
@@ -106,7 +120,12 @@ def dump_workgraph(
             _simplify_calcjob_dump(folder)
 
     # Remove metadata files throughout the tree
-    for filename in ["README.md", "aiida_node_metadata.yaml", "aiida_dump_log.json", ".aiida_dump_safeguard"]:
+    for filename in [
+        "README.md",
+        "aiida_node_metadata.yaml",
+        "aiida_dump_log.json",
+        ".aiida_dump_safeguard",
+    ]:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
 

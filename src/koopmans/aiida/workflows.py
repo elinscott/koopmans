@@ -284,6 +284,7 @@ def _build_singlepoint_workgraph(
         alpha_numsteps=workflow.alpha_numsteps,
         fix_spin_contamination=workflow.fix_spin_contamination,
         initial_alpha=initial_alpha,
+        spin_polarized=workflow.spin_polarized,
     )
 
 
