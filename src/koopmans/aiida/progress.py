@@ -5,9 +5,10 @@ from __future__ import annotations
 from time import sleep
 from typing import TYPE_CHECKING
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.table import Table
+from rich.text import Text
 
 from koopmans.aiida.utils import get_node_label, suppress_stdout
 
@@ -25,6 +26,7 @@ STATUS_STYLES = {
     "failed": "red",
     "excepted": "red bold italic",
     "killed": "red",
+    "paused": "magenta bold",
 }
 
 
@@ -39,6 +41,14 @@ def get_process_state(process_node: ProcessNode, node_type: str = "") -> str:
         String representation of the process state.
     """
     try:
+        # ``paused`` overrides everything: AiiDA marks a process paused
+        # when a transport task (typically the upload) has failed its
+        # retry budget and the daemon has stopped retrying. The process
+        # is alive but no longer making progress — almost always means
+        # stale scratch state from an earlier run. Surface it loudly so
+        # the user knows the live table isn't just slow.
+        if getattr(process_node, "paused", False):
+            return "paused"
         state = process_node.process_state
         if state is not None:
             state_str = state.value.lower()
@@ -128,16 +138,44 @@ def add_process_rows(table: Table, process_node, depth: int = 0, max_depth: int 
             pass
 
 
-def make_progress_table(process_node: ProcessNode) -> Table:
-    """Create a rich table showing workgraph progress.
+def _walk_paused_descendants(node) -> list:
+    """Collect every paused descendant.
 
-    Queries the called children of the workgraph process to show their states.
+    A *paused* sub-process is one whose transport-task retries have been
+    exhausted and the daemon has stopped retrying.
+
+    Returns a list of ``(pk, process_label)`` tuples — empty when nothing
+    is paused. Used by :func:`make_progress_table` to surface a hint when
+    the live display would otherwise look like a normal slow run.
+    """
+    out: list[tuple[int, str]] = []
+
+    def _visit(n) -> None:
+        if getattr(n, "paused", False):
+            out.append((n.pk, n.process_label or n.__class__.__name__))
+        try:
+            for child in n.called:
+                _visit(child)
+        except Exception:
+            return
+
+    _visit(node)
+    return out
+
+
+def make_progress_table(process_node: ProcessNode):
+    """Build the live progress display: the per-task table plus optional hints.
+
+    Returns a ``rich.console.Group`` containing the task table and, when
+    one or more descendants are in the paused state (transport-task
+    retry budget exhausted), a short footer line pointing the user at
+    the right diagnostic command. The paused-detection logic guards
+    against the most common live-table confusion: a process that looks
+    like it's just slow but is actually wedged on stale AiiDA scratch
+    state from a previous failed run.
 
     Args:
         process_node: The WorkGraphNode process to display progress for.
-
-    Returns:
-        A rich Table object with task status information.
     """
     table = Table(box=None)
     table.add_column("Step", no_wrap=True, min_width=70)
@@ -145,7 +183,28 @@ def make_progress_table(process_node: ProcessNode) -> Table:
 
     add_process_rows(table, process_node)
 
-    return table
+    paused = _walk_paused_descendants(process_node)
+    if not paused:
+        return table
+
+    hint_lines = [
+        Text(""),
+        Text(
+            f"⚠ {len(paused)} process(es) paused after exhausted transport retries — "
+            "the daemon has stopped trying to recover them.",
+            style="magenta bold",
+        ),
+        Text(
+            "  This typically means stale AiiDA scratch directories from an "
+            "earlier failed run. Diagnose with:",
+            style="magenta",
+        ),
+    ]
+    for pk, label in paused[:5]:
+        hint_lines.append(Text(f"    verdi process show {pk}  # {label}", style="magenta"))
+    if len(paused) > 5:
+        hint_lines.append(Text(f"    … and {len(paused) - 5} more", style="magenta"))
+    return Group(table, *hint_lines)
 
 
 def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
