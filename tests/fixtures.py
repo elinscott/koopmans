@@ -159,7 +159,17 @@ def _scrub(value: Any) -> Any:  # noqa: C901
             for key, val in value.items()
         }
     if isinstance(value, list | tuple):
-        return [_scrub(v) for v in value]
+        scrubbed = [_scrub(v) for v in value]
+        # ``WorkGraph.to_dict()`` collects some namespaces by iterating
+        # an unordered dict, so two runs of the same build can emit the
+        # same list of port names in different orders. Sort lists of
+        # plain strings to make the snapshot stable; lists holding
+        # structured items (dicts, sub-lists) are left in place — their
+        # order tends to carry semantic meaning (e.g. socket-connection
+        # order).
+        if scrubbed and all(isinstance(v, str) for v in scrubbed):
+            scrubbed.sort()
+        return scrubbed
     if isinstance(value, str):
         return _UUID_RE.sub("<uuid>", value)
     return value

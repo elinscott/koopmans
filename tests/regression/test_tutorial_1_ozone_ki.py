@@ -47,14 +47,26 @@ def test_build_workgraph(
     # tutorial_1 / KI-DSCF expectation. These fail fast and cheaply in case
     # the dispatcher suddenly returns an unexpected object.
     assert snapshot["n_tasks"] >= 1, snapshot["task_names"]
-    # The root ``@task.graph`` is called KoopmansDSCFTask; inside we expect the
-    # DFT initialization sub-graph plus a kcp.x call for the KI correction.
+    # The root ``@task.graph`` is called KoopmansDSCFTask; inside we expect
+    # the spin-symmetric DFT initialization chain (4 sub-graphs) plus a
+    # nested ``KIDscfRefinementTask`` sub-graph holding the trial KI, the
+    # per-orbital DSCF fan-out, and the final KI.
     assert snapshot["workgraph_name"].startswith("KoopmansDSCFTask"), snapshot["workgraph_name"]
-    # Sub-tasks carry the descriptive names threaded through ``call_link_label``
-    # so they show up sensibly in ``verdi process list`` and the koopmans
-    # progress display.
-    assert "dft_init" in snapshot["task_names"], snapshot["task_names"]
-    assert "ki_final" in snapshot["task_names"], snapshot["task_names"]
+    # Top-level structural tasks at the dispatcher layer. ``ki_trial`` /
+    # ``ki_final`` are *not* top-level — they live inside the
+    # ``KIDscfRefinementTask`` sub-graph (whose internals are visible
+    # via the scrubbed ``raw`` payload below).
+    expected_top_level = {
+        "resolve_pseudo_family_task",
+        "count_electrons_task",
+        "dft_init_nspin1",
+        "dft_init_nspin2_dummy",
+        "convert_spin1_to_spin2",
+        "dft_init_nspin2",
+        "KIDscfRefinementTask",
+    }
+    missing = expected_top_level - set(snapshot["task_names"])
+    assert not missing, (missing, snapshot["task_names"])
 
     data_regression.check(snapshot)
 
