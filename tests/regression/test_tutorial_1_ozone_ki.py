@@ -71,6 +71,39 @@ def test_build_workgraph(
     data_regression.check(snapshot)
 
 
+def test_build_workgraph_multi_iteration(
+    aiida_profile,
+    installed_pw_code,
+    installed_kcp_code,
+    fake_sg15_pseudo_family,
+    tutorial_1_ozone_input,
+    serialize_workgraph,
+):
+    """Dispatcher accepts ``alpha_numsteps > 1``.
+
+    Rebuilds the tutorial input with ``alpha_numsteps=2`` and verifies
+    that ``build_workgraph`` returns successfully and the top-level
+    shape is unchanged (the ``While`` zone is wrapped inside
+    ``ComputeScreeningParameters``, not at the dispatcher layer).
+
+    The actual ``While`` zone wiring is verified in
+    ``aiida-koopmans2/tests/test_kcp_workgraph.py`` (which builds
+    ``ComputeScreeningParameters`` directly and can inspect its
+    internals); this test is the koopmans2-level guard against a
+    regression in the ``_validate_scope`` gate or the parameter
+    plumbing.
+    """
+    from koopmans.input_file import KoopmansInput
+
+    d = tutorial_1_ozone_input.model_dump()
+    d["workflow"]["alpha_numsteps"] = 2
+    inp = KoopmansInput.model_validate(d)
+
+    workgraph = build_workgraph(inp)
+    snapshot = serialize_workgraph(workgraph)
+    assert "ComputeScreeningParameters" in snapshot["task_names"], snapshot["task_names"]
+
+
 def test_dispatcher_rejects_non_ki_correction(
     aiida_profile,
     installed_pw_code,
