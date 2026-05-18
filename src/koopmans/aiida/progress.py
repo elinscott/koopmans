@@ -90,18 +90,24 @@ def _is_process_function_node(node) -> bool:
     return isinstance(node, (CalcFunctionNode, WorkFunctionNode))
 
 
-def add_process_rows(table: Table, process_node, depth: int = 0, max_depth: int = 5) -> None:
+def add_process_rows(table: Table, process_node, depth: int = 0) -> None:
     """Recursively add rows for a process and its children.
 
     Skips ``@calcfunction`` / ``@workfunction`` / ``@task`` PyFunctions
     (see :func:`_is_process_function_node`); those are internal helpers.
     The root node is always rendered.
 
+    Children are re-loaded via ``load_node(pk)`` rather than reusing the
+    Node objects yielded by ``process_node.called``. AiiDA keeps Node
+    instances in a session-level cache, and the daemon's writes don't
+    always invalidate that cache fast enough to appear in the live
+    table — without an explicit reload, a graph task's children can
+    sit invisible until the whole run finishes.
+
     Args:
         table: The Table to add rows to.
         process_node: The process node to display.
         depth: Current indentation depth.
-        max_depth: Maximum recursion depth.
     """
     if depth > 0 and _is_process_function_node(process_node):
         return
@@ -127,15 +133,22 @@ def add_process_rows(table: Table, process_node, depth: int = 0, max_depth: int 
 
     table.add_row(f"{indent}{label}", status_text)
 
-    # Recursively add children
-    if depth < max_depth:
+    # Recursively add children — reload each one freshly so the live
+    # table picks up newly-spawned tasks without waiting for the run
+    # to terminate (see docstring).
+    from aiida.orm import load_node
+
+    try:
+        called_pks = [(n.pk, n.ctime) for n in process_node.called]
+    except Exception:
+        return
+    called_pks.sort(key=lambda pair: pair[1])
+    for pk, _ in called_pks:
         try:
-            called = list(process_node.called)
-            called.sort(key=lambda n: n.ctime)
-            for child in called:
-                add_process_rows(table, child, depth + 1, max_depth)
-        except Exception:  # noqa: S110 - progress UI must never raise
-            pass
+            child = load_node(pk)
+        except Exception:  # noqa: S112 - skip unreadable children
+            continue
+        add_process_rows(table, child, depth + 1)
 
 
 def _walk_paused_descendants(node) -> list:
