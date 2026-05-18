@@ -224,13 +224,6 @@ def add_process_rows(
         raw_label = getattr(process_node, "process_label", None) or "WorkGraph"
     label = prettify_label(raw_label)
 
-    # Suppress redundant wrapper-rows (see docstring). We still recurse
-    # into the node's children so a hidden wrapper's grandchildren keep
-    # showing up under the wrapper's parent.
-    suppress_self = parent_label is not None and (
-        label == parent_label or parent_label.startswith(label + " ")
-    )
-
     # Get type and state
     node_type = get_node_type(process_node) if depth > 0 else "workgraph"
     state = get_process_state(process_node, node_type)
@@ -241,6 +234,19 @@ def add_process_rows(
         status_text = f"[{style}]{state}[/{style}]"
     else:
         status_text = state
+
+    # Suppress redundant wrapper-rows: a child row whose label is a
+    # prefix of (or identical to) its parent's. *Only* once the child
+    # is terminal — while it's running we still want to surface the
+    # row so the user sees that step is making progress (the parent
+    # @task.graph's status can lag behind its child CalcJob's). After
+    # termination the duplicate row collapses away.
+    _terminal_states = {"finished", "failed", "excepted", "killed"}
+    suppress_self = (
+        parent_label is not None
+        and state in _terminal_states
+        and (label == parent_label or parent_label.startswith(label + " "))
+    )
 
     if not suppress_self:
         table.add_row(f"{indent}{label}", status_text)

@@ -104,6 +104,46 @@ def test_build_workgraph_multi_iteration(
     assert "ComputeScreeningParameters" in snapshot["task_names"], snapshot["task_names"]
 
 
+def test_build_workgraph_spin_polarized(
+    aiida_profile,
+    installed_pw_code,
+    installed_kcp_code,
+    fake_sg15_pseudo_family,
+    tutorial_1_ozone_input,
+    serialize_workgraph,
+):
+    """Dispatcher accepts ``spin_polarized=True``.
+
+    Rebuilds the ozone input with ``spin_polarized=True`` and verifies
+    that ``build_workgraph`` returns successfully. Ozone is physically
+    closed-shell, so this is a *smoke test* for the spin-polarised code
+    path — exercises:
+
+    * the single-step DFT init branch (no spin-symmetric pre-pass);
+    * ``generate_alphas`` emitting both UP and DOWN channels;
+    * the per-orbital Map-zone fan-out doubling (UP + DOWN orbitals
+      instead of a single representative channel);
+    * the N+1 spin-direction branch (added separately).
+
+    Deeper structural assertions about the per-spin fan-out live in
+    ``aiida-koopmans2/tests/test_kcp_workgraph.py``.
+    """
+    from koopmans.input_file import KoopmansInput
+
+    d = tutorial_1_ozone_input.model_dump()
+    d["workflow"]["spin_polarized"] = True
+    inp = KoopmansInput.model_validate(d)
+
+    workgraph = build_workgraph(inp)
+    snapshot = serialize_workgraph(workgraph)
+    # Spin-polarised init skips the closed-shell 3-step pre-pass; the
+    # single ``dft_init`` task appears at the top level.
+    assert "dft_init" in snapshot["task_names"], snapshot["task_names"]
+    assert "dft_init_nspin1" not in snapshot["task_names"], snapshot["task_names"]
+    assert "convert_spin1_to_spin2" not in snapshot["task_names"], snapshot["task_names"]
+    assert "ComputeScreeningParameters" in snapshot["task_names"], snapshot["task_names"]
+
+
 def test_dispatcher_rejects_non_ki_correction(
     aiida_profile,
     installed_pw_code,
