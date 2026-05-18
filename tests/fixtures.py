@@ -172,6 +172,13 @@ def _scrub(value: Any) -> Any:  # noqa: C901
         return scrubbed
     if isinstance(value, str):
         return _UUID_RE.sub("<uuid>", value)
+    # node-graph socket objects (``SocketAny`` etc.) sometimes appear in
+    # the serialised workgraph payload when one ``@task.graph``'s output
+    # is wired into another's input. YAML can't represent them; collapse
+    # to a stable placeholder so ``data_regression`` works.
+    type_name = type(value).__name__
+    if type_name.startswith("Socket"):
+        return f"<{type_name}>"
     return value
 
 
