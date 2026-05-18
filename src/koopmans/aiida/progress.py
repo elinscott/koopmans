@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from time import sleep
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,69 @@ from koopmans.aiida.utils import get_node_label, suppress_stdout
 if TYPE_CHECKING:
     from aiida.orm import ProcessNode
     from aiida_workgraph import WorkGraph
+
+
+# Acronyms that should stay uppercase after pretty-printing — these come
+# from the physics jargon used in task names (functionals, code names,
+# etc.). Add new ones here as the workflow grows.
+_ACRONYMS = frozenset({"ki", "dft", "dscf", "kipz", "pkipz", "ks", "pz", "scf", "kc", "kcw"})
+
+# Token regex for ``_prettify``: matches a leading run of caps not
+# followed by a ``Cap+lowercase`` boundary, an initial cap with
+# lowercase tail (``Iteration``), an all-lowercase run, an all-caps run
+# (acronyms standalone), or a digit run. Together this handles
+# CamelCase, snake_case, and trailing-digit suffixes uniformly.
+_PRETTIFY_TOKEN_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+
+
+def prettify_label(raw: str) -> str:
+    """Convert an internal task / call-link label into a display string.
+
+    Rules:
+
+    * Strip a ``<plugin>-`` prefix when the left half is lowercase
+      (``kcp-ki_trial`` → ``ki_trial``). Plugin names are implementation
+      detail; the call_link_label is the action.
+    * Split on underscores and CamelCase boundaries
+      (``ScreeningIteration1`` → ``["Screening", "Iteration", "1"]``).
+    * Keep known acronyms uppercase (``ki`` → ``KI``,
+      ``dscf`` → ``DSCF``, …); other tokens get a leading capital.
+    * Re-join with single spaces.
+
+    Examples:
+    >>> prettify_label("ki_trial")
+    'KI Trial'
+    >>> prettify_label("kcp-dft_init")
+    'DFT Init'
+    >>> prettify_label("ScreeningIteration1")
+    'Screening Iteration 1'
+    >>> prettify_label("KoopmansDSCFWorkflow")
+    'Koopmans DSCF Workflow'
+    >>> prettify_label("convert_spin1_to_spin2")
+    'Convert Spin 1 To Spin 2'
+    """
+    if not raw:
+        return raw
+    if "-" in raw and raw.split("-", 1)[0].islower():
+        raw = raw.split("-", 1)[1]
+    out: list[str] = []
+    for chunk in raw.split("_"):
+        for token in _PRETTIFY_TOKEN_RE.findall(chunk):
+            if token.isdigit():
+                out.append(token)
+            elif token.lower() in _ACRONYMS:
+                out.append(token.upper())
+            else:
+                out.append(token[0].upper() + token[1:].lower())
+    s = " ".join(out) if out else raw
+    # Physics-paper conventions that read better than the tokenised form.
+    # Order matters: the longer (nspin=N; dummy) rule must run before the
+    # bare nspin one so it consumes the trailing "Dummy".
+    s = re.sub(r"\bNspin (\d+) Dummy\b", r"(nspin=\1; dummy)", s)
+    s = re.sub(r"\bNspin (\d+)\b", r"(nspin=\1)", s)
+    s = re.sub(r"\bN Minus (\d+)\b", r"N-\1", s)
+    s = re.sub(r"\bN Plus (\d+)\b", r"N+\1", s)
+    return s
 
 
 # Status display styling
@@ -114,11 +178,16 @@ def add_process_rows(table: Table, process_node, depth: int = 0) -> None:
 
     indent = "  " * depth
 
-    # Get label
+    # Get label. The root row shows the top-level process_label
+    # (``KoopmansDSCFWorkflow`` etc.) rather than a hard-coded
+    # ``"WorkGraph"``, so the user sees the actual workflow they invoked.
+    # Both branches go through ``prettify_label`` for consistent
+    # CamelCase / snake_case / acronym handling.
     if depth > 0:
-        label = get_node_label(process_node, include_code=True)
+        raw_label = get_node_label(process_node, include_code=True)
     else:
-        label = "WorkGraph"
+        raw_label = getattr(process_node, "process_label", None) or "WorkGraph"
+    label = prettify_label(raw_label)
 
     # Get type and state
     node_type = get_node_type(process_node) if depth > 0 else "workgraph"

@@ -243,10 +243,10 @@ def _build_singlepoint_workgraph(
 
     Dispatches on ``workflow.correction``:
 
-    - ``KI`` → ``KoopmansDSCFTask`` (MVP: DFT init + KI correction, two kcp.x calls)
+    - ``KI`` → ``KoopmansDSCFWorkflow`` (MVP: DFT init + KI correction, two kcp.x calls)
     - ``KIPZ``, ``PKIPZ``, ``NONE``, ``ALL`` → ``NotImplementedError`` (not yet ported)
     """
-    from aiida_koopmans.workgraphs.kcp import KoopmansDSCFTask
+    from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
 
     from koopmans.aiida.setup import ensure_pseudo_family_installed
 
@@ -268,7 +268,7 @@ def _build_singlepoint_workgraph(
         workflow.alpha_guess if isinstance(workflow.alpha_guess, float) else workflow.alpha_guess[0]
     )
 
-    return KoopmansDSCFTask.build(
+    return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
         structure=structure,
         pseudo_family=pseudo_family,

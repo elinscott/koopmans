@@ -47,14 +47,14 @@ def test_build_workgraph(
     # tutorial_1 / KI-DSCF expectation. These fail fast and cheaply in case
     # the dispatcher suddenly returns an unexpected object.
     assert snapshot["n_tasks"] >= 1, snapshot["task_names"]
-    # The root ``@task.graph`` is called KoopmansDSCFTask; inside we expect
+    # The root ``@task.graph`` is called KoopmansDSCFWorkflow; inside we expect
     # the spin-symmetric DFT initialization chain (4 sub-graphs) plus a
-    # nested ``KIDscfRefinementTask`` sub-graph holding the trial KI, the
+    # nested ``ComputeScreeningParameters`` sub-graph holding the trial KI, the
     # per-orbital DSCF fan-out, and the final KI.
-    assert snapshot["workgraph_name"].startswith("KoopmansDSCFTask"), snapshot["workgraph_name"]
+    assert snapshot["workgraph_name"].startswith("KoopmansDSCFWorkflow"), snapshot["workgraph_name"]
     # Top-level structural tasks at the dispatcher layer. ``ki_trial`` /
     # ``ki_final`` are *not* top-level — they live inside the
-    # ``KIDscfRefinementTask`` sub-graph (whose internals are visible
+    # ``ComputeScreeningParameters`` sub-graph (whose internals are visible
     # via the scrubbed ``raw`` payload below).
     expected_top_level = {
         "resolve_pseudo_family_task",
@@ -63,7 +63,7 @@ def test_build_workgraph(
         "dft_init_nspin2_dummy",
         "convert_spin1_to_spin2",
         "dft_init_nspin2",
-        "KIDscfRefinementTask",
+        "ComputeScreeningParameters",
     }
     missing = expected_top_level - set(snapshot["task_names"])
     assert not missing, (missing, snapshot["task_names"])
@@ -80,7 +80,7 @@ def test_dispatcher_rejects_non_ki_correction(
     """``build_workgraph`` should raise ``NotImplementedError`` for KIPZ/PKIPZ.
 
     Exercises the dispatcher's scope guard without entering the
-    ``KoopmansDSCFTask`` body.
+    ``KoopmansDSCFWorkflow`` body.
     """
     from koopmans.input_file import KoopmansInput
 

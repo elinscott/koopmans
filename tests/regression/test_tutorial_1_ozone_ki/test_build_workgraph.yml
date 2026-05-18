@@ -3,35 +3,35 @@ raw:
   action: NONE
   connectivity:
     child_node:
-      KIDscfRefinementTask:
+      ComputeScreeningParameters:
       - graph_outputs
       convert_spin1_to_spin2:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       - dft_init_nspin2
       - graph_outputs
       count_electrons_task:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       - convert_spin1_to_spin2
       - dft_init_nspin1
       - dft_init_nspin2
       - dft_init_nspin2_dummy
       - graph_outputs
       dft_init_nspin1:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       - convert_spin1_to_spin2
       - dft_init_nspin2
       - graph_outputs
       dft_init_nspin2:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       - graph_outputs
       dft_init_nspin2_dummy:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       - convert_spin1_to_spin2
       - dft_init_nspin2
       - graph_outputs
       graph_ctx: []
       graph_inputs:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       - convert_spin1_to_spin2
       - count_electrons_task
       - dft_init_nspin1
@@ -41,7 +41,7 @@ raw:
       - resolve_pseudo_family_task
       graph_outputs: []
       resolve_pseudo_family_task:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       - convert_spin1_to_spin2
       - count_electrons_task
       - dft_init_nspin1
@@ -49,11 +49,12 @@ raw:
       - dft_init_nspin2_dummy
       - graph_outputs
     input_node:
-      KIDscfRefinementTask:
+      ComputeScreeningParameters:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
       - dft_init_nspin2
+      - graph_inputs
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -104,16 +105,16 @@ raw:
       graph_ctx: []
       graph_inputs: []
       graph_outputs:
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
       resolve_pseudo_family_task:
       - graph_inputs
       - graph_inputs
     output_node:
-      KIDscfRefinementTask:
+      ComputeScreeningParameters:
       - graph_outputs
       - graph_outputs
       - graph_outputs
@@ -122,9 +123,9 @@ raw:
       convert_spin1_to_spin2:
       - dft_init_nspin2
       count_electrons_task:
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
       - dft_init_nspin1
       - dft_init_nspin2
       - dft_init_nspin2
@@ -135,21 +136,22 @@ raw:
       dft_init_nspin1:
       - convert_spin1_to_spin2
       dft_init_nspin2:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       dft_init_nspin2_dummy:
       - convert_spin1_to_spin2
       graph_ctx: []
       graph_inputs:
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
       - count_electrons_task
       - count_electrons_task
       - dft_init_nspin1
@@ -171,13 +173,13 @@ raw:
       - resolve_pseudo_family_task
       graph_outputs: []
       resolve_pseudo_family_task:
-      - KIDscfRefinementTask
+      - ComputeScreeningParameters
       - count_electrons_task
       - dft_init_nspin1
       - dft_init_nspin2
       - dft_init_nspin2_dummy
     zone:
-      KIDscfRefinementTask:
+      ComputeScreeningParameters:
         children: []
         input_tasks:
         - count_electrons_task
@@ -222,7 +224,7 @@ raw:
       graph_outputs:
         children: []
         input_tasks:
-        - KIDscfRefinementTask
+        - ComputeScreeningParameters
       resolve_pseudo_family_task:
         children: []
         input_tasks:
@@ -374,100 +376,104 @@ raw:
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: structure
     from_task: graph_inputs
     to_socket: structure
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: _outputs
     from_task: resolve_pseudo_family_task
     to_socket: pseudos
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: ecutwfc
     from_task: graph_inputs
     to_socket: ecutwfc
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: ecutrho
     from_task: graph_inputs
     to_socket: ecutrho
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: nbnd
     from_task: graph_inputs
     to_socket: nbnd
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: nspin
     from_task: graph_inputs
     to_socket: nspin
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: nelec
     from_task: count_electrons_task
     to_socket: nelec
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: nelup
     from_task: count_electrons_task
     to_socket: nelup
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: neldw
     from_task: count_electrons_task
     to_socket: neldw
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: initial_alpha
     from_task: graph_inputs
     to_socket: initial_alpha
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: functional
     from_task: graph_inputs
     to_socket: functional
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: init_orbitals
     from_task: graph_inputs
     to_socket: init_orbitals
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: spin_polarized
     from_task: graph_inputs
     to_socket: spin_polarized
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
+  - from_socket: alpha_numsteps
+    from_task: graph_inputs
+    to_socket: alpha_numsteps
+    to_task: ComputeScreeningParameters
   - from_socket: remote_folder
     from_task: dft_init_nspin2
     to_socket: dft_remote
-    to_task: KIDscfRefinementTask
+    to_task: ComputeScreeningParameters
   - from_socket: parameters
-    from_task: KIDscfRefinementTask
+    from_task: ComputeScreeningParameters
     to_socket: parameters
     to_task: graph_outputs
   - from_socket: eigenvalues
-    from_task: KIDscfRefinementTask
+    from_task: ComputeScreeningParameters
     to_socket: eigenvalues
     to_task: graph_outputs
   - from_socket: lambdas
-    from_task: KIDscfRefinementTask
+    from_task: ComputeScreeningParameters
     to_socket: lambdas
     to_task: graph_outputs
   - from_socket: bare_lambdas
-    from_task: KIDscfRefinementTask
+    from_task: ComputeScreeningParameters
     to_socket: bare_lambdas
     to_task: graph_outputs
   - from_socket: remote_folder
-    from_task: KIDscfRefinementTask
+    from_task: ComputeScreeningParameters
     to_socket: remote_folder
     to_task: graph_outputs
   max_iteration: 1000000
   max_number_jobs: 1000000
   metadata:
     definition:
-      callable_path: aiida_koopmans.workgraphs.kcp.KoopmansDSCFTask
+      callable_path: aiida_koopmans.workgraphs.kcp.KoopmansDSCFWorkflow
       file_path: <scrubbed:file_path>
       module: aiida_koopmans.workgraphs.kcp
       package: aiida_koopmans
       package_version: <scrubbed:package_version>
-      qualname: KoopmansDSCFTask
-      task_identifier: KoopmansDSCFTask
+      qualname: KoopmansDSCFWorkflow
+      task_identifier: KoopmansDSCFWorkflow
     graph_class:
       callable_name: WorkGraph
       module_path: aiida_workgraph.workgraph
     graph_type: NORMAL
     pk: <scrubbed:pk>
-  name: KoopmansDSCFTask
+  name: KoopmansDSCFWorkflow
   platform_version: <scrubbed:platform_version>
   process: <scrubbed:process>
   restart_process: null
@@ -1000,7 +1006,7 @@ raw:
     schema_source: EMBEDDED
   state: CREATED
   tasks:
-    KIDscfRefinementTask:
+    ComputeScreeningParameters:
       action: ''
       children: []
       description: ''
@@ -1010,11 +1016,13 @@ raw:
       identifier: <scrubbed:identifier>
       input_socket_meta: {}
       inputs:
+        alpha_conv_thr: 0.001
+        alpha_numsteps: 1
         spin_polarized: false
       log: ''
       metadata:
         pk: <scrubbed:pk>
-      name: KIDscfRefinementTask
+      name: ComputeScreeningParameters
       parent_task:
       - null
       position:
@@ -1027,7 +1035,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: KIDscfRefinementTask
+          callable_name: ComputeScreeningParameters
           graph_data: null
           metadata: null
           mode: module
@@ -1172,7 +1180,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: DFTCPTask
+          callable_name: DFTInitialization
           graph_data: null
           metadata: null
           mode: module
@@ -1223,7 +1231,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: DFTCPTask
+          callable_name: DFTInitialization
           graph_data: null
           metadata: null
           mode: module
@@ -1274,7 +1282,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: DFTCPTask
+          callable_name: DFTInitialization
           graph_data: null
           metadata: null
           mode: module
@@ -1971,7 +1979,7 @@ raw:
       wait: []
   uuid: <scrubbed:uuid>
 task_names:
-- KIDscfRefinementTask
+- ComputeScreeningParameters
 - convert_spin1_to_spin2
 - count_electrons_task
 - dft_init_nspin1
@@ -1981,4 +1989,4 @@ task_names:
 - graph_inputs
 - graph_outputs
 - resolve_pseudo_family_task
-workgraph_name: KoopmansDSCFTask
+workgraph_name: KoopmansDSCFWorkflow
