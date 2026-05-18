@@ -61,6 +61,13 @@ def prettify_label(raw: str) -> str:
         return raw
     if "-" in raw and raw.split("-", 1)[0].islower():
         raw = raw.split("-", 1)[1]
+    # ``aiida-workgraph`` wraps the top-level process_label as
+    # ``WorkGraph<KoopmansDSCFWorkflow>``. The user already knows it's a
+    # WorkGraph from the context (it's the root of the display), so peel
+    # the envelope before tokenising.
+    m = re.match(r"^WorkGraph<(.+)>$", raw)
+    if m:
+        raw = m.group(1)
     out: list[str] = []
     for chunk in raw.split("_"):
         for token in _PRETTIFY_TOKEN_RE.findall(chunk):
@@ -78,6 +85,20 @@ def prettify_label(raw: str) -> str:
     s = re.sub(r"\bNspin (\d+)\b", r"(nspin=\1)", s)
     s = re.sub(r"\bN Minus (\d+)\b", r"N-\1", s)
     s = re.sub(r"\bN Plus (\d+)\b", r"N+\1", s)
+    # Compute-screening-parameters context already says "Screening" —
+    # the inner iterations are just "Iteration <N>". aiida-workgraph
+    # auto-numbers repeated tasks from 0 (first instance bare, second
+    # is "1", …) but users count from 1, so shift the index up by one.
+    s = re.sub(
+        r"\bScreening Iteration (\d+)\b",
+        lambda m: f"Iteration {int(m.group(1)) + 1}",
+        s,
+    )
+    s = re.sub(r"\bScreening Iteration\b", "Iteration 1", s)
+    # Orbital sub-graphs: parent gives the "screening" context, and
+    # ``Orb N`` is just the Map-zone key for ``Orbital N`` — collapse.
+    s = re.sub(r"\bOrb (\d+) Filled Orbital Screening\b", r"Orbital \1 (filled)", s)
+    s = re.sub(r"\bOrb (\d+) Empty Orbital Screening\b", r"Orbital \1 (empty)", s)
     return s
 
 
@@ -154,12 +175,24 @@ def _is_process_function_node(node) -> bool:
     return isinstance(node, (CalcFunctionNode, WorkFunctionNode))
 
 
-def add_process_rows(table: Table, process_node, depth: int = 0) -> None:
+def add_process_rows(
+    table: Table,
+    process_node,
+    depth: int = 0,
+    parent_label: str | None = None,
+) -> None:
     """Recursively add rows for a process and its children.
 
     Skips ``@calcfunction`` / ``@workfunction`` / ``@task`` PyFunctions
     (see :func:`_is_process_function_node`); those are internal helpers.
     The root node is always rendered.
+
+    Also suppresses a row whose prettified label is a *prefix* of (or
+    identical to) its parent's prettified label. This collapses the
+    redundant single-CalcJob wrappers — e.g. the ``DFTInitialization``
+    ``@task.graph`` wraps one ``kcp.x`` call whose label
+    (``"DFT Init"``) is already part of the wrapper's
+    (``"DFT Init (nspin=1)"``).
 
     Children are re-loaded via ``load_node(pk)`` rather than reusing the
     Node objects yielded by ``process_node.called``. AiiDA keeps Node
@@ -172,6 +205,8 @@ def add_process_rows(table: Table, process_node, depth: int = 0) -> None:
         table: The Table to add rows to.
         process_node: The process node to display.
         depth: Current indentation depth.
+        parent_label: The prettified label of the parent row, or ``None``
+            for the root. Used to suppress redundant child rows.
     """
     if depth > 0 and _is_process_function_node(process_node):
         return
@@ -189,6 +224,13 @@ def add_process_rows(table: Table, process_node, depth: int = 0) -> None:
         raw_label = getattr(process_node, "process_label", None) or "WorkGraph"
     label = prettify_label(raw_label)
 
+    # Suppress redundant wrapper-rows (see docstring). We still recurse
+    # into the node's children so a hidden wrapper's grandchildren keep
+    # showing up under the wrapper's parent.
+    suppress_self = parent_label is not None and (
+        label == parent_label or parent_label.startswith(label + " ")
+    )
+
     # Get type and state
     node_type = get_node_type(process_node) if depth > 0 else "workgraph"
     state = get_process_state(process_node, node_type)
@@ -200,7 +242,8 @@ def add_process_rows(table: Table, process_node, depth: int = 0) -> None:
     else:
         status_text = state
 
-    table.add_row(f"{indent}{label}", status_text)
+    if not suppress_self:
+        table.add_row(f"{indent}{label}", status_text)
 
     # Recursively add children — reload each one freshly so the live
     # table picks up newly-spawned tasks without waiting for the run
@@ -212,12 +255,16 @@ def add_process_rows(table: Table, process_node, depth: int = 0) -> None:
     except Exception:
         return
     called_pks.sort(key=lambda pair: pair[1])
+    # Suppressed rows pass their parent's label / depth straight through
+    # so the grandchild is rendered against the *visible* ancestor.
+    child_parent_label = parent_label if suppress_self else label
+    child_depth = depth if suppress_self else depth + 1
     for pk, _ in called_pks:
         try:
             child = load_node(pk)
         except Exception:  # noqa: S112 - skip unreadable children
             continue
-        add_process_rows(table, child, depth + 1)
+        add_process_rows(table, child, child_depth, parent_label=child_parent_label)
 
 
 def _walk_paused_descendants(node) -> list:
