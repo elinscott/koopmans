@@ -1,0 +1,1864 @@
+n_tasks: 8
+raw:
+  action: NONE
+  connectivity:
+    child_node:
+      ComputeScreeningParameters:
+      - KIFinal
+      - graph_outputs
+      KIFinal:
+      - graph_outputs
+      count_electrons_task:
+      - ComputeScreeningParameters
+      - KIFinal
+      - dft_init
+      - graph_outputs
+      dft_init:
+      - ComputeScreeningParameters
+      - KIFinal
+      - graph_outputs
+      graph_ctx: []
+      graph_inputs:
+      - ComputeScreeningParameters
+      - KIFinal
+      - count_electrons_task
+      - dft_init
+      - graph_outputs
+      - resolve_pseudo_family_task
+      graph_outputs: []
+      resolve_pseudo_family_task:
+      - ComputeScreeningParameters
+      - KIFinal
+      - count_electrons_task
+      - dft_init
+      - graph_outputs
+    input_node:
+      ComputeScreeningParameters:
+      - count_electrons_task
+      - count_electrons_task
+      - count_electrons_task
+      - dft_init
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - resolve_pseudo_family_task
+      KIFinal:
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - count_electrons_task
+      - count_electrons_task
+      - count_electrons_task
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - resolve_pseudo_family_task
+      count_electrons_task:
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - resolve_pseudo_family_task
+      dft_init:
+      - count_electrons_task
+      - count_electrons_task
+      - count_electrons_task
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - graph_inputs
+      - resolve_pseudo_family_task
+      graph_ctx: []
+      graph_inputs: []
+      graph_outputs:
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      resolve_pseudo_family_task:
+      - graph_inputs
+      - graph_inputs
+    output_node:
+      ComputeScreeningParameters:
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      KIFinal:
+      - graph_outputs
+      - graph_outputs
+      - graph_outputs
+      - graph_outputs
+      - graph_outputs
+      count_electrons_task:
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - dft_init
+      - dft_init
+      - dft_init
+      dft_init:
+      - ComputeScreeningParameters
+      graph_ctx: []
+      graph_inputs:
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - count_electrons_task
+      - count_electrons_task
+      - count_electrons_task
+      - dft_init
+      - dft_init
+      - dft_init
+      - dft_init
+      - dft_init
+      - dft_init
+      - dft_init
+      - resolve_pseudo_family_task
+      - resolve_pseudo_family_task
+      graph_outputs: []
+      resolve_pseudo_family_task:
+      - ComputeScreeningParameters
+      - KIFinal
+      - count_electrons_task
+      - dft_init
+    zone:
+      ComputeScreeningParameters:
+        children: []
+        input_tasks:
+        - count_electrons_task
+        - dft_init
+        - graph_inputs
+        - resolve_pseudo_family_task
+      KIFinal:
+        children: []
+        input_tasks:
+        - ComputeScreeningParameters
+        - count_electrons_task
+        - graph_inputs
+        - resolve_pseudo_family_task
+      count_electrons_task:
+        children: []
+        input_tasks:
+        - graph_inputs
+        - resolve_pseudo_family_task
+      dft_init:
+        children: []
+        input_tasks:
+        - count_electrons_task
+        - graph_inputs
+        - resolve_pseudo_family_task
+      graph_ctx:
+        children: []
+        input_tasks: []
+      graph_inputs:
+        children: []
+        input_tasks: []
+      graph_outputs:
+        children: []
+        input_tasks:
+        - KIFinal
+      resolve_pseudo_family_task:
+        children: []
+        input_tasks:
+        - graph_inputs
+  description: ''
+  error: ''
+  error_handlers: {}
+  knowledge_graph:
+    namespaces:
+      prov: http://www.w3.org/ns/prov#
+      qudt: http://qudt.org/schema/qudt/
+      qudt-unit: http://qudt.org/vocab/unit/
+      schema: https://schema.org/
+    sockets: {}
+    triples: []
+  links:
+  - from_socket: pseudo_family
+    from_task: graph_inputs
+    to_socket: family_label
+    to_task: resolve_pseudo_family_task
+  - from_socket: structure
+    from_task: graph_inputs
+    to_socket: structure
+    to_task: resolve_pseudo_family_task
+  - from_socket: structure
+    from_task: graph_inputs
+    to_socket: structure
+    to_task: count_electrons_task
+  - from_socket: _outputs
+    from_task: resolve_pseudo_family_task
+    to_socket: pseudos
+    to_task: count_electrons_task
+  - from_socket: nspin
+    from_task: graph_inputs
+    to_socket: nspin
+    to_task: count_electrons_task
+  - from_socket: tot_magnetization
+    from_task: graph_inputs
+    to_socket: tot_magnetization
+    to_task: count_electrons_task
+  - from_socket: code
+    from_task: graph_inputs
+    to_socket: code
+    to_task: dft_init
+  - from_socket: structure
+    from_task: graph_inputs
+    to_socket: structure
+    to_task: dft_init
+  - from_socket: _outputs
+    from_task: resolve_pseudo_family_task
+    to_socket: pseudos
+    to_task: dft_init
+  - from_socket: nelec
+    from_task: count_electrons_task
+    to_socket: nelec
+    to_task: dft_init
+  - from_socket: nelup
+    from_task: count_electrons_task
+    to_socket: nelup
+    to_task: dft_init
+  - from_socket: neldw
+    from_task: count_electrons_task
+    to_socket: neldw
+    to_task: dft_init
+  - from_socket: ecutwfc
+    from_task: graph_inputs
+    to_socket: ecutwfc
+    to_task: dft_init
+  - from_socket: ecutrho
+    from_task: graph_inputs
+    to_socket: ecutrho
+    to_task: dft_init
+  - from_socket: nbnd
+    from_task: graph_inputs
+    to_socket: nbnd
+    to_task: dft_init
+  - from_socket: nspin
+    from_task: graph_inputs
+    to_socket: nspin
+    to_task: dft_init
+  - from_socket: tot_magnetization
+    from_task: graph_inputs
+    to_socket: tot_magnetization
+    to_task: dft_init
+  - from_socket: code
+    from_task: graph_inputs
+    to_socket: code
+    to_task: ComputeScreeningParameters
+  - from_socket: structure
+    from_task: graph_inputs
+    to_socket: structure
+    to_task: ComputeScreeningParameters
+  - from_socket: _outputs
+    from_task: resolve_pseudo_family_task
+    to_socket: pseudos
+    to_task: ComputeScreeningParameters
+  - from_socket: ecutwfc
+    from_task: graph_inputs
+    to_socket: ecutwfc
+    to_task: ComputeScreeningParameters
+  - from_socket: ecutrho
+    from_task: graph_inputs
+    to_socket: ecutrho
+    to_task: ComputeScreeningParameters
+  - from_socket: nbnd
+    from_task: graph_inputs
+    to_socket: nbnd
+    to_task: ComputeScreeningParameters
+  - from_socket: nspin
+    from_task: graph_inputs
+    to_socket: nspin
+    to_task: ComputeScreeningParameters
+  - from_socket: nelec
+    from_task: count_electrons_task
+    to_socket: nelec
+    to_task: ComputeScreeningParameters
+  - from_socket: nelup
+    from_task: count_electrons_task
+    to_socket: nelup
+    to_task: ComputeScreeningParameters
+  - from_socket: neldw
+    from_task: count_electrons_task
+    to_socket: neldw
+    to_task: ComputeScreeningParameters
+  - from_socket: tot_magnetization
+    from_task: graph_inputs
+    to_socket: tot_magnetization
+    to_task: ComputeScreeningParameters
+  - from_socket: initial_alpha
+    from_task: graph_inputs
+    to_socket: initial_alpha
+    to_task: ComputeScreeningParameters
+  - from_socket: functional
+    from_task: graph_inputs
+    to_socket: functional
+    to_task: ComputeScreeningParameters
+  - from_socket: init_orbitals
+    from_task: graph_inputs
+    to_socket: init_orbitals
+    to_task: ComputeScreeningParameters
+  - from_socket: spin_polarized
+    from_task: graph_inputs
+    to_socket: spin_polarized
+    to_task: ComputeScreeningParameters
+  - from_socket: alpha_numsteps
+    from_task: graph_inputs
+    to_socket: alpha_numsteps
+    to_task: ComputeScreeningParameters
+  - from_socket: remote_folder
+    from_task: dft_init
+    to_socket: dft_remote
+    to_task: ComputeScreeningParameters
+  - from_socket: code
+    from_task: graph_inputs
+    to_socket: code
+    to_task: KIFinal
+  - from_socket: structure
+    from_task: graph_inputs
+    to_socket: structure
+    to_task: KIFinal
+  - from_socket: _outputs
+    from_task: resolve_pseudo_family_task
+    to_socket: pseudos
+    to_task: KIFinal
+  - from_socket: ecutwfc
+    from_task: graph_inputs
+    to_socket: ecutwfc
+    to_task: KIFinal
+  - from_socket: ecutrho
+    from_task: graph_inputs
+    to_socket: ecutrho
+    to_task: KIFinal
+  - from_socket: nbnd
+    from_task: graph_inputs
+    to_socket: nbnd
+    to_task: KIFinal
+  - from_socket: nspin
+    from_task: graph_inputs
+    to_socket: nspin
+    to_task: KIFinal
+  - from_socket: nelec
+    from_task: count_electrons_task
+    to_socket: nelec
+    to_task: KIFinal
+  - from_socket: nelup
+    from_task: count_electrons_task
+    to_socket: nelup
+    to_task: KIFinal
+  - from_socket: neldw
+    from_task: count_electrons_task
+    to_socket: neldw
+    to_task: KIFinal
+  - from_socket: tot_magnetization
+    from_task: graph_inputs
+    to_socket: tot_magnetization
+    to_task: KIFinal
+  - from_socket: functional
+    from_task: graph_inputs
+    to_socket: functional
+    to_task: KIFinal
+  - from_socket: alphas
+    from_task: ComputeScreeningParameters
+    to_socket: alphas
+    to_task: KIFinal
+  - from_socket: alphas.filled
+    from_task: ComputeScreeningParameters
+    to_socket: alphas.filled
+    to_task: KIFinal
+  - from_socket: alphas.empty
+    from_task: ComputeScreeningParameters
+    to_socket: alphas.empty
+    to_task: KIFinal
+  - from_socket: trial_remote
+    from_task: ComputeScreeningParameters
+    to_socket: parent_folder
+    to_task: KIFinal
+  - from_socket: parameters
+    from_task: KIFinal
+    to_socket: parameters
+    to_task: graph_outputs
+  - from_socket: eigenvalues
+    from_task: KIFinal
+    to_socket: eigenvalues
+    to_task: graph_outputs
+  - from_socket: lambdas
+    from_task: KIFinal
+    to_socket: lambdas
+    to_task: graph_outputs
+  - from_socket: bare_lambdas
+    from_task: KIFinal
+    to_socket: bare_lambdas
+    to_task: graph_outputs
+  - from_socket: remote_folder
+    from_task: KIFinal
+    to_socket: remote_folder
+    to_task: graph_outputs
+  max_iteration: 1000000
+  max_number_jobs: 1000000
+  metadata:
+    definition:
+      callable_path: aiida_koopmans.workgraphs.kcp.KoopmansDSCFWorkflow
+      file_path: <scrubbed:file_path>
+      module: aiida_koopmans.workgraphs.kcp
+      package: aiida_koopmans
+      package_version: <scrubbed:package_version>
+      qualname: KoopmansDSCFWorkflow
+      task_identifier: KoopmansDSCFWorkflow
+    graph_class:
+      callable_name: WorkGraph
+      module_path: aiida_workgraph.workgraph
+    graph_type: NORMAL
+    pk: <scrubbed:pk>
+  name: KoopmansDSCFWorkflow
+  platform_version: <scrubbed:platform_version>
+  process: <scrubbed:process>
+  restart_process: null
+  spec:
+    ctx:
+      dynamic: true
+      identifier: <scrubbed:identifier>
+      meta:
+        child_default_link_limit: 1000000
+        required: true
+    inputs:
+      dynamic: false
+      fields:
+        alpha_numsteps:
+          default: 1
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        code:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+            required: true
+        ecutrho:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: true
+        ecutwfc:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: true
+        fix_spin_contamination:
+          default: false
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        functional:
+          default: ki
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        init_orbitals:
+          default: kohn-sham
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        initial_alpha:
+          default: 0.6
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        metadata:
+          dynamic: false
+          fields:
+            call_link_label:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                is_metadata: true
+                required: false
+            description:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                is_metadata: true
+                required: false
+            disable_cache:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                is_metadata: true
+                required: false
+            label:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                is_metadata: true
+                required: false
+            store_provenance:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                is_metadata: true
+                required: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            is_metadata: true
+            required: false
+        nbnd:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: true
+        nspin:
+          default: 2
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        options:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        overrides:
+          dynamic: false
+          fields:
+            dft:
+              dynamic: false
+              fields:
+                CELL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                CONTROL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                EE:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                ELECTRONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                IONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                NKSIC:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                SYSTEM:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            dft_n_minus_1:
+              dynamic: false
+              fields:
+                CELL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                CONTROL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                EE:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                ELECTRONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                IONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                NKSIC:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                SYSTEM:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            dft_n_plus_1:
+              dynamic: false
+              fields:
+                CELL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                CONTROL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                EE:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                ELECTRONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                IONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                NKSIC:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                SYSTEM:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            dft_n_plus_1_dummy:
+              dynamic: false
+              fields:
+                CELL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                CONTROL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                EE:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                ELECTRONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                IONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                NKSIC:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                SYSTEM:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            ki:
+              dynamic: false
+              fields:
+                CELL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                CONTROL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                EE:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                ELECTRONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                IONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                NKSIC:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                SYSTEM:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            pz_print:
+              dynamic: false
+              fields:
+                CELL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                CONTROL:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                EE:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                ELECTRONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                IONS:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                NKSIC:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                SYSTEM:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        pseudo_family:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: true
+        spin_polarized:
+          default: false
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        structure:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: true
+        tot_magnetization:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+      identifier: <scrubbed:identifier>
+      meta:
+        call_role: kwargs
+        child_default_link_limit: 1000000
+        required: true
+    outputs:
+      dynamic: false
+      fields:
+        bare_lambdas:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: numpy.ndarray
+            required: true
+        eigenvalues:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: numpy.ndarray
+            required: true
+        lambdas:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: numpy.ndarray
+            required: true
+        parameters:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            required: true
+        remote_folder:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.remote.base.RemoteData
+            required: true
+      identifier: <scrubbed:identifier>
+      meta:
+        call_role: return
+        child_default_link_limit: 1
+        required: true
+    schema_source: EMBEDDED
+  state: CREATED
+  tasks:
+    ComputeScreeningParameters:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs:
+        alpha_conv_thr: 0.001
+        alpha_numsteps: 1
+        spin_polarized: false
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: ComputeScreeningParameters
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.graph_task.GraphTask
+        catalog: null
+        executor:
+          callable_kind: null
+          callable_name: ComputeScreeningParameters
+          graph_data: null
+          metadata: null
+          mode: module
+          module_path: aiida_koopmans.workgraphs.kcp
+          pickled_callable: null
+          source_code: ''
+        identifier: <scrubbed:identifier>
+        metadata:
+          max_depth: 100
+          max_number_jobs: null
+          non_function_inputs:
+          - metadata
+          non_function_outputs: []
+        schema_source: handle
+        task_type: GRAPH
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
+    KIFinal:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs: {}
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: KIFinal
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.graph_task.GraphTask
+        catalog: null
+        executor:
+          callable_kind: null
+          callable_name: KIFinal
+          graph_data: null
+          metadata: null
+          mode: module
+          module_path: aiida_koopmans.workgraphs.kcp
+          pickled_callable: null
+          source_code: ''
+        identifier: <scrubbed:identifier>
+        metadata:
+          max_depth: 100
+          max_number_jobs: null
+          non_function_inputs:
+          - metadata
+          non_function_outputs: []
+        schema_source: handle
+        task_type: GRAPH
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
+    count_electrons_task:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs: {}
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: count_electrons_task
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.pythonjob_tasks.PyFunctionTask
+        catalog: Others
+        executor:
+          callable_kind: null
+          callable_name: count_electrons_task
+          graph_data: null
+          metadata: null
+          mode: module
+          module_path: aiida_koopmans.utils
+          pickled_callable: null
+          source_code: ''
+        identifier: <scrubbed:identifier>
+        metadata:
+          deserializers:
+            aiida.orm.nodes.data.structure.StructureData: aiida_koopmans.utils.passthrough_node
+            aiida_pseudo.data.pseudo.upf.UpfData: aiida_koopmans.utils.passthrough_node
+          non_function_inputs:
+          - function_data
+          - function_inputs
+          - metadata
+          - process_label
+          non_function_outputs: []
+        schema_source: handle
+        task_type: PYFUNCTION
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
+    dft_init:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs:
+        metadata:
+          call_link_label: dft_init
+        name: dft_init
+        nspin: 2
+        outerloop: true
+        restart_mode: from_scratch
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: dft_init
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.graph_task.GraphTask
+        catalog: null
+        executor:
+          callable_kind: null
+          callable_name: DFTInitialization
+          graph_data: null
+          metadata: null
+          mode: module
+          module_path: aiida_koopmans.workgraphs.kcp
+          pickled_callable: null
+          source_code: ''
+        identifier: <scrubbed:identifier>
+        metadata:
+          max_depth: 100
+          max_number_jobs: null
+          non_function_inputs:
+          - metadata
+          non_function_outputs: []
+        schema_source: handle
+        task_type: GRAPH
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
+    graph_ctx:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs: {}
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: graph_ctx
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.builtins.GraphLevelTask
+        catalog: Others
+        identifier: <scrubbed:identifier>
+        inputs:
+          dynamic: true
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1000000
+            required: true
+        metadata: {}
+        schema_source: embedded
+        task_type: Normal
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
+    graph_inputs:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs:
+        alpha_numsteps: 2
+        code:
+          __aiida_code__: kcp@localhost
+        ecutrho: 160.0
+        ecutwfc: 40.0
+        fix_spin_contamination: false
+        functional: ki
+        init_orbitals: kohn-sham
+        initial_alpha: 0.6
+        nbnd: 8
+        nspin: 2
+        pseudo_family: SG15/1.2/PBE/SR
+        spin_polarized: true
+        structure:
+          __aiida_structure__: O2
+        tot_magnetization: 2
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: graph_inputs
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.builtins.GraphLevelTask
+        catalog: Others
+        identifier: <scrubbed:identifier>
+        inputs:
+          dynamic: false
+          fields:
+            alpha_numsteps:
+              default: 1
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            code:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: true
+            ecutrho:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: true
+            ecutwfc:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: true
+            fix_spin_contamination:
+              default: false
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            functional:
+              default: ki
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            init_orbitals:
+              default: kohn-sham
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            initial_alpha:
+              default: 0.6
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            metadata:
+              dynamic: false
+              fields:
+                call_link_label:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    call_role: kwargs
+                    child_default_link_limit: 1
+                    is_metadata: true
+                    required: false
+                description:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    call_role: kwargs
+                    child_default_link_limit: 1
+                    is_metadata: true
+                    required: false
+                disable_cache:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    call_role: kwargs
+                    child_default_link_limit: 1
+                    is_metadata: true
+                    required: false
+                label:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    call_role: kwargs
+                    child_default_link_limit: 1
+                    is_metadata: true
+                    required: false
+                store_provenance:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    call_role: kwargs
+                    child_default_link_limit: 1
+                    is_metadata: true
+                    required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                is_metadata: true
+                required: false
+            nbnd:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: true
+            nspin:
+              default: 2
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            options:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            overrides:
+              dynamic: false
+              fields:
+                dft:
+                  dynamic: false
+                  fields:
+                    CELL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    CONTROL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    EE:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    ELECTRONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    IONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    NKSIC:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    SYSTEM:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                dft_n_minus_1:
+                  dynamic: false
+                  fields:
+                    CELL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    CONTROL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    EE:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    ELECTRONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    IONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    NKSIC:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    SYSTEM:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                dft_n_plus_1:
+                  dynamic: false
+                  fields:
+                    CELL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    CONTROL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    EE:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    ELECTRONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    IONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    NKSIC:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    SYSTEM:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                dft_n_plus_1_dummy:
+                  dynamic: false
+                  fields:
+                    CELL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    CONTROL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    EE:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    ELECTRONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    IONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    NKSIC:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    SYSTEM:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                ki:
+                  dynamic: false
+                  fields:
+                    CELL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    CONTROL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    EE:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    ELECTRONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    IONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    NKSIC:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    SYSTEM:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                pz_print:
+                  dynamic: false
+                  fields:
+                    CELL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    CONTROL:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    EE:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    ELECTRONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    IONS:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    NKSIC:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                    SYSTEM:
+                      dynamic: false
+                      identifier: <scrubbed:identifier>
+                      meta:
+                        child_default_link_limit: 1
+                        required: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            pseudo_family:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: true
+            spin_polarized:
+              default: false
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            structure:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: true
+            tot_magnetization:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1000000
+            required: true
+        metadata: {}
+        schema_source: embedded
+        task_type: Normal
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
+    graph_outputs:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs: {}
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: graph_outputs
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.builtins.GraphLevelTask
+        catalog: Others
+        identifier: <scrubbed:identifier>
+        inputs:
+          dynamic: false
+          fields:
+            bare_lambdas:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: numpy.ndarray
+                required: true
+            eigenvalues:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: numpy.ndarray
+                required: true
+            lambdas:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: numpy.ndarray
+                required: true
+            parameters:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+            remote_folder:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.remote.base.RemoteData
+                required: true
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: return
+            child_default_link_limit: 1
+            required: true
+        metadata: {}
+        schema_source: embedded
+        task_type: Normal
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
+    resolve_pseudo_family_task:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs: {}
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: resolve_pseudo_family_task
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.aiida.AiiDAFunctionTask
+        catalog: null
+        executor:
+          callable_kind: null
+          callable_name: resolve_pseudo_family_task
+          graph_data: null
+          metadata: null
+          mode: module
+          module_path: aiida_koopmans.utils
+          pickled_callable: null
+          source_code: ''
+        identifier: <scrubbed:identifier>
+        metadata:
+          non_function_inputs:
+          - metadata
+          non_function_outputs: []
+        schema_source: handle
+        task_type: WORKFUNCTION
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
+  uuid: <scrubbed:uuid>
+task_names:
+- ComputeScreeningParameters
+- KIFinal
+- count_electrons_task
+- dft_init
+- graph_ctx
+- graph_inputs
+- graph_outputs
+- resolve_pseudo_family_task
+workgraph_name: KoopmansDSCFWorkflow
