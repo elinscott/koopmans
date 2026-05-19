@@ -285,6 +285,7 @@ def _build_singlepoint_workgraph(
         fix_spin_contamination=workflow.fix_spin_contamination,
         initial_alpha=initial_alpha,
         spin_polarized=workflow.spin_polarized,
+        orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
     )
 
 

@@ -6,7 +6,8 @@
         "init_orbitals": "kohn-sham",
         "alpha_numsteps": 2,
         "pseudo_library": "SG15/1.2/PBE/SR",
-        "spin_polarized": true
+        "spin_polarized": true,
+        "orbital_groups_self_hartree_tol": 0.001
     },
     "atoms": {
         "cell_parameters": {

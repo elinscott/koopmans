@@ -730,6 +730,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        orbital_groups_self_hartree_tol:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         overrides:
           dynamic: false
           fields:
@@ -1663,6 +1670,13 @@ raw:
                 child_default_link_limit: 1
                 required: false
             options:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            orbital_groups_self_hartree_tol:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
