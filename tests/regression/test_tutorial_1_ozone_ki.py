@@ -144,13 +144,13 @@ def test_build_workgraph_spin_polarized(
     assert "ComputeScreeningParameters" in snapshot["task_names"], snapshot["task_names"]
 
 
-def test_dispatcher_rejects_non_ki_correction(
+def test_dispatcher_rejects_unsupported_correction(
     aiida_profile,
     installed_pw_code,
     installed_kcp_code,
     tutorial_1_ozone_input,
 ):
-    """``build_workgraph`` should raise ``NotImplementedError`` for KIPZ/PKIPZ.
+    """``build_workgraph`` should raise ``NotImplementedError`` for PKIPZ.
 
     Exercises the dispatcher's scope guard without entering the
     ``KoopmansDSCFWorkflow`` body.
@@ -158,7 +158,7 @@ def test_dispatcher_rejects_non_ki_correction(
     from koopmans.input_file import KoopmansInput
 
     d = tutorial_1_ozone_input.model_dump()
-    d["workflow"]["correction"] = "kipz"
+    d["workflow"]["correction"] = "pkipz"
     inp = KoopmansInput.model_validate(d)
 
     with pytest.raises(NotImplementedError, match="correction="):

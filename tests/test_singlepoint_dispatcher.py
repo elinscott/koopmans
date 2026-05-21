@@ -17,7 +17,7 @@ from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
     Task,
-    VariationalOrbital,
+    VariationalOrbitalType,
 )
 
 
@@ -64,7 +64,7 @@ class TestOzoneInputParse:
         assert ozone_input.workflow.task == Task.SINGLEPOINT
         assert ozone_input.workflow.correction == Correction.KI
         assert ozone_input.workflow.screening_method == CalculateScreeningMethod.DSCF
-        assert ozone_input.workflow.init_orbitals == VariationalOrbital.KOHN_SHAM
+        assert ozone_input.workflow.init_orbitals == VariationalOrbitalType.KOHN_SHAM
         assert ozone_input.workflow.alpha_numsteps == 1
         assert ozone_input.workflow.pseudo_library == "SG15/1.2/PBE/SR"
 
@@ -141,12 +141,12 @@ class TestBuildSinglepointWorkgraphScopeGuards:
 
     @pytest.mark.parametrize(
         "correction_value",
-        ["kipz", "pkipz", "none", "all"],
+        ["pkipz", "none", "all"],
     )
-    def test_non_ki_correction_raises_notimplemented(
+    def test_unsupported_correction_raises_notimplemented(
         self, ozone_input: KoopmansInput, correction_value: str
     ) -> None:
-        """Only KI is implemented; other corrections should raise NotImplementedError."""
+        """Only KI/KIPZ are implemented; other corrections should raise NotImplementedError."""
         d = ozone_input.model_dump()
         d["workflow"]["correction"] = correction_value
         inp = KoopmansInput.model_validate(d)

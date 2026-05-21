@@ -252,10 +252,13 @@ def _build_singlepoint_workgraph(
 
     workflow = koopmans_input.workflow
     correction = workflow.correction
-    if correction != Correction.KI:
+    supported = {Correction.KI, Correction.KIPZ}
+    if correction not in supported:
         raise NotImplementedError(
             f"correction={correction.value!r} is not yet ported. "
-            f"Only {Correction.KI.value!r} is implemented in the current MVP."
+            f"Supported: {sorted(c.value for c in supported)}. "
+            "PKIPZ requires a perturbative post-processing step; "
+            "NONE / ALL are workflow-control flags."
         )
 
     structure = atoms_input_to_structure(koopmans_input.atoms)
@@ -279,8 +282,8 @@ def _build_singlepoint_workgraph(
         tot_magnetization=_coerce_optional_int(
             koopmans_input.calculator_parameters.tot_magnetization
         ),
-        functional=correction.value,
-        init_orbitals=workflow.init_orbitals.value,
+        correction=correction,
+        init_orbitals=workflow.init_orbitals,
         alpha_numsteps=workflow.alpha_numsteps,
         fix_spin_contamination=workflow.fix_spin_contamination,
         initial_alpha=initial_alpha,

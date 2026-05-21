@@ -466,9 +466,9 @@ raw:
     from_task: graph_inputs
     to_socket: initial_alpha
     to_task: ComputeScreeningParameters
-  - from_socket: functional
+  - from_socket: correction
     from_task: graph_inputs
-    to_socket: functional
+    to_socket: correction
     to_task: ComputeScreeningParameters
   - from_socket: init_orbitals
     from_task: graph_inputs
@@ -526,9 +526,9 @@ raw:
     from_task: count_electrons_task
     to_socket: neldw
     to_task: KIFinal
-  - from_socket: functional
+  - from_socket: correction
     from_task: graph_inputs
-    to_socket: functional
+    to_socket: correction
     to_task: KIFinal
   - from_socket: alphas
     from_task: ComputeScreeningParameters
@@ -613,6 +613,19 @@ raw:
             extras:
               py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
             required: true
+        correction:
+          default: ki
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida_koopmans.types.Correction
+              structured_type:
+                kind: enum
+                path: aiida_koopmans.types.Correction
+            required: true
         ecutrho:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -635,14 +648,6 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
-        functional:
-          default: ki
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            required: false
         init_orbitals:
           default: kohn-sham
           dynamic: false
@@ -650,7 +655,12 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
-            required: false
+            extras:
+              py_type: aiida_koopmans.types.VariationalOrbitalType
+              structured_type:
+                kind: enum
+                path: aiida_koopmans.types.VariationalOrbitalType
+            required: true
         initial_alpha:
           default: 0.6
           dynamic: false
@@ -1512,10 +1522,10 @@ raw:
         alpha_numsteps: 1
         code:
           __aiida_code__: kcp@localhost
+        correction: ki
         ecutrho: 260.0
         ecutwfc: 65.0
         fix_spin_contamination: false
-        functional: ki
         init_orbitals: kohn-sham
         initial_alpha: 0.6
         nbnd: 10
@@ -1559,6 +1569,19 @@ raw:
                 extras:
                   py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: true
+            correction:
+              default: ki
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida_koopmans.types.Correction
+                  structured_type:
+                    kind: enum
+                    path: aiida_koopmans.types.Correction
+                required: true
             ecutrho:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -1581,14 +1604,6 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
-            functional:
-              default: ki
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                required: false
             init_orbitals:
               default: kohn-sham
               dynamic: false
@@ -1596,7 +1611,12 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
-                required: false
+                extras:
+                  py_type: aiida_koopmans.types.VariationalOrbitalType
+                  structured_type:
+                    kind: enum
+                    path: aiida_koopmans.types.VariationalOrbitalType
+                required: true
             initial_alpha:
               default: 0.6
               dynamic: false

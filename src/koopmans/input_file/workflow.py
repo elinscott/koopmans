@@ -3,9 +3,16 @@
 from enum import Enum
 from typing import Annotated, Any, Self
 
+from aiida_koopmans.types import Correction, VariationalOrbitalType
 from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
+
+# Re-export so ``from koopmans.input_file.workflow import Correction``
+# (and ``VariationalOrbitalType``) keeps working — canonical definitions live in
+# ``aiida_koopmans.types`` so the dispatcher can pass enum values
+# across the package boundary without a string round-trip.
+__all__ = ["Correction", "VariationalOrbitalType"]
 
 FloatGE1 = Annotated[float, Field(ge=1.0)]
 
@@ -22,30 +29,11 @@ class Task(Enum):
     TRAJECTORY = "trajectory"
 
 
-class Correction(Enum):
-    """Valid orbital-density-dependent-functional corrections."""
-
-    KI = "ki"
-    KIPZ = "kipz"
-    PKIPZ = "pkipz"
-    NONE = "none"
-    ALL = "all"
-
-
 class CalculateScreeningMethod(Enum):
     """Valid methods for calculating screening parameters."""
 
     DSCF = "dscf"
     DFPT = "dfpt"
-
-
-class VariationalOrbital(Enum):
-    """Valid options for variational orbitals."""
-
-    PZ = "pz"
-    KOHN_SHAM = "kohn-sham"
-    MLWFS = "mlwfs"
-    PROJWFS = "projwfs"
 
 
 class WorkflowConfig(BaseModel):
@@ -66,11 +54,11 @@ class WorkflowConfig(BaseModel):
         default=CalculateScreeningMethod.DSCF,
         description="the method to calculate the screening parameters: either with ΔSCF or DFPT",
     )
-    init_orbitals: VariationalOrbital = Field(
-        default=VariationalOrbital.PZ,
+    init_orbitals: VariationalOrbitalType = Field(
+        default=VariationalOrbitalType.PZ,
         description="which orbitals to use as an initial guess for the variational orbitals",
     )
-    init_empty_orbitals: VariationalOrbital = Field(
+    init_empty_orbitals: VariationalOrbitalType = Field(
         description="which orbitals to use as an initial guess for the empty variational orbitals"
     )
     frozen_orbitals: bool | None = Field(
@@ -192,7 +180,7 @@ class WorkflowConfig(BaseModel):
     ) -> dict[str, Any]:
         """If init_empty_orbitals is not specified, set it to the same value as init_orbitals."""
         if values.get("init_empty_orbitals", None) is None:
-            values["init_empty_orbitals"] = values.get("init_orbitals", VariationalOrbital.PZ)
+            values["init_empty_orbitals"] = values.get("init_orbitals", VariationalOrbitalType.PZ)
         return values
 
     @model_validator(mode="after")
