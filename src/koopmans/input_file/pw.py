@@ -3,8 +3,9 @@
 from typing import Any, Literal, ClassVar
 
 from pydantic import Field, field_validator
-from pydantic_espresso.models.qe_7_4.pw import ControlNamelist as _ControlNamelist
-from pydantic_espresso.models.qe_7_4.pw import ElectronsNamelist, SystemNamelist
+from pydantic_espresso.models.pw.develop import ControlNamelist as _ControlNamelist
+from pydantic_espresso.models.pw.develop import SystemNamelist as _SystemNamelist
+from pydantic_espresso.models.pw.develop import ElectronsNamelist
 
 from koopmans.base import BaseModel
 
@@ -21,6 +22,20 @@ class ControlNamelist(_ControlNamelist):
     def enforce_high_verbosity(cls, v: Any) -> Literal["high"]:
         """High verbosity is required to guarantee that all bands will be printed."""
         return "high"
+
+
+class SystemNamelist(_SystemNamelist):
+    """``SYSTEM`` namelist for ``pw.x`` calculations.
+
+    ``ibrav``, ``nat`` and ``ntyp`` are derived from the input structure, not provided
+    by the user. ``ecutwfc`` is optional at parse time; the dispatcher raises if it is
+    still unset when the workgraph is built.
+    """
+
+    ibrav: ClassVar[int | None] = None  # Exclude this field
+    nat: ClassVar[int | None] = None  # Exclude this field
+    ntyp: ClassVar[int | None] = None  # Exclude this field
+    ecutwfc: float | None = None
 
 
 class PWInputParameters(BaseModel):
