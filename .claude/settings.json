@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run --group tests pytest *)",
+      "Bash(uv run pytest *)",
+      "Bash(.venv/bin/pytest *)",
+      "Bash(verdi -p koopmans process list *)",
+      "Bash(verdi -p koopmans process show *)",
+      "Bash(verdi -p koopmans process report *)",
+      "Bash(verdi -p koopmans calcjob outputcat *)",
+      "Bash(verdi -p koopmans calcjob inputcat *)",
+      "Bash(verdi -p koopmans calcjob outputls *)",
+      "Bash(verdi -p koopmans node show *)",
+      "Bash(verdi -p koopmans node attributes *)",
+      "Bash(verdi -p koopmans code show *)",
+      "Bash(verdi -p koopmans code list *)",
+      "Bash(verdi -p koopmans daemon status *)",
+      "Bash(uv run verdi -p koopmans process list *)",
+      "Bash(uv run verdi -p koopmans process report *)"
+    ]
+  }
+}

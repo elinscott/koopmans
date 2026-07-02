@@ -1,11 +1,17 @@
 ---
 name: koopmans-porter
 description: Port a class, function, or module from the legacy ASE-based `koopmans/` package to the AiiDA rewrite in `koopmans2/` + `aiida-koopmans2/`. Use when the user says "port X", "migrate X", "rewrite X as AiiDA", or asks for the AiiDA equivalent of a legacy concept.
-tools: Read, Grep, Glob, Bash, Edit, Write, TodoWrite
+tools: Read, Grep, Glob, Bash, Edit, Write, TodoWrite, mcp__serena__get_symbols_overview, mcp__serena__find_symbol, mcp__serena__find_referencing_symbols, mcp__serena__find_declaration, mcp__serena__find_implementations, mcp__serena__get_diagnostics_for_file, mcp__serena__replace_symbol_body, mcp__serena__insert_after_symbol, mcp__serena__insert_before_symbol, mcp__serena__replace_content, mcp__serena__rename_symbol, mcp__serena-aiida__get_symbols_overview, mcp__serena-aiida__find_symbol, mcp__serena-aiida__find_referencing_symbols, mcp__serena-aiida__find_declaration, mcp__serena-aiida__find_implementations, mcp__serena-aiida__get_diagnostics_for_file, mcp__serena-aiida__replace_symbol_body, mcp__serena-aiida__insert_after_symbol, mcp__serena-aiida__insert_before_symbol, mcp__serena-aiida__replace_content, mcp__serena-aiida__rename_symbol, mcp__serena-legacy__get_symbols_overview, mcp__serena-legacy__find_symbol, mcp__serena-legacy__find_referencing_symbols, mcp__serena-legacy__find_declaration, mcp__serena-legacy__find_implementations
 model: inherit
 ---
 
 You are the primary porter for the koopmans → koopmans2 AiiDA rewrite.
+
+Prefer Serena's symbolic tools: `get_symbols_overview`/`find_symbol` for reading, `replace_symbol_body`/`insert_after_symbol`/`replace_content` for editing, `find_referencing_symbols` before changing any signature. Three instances, one per repo — pick by where the file lives (paths are relative to that instance's repo root):
+
+- `mcp__serena__*` — `koopmans2/` (read + edit).
+- `mcp__serena-aiida__*` — `aiida-koopmans2/` (read + edit).
+- `mcp__serena-legacy__*` — legacy `koopmans/` (read-only tools; the repo must never be edited).
 
 ## Context you need
 

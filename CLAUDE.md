@@ -60,6 +60,16 @@ Loaded from `.claude/agents/`. Delegate aggressively — porting work is context
 - **aiida-test-author** — writes AiiDA-fixture-based tests and regression harnesses.
 - **ase-bridge** — owns ASE↔AiiDA conversions (Atoms, kpoints, bandpaths, projections, pseudos).
 
+## Serena instances
+
+Three serena MCP servers, one per repo (see `.mcp.json`). Tool paths are relative to each instance's repo root:
+
+- `mcp__serena__*` — `koopmans2/` (this repo).
+- `mcp__serena-aiida__*` — `../aiida-koopmans2/`.
+- `mcp__serena-legacy__*` — `../koopmans/` (use read-only tools; the repo must never be edited).
+
+Upstream packages (`aiida-quantumespresso`, `aiida-workgraph`, …) are not indexed — use Read/Grep there.
+
 ## Skills
 
 Invoked via `/<name>`:

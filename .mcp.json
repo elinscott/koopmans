@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "serena-legacy": {
+      "command": "serena",
+      "args": [
+        "start-mcp-server",
+        "--context",
+        "claude-code",
+        "--project",
+        "/home/linsco_e/code/koopmans"
+      ]
+    },
+    "serena-aiida": {
+      "command": "serena",
+      "args": [
+        "start-mcp-server",
+        "--context",
+        "claude-code",
+        "--project",
+        "/home/linsco_e/code/aiida-koopmans2"
+      ]
+    }
+  }
+}
