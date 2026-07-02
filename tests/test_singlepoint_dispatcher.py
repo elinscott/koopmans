@@ -9,7 +9,6 @@ import pytest
 from koopmans.aiida.workflows import (
     _build_singlepoint_workgraph,
     _extract_kcp_scalar_inputs,
-    build_workgraph,
     load_codes_for_task,
 )
 from koopmans.input_file import KoopmansInput, read_input_file
@@ -172,17 +171,3 @@ class TestProfileRequired:
 
         with pytest.raises(NotImplementedError, match=r"screening_method=.*dfpt"):
             load_codes_for_task(inp.workflow)
-
-    @pytest.mark.skip(reason="requires loaded AiiDA profile with pw.x code")
-    def test_build_workgraph_kipz_raises_notimplemented(self, ozone_input: KoopmansInput) -> None:
-        """``build_workgraph`` with KIPZ correction should raise ``NotImplementedError``.
-
-        The dispatcher calls ``load_codes_for_task`` first, which requires a
-        profile (pw.x lookup), so this test is skipped until we have one.
-        """
-        d = ozone_input.model_dump()
-        d["workflow"]["correction"] = "kipz"
-        inp = KoopmansInput.model_validate(d)
-
-        with pytest.raises(NotImplementedError, match="correction="):
-            build_workgraph(inp)
