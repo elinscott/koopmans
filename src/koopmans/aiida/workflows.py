@@ -57,12 +57,11 @@ def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]
     # All tasks need pw.x
     codes["pw"] = _load_code("pw", "pw.x")
 
-    # Singlepoint with a Koopmans correction needs a screening-method-specific code.
-    if (
-        task == Task.SINGLEPOINT
-        and workflow.correction != Correction.NONE
-        and workflow.calculate_alpha
-    ):
+    # Singlepoint with a Koopmans correction needs a screening-method-specific
+    # code regardless of ``calculate_alpha``: when alphas are guessed instead
+    # of computed, kcp.x/kcw.x still evaluate the corrected functional — only
+    # the screening step itself is skipped.
+    if task == Task.SINGLEPOINT and workflow.correction != Correction.NONE:
         if workflow.screening_method == CalculateScreeningMethod.DSCF:
             codes["kcp"] = _load_code("kcp", "kcp.x")
         elif workflow.screening_method == CalculateScreeningMethod.DFPT:
@@ -240,7 +239,10 @@ def _build_singlepoint_workgraph(
 
     workflow = koopmans_input.workflow
 
-    if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
+    # DFPT routes on the screening method alone: calculate_alpha = False is
+    # the alpha_guess path inside the DFPT builder (screen step skipped),
+    # not a reason to fall through to the kcp.x/DSCF branch.
+    if workflow.screening_method == CalculateScreeningMethod.DFPT:
         return _build_singlepoint_dfpt_workgraph(koopmans_input, codes)
 
     correction = workflow.correction
