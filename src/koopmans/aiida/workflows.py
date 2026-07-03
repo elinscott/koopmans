@@ -23,6 +23,17 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
+def _load_code(name: str, executable: str) -> orm.AbstractCode:
+    """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
+    try:
+        return orm.load_code(f"{name}@localhost")
+    except Exception as exc:
+        raise ValueError(
+            f"Could not load {executable} code: {exc}\n"
+            "Please run 'koopmans install' first to set up the AiiDA backend."
+        ) from exc
+
+
 def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]:
     """Load the AiiDA codes required by the workflow described in ``workflow``.
 
@@ -44,13 +55,7 @@ def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]
     codes: dict[str, orm.AbstractCode] = {}
 
     # All tasks need pw.x
-    try:
-        codes["pw"] = orm.load_code("pw@localhost")
-    except Exception as exc:
-        raise ValueError(
-            f"Could not load pw.x code: {exc}\n"
-            "Please run 'koopmans install' first to set up the AiiDA backend."
-        ) from exc
+    codes["pw"] = _load_code("pw", "pw.x")
 
     # Singlepoint with a Koopmans correction needs a screening-method-specific code.
     if (
@@ -59,37 +64,16 @@ def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]
         and workflow.calculate_alpha
     ):
         if workflow.screening_method == CalculateScreeningMethod.DSCF:
-            try:
-                codes["kcp"] = orm.load_code("kcp@localhost")
-            except Exception as exc:
-                raise ValueError(
-                    f"Could not load kcp.x code: {exc}\n"
-                    "Please run 'koopmans install' first to set up the AiiDA backend."
-                ) from exc
-        else:
-            raise NotImplementedError(
-                f"screening_method={workflow.screening_method.value!r} is not yet "
-                f"ported. Only {CalculateScreeningMethod.DSCF.value!r} (which uses "
-                "kcp.x) is implemented."
-            )
+            codes["kcp"] = _load_code("kcp", "kcp.x")
+        elif workflow.screening_method == CalculateScreeningMethod.DFPT:
+            # kcw.x runs all three DFPT steps (wann2kc, screen, ham) selected
+            # via its ``control.calculation`` flag, so a single code suffices.
+            codes["kcw"] = _load_code("kcw", "kcw.x")
 
     # Wannierize task needs additional codes
     if task == Task.WANNIERIZE:
-        try:
-            codes["pw2wannier90"] = orm.load_code("pw2wannier90@localhost")
-        except Exception as exc:
-            raise ValueError(
-                f"Could not load pw2wannier90.x code: {exc}\n"
-                "Please run 'koopmans install' first to set up the AiiDA backend."
-            ) from exc
-
-        try:
-            codes["wannier90"] = orm.load_code("wannier90@localhost")
-        except Exception as exc:
-            raise ValueError(
-                f"Could not load wannier90.x code: {exc}\n"
-                "Please run 'koopmans install' first to set up the AiiDA backend."
-            ) from exc
+        codes["pw2wannier90"] = _load_code("pw2wannier90", "pw2wannier90.x")
+        codes["wannier90"] = _load_code("wannier90", "wannier90.x")
 
         # TODO: projwfc is only needed when the Wannierize flow computes a
         # projected DOS / bandstructure. Silently swallowing the lookup error
@@ -168,11 +152,13 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         return _build_wannierize_workgraph(koopmans_input, codes)
     elif task == Task.SINGLEPOINT:
         return _build_singlepoint_workgraph(koopmans_input, codes)
+    elif task == Task.TRAJECTORY:
+        return _build_trajectory_workgraph(koopmans_input, codes)
     else:
         raise ValueError(
             f"Task '{task.value}' is not yet implemented. "
             f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-            f"{Task.SINGLEPOINT.value}"
+            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}"
         )
 
 
@@ -241,16 +227,22 @@ def _build_singlepoint_workgraph(
 ) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
 
-    Dispatches on ``workflow.correction``:
+    Dispatches on ``workflow.screening_method`` first (DSCF vs DFPT), then on
+    ``workflow.correction``:
 
-    - ``KI`` → ``KoopmansDSCFWorkflow`` (MVP: DFT init + KI correction, two kcp.x calls)
-    - ``KIPZ``, ``PKIPZ``, ``NONE``, ``ALL`` → ``NotImplementedError`` (not yet ported)
+    - DSCF + ``KI``/``KIPZ`` → ``KoopmansDSCFWorkflow`` (kcp.x)
+    - DFPT → ``_build_singlepoint_dfpt_workgraph`` (kcw.x)
+    - ``PKIPZ``, ``NONE``, ``ALL`` → ``NotImplementedError`` (not yet ported)
     """
     from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
 
     from koopmans.aiida.setup import ensure_pseudo_family_installed
 
     workflow = koopmans_input.workflow
+
+    if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
+        return _build_singlepoint_dfpt_workgraph(koopmans_input, codes)
+
     correction = workflow.correction
     supported = {Correction.KI, Correction.KIPZ}
     if correction not in supported:
@@ -289,6 +281,38 @@ def _build_singlepoint_workgraph(
         initial_alpha=initial_alpha,
         spin_polarized=workflow.spin_polarized,
         orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
+    )
+
+
+def _build_singlepoint_dfpt_workgraph(
+    koopmans_input: KoopmansInput,
+    codes: dict[str, orm.AbstractCode],
+) -> WorkGraph:
+    """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
+
+    Will assemble the DFPT chain (wannierize → wann2kc → screen → ham) from
+    ``aiida_koopmans.workgraphs.dfpt`` once that port lands.
+    """
+    raise NotImplementedError(
+        "DFPT screening is not yet ported. The workgraph will live in "
+        "aiida_koopmans.workgraphs.dfpt (legacy reference: "
+        "koopmans/workflows/_koopmans_dfpt.py)."
+    )
+
+
+def _build_trajectory_workgraph(
+    koopmans_input: KoopmansInput,
+    codes: dict[str, orm.AbstractCode],
+) -> WorkGraph:
+    """Build a workgraph for a trajectory (machine-learning train/predict) task.
+
+    Will assemble the per-snapshot fan-out from ``aiida_koopmans.workgraphs.ml``
+    once that port lands.
+    """
+    raise NotImplementedError(
+        "The trajectory (ML) task is not yet ported. The workgraph will live in "
+        "aiida_koopmans.workgraphs.ml (legacy reference: "
+        "koopmans/workflows/_trajectory.py and koopmans/ml/)."
     )
 
 
