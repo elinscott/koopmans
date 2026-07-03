@@ -304,15 +304,119 @@ def _build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
     codes: dict[str, orm.AbstractCode],
 ) -> WorkGraph:
-    """Build a workgraph for a trajectory (machine-learning train/predict) task.
+    """Build a workgraph for a trajectory (machine-learning train/test) task.
 
-    Will assemble the per-snapshot fan-out from ``aiida_koopmans.workgraphs.ml``
-    once that port lands.
+    Fans the snapshots out over per-snapshot ``KoopmansDSCFWorkflow`` runs via
+    ``aiida_koopmans.workgraphs.ml.TrajectoryWorkflow`` and, depending on the
+    ``ml`` configuration, trains a screening-parameter model on the computed
+    alphas (``ml:train``) or scores an existing model against them
+    (``ml:test``).
+
+    Current limitations (raise ``NotImplementedError`` / ``ValueError``):
+
+    - ``ml:predict`` needs per-orbital alpha injection, which the frozen
+      ``KoopmansDSCFWorkflow`` interface does not support.
+    - Only the ``self_hartree`` descriptor is wired; ``orbital_density``
+      needs kcp.x orbital-density retrieval.
+    - Multi-snapshot (xyz trajectory) input is not representable in the
+      ``KoopmansInput`` schema yet, so the single input structure is run as
+      a one-snapshot trajectory.
     """
-    raise NotImplementedError(
-        "The trajectory (ML) task is not yet ported. The workgraph will live in "
-        "aiida_koopmans.workgraphs.ml (legacy reference: "
-        "koopmans/workflows/_trajectory.py and koopmans/ml/)."
+    from json import load as json_load
+
+    from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
+
+    from koopmans.aiida.setup import ensure_pseudo_family_installed
+    from koopmans.input_file.ml import MLConfig
+
+    workflow = koopmans_input.workflow
+
+    if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
+        raise NotImplementedError(
+            "The trajectory task only supports DSCF screening (kcp.x); DFPT screening "
+            "is not ported for trajectories."
+        )
+
+    correction = workflow.correction
+    supported = {Correction.KI, Correction.KIPZ}
+    if correction not in supported:
+        raise NotImplementedError(
+            f"correction={correction.value!r} is not yet ported. "
+            f"Supported: {sorted(c.value for c in supported)}."
+        )
+
+    # The ``ml`` block (``koopmans.input_file.ml.MLConfig``) is not attached to
+    # the ``KoopmansInput`` schema yet; fall back to defaults so this wiring is
+    # already correct once the schema gains the field.
+    ml_config = getattr(koopmans_input, "ml", None) or MLConfig()
+
+    if ml_config.predict:
+        raise NotImplementedError(
+            "ml:predict is not yet supported: injecting per-orbital predicted alphas "
+            "(and skipping the Delta-SCF refinement) requires an extension of the "
+            "KoopmansDSCFWorkflow interface, which currently accepts only a scalar "
+            "initial_alpha."
+        )
+    if (ml_config.train or ml_config.test) and ml_config.descriptor != "self_hartree":
+        raise NotImplementedError(
+            f"ml:descriptor={ml_config.descriptor!r} is not yet supported: the "
+            "orbital_density (power-spectrum) descriptor requires retrieving the "
+            "trial KI's real-space orbital densities from kcp.x. Use "
+            "ml:descriptor='self_hartree'."
+        )
+    ml_mode = "train" if ml_config.train else "test" if ml_config.test else "none"
+
+    ml_model = None
+    if ml_mode == "test":
+        if ml_config.model_file is None:
+            raise ValueError(
+                "ml:test requires ml:model_file (the JSON model produced by an ml:train run)."
+            )
+        with open(ml_config.model_file) as handle:
+            ml_model = json_load(handle)
+
+    structure = atoms_input_to_structure(koopmans_input.atoms)
+    pseudo_family = workflow.pseudo_library
+    ensure_pseudo_family_installed(pseudo_family)
+
+    ecutwfc, ecutrho, nbnd, nspin = _extract_kcp_scalar_inputs(koopmans_input)
+
+    initial_alpha = (
+        workflow.alpha_guess if isinstance(workflow.alpha_guess, float) else workflow.alpha_guess[0]
+    )
+
+    # The input schema cannot express multiple snapshots yet (legacy read them
+    # from an ``atomic_positions: {snapshots: file.xyz}`` entry), so run the
+    # single input structure as a one-snapshot trajectory.
+    snapshots = {"snapshot_1": structure}
+
+    # ``load_codes_for_task`` has no trajectory branch yet (it is shared with
+    # other porting streams), so load kcp.x here when it wasn't provided.
+    kcp_code = codes.get("kcp") or _load_code("kcp", "kcp.x")
+
+    return TrajectoryWorkflow.build(
+        code=kcp_code,
+        snapshots=snapshots,
+        pseudo_family=pseudo_family,
+        ecutwfc=ecutwfc,
+        ecutrho=ecutrho,
+        nbnd=nbnd,
+        nspin=nspin,
+        tot_magnetization=_coerce_optional_int(
+            koopmans_input.calculator_parameters.tot_magnetization
+        ),
+        correction=correction,
+        init_orbitals=workflow.init_orbitals,
+        alpha_numsteps=workflow.alpha_numsteps,
+        fix_spin_contamination=workflow.fix_spin_contamination,
+        initial_alpha=initial_alpha,
+        spin_polarized=workflow.spin_polarized,
+        orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
+        ml_mode=ml_mode,
+        ml_model=ml_model,
+        estimator=ml_config.estimator,
+        descriptor=ml_config.descriptor,
+        occ_and_emp_together=ml_config.occ_and_emp_together,
     )
 
 
