@@ -19,6 +19,7 @@ from koopmans.input_file.cell_parameters import (
     CellParametersViaVectors,
 )
 from koopmans.input_file.kcp import KCPInputParameters
+from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.ui import UnfoldAndInterpolateConfig
@@ -113,6 +114,10 @@ class KoopmansInput(BaseModel):
     )
     calculator_parameters: CalculatorParametersInput = Field(
         description="Parameters for the individual electronic structure calculators (``pw.x``, etc...)"
+    )
+    ml: MLConfig = Field(
+        default_factory=lambda: MLConfig(),
+        description="Machine-learning configuration for predicting screening parameters",
     )
 
     @classmethod

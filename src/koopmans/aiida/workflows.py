@@ -57,11 +57,12 @@ def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]
     # All tasks need pw.x
     codes["pw"] = _load_code("pw", "pw.x")
 
-    # Singlepoint with a Koopmans correction needs a screening-method-specific
-    # code regardless of ``calculate_alpha``: when alphas are guessed instead
+    # A corrected singlepoint — or a trajectory, which runs one DSCF
+    # singlepoint per snapshot — needs a screening-method-specific code
+    # regardless of ``calculate_alpha``: when alphas are guessed instead
     # of computed, kcp.x/kcw.x still evaluate the corrected functional — only
     # the screening step itself is skipped.
-    if task == Task.SINGLEPOINT and workflow.correction != Correction.NONE:
+    if task in (Task.SINGLEPOINT, Task.TRAJECTORY) and workflow.correction != Correction.NONE:
         if workflow.screening_method == CalculateScreeningMethod.DSCF:
             codes["kcp"] = _load_code("kcp", "kcp.x")
         elif workflow.screening_method == CalculateScreeningMethod.DFPT:
@@ -420,7 +421,6 @@ def _build_trajectory_workgraph(
     from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
 
     from koopmans.aiida.setup import ensure_pseudo_family_installed
-    from koopmans.input_file.ml import MLConfig
 
     workflow = koopmans_input.workflow
 
@@ -438,10 +438,7 @@ def _build_trajectory_workgraph(
             f"Supported: {sorted(c.value for c in supported)}."
         )
 
-    # The ``ml`` block (``koopmans.input_file.ml.MLConfig``) is not attached to
-    # the ``KoopmansInput`` schema yet; fall back to defaults so this wiring is
-    # already correct once the schema gains the field.
-    ml_config = getattr(koopmans_input, "ml", None) or MLConfig()
+    ml_config = koopmans_input.ml
 
     if ml_config.predict:
         raise NotImplementedError(
@@ -483,12 +480,8 @@ def _build_trajectory_workgraph(
     # single input structure as a one-snapshot trajectory.
     snapshots = {"snapshot_1": structure}
 
-    # ``load_codes_for_task`` has no trajectory branch yet (it is shared with
-    # other porting streams), so load kcp.x here when it wasn't provided.
-    kcp_code = codes.get("kcp") or _load_code("kcp", "kcp.x")
-
     return TrajectoryWorkflow.build(
-        code=kcp_code,
+        code=codes["kcp"],
         snapshots=snapshots,
         pseudo_family=pseudo_family,
         ecutwfc=ecutwfc,

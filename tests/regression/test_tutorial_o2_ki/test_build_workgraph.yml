@@ -89,6 +89,9 @@ raw:
       graph_ctx: []
       graph_inputs: []
       graph_outputs:
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - ComputeScreeningParameters
       - KIFinal
       - KIFinal
       - KIFinal
@@ -103,6 +106,9 @@ raw:
       - KIFinal
       - KIFinal
       - KIFinal
+      - graph_outputs
+      - graph_outputs
+      - graph_outputs
       KIFinal:
       - graph_outputs
       - graph_outputs
@@ -197,6 +203,7 @@ raw:
       graph_outputs:
         children: []
         input_tasks:
+        - ComputeScreeningParameters
         - KIFinal
       resolve_pseudo_family_task:
         children: []
@@ -437,6 +444,18 @@ raw:
   - from_socket: remote_folder
     from_task: KIFinal
     to_socket: remote_folder
+    to_task: graph_outputs
+  - from_socket: alphas
+    from_task: ComputeScreeningParameters
+    to_socket: alphas
+    to_task: graph_outputs
+  - from_socket: alphas.filled
+    from_task: ComputeScreeningParameters
+    to_socket: alphas.filled
+    to_task: graph_outputs
+  - from_socket: alphas.empty
+    from_task: ComputeScreeningParameters
+    to_socket: alphas.empty
     to_task: graph_outputs
   max_iteration: 1000000
   max_number_jobs: 1000000
@@ -958,6 +977,25 @@ raw:
     outputs:
       dynamic: false
       fields:
+        alphas:
+          dynamic: false
+          fields:
+            empty:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+            filled:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            required: true
         bare_lambdas:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1800,6 +1838,25 @@ raw:
         inputs:
           dynamic: false
           fields:
+            alphas:
+              dynamic: false
+              fields:
+                empty:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+                filled:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
             bare_lambdas:
               dynamic: false
               identifier: <scrubbed:identifier>
