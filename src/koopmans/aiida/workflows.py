@@ -290,13 +290,104 @@ def _build_singlepoint_dfpt_workgraph(
 ) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
 
-    Will assemble the DFPT chain (wannierize → wann2kc → screen → ham) from
-    ``aiida_koopmans.workgraphs.dfpt`` once that port lands.
+    Assembles the full chain (scf + nscf → per-manifold wannierization →
+    wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPT``.
+
+    MVP restrictions (mirroring the ``SinglepointDFPT`` scope): periodic,
+    spin-unpolarized, MLWF/projwf variational orbitals, and explicit
+    projections forming exactly one occupied manifold block plus at most one
+    empty block (the legacy multi-block merge machinery is not yet ported).
     """
-    raise NotImplementedError(
-        "DFPT screening is not yet ported. The workgraph will live in "
-        "aiida_koopmans.workgraphs.dfpt (legacy reference: "
-        "koopmans/workflows/_koopmans_dfpt.py)."
+    from aiida_koopmans.workgraphs.dfpt import (
+        SinglepointDFPT,
+        derive_dfpt_manifolds,
+        normalize_alpha_guess,
+    )
+
+    from koopmans.aiida.conversion import (
+        get_pseudos_from_family,
+        kpoints_input_to_kpoints_mesh,
+        kpoints_input_to_kpoints_path,
+    )
+    from koopmans.input_file.workflow import VariationalOrbitalType
+
+    workflow = koopmans_input.workflow
+
+    if workflow.spin_polarized:
+        raise NotImplementedError(
+            "Spin-polarized DFPT screening is not yet ported (needs the per-spin "
+            "wann2kc/screen/ham fan-out; legacy: _koopmans_dfpt.py spin_components loop)."
+        )
+    if workflow.init_orbitals not in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    ):
+        raise NotImplementedError(
+            "DFPT screening is only ported for Wannier-function variational orbitals "
+            "(init_orbitals = 'mlwfs' or 'projwfs'). The molecular kcw_at_ks path is "
+            "not yet wired."
+        )
+    if getattr(koopmans_input.kpoints, "gamma_only", False):
+        raise NotImplementedError(
+            "Gamma-only DFPT (isolated systems) is not yet ported; provide a k-point grid."
+        )
+    if isinstance(workflow.eps_inf, str):
+        raise NotImplementedError(
+            "eps_inf = 'auto' (computing the dielectric constant with ph.x) is not "
+            "yet ported; provide a numeric value."
+        )
+
+    structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
+
+    # Electron count from the pseudopotential valences: fixes the size of the
+    # occupied manifold (legacy: pseudopotentials.nelec_from_pseudos).
+    pseudos = get_pseudos_from_family(pseudo_family, structure)
+    nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
+
+    calc_params = koopmans_input.calculator_parameters
+    nbnd = calc_params.nbnd if calc_params.nbnd is not None else calc_params.pw.system.nbnd
+
+    occ_block, emp_block, has_disentangle, n_orbitals = derive_dfpt_manifolds(
+        structure=structure,
+        projection_blocks=calc_params.wannier90.projections,
+        nelec=nelec,
+        nbnd=int(nbnd) if nbnd is not None else None,
+    )
+
+    alpha_guess = (
+        None
+        if workflow.calculate_alpha
+        else normalize_alpha_guess(workflow.alpha_guess, n_orbitals)
+    )
+
+    bands_kpoints = (
+        kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
+        if koopmans_input.kpoints.path is not None
+        else None
+    )
+
+    # The wannierization steps need codes that load_codes_for_task only wires
+    # for the WANNIERIZE task; load them here until it grows a DFPT branch.
+    codes = dict(codes)
+    codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
+    codes.setdefault("pw2wannier90", _load_code("pw2wannier90", "pw2wannier90.x"))
+
+    return SinglepointDFPT.build(
+        codes=codes,
+        structure=structure,
+        occ_block=occ_block,
+        emp_block=emp_block,
+        kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
+        kgrid=list(koopmans_input.kpoints.grid),
+        bands_kpoints=bands_kpoints,
+        pseudo_family=pseudo_family,
+        overrides=overrides,
+        # eps_inf is FloatGE1 | None after the 'auto' guard above; l_vcut is
+        # the Gygi-Baldereschi flag (None -> the periodic default, on).
+        eps_inf=workflow.eps_inf,
+        alpha_guess=alpha_guess,
+        has_disentangle=has_disentangle,
+        l_vcut=workflow.gb_correction,
     )
 
 
