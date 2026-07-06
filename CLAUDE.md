@@ -90,5 +90,6 @@ Invoked via `/<name>`:
 
 - Input file parsing (`input_file/`): ~95% ported.
 - Dispatcher (`aiida/workflows.py`): covers `DFT_BANDS`, `WANNIERIZE`, `SINGLEPOINT` (DSCF via kcp.x with KI/KIPZ; DFPT via kcw.x), and `TRAJECTORY` (ML train/test, `self_hartree` descriptor).
-- Known gaps (raise `NotImplementedError` with pointers in `aiida/workflows.py`): corrections `PKIPZ`/`NONE`/`ALL`; spin-polarized DFPT; gamma-only DFPT; `eps_inf='auto'` (ph.x); `ml:predict`; `orbital_density` descriptor; multi-snapshot trajectory input.
+- Spin: `workflow.spin` takes aiida-quantumespresso's `SpinType` (`none`/`collinear`/`non_collinear`/`spin_orbit`). DFPT supports all four regimes (collinear fans out per channel; noncollinear runs the spinor chain — QE reference `KCW/examples/example05.1`); the kcp.x streams support `none`/`collinear` only.
+- Known gaps (raise `NotImplementedError` with pointers in `aiida/workflows.py`): corrections `PKIPZ`/`NONE`/`ALL`; gamma-only DFPT; `eps_inf='auto'` (ph.x); `ml:predict`; `orbital_density` descriptor; multi-snapshot trajectory input; multi-block manifold merging (u/hr/centres merge machinery).
 - Active branch: `core_functionality`.
