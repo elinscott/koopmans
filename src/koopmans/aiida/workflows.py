@@ -308,6 +308,17 @@ def _build_singlepoint_workgraph(
 
     inputs = _kcp_dscf_inputs(koopmans_input)
 
+    if workflow.calculate_bands and workflow.init_orbitals not in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    ):
+        raise NotImplementedError(
+            "calculate_bands=True on the DSCF stream is only wired for the "
+            "Wannier-initialised periodic route (init_orbitals='mlwfs' / 'projwfs'): "
+            "the unfold-and-interpolate stage needs the per-block Wannier "
+            "Hamiltonians and centres."
+        )
+
     extra_kwargs: dict[str, Any] = {}
     if workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
@@ -430,6 +441,7 @@ def _dscf_wannier_init_inputs(
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
         kpoints_input_to_kpoints_mesh,
+        kpoints_input_to_kpoints_path,
     )
 
     workflow = koopmans_input.workflow
@@ -492,7 +504,7 @@ def _dscf_wannier_init_inputs(
     wannier_codes.setdefault("wann2kcp", _load_code("wann2kcp", "wann2kcp.x"))
     wannier_codes.setdefault("merge_evc", _load_code("merge_evc", "merge_evc.x"))
 
-    return {
+    inputs: dict[str, Any] = {
         "codes": wannier_codes,
         "blocks": blocks,
         "kgrid": list(kpoints_input.grid),
@@ -502,6 +514,34 @@ def _dscf_wannier_init_inputs(
         "mp_correction": workflow.mp_correction,
         "eps_inf": workflow.eps_inf,
     }
+
+    # Band-structure interpolation (legacy unfold-and-interpolate,
+    # ``_koopmans_dscf.py:342-369``): the k-path + the legacy ``ui``
+    # calculator knobs + the DOS plotting block. Mirrors the DFPT
+    # dispatcher's bands gating: an explicit ``kpoints.path`` is required.
+    if workflow.calculate_bands:
+        if kpoints_input.path is None:
+            raise ValueError(
+                "calculate_bands=True needs a band path for the interpolated band "
+                "structure: set `kpoints.path` (e.g. 'GXG')."
+            )
+        ui = calc_params.unfold_and_interpolate
+        inputs.update(
+            {
+                "calculate_bands": True,
+                "kpath": kpoints_input_to_kpoints_path(kpoints_input, structure),
+                "ui_parameters": {
+                    "do_map": ui.do_map,
+                    "use_ws_distance": ui.use_ws_distance,
+                    "w90_input_sc": ui.wannier90_input_sc or ui.wannier90_calc == "sc",
+                    "do_dos": ui.do_dos,
+                    "smooth_int_factor": list(ui.smooth_int_factor),
+                },
+                "plotting": koopmans_input.plotting.model_dump(),
+            }
+        )
+
+    return inputs
 
 
 def _build_singlepoint_dfpt_workgraph(

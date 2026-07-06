@@ -4,23 +4,23 @@ raw:
   connectivity:
     child_node:
       ComputeScreeningParameters:
-      - RunFinalKI
+      - KIFinal
       - graph_outputs
-      RunFinalKI:
+      KIFinal:
       - graph_outputs
       count_electrons_task:
       - ComputeScreeningParameters
-      - RunFinalKI
+      - KIFinal
       - dft_init
       - graph_outputs
       dft_init:
       - ComputeScreeningParameters
-      - RunFinalKI
+      - KIFinal
       - graph_outputs
       graph_ctx: []
       graph_inputs:
       - ComputeScreeningParameters
-      - RunFinalKI
+      - KIFinal
       - count_electrons_task
       - dft_init
       - graph_outputs
@@ -28,7 +28,7 @@ raw:
       graph_outputs: []
       resolve_pseudo_family_task:
       - ComputeScreeningParameters
-      - RunFinalKI
+      - KIFinal
       - count_electrons_task
       - dft_init
       - graph_outputs
@@ -52,7 +52,7 @@ raw:
       - graph_inputs
       - graph_inputs
       - resolve_pseudo_family_task
-      RunFinalKI:
+      KIFinal:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
@@ -60,6 +60,7 @@ raw:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
+      - graph_inputs
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -92,24 +93,26 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
       resolve_pseudo_family_task:
       - graph_inputs
       - graph_inputs
     output_node:
       ComputeScreeningParameters:
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
       - graph_outputs
       - graph_outputs
       - graph_outputs
-      RunFinalKI:
+      KIFinal:
+      - graph_outputs
       - graph_outputs
       - graph_outputs
       - graph_outputs
@@ -119,9 +122,9 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
+      - KIFinal
+      - KIFinal
+      - KIFinal
       - dft_init
       - dft_init
       - dft_init
@@ -142,14 +145,15 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
-      - RunFinalKI
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
+      - KIFinal
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
@@ -165,7 +169,7 @@ raw:
       graph_outputs: []
       resolve_pseudo_family_task:
       - ComputeScreeningParameters
-      - RunFinalKI
+      - KIFinal
       - count_electrons_task
       - dft_init
     zone:
@@ -176,7 +180,7 @@ raw:
         - dft_init
         - graph_inputs
         - resolve_pseudo_family_task
-      RunFinalKI:
+      KIFinal:
         children: []
         input_tasks:
         - ComputeScreeningParameters
@@ -204,7 +208,7 @@ raw:
         children: []
         input_tasks:
         - ComputeScreeningParameters
-        - RunFinalKI
+        - KIFinal
       resolve_pseudo_family_task:
         children: []
         input_tasks:
@@ -364,86 +368,94 @@ raw:
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: structure
     from_task: graph_inputs
     to_socket: structure
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: _outputs
     from_task: resolve_pseudo_family_task
     to_socket: pseudos
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: ecutwfc
     from_task: graph_inputs
     to_socket: ecutwfc
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: ecutrho
     from_task: graph_inputs
     to_socket: ecutrho
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: nbnd
     from_task: graph_inputs
     to_socket: nbnd
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: nspin
     from_task: graph_inputs
     to_socket: nspin
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: nelec
     from_task: count_electrons_task
     to_socket: nelec
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: nelup
     from_task: count_electrons_task
     to_socket: nelup
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: neldw
     from_task: count_electrons_task
     to_socket: neldw
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: tot_magnetization
     from_task: graph_inputs
     to_socket: tot_magnetization
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: correction
     from_task: graph_inputs
     to_socket: correction
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: alphas
     from_task: ComputeScreeningParameters
     to_socket: alphas
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: alphas.filled
     from_task: ComputeScreeningParameters
     to_socket: alphas.filled
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: alphas.empty
     from_task: ComputeScreeningParameters
     to_socket: alphas.empty
-    to_task: RunFinalKI
+    to_task: KIFinal
   - from_socket: trial_remote
     from_task: ComputeScreeningParameters
     to_socket: parent_folder
-    to_task: RunFinalKI
+    to_task: KIFinal
+  - from_socket: calculate_bands
+    from_task: graph_inputs
+    to_socket: write_hr
+    to_task: KIFinal
   - from_socket: parameters
-    from_task: RunFinalKI
+    from_task: KIFinal
     to_socket: parameters
     to_task: graph_outputs
   - from_socket: eigenvalues
-    from_task: RunFinalKI
+    from_task: KIFinal
     to_socket: eigenvalues
     to_task: graph_outputs
   - from_socket: lambdas
-    from_task: RunFinalKI
+    from_task: KIFinal
     to_socket: lambdas
     to_task: graph_outputs
   - from_socket: bare_lambdas
-    from_task: RunFinalKI
+    from_task: KIFinal
     to_socket: bare_lambdas
     to_task: graph_outputs
   - from_socket: remote_folder
-    from_task: RunFinalKI
+    from_task: KIFinal
     to_socket: remote_folder
+    to_task: graph_outputs
+  - from_socket: retrieved
+    from_task: KIFinal
+    to_socket: retrieved
     to_task: graph_outputs
   - from_socket: alphas
     from_task: ComputeScreeningParameters
@@ -496,6 +508,14 @@ raw:
             child_default_link_limit: 1
             required: false
         blocks:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        calculate_bands:
+          default: false
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -615,6 +635,15 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
+            required: false
+        kpath:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
         kpoints:
           dynamic: false
@@ -1019,6 +1048,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        plotting:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         pseudo_family:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1042,6 +1078,13 @@ raw:
             child_default_link_limit: 1
             required: true
         tot_magnetization:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        ui_parameters:
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -1089,6 +1132,20 @@ raw:
           meta:
             child_default_link_limit: 1
             required: true
+        band_structure:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.bands.BandsData
+            required: false
+        band_structure_reference:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            required: false
         bare_lambdas:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1097,6 +1154,14 @@ raw:
             extras:
               py_type: numpy.ndarray
             required: true
+        dos:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.xy.XyData
+            required: false
         eigenvalues:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1127,6 +1192,14 @@ raw:
             extras:
               py_type: aiida.orm.nodes.data.remote.base.RemoteData
             required: true
+        retrieved:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.folder.FolderData
+            required: false
       identifier: <scrubbed:identifier>
       meta:
         call_role: return
@@ -1185,7 +1258,7 @@ raw:
       state: PLANNED
       uuid: <scrubbed:uuid>
       wait: []
-    RunFinalKI:
+    KIFinal:
       action: ''
       children: []
       description: ''
@@ -1194,11 +1267,12 @@ raw:
       hash: <scrubbed:hash>
       identifier: <scrubbed:identifier>
       input_socket_meta: {}
-      inputs: {}
+      inputs:
+        write_hr: false
       log: ''
       metadata:
         pk: <scrubbed:pk>
-      name: RunFinalKI
+      name: KIFinal
       parent_task:
       - null
       position:
@@ -1211,7 +1285,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: RunFinalKI
+          callable_name: KIFinal
           graph_data: null
           metadata: null
           mode: module
@@ -1311,7 +1385,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: InitializeOrbitals
+          callable_name: DFTInitialization
           graph_data: null
           metadata: null
           mode: module
@@ -1378,6 +1452,7 @@ raw:
       input_socket_meta: {}
       inputs:
         alpha_numsteps: 2
+        calculate_bands: false
         code:
           __aiida_code__: kcp@localhost
         correction: ki
@@ -1422,6 +1497,14 @@ raw:
                 child_default_link_limit: 1
                 required: false
             blocks:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            calculate_bands:
+              default: false
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -1541,6 +1624,15 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                required: false
+            kpath:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             kpoints:
               dynamic: false
@@ -1945,6 +2037,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
+            plotting:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             pseudo_family:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -1968,6 +2067,13 @@ raw:
                 child_default_link_limit: 1
                 required: true
             tot_magnetization:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            ui_parameters:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2046,6 +2152,20 @@ raw:
               meta:
                 child_default_link_limit: 1
                 required: true
+            band_structure:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.bands.BandsData
+                required: false
+            band_structure_reference:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
             bare_lambdas:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2054,6 +2174,14 @@ raw:
                 extras:
                   py_type: numpy.ndarray
                 required: true
+            dos:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.xy.XyData
+                required: false
             eigenvalues:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2084,6 +2212,14 @@ raw:
                 extras:
                   py_type: aiida.orm.nodes.data.remote.base.RemoteData
                 required: true
+            retrieved:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.folder.FolderData
+                required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: return
@@ -2141,7 +2277,7 @@ raw:
   uuid: <scrubbed:uuid>
 task_names:
 - ComputeScreeningParameters
-- RunFinalKI
+- KIFinal
 - count_electrons_task
 - dft_init
 - graph_ctx

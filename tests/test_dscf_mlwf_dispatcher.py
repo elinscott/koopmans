@@ -189,3 +189,51 @@ class TestPeriodicMlwfsBuild:
         d = _si_dscf_dict(eps_inf="auto")
         with pytest.raises(NotImplementedError, match="eps_inf"):
             _build(d, dscf_codes)
+
+
+class TestCalculateBandsRouting:
+    """Dispatcher wiring of the unfold-and-interpolate band stage."""
+
+    def test_calculate_bands_routes_the_interpolation_stage(
+        self, aiida_profile, dscf_codes, fake_sg15_pseudo_family
+    ):
+        """calculate_bands + a k-path adds the interpolation stage with the ui knobs."""
+        d = _si_dscf_dict(calculate_bands=True)
+        d["kpoints"]["path"] = "GXG"
+        wg = _build(d, dscf_codes)
+        names = wg.get_task_names()
+        assert "interpolate_band_structure" in names, names
+
+        task = wg.tasks["interpolate_band_structure"]
+        ui_parameters = task.inputs["ui_parameters"].value
+        assert ui_parameters["do_dos"] is True
+        assert ui_parameters["use_ws_distance"] is True
+        assert ui_parameters["w90_input_sc"] is False
+        assert ui_parameters["smooth_int_factor"] == [1, 1, 1]
+        plotting = task.inputs["plotting"].value
+        assert plotting["degauss"] == pytest.approx(0.05)
+
+    def test_default_has_no_interpolation_stage(
+        self, aiida_profile, dscf_codes, fake_sg15_pseudo_family
+    ):
+        """Without calculate_bands the graph is unchanged."""
+        wg = _build(_si_dscf_dict(), dscf_codes)
+        assert "interpolate_band_structure" not in wg.get_task_names()
+
+    def test_calculate_bands_without_path_raises(
+        self, aiida_profile, dscf_codes, fake_sg15_pseudo_family
+    ):
+        """calculate_bands needs an explicit kpoints.path (mirrors the DFPT gating)."""
+        d = _si_dscf_dict(calculate_bands=True)
+        assert d["kpoints"].get("path") is None
+        with pytest.raises(ValueError, match="band path"):
+            _build(d, dscf_codes)
+
+    def test_calculate_bands_needs_the_wannier_route(
+        self, aiida_profile, dscf_codes, fake_sg15_pseudo_family
+    ):
+        """calculate_bands on the molecular (kohn-sham) route is not wired."""
+        d = _si_dscf_dict(calculate_bands=True, init_orbitals="kohn-sham")
+        d["kpoints"]["path"] = "GXG"
+        with pytest.raises(NotImplementedError, match="calculate_bands"):
+            _build(d, dscf_codes)
