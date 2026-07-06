@@ -77,6 +77,10 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
             # via its ``control.calculation`` flag, so a single code suffices.
             codes["kcw"] = _load_code("kcw", "kcw.x")
 
+    # The dielectric-constant task runs ph.x on top of the scf
+    if task == Task.DFT_EPS:
+        codes["ph"] = _load_code("ph", "ph.x")
+
     # Wannierize task needs additional codes
     if task == Task.WANNIERIZE:
         codes["pw2wannier90"] = _load_code("pw2wannier90", "pw2wannier90.x")
@@ -156,11 +160,13 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         return _build_singlepoint_workgraph(koopmans_input, codes)
     elif task == Task.TRAJECTORY:
         return _build_trajectory_workgraph(koopmans_input, codes)
+    elif task == Task.DFT_EPS:
+        return _build_dft_eps_workgraph(koopmans_input, codes)
     else:
         raise ValueError(
             f"Task '{task.value}' is not yet implemented. "
             f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}"
+            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
         )
 
 
@@ -184,6 +190,39 @@ def _build_dft_bands_workgraph(
     return RunPwBands.build(
         code=codes["pw"],
         structure=structure,
+        overrides=overrides,
+    )
+
+
+def _build_dft_eps_workgraph(
+    koopmans_input: KoopmansInput,
+    codes: dict[str, orm.AbstractCode],
+) -> WorkGraph:
+    """Build a workgraph for the dielectric-constant (ph.x) task.
+
+    Port of the legacy ``DFTPhWorkflow`` (``workflows/_dft.py``): one scf,
+    then ph.x with ``epsil = .true.`` / ``trans = .false.`` at q = Gamma,
+    exposing the isotropic average of the dielectric tensor as ``eps_inf``.
+    The legacy scf passes ``nbnd=None`` (no empty bands are needed for a
+    ground-state response), so ``nbnd`` is stripped from the PW overrides.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+        codes: Dictionary of loaded codes.
+
+    Returns:
+        A WorkGraph chaining PwBaseWorkChain into PhBaseWorkChain.
+    """
+    from aiida_koopmans.workgraphs.ph import DielectricTask
+
+    structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf"])
+    overrides["scf"]["pw"]["parameters"].get("SYSTEM", {}).pop("nbnd", None)
+
+    return DielectricTask.build(
+        pw_code=codes["pw"],
+        ph_code=codes["ph"],
+        structure=structure,
+        pseudo_family=pseudo_family,
         overrides=overrides,
     )
 
@@ -320,10 +359,10 @@ def _build_singlepoint_dfpt_workgraph(
         raise NotImplementedError(
             "Gamma-only DFPT (isolated systems) is not yet supported; provide a k-point grid."
         )
-    if isinstance(workflow.eps_inf, str):
-        raise NotImplementedError(
-            "eps_inf = 'auto' (computing the dielectric constant with ph.x) is not "
-            "yet supported; provide a numeric value."
+    if isinstance(workflow.eps_inf, str) and workflow.eps_inf != "auto":
+        raise ValueError(
+            f"eps_inf={workflow.eps_inf!r} is not understood: provide a numeric value "
+            "or 'auto' (compute the dielectric constant with ph.x)."
         )
 
     calc_params = koopmans_input.calculator_parameters
@@ -386,6 +425,8 @@ def _build_singlepoint_dfpt_workgraph(
     codes = dict(codes)
     codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
     codes.setdefault("pw2wannier90", _load_code("pw2wannier90", "pw2wannier90.x"))
+    if workflow.eps_inf == "auto":
+        codes.setdefault("ph", _load_code("ph", "ph.x"))
 
     return SinglepointDFPTWorkflow.build(
         codes=codes,
@@ -395,8 +436,9 @@ def _build_singlepoint_dfpt_workgraph(
         bands_kpoints=bands_kpoints,
         pseudo_family=pseudo_family,
         overrides=overrides,
-        # eps_inf is FloatGE1 | None after the 'auto' guard above; l_vcut is
-        # the Gygi-Baldereschi flag (None -> the periodic default, on).
+        # eps_inf is FloatGE1 | 'auto' | None after the guard above ('auto'
+        # prepends the scf + ph.x dielectric chain inside SinglepointDFPT);
+        # l_vcut is the Gygi-Baldereschi flag (None -> the periodic default, on).
         eps_inf=workflow.eps_inf,
         l_vcut=workflow.gb_correction,
         spin=spin,
