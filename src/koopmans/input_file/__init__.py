@@ -21,6 +21,7 @@ from koopmans.input_file.cell_parameters import (
 )
 from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.ml import MLConfig
+from koopmans.input_file.plotting import PlottingConfig
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
@@ -169,6 +170,10 @@ class KoopmansInput(BaseModel):
     ml: MLConfig = Field(
         default_factory=lambda: MLConfig(),
         description="Machine-learning configuration for predicting screening parameters",
+    )
+    plotting: PlottingConfig = Field(
+        default_factory=lambda: PlottingConfig(),
+        description="Plotting parameters (DOS smearing and energy window)",
     )
 
     @field_validator("version")
