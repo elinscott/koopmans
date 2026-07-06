@@ -623,6 +623,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        blocks:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         code:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -632,6 +639,13 @@ raw:
             extras:
               py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
             required: true
+        codes:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         correction:
           default: ki
           dynamic: false
@@ -659,7 +673,22 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: true
+        eps_inf:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         fix_spin_contamination:
+          default: false
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        gamma_only:
           default: false
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -687,6 +716,22 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
+            required: false
+        kgrid:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        kpoints:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
         metadata:
           dynamic: false
@@ -736,6 +781,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             is_metadata: true
+            required: false
+        mp_correction:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
             required: false
         nbnd:
           dynamic: false
@@ -1097,6 +1149,20 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        wannier_overrides:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        wannier_protocol:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
       identifier: <scrubbed:identifier>
       meta:
         call_role: kwargs
@@ -1182,6 +1248,8 @@ raw:
       inputs:
         alpha_conv_thr: 0.001
         alpha_numsteps: 1
+        eps_inf: 1.0
+        mp_correction: false
         spin_polarized: false
       log: ''
       metadata:
@@ -1564,6 +1632,7 @@ raw:
         ecutrho: 260.0
         ecutwfc: 65.0
         fix_spin_contamination: false
+        gamma_only: false
         init_orbitals: kohn-sham
         initial_alpha: 0.6
         nbnd: 10
@@ -1598,6 +1667,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
+            blocks:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             code:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -1607,6 +1683,13 @@ raw:
                 extras:
                   py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: true
+            codes:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             correction:
               default: ki
               dynamic: false
@@ -1634,7 +1717,22 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: true
+            eps_inf:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             fix_spin_contamination:
+              default: false
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            gamma_only:
               default: false
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -1662,6 +1760,22 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                required: false
+            kgrid:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            kpoints:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             metadata:
               dynamic: false
@@ -1711,6 +1825,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 is_metadata: true
+                required: false
+            mp_correction:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
                 required: false
             nbnd:
               dynamic: false
@@ -2066,6 +2187,20 @@ raw:
                 child_default_link_limit: 1
                 required: true
             tot_magnetization:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            wannier_overrides:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            wannier_protocol:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
