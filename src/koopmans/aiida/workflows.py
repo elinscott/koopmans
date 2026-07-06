@@ -259,11 +259,202 @@ def _build_singlepoint_workgraph(
     structure = atoms_input_to_structure(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
 
+    inputs = _kcp_dscf_inputs(koopmans_input)
+
+    extra_kwargs: dict[str, Any] = {}
+    if workflow.init_orbitals in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    ):
+        extra_kwargs = _dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
+        # The prod(kgrid) supercell images of each primitive Wannier function
+        # are physically equivalent, but constructive image grouping is not
+        # implemented yet. Group them at runtime by self-Hartree energy
+        # instead: a tight tolerance only merges numerically identical
+        # orbitals, so the per-orbital fan-out collapses to the primitive
+        # count without risking real physics.
+        if inputs["orbital_groups_self_hartree_tol"] is None:
+            inputs["orbital_groups_self_hartree_tol"] = 1.0e-4
+
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
         structure=structure,
-        **_kcp_dscf_inputs(koopmans_input),
+        **inputs,
+        **extra_kwargs,
     )
+
+
+def _band_range_complement(start: int, end: int, nbnd: int) -> str | None:
+    """Return the wannier90 ``exclude_bands`` string for a [start, end] block."""
+    parts = []
+    if start > 1:
+        parts.append(f"1-{start - 1}")
+    if end < nbnd:
+        parts.append(f"{end + 1}-{nbnd}")
+    return ",".join(parts) if parts else None
+
+
+def _derive_dscf_blocks(
+    structure: orm.StructureData,
+    projection_blocks: list,
+    nocc: int,
+    nbnd: int,
+    spin_channel: Any,
+) -> list:
+    """Turn user projection blocks into DSCF wannierization blocks.
+
+    Unlike the DFPT manifolds (one occupied + at most one empty block), the
+    DSCF route wannierises every user block separately and merges them per
+    (filling, spin) via merge_evc.x, so any number of blocks is allowed.
+    Each block covers ``num_wann`` consecutive bands; a block straddling the
+    occupied/empty boundary is an input error, and the occupied blocks must
+    cover every occupied band (the folded ``evc_occupied`` files seed the
+    complete occupied manifold of the supercell kcp.x run).
+    """
+    from aiida_koopmans.types import ExplicitProjectionBlock, SpinChannel
+    from aiida_koopmans.workgraphs.dfpt import _projection_num_wann
+    from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+    if not projection_blocks:
+        raise ValueError(
+            "Wannier-function initialisation requires explicit projections in "
+            "``calculator_parameters.w90.projections``."
+        )
+
+    suffix = f"_{spin_channel.value}" if spin_channel in (SpinChannel.UP, SpinChannel.DOWN) else ""
+    blocks: list = []
+    cursor = 0
+    n_occ = n_emp = 0
+    for block in projection_blocks:
+        num_wann = sum(_projection_num_wann(structure, p) for p in block)
+        start, end = cursor + 1, cursor + num_wann
+        if end <= nocc:
+            n_occ += 1
+            label = f"occ{suffix}_{n_occ}"
+        elif cursor >= nocc:
+            n_emp += 1
+            label = f"emp{suffix}_{n_emp}"
+        else:
+            raise ValueError(
+                f"A projection block (bands {start}-{end}) straddles the occupied/empty "
+                f"boundary at band {nocc}."
+            )
+        if end > nbnd:
+            raise ValueError(f"The projection blocks span {end} bands but nbnd = {nbnd}.")
+        blocks.append(
+            ExplicitProjectionBlock(
+                label=label,
+                spin=spin_channel,
+                num_wann=num_wann,
+                num_bands=num_wann,
+                include_bands=list(range(start, end + 1)),
+                exclude_bands=_band_range_complement(start, end, nbnd),
+                projection_type=WannierProjectionType.ANALYTIC,
+                projections=[f"{p.site}:{p.ang_mtm}" for p in block],
+            )
+        )
+        cursor = end
+
+    covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][0] <= nocc)
+    if covered_occ != nocc:
+        raise ValueError(
+            f"The occupied projection blocks span {covered_occ} Wannier functions but "
+            f"the system has {nocc} occupied bands per primitive cell; every occupied "
+            "band must be covered for the Wannier-seeded kcp.x initialisation."
+        )
+    return blocks
+
+
+def _dscf_wannier_init_inputs(
+    koopmans_input: KoopmansInput,
+    structure: orm.StructureData,
+    codes: dict[str, orm.AbstractCode],
+    nbnd: int,
+) -> dict[str, Any]:
+    """Assemble the extra ``KoopmansDSCFWorkflow`` inputs for the Wannier route.
+
+    Covers the periodic mlwfs/projwfs initialisation: the wannierize +
+    fold-to-supercell codes, the projection blocks (primitive band indices;
+    per spin channel when ``spin='collinear'``), the k-mesh, and the
+    Makov-Payne knobs. The molecular/kohn-sham route needs none of this.
+    """
+    from aiida_koopmans.types import SpinChannel
+
+    from koopmans.aiida.conversion import (
+        get_pseudos_from_family,
+        kpoints_input_to_kpoints_mesh,
+    )
+
+    workflow = koopmans_input.workflow
+    calc_params = koopmans_input.calculator_parameters
+    kpoints_input = koopmans_input.kpoints
+
+    if isinstance(workflow.eps_inf, str):
+        raise NotImplementedError(
+            "eps_inf='auto' is not wired for the DSCF stream yet (the DielectricTask "
+            "exists — hook it up like the DFPT dispatcher); provide a numeric value."
+        )
+
+    pseudo_family = workflow.pseudo_library
+    pseudos = get_pseudos_from_family(pseudo_family, structure)
+    nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
+
+    if workflow.spin == SpinType.COLLINEAR:
+        w90 = calc_params.wannier90
+        if w90.up is None or w90.down is None:
+            raise ValueError(
+                "spin='collinear' Wannier initialisation needs per-spin projections: set "
+                "``calculator_parameters.w90.up.projections`` and "
+                "``calculator_parameters.w90.down.projections``."
+            )
+        magnetization = _coerce_optional_int(calc_params.tot_magnetization)
+        if magnetization is None:
+            raise ValueError(
+                "spin='collinear' Wannier initialisation needs "
+                "``calculator_parameters.tot_magnetization``."
+            )
+        if (nelec + magnetization) % 2:
+            raise ValueError(
+                f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "
+                "integer per-channel occupations."
+            )
+        blocks = _derive_dscf_blocks(
+            structure, w90.up.projections, (nelec + magnetization) // 2, nbnd, SpinChannel.UP
+        ) + _derive_dscf_blocks(
+            structure, w90.down.projections, (nelec - magnetization) // 2, nbnd, SpinChannel.DOWN
+        )
+    else:
+        if nelec % 2:
+            raise ValueError(
+                f"Odd electron count ({nelec}) requires spin='collinear' for the "
+                "Wannier-initialised DSCF route."
+            )
+        blocks = _derive_dscf_blocks(
+            structure, calc_params.wannier90.projections, nelec // 2, nbnd, SpinChannel.NONE
+        )
+
+    parameters = input_to_pw_parameters(koopmans_input)
+    wannier_overrides = {
+        key: {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}}
+        for key in ("scf", "nscf")
+    }
+
+    wannier_codes = dict(codes)
+    wannier_codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
+    wannier_codes.setdefault("pw2wannier90", _load_code("pw2wannier90", "pw2wannier90.x"))
+    wannier_codes.setdefault("wann2kcp", _load_code("wann2kcp", "wann2kcp.x"))
+    wannier_codes.setdefault("merge_evc", _load_code("merge_evc", "merge_evc.x"))
+
+    return {
+        "codes": wannier_codes,
+        "blocks": blocks,
+        "kgrid": list(kpoints_input.grid),
+        "kpoints": kpoints_input_to_kpoints_mesh(kpoints_input),
+        "gamma_only": bool(getattr(kpoints_input, "gamma_only", False)),
+        "wannier_overrides": wannier_overrides,
+        "mp_correction": workflow.mp_correction,
+        "eps_inf": workflow.eps_inf,
+    }
 
 
 def _build_singlepoint_dfpt_workgraph(
