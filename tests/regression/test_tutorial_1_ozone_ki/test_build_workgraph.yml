@@ -91,6 +91,7 @@ raw:
       - graph_inputs
       - graph_inputs
       - graph_inputs
+      - graph_inputs
       - resolve_pseudo_family_task
       convert_spin1_to_spin2:
       - dft_init_nspin1
@@ -139,6 +140,7 @@ raw:
       - KIFinal
       - KIFinal
       - KIFinal
+      - KIFinal
       resolve_pseudo_family_task:
       - graph_inputs
       - graph_inputs
@@ -152,6 +154,7 @@ raw:
       - graph_outputs
       - graph_outputs
       KIFinal:
+      - graph_outputs
       - graph_outputs
       - graph_outputs
       - graph_outputs
@@ -192,6 +195,7 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
+      - KIFinal
       - KIFinal
       - KIFinal
       - KIFinal
@@ -553,6 +557,10 @@ raw:
     from_task: ComputeScreeningParameters
     to_socket: parent_folder
     to_task: KIFinal
+  - from_socket: calculate_bands
+    from_task: graph_inputs
+    to_socket: write_hr
+    to_task: KIFinal
   - from_socket: parameters
     from_task: KIFinal
     to_socket: parameters
@@ -572,6 +580,10 @@ raw:
   - from_socket: remote_folder
     from_task: KIFinal
     to_socket: remote_folder
+    to_task: graph_outputs
+  - from_socket: retrieved
+    from_task: KIFinal
+    to_socket: retrieved
     to_task: graph_outputs
   - from_socket: alphas
     from_task: ComputeScreeningParameters
@@ -624,6 +636,14 @@ raw:
             child_default_link_limit: 1
             required: false
         blocks:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        calculate_bands:
+          default: false
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -743,6 +763,15 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
+            required: false
+        kpath:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
         kpoints:
           dynamic: false
@@ -1147,6 +1176,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        plotting:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         pseudo_family:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1170,6 +1206,13 @@ raw:
             child_default_link_limit: 1
             required: true
         tot_magnetization:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        ui_parameters:
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -1217,6 +1260,20 @@ raw:
           meta:
             child_default_link_limit: 1
             required: true
+        band_structure:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.bands.BandsData
+            required: false
+        band_structure_reference:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            required: false
         bare_lambdas:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1225,6 +1282,14 @@ raw:
             extras:
               py_type: numpy.ndarray
             required: true
+        dos:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.xy.XyData
+            required: false
         eigenvalues:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1255,6 +1320,14 @@ raw:
             extras:
               py_type: aiida.orm.nodes.data.remote.base.RemoteData
             required: true
+        retrieved:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.folder.FolderData
+            required: false
       identifier: <scrubbed:identifier>
       meta:
         call_role: return
@@ -1322,7 +1395,8 @@ raw:
       hash: <scrubbed:hash>
       identifier: <scrubbed:identifier>
       input_socket_meta: {}
-      inputs: {}
+      inputs:
+        write_hr: false
       log: ''
       metadata:
         pk: <scrubbed:pk>
@@ -1653,6 +1727,7 @@ raw:
       input_socket_meta: {}
       inputs:
         alpha_numsteps: 1
+        calculate_bands: false
         code:
           __aiida_code__: kcp@localhost
         correction: ki
@@ -1695,6 +1770,14 @@ raw:
                 child_default_link_limit: 1
                 required: false
             blocks:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            calculate_bands:
+              default: false
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -1814,6 +1897,15 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                required: false
+            kpath:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             kpoints:
               dynamic: false
@@ -2218,6 +2310,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
+            plotting:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             pseudo_family:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2241,6 +2340,13 @@ raw:
                 child_default_link_limit: 1
                 required: true
             tot_magnetization:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            ui_parameters:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2319,6 +2425,20 @@ raw:
               meta:
                 child_default_link_limit: 1
                 required: true
+            band_structure:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.bands.BandsData
+                required: false
+            band_structure_reference:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
             bare_lambdas:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2327,6 +2447,14 @@ raw:
                 extras:
                   py_type: numpy.ndarray
                 required: true
+            dos:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.xy.XyData
+                required: false
             eigenvalues:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2357,6 +2485,14 @@ raw:
                 extras:
                   py_type: aiida.orm.nodes.data.remote.base.RemoteData
                 required: true
+            retrieved:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.folder.FolderData
+                required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: return
