@@ -89,7 +89,8 @@ Invoked via `/<name>`:
 ## Current status (update as work progresses)
 
 - Input file parsing (`input_file/`): ~95% ported.
-- Dispatcher (`aiida/workflows.py`): covers `DFT_BANDS`, `WANNIERIZE`, `SINGLEPOINT` (DSCF via kcp.x with KI/KIPZ; DFPT via kcw.x), and `TRAJECTORY` (ML train/test, `self_hartree` descriptor).
+- Dispatcher (`aiida/workflows.py`): covers `DFT_BANDS`, `WANNIERIZE`, `SINGLEPOINT` (DSCF via kcp.x with KI/KIPZ, molecular KS-init and periodic Wannier-init routes; DFPT via kcw.x), `TRAJECTORY` (ML train/test, `self_hartree` descriptor), `DFT_EPS` (ph.x dielectric), and `UI` (unfold-and-interpolate, pure python).
 - Spin: `workflow.spin` takes aiida-quantumespresso's `SpinType` (`none`/`collinear`/`non_collinear`/`spin_orbit`). DFPT supports all four regimes (collinear fans out per channel; noncollinear runs the spinor chain — QE reference `KCW/examples/example05.1`); the kcp.x streams support `none`/`collinear` only.
-- Known gaps (raise `NotImplementedError` with pointers in `aiida/workflows.py`): corrections `PKIPZ`/`NONE`/`ALL`; gamma-only DFPT; `eps_inf='auto'` (ph.x); `ml:predict`; `orbital_density` descriptor; multi-snapshot trajectory input; multi-block manifold merging (u/hr/centres merge machinery).
-- Active branch: `core_functionality`.
+- Periodic DSCF (mlwfs/projwfs): wannierize → fold-to-supercell (wann2kcp.x + merge_evc.x) → Wannier-seeded kcp.x init; supercell-image orbital grouping approximated via a defaulted `orbital_groups_self_hartree_tol=1e-4` (constructive grouping not ported). Fold path has construction-level tests only — needs a live QE smoke test.
+- Known gaps (raise `NotImplementedError` with pointers in `aiida/workflows.py`): corrections `PKIPZ`/`NONE`/`ALL`; `init_orbitals='pz'`; `fix_spin_contamination`; gamma-only/molecular DFPT; `eps_inf='auto'` for DSCF (wired for DFPT); `ml:predict`; `orbital_density` descriptor (planned via wannier90 `feature/decompose`); multi-snapshot trajectory input; multi-block DFPT manifold merging; UI inside singlepoints (occ/emp × spin fan-out + smooth-wannierization); `convergence` task.
+- Active branch: `dscf-mlwf-init` (stacked on `spin-dfpt` → `core_functionality`; PR-per-change flow, user pushes/opens PRs).
