@@ -347,22 +347,33 @@ class TestOrbitalDensityDispatcher:
         return _build_trajectory_workgraph(inp, codes)
 
     @pytest.mark.parametrize("r_cut", [None, 3.0])
-    def test_harvest_blocked_on_missing_dscf_output(
+    def test_orbital_density_harvest_wired(
         self, trajectory_codes, fake_sg15_pseudo_family, r_cut
     ) -> None:
-        """RECONCILIATION SEAM: flips once KoopmansDSCFOutputs grows wannier_blocks.
+        """orbital_density trajectories build with the .power harvest wired.
 
-        Everything upstream of the harvest works — the wannier route is
-        derived, the decompose keywords are built (with an explicit or a
-        derived r_cut) and injected into the per-snapshot wannier overrides —
-        so the build must fail at exactly the missing-DSCF-output wiring
-        point. Replace with a positive wiring test when the output lands.
+        Positive replacement of the reconciliation seam test: with
+        ``KoopmansDSCFOutputs.wannier_blocks`` in place the build succeeds
+        end-to-end — the wannier route is derived, the decompose keywords are
+        built (with an explicit or a derived r_cut) and injected, and one
+        ``extract_power_spectrum_dataset`` is wired per snapshot.
         """
         ml: dict[str, Any] = {"train": True, "descriptor": "orbital_density"}
         if r_cut is not None:
             ml["r_cut"] = r_cut
-        with pytest.raises(NotImplementedError, match="wannier_blocks"):
-            self._build(ml, trajectory_codes)
+        wg = self._build(ml, trajectory_codes)
+        names: list[str] = []
+
+        def _walk(tasks):
+            for t in tasks:
+                names.append(t.name)
+                children = getattr(t, "children", None)
+                if children:
+                    _walk(children)
+
+        _walk(wg.tasks)
+        assert sum(1 for n in names if "harvest_power_spectrum_snapshot" in n) == 1, names
+        assert not any("extract_snapshot_dataset" in n for n in names), names
 
     def test_self_hartree_still_builds_on_wannier_route(
         self, trajectory_codes, fake_sg15_pseudo_family
