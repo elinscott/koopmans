@@ -12,7 +12,7 @@ from wannier90_input.models.parameters import Projection
 from yaml import safe_load
 
 from koopmans.base import BaseModel
-from koopmans.input_file.atomic_positions import AtomicPositionsInput
+from koopmans.input_file.atomic_positions import AtomicPositionsInput, SnapshotsInput
 from koopmans.input_file.cell_parameters import (
     CellParametersViaAlat,
     CellParametersViaIbrav,
@@ -25,14 +25,20 @@ from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.ui import UnfoldAndInterpolateConfig
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
-from koopmans.input_file.workflow import WorkflowConfig
+from koopmans.input_file.workflow import Task, WorkflowConfig
 
 
 class AtomsInput(BaseModel):
-    """Input model for specifying the cell and atomic positions."""
+    """Input model for specifying the cell and atomic positions.
+
+    ``atomic_positions`` either lists the positions explicitly
+    (:class:`AtomicPositionsInput`) or points at a multi-frame xyz
+    trajectory via a ``snapshots`` key (:class:`SnapshotsInput`; only
+    valid for the ``trajectory`` task).
+    """
 
     cell_parameters: CellParametersViaIbrav | CellParametersViaVectors | CellParametersViaAlat
-    atomic_positions: AtomicPositionsInput
+    atomic_positions: AtomicPositionsInput | SnapshotsInput
 
 
 class GammaOnlyKpointsInput(BaseModel):
@@ -124,6 +130,25 @@ class KoopmansInput(BaseModel):
         default_factory=lambda: PlottingConfig(),
         description="Plotting parameters (DOS smearing and energy window)",
     )
+
+    @model_validator(mode="after")
+    def snapshots_require_trajectory_task(self) -> KoopmansInput:
+        """Validate that a ``snapshots`` trajectory file is only used with ``task: trajectory``.
+
+        Other tasks consume a single structure; restricting the snapshots
+        input keeps their dispatch paths free of multi-frame handling.
+        (The legacy code silently used only the first frame elsewhere.)
+        """
+        if (
+            isinstance(self.atoms.atomic_positions, SnapshotsInput)
+            and self.workflow.task != Task.TRAJECTORY
+        ):
+            raise ValueError(
+                "`atoms.atomic_positions.snapshots` is only valid for `workflow.task = "
+                f"'trajectory'`, not `{self.workflow.task.value}`. Provide explicit "
+                "`atomic_positions` instead."
+            )
+        return self
 
     @classmethod
     def from_file(cls, filename: str | Path) -> KoopmansInput:
