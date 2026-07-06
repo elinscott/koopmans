@@ -72,12 +72,39 @@ def installed_kcp_code(aiida_code_installed):
 
 
 @pytest.fixture
+def installed_kcw_code(aiida_code_installed):
+    """Register a dummy ``kcw@localhost`` code so ``load_code`` succeeds."""
+    return aiida_code_installed(
+        label="kcw",
+        default_calc_job_plugin="koopmans.kcw_wann2kc",
+        filepath_executable="/bin/true",
+    )
+
+
+@pytest.fixture
+def installed_wannier_codes(aiida_code_installed):
+    """Register dummy ``wannier90`` / ``pw2wannier90`` codes for DFPT builds."""
+    return {
+        "wannier90": aiida_code_installed(
+            label="wannier90",
+            default_calc_job_plugin="wannier90.wannier90",
+            filepath_executable="/bin/true",
+        ),
+        "pw2wannier90": aiida_code_installed(
+            label="pw2wannier90",
+            default_calc_job_plugin="quantumespresso.pw2wannier90",
+            filepath_executable="/bin/true",
+        ),
+    }
+
+
+@pytest.fixture
 def fake_sg15_pseudo_family(aiida_profile):
-    """Install a minimal fake ``SG15/1.2/PBE/SR`` family with an oxygen pseudo.
+    """Install a minimal fake ``SG15/1.2/PBE/SR`` family (O and Si pseudos).
 
     This prevents ``ensure_pseudo_family_installed`` from hitting the network
-    when the dispatcher builds the workgraph. Uses a synthetic UPF stream —
-    enough for ``UpfData`` validation, not a physically meaningful pseudo.
+    when the dispatcher builds the workgraph. Uses synthetic UPF streams —
+    enough for ``UpfData`` validation, not physically meaningful pseudos.
     """
     from aiida.common.exceptions import NotExistent
     from aiida_pseudo.data.pseudo.upf import UpfData
@@ -89,11 +116,15 @@ def fake_sg15_pseudo_family(aiida_profile):
     except NotExistent:
         pass
 
-    content = '<UPF version="2.0.1"><PP_HEADER\nelement="O"\nz_valence="6.0"\n/></UPF>\n'
-    upf = UpfData(io.BytesIO(content.encode("utf-8")), filename="O.upf")
     family = PseudoPotentialFamily(label=label, description="fake SG15 family for tests")
     family.store()
-    family.add_nodes([upf.store()])
+    for element, z_valence in (("O", 6.0), ("Si", 4.0)):
+        content = (
+            f'<UPF version="2.0.1"><PP_HEADER\nelement="{element}"\n'
+            f'z_valence="{z_valence}"\n/></UPF>\n'
+        )
+        upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
+        family.add_nodes([upf.store()])
     return family
 
 
