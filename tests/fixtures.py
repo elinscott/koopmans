@@ -110,6 +110,23 @@ def installed_wannier_codes(aiida_code_installed: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
+def installed_fold_codes(aiida_code_installed: Any) -> dict[str, Any]:
+    """Register dummy ``wann2kcp`` / ``merge_evc`` codes for the fold path."""
+    return {
+        "wann2kcp": aiida_code_installed(
+            label="wann2kcp",
+            default_calc_job_plugin="koopmans.wann2kcp",
+            filepath_executable="/bin/true",
+        ),
+        "merge_evc": aiida_code_installed(
+            label="merge_evc",
+            default_calc_job_plugin="koopmans.merge_evc",
+            filepath_executable="/bin/true",
+        ),
+    }
+
+
+@pytest.fixture
 def fake_sg15_pseudo_family(aiida_profile: Any) -> Any:
     """Install a minimal fake ``SG15/1.2/PBE/SR`` family (O and Si pseudos).
 
