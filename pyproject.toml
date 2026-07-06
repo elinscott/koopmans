@@ -117,6 +117,9 @@ pyroma = [
     "pyroma",
     "pygments",
 ]
+dev = [
+    "pre-commit>=4.6.0",
+]
 
 # see https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#dependencies-optional-dependencies
 [project.optional-dependencies]
