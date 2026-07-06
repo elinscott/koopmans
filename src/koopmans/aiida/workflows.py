@@ -661,33 +661,77 @@ def _collinear_dfpt_manifold_inputs(
     return inputs
 
 
+def _resolve_trajectory_ml_mode(ml_config: Any) -> tuple[str, dict | None]:
+    """Map the ``ml`` input block onto a ``TrajectoryWorkflow`` mode and model.
+
+    Returns ``(ml_mode, ml_model)`` where ``ml_mode`` is one of ``train`` /
+    ``test`` / ``predict`` / ``none`` and ``ml_model`` is the JSON model
+    loaded from ``ml:model_file`` (required for ``test`` and ``predict``).
+
+    Raises:
+        NotImplementedError: For descriptors other than ``self_hartree``.
+        ValueError: If a mode needing a trained model lacks ``model_file``.
+    """
+    from json import load as json_load
+
+    if (
+        ml_config.train or ml_config.test or ml_config.predict
+    ) and ml_config.descriptor != "self_hartree":
+        raise NotImplementedError(
+            f"ml:descriptor={ml_config.descriptor!r} is not yet supported: the "
+            "orbital_density (power-spectrum) descriptor requires retrieving the "
+            "trial KI's real-space orbital densities from kcp.x. Use "
+            "ml:descriptor='self_hartree'."
+        )
+    if ml_config.train:
+        ml_mode = "train"
+    elif ml_config.test:
+        ml_mode = "test"
+    elif ml_config.predict:
+        ml_mode = "predict"
+    else:
+        ml_mode = "none"
+
+    ml_model = None
+    if ml_mode in ("test", "predict"):
+        if ml_config.model_file is None:
+            raise ValueError(
+                f"ml:{ml_mode} requires ml:model_file (the JSON model produced by an ml:train run)."
+            )
+        with open(ml_config.model_file) as handle:
+            ml_model = json_load(handle)
+    return ml_mode, ml_model
+
+
 def _build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
-    """Build a workgraph for a trajectory (machine-learning train/test) task.
+    """Build a workgraph for a trajectory (machine-learning) task.
 
     Fans the snapshots out over per-snapshot ``KoopmansDSCFWorkflow`` runs via
     ``aiida_koopmans.workgraphs.ml.TrajectoryWorkflow`` and, depending on the
     ``ml`` configuration, trains a screening-parameter model on the computed
-    alphas (``ml:train``) or scores an existing model against them
-    (``ml:test``).
+    alphas (``ml:train``), scores an existing model against them
+    (``ml:test``), or applies an existing model to predict the alphas without
+    the Delta-SCF refinement (``ml:predict`` — each snapshot runs a trial KI
+    at the guess alphas, the model predicts every screening parameter from
+    the trial's self-Hartrees, and the final KI applies the predictions).
 
-    Current limitations (raise ``NotImplementedError`` / ``ValueError``):
+    Snapshots come from ``atoms.atomic_positions.snapshots`` (a multi-frame
+    xyz file, the legacy convention — every frame shares the cell from
+    ``cell_parameters``); a plain ``atomic_positions`` block runs as a
+    one-snapshot trajectory.
 
-    - ``ml:predict`` needs per-orbital alpha injection, which the frozen
-      ``KoopmansDSCFWorkflow`` interface does not support.
+    Current limitations (raise ``NotImplementedError``):
+
     - Only the ``self_hartree`` descriptor is wired; ``orbital_density``
       needs kcp.x orbital-density retrieval.
-    - Multi-snapshot (xyz trajectory) input is not representable in the
-      ``KoopmansInput`` schema yet, so the single input structure is run as
-      a one-snapshot trajectory.
     """
-    from json import load as json_load
-
     from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
+    from koopmans.input_file import AtomsInput, SnapshotsInput
 
     workflow = koopmans_input.workflow
 
@@ -706,38 +750,25 @@ def _build_trajectory_workgraph(
         )
 
     ml_config = koopmans_input.ml
+    ml_mode, ml_model = _resolve_trajectory_ml_mode(ml_config)
 
-    if ml_config.predict:
-        raise NotImplementedError(
-            "ml:predict is not yet supported: injecting per-orbital predicted alphas "
-            "(and skipping the Delta-SCF refinement) requires an extension of the "
-            "KoopmansDSCFWorkflow interface, which currently accepts only a scalar "
-            "initial_alpha."
-        )
-    if (ml_config.train or ml_config.test) and ml_config.descriptor != "self_hartree":
-        raise NotImplementedError(
-            f"ml:descriptor={ml_config.descriptor!r} is not yet supported: the "
-            "orbital_density (power-spectrum) descriptor requires retrieving the "
-            "trial KI's real-space orbital densities from kcp.x. Use "
-            "ml:descriptor='self_hartree'."
-        )
-    ml_mode = "train" if ml_config.train else "test" if ml_config.test else "none"
-
-    ml_model = None
-    if ml_mode == "test":
-        if ml_config.model_file is None:
-            raise ValueError(
-                "ml:test requires ml:model_file (the JSON model produced by an ml:train run)."
+    atoms = koopmans_input.atoms
+    if isinstance(atoms.atomic_positions, SnapshotsInput):
+        # Multi-snapshot trajectory (legacy ``atomic_positions: {snapshots:
+        # file.xyz}``): every frame becomes one StructureData, all sharing
+        # the cell / periodicity from ``cell_parameters`` (which overrides
+        # the lattice declared inside the xyz file, as in legacy
+        # ``read_atoms_dict``).
+        snapshots = {
+            f"snapshot_{index + 1}": atoms_input_to_structure(
+                AtomsInput(cell_parameters=atoms.cell_parameters, atomic_positions=frame)
             )
-        with open(ml_config.model_file) as handle:
-            ml_model = json_load(handle)
+            for index, frame in enumerate(atoms.atomic_positions.read_frames())
+        }
+    else:
+        snapshots = {"snapshot_1": atoms_input_to_structure(atoms)}
 
-    structure = atoms_input_to_structure(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
-
-    # The input schema cannot express multiple snapshots yet, so run the
-    # single input structure as a one-snapshot trajectory.
-    snapshots = {"snapshot_1": structure}
 
     return TrajectoryWorkflow.build(
         code=codes["kcp"],

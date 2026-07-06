@@ -717,6 +717,26 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        initial_alphas:
+          dynamic: false
+          fields:
+            empty:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+            filled:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         kgrid:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -781,6 +801,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             is_metadata: true
+            required: false
+        ml_model:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
             required: false
         mp_correction:
           dynamic: false
@@ -1761,6 +1788,26 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
+            initial_alphas:
+              dynamic: false
+              fields:
+                empty:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+                filled:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             kgrid:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -1825,6 +1872,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 is_metadata: true
+                required: false
+            ml_model:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
                 required: false
             mp_correction:
               dynamic: false
