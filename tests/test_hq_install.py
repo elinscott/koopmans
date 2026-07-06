@@ -189,8 +189,18 @@ def test_hq_lifecycle_with_real_binary(monkeypatch: pytest.MonkeyPatch, tmp_path
 def test_get_localhost_computer_uses_hyperqueue(
     monkeypatch: pytest.MonkeyPatch, aiida_profile_clean: Any
 ) -> None:
-    """``get_localhost_computer`` always registers with the ``hyperqueue`` scheduler."""
+    """``get_localhost_computer`` always registers with the ``hyperqueue`` scheduler.
+
+    The registered ``localhost`` computer is wiped again afterwards:
+    ``aiida_profile_clean`` only resets storage *before* the test, and a
+    leaked hyperqueue ``localhost`` collides with the ``aiida_localhost`` /
+    ``aiida_code_installed`` fixtures of any test module that runs later in
+    the session (UNIQUE constraint on the computer label).
+    """
     from koopmans.aiida.setup import computer as computer_mod
 
-    computer = computer_mod.get_localhost_computer(nprocs=1)
-    assert computer.scheduler_type == "hyperqueue"
+    try:
+        computer = computer_mod.get_localhost_computer(nprocs=1)
+        assert computer.scheduler_type == "hyperqueue"
+    finally:
+        aiida_profile_clean.reset_storage()
