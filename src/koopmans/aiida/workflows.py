@@ -14,7 +14,7 @@ from koopmans.aiida.conversion import (
     atoms_input_to_structure,
     input_to_pw_parameters,
 )
-from koopmans.input_file.workflow import CalculateScreeningMethod, Correction, Task
+from koopmans.input_file.workflow import CalculateScreeningMethod, Correction, SpinType, Task
 
 if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
@@ -256,6 +256,12 @@ def _build_singlepoint_workgraph(
             "NONE / ALL are workflow-control flags."
         )
 
+    if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
+        raise NotImplementedError(
+            f"spin={workflow.spin.value!r} is not supported by the DSCF (kcp.x) stream: "
+            "kcp.x has no noncollinear mode. Use screening_method='dfpt'."
+        )
+
     structure = atoms_input_to_structure(koopmans_input.atoms)
     pseudo_family = workflow.pseudo_library
     ensure_pseudo_family_installed(pseudo_family)
@@ -282,7 +288,7 @@ def _build_singlepoint_workgraph(
         alpha_numsteps=workflow.alpha_numsteps,
         fix_spin_contamination=workflow.fix_spin_contamination,
         initial_alpha=initial_alpha,
-        spin_polarized=workflow.spin_polarized,
+        spin_polarized=workflow.spin == SpinType.COLLINEAR,
         orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
     )
 
@@ -316,10 +322,12 @@ def _build_singlepoint_dfpt_workgraph(
 
     workflow = koopmans_input.workflow
 
-    if workflow.spin_polarized:
+    if workflow.spin != SpinType.NONE:
         raise NotImplementedError(
-            "Spin-polarized DFPT screening is not yet ported (needs the per-spin "
-            "wann2kc/screen/ham fan-out; legacy: _koopmans_dfpt.py spin_components loop)."
+            f"spin={workflow.spin.value!r} DFPT screening is not yet ported: 'collinear' "
+            "needs the per-spin wann2kc/screen/ham fan-out (legacy: _koopmans_dfpt.py "
+            "spin_components loop); 'non_collinear' / 'spin_orbit' need the spinor "
+            "wannierization chain (QE reference: KCW/examples/example05.1)."
         )
     if workflow.init_orbitals not in (
         VariationalOrbitalType.MLWFS,
@@ -438,6 +446,12 @@ def _build_trajectory_workgraph(
             f"Supported: {sorted(c.value for c in supported)}."
         )
 
+    if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
+        raise NotImplementedError(
+            f"spin={workflow.spin.value!r} is not supported by the trajectory (kcp.x) "
+            "stream: kcp.x has no noncollinear mode."
+        )
+
     ml_config = koopmans_input.ml
 
     if ml_config.predict:
@@ -496,7 +510,7 @@ def _build_trajectory_workgraph(
         alpha_numsteps=workflow.alpha_numsteps,
         fix_spin_contamination=workflow.fix_spin_contamination,
         initial_alpha=initial_alpha,
-        spin_polarized=workflow.spin_polarized,
+        spin_polarized=workflow.spin == SpinType.COLLINEAR,
         orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
         ml_mode=ml_mode,
         ml_model=ml_model,
@@ -537,7 +551,7 @@ def _extract_kcp_scalar_inputs(
     nbnd = int(nbnd_raw)
 
     # KI requires nspin=2 for per-spin orbital-dependent screening, regardless of
-    # what ``spin_polarized`` says — closed-shell molecules still need two channels.
+    # what ``spin`` says — closed-shell molecules still need two channels.
     nspin = 2
 
     return float(ecutwfc), float(ecutrho), nbnd, nspin

@@ -6,7 +6,7 @@
         "init_orbitals": "kohn-sham",
         "alpha_numsteps": 1,
         "pseudo_library": "SG15/1.2/PBE/SR",
-        "spin_polarized": true
+        "spin": "collinear"
     },
     "atoms": {
         "cell_parameters": {

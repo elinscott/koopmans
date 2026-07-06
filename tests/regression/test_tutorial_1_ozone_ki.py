@@ -112,9 +112,9 @@ def test_build_workgraph_spin_polarized(
     tutorial_1_ozone_input,
     serialize_workgraph,
 ):
-    """Dispatcher accepts ``spin_polarized=True``.
+    """Dispatcher accepts ``spin='collinear'``.
 
-    Rebuilds the ozone input with ``spin_polarized=True`` and verifies
+    Rebuilds the ozone input with ``spin='collinear'`` and verifies
     that ``build_workgraph`` returns successfully. Ozone is physically
     closed-shell, so this is a *smoke test* for the spin-polarised code
     path — exercises:
@@ -131,7 +131,7 @@ def test_build_workgraph_spin_polarized(
     from koopmans.input_file import KoopmansInput
 
     d = tutorial_1_ozone_input.model_dump()
-    d["workflow"]["spin_polarized"] = True
+    d["workflow"]["spin"] = "collinear"
     inp = KoopmansInput.model_validate(d)
 
     workgraph = build_workgraph(inp)
