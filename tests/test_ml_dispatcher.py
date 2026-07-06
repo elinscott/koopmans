@@ -228,10 +228,10 @@ class TestTrajectoryDispatcher:
         with pytest.raises(ValueError, match="ml:predict requires ml:model_file"):
             self._build(inp, kcp_code)
 
-    def test_orbital_density_descriptor_raises(
+    def test_orbital_density_predict_raises(
         self, snapshots_xyz: Path, model_file: Path, kcp_code, fake_sg15_pseudo_family
     ) -> None:
-        """The power-spectrum descriptor is still gated behind kcp.x retrieval."""
+        """Predict + power-spectrum descriptor: the in-DSCF prediction step is not wired."""
         inp = KoopmansInput.model_validate(
             _trajectory_input_dict(
                 snapshots_xyz,
@@ -240,3 +240,144 @@ class TestTrajectoryDispatcher:
         )
         with pytest.raises(NotImplementedError, match="orbital_density"):
             self._build(inp, kcp_code)
+
+    def test_unknown_descriptor_raises(
+        self, snapshots_xyz: Path, kcp_code, fake_sg15_pseudo_family
+    ) -> None:
+        """A descriptor outside the known set is an input error."""
+        inp = KoopmansInput.model_validate(
+            _trajectory_input_dict(snapshots_xyz, ml={"train": True, "descriptor": "bogus"})
+        )
+        with pytest.raises(ValueError, match="not recognised"):
+            self._build(inp, kcp_code)
+
+    def test_orbital_density_without_wannier_init_raises(
+        self, snapshots_xyz: Path, kcp_code, fake_sg15_pseudo_family
+    ) -> None:
+        """orbital_density needs the Wannier-initialised (mlwfs/projwfs) route."""
+        inp = KoopmansInput.model_validate(
+            _trajectory_input_dict(
+                snapshots_xyz, ml={"train": True, "descriptor": "orbital_density"}
+            )
+        )
+        with pytest.raises(ValueError, match="init_orbitals"):
+            self._build(inp, kcp_code)
+
+
+class TestMLSchemaDecomposeKnobs:
+    """The ml-block radial-basis knobs that map onto wannier90's decompose_*."""
+
+    def test_r_cut_defaults_to_none(self) -> None:
+        """An unset r_cut stays None (the dispatcher derives it from the BvK cell)."""
+        from koopmans.input_file.ml import MLConfig
+
+        assert MLConfig().r_cut is None
+
+    def test_r_cut_parses(self) -> None:
+        """An explicit r_cut round-trips through the schema."""
+        from koopmans.input_file.ml import MLConfig
+
+        assert MLConfig(r_cut=6.5).r_cut == pytest.approx(6.5)
+
+    def test_non_positive_r_cut_rejected(self) -> None:
+        """r_cut must be strictly positive."""
+        from koopmans.input_file.ml import MLConfig
+
+        with pytest.raises(ValueError):
+            MLConfig(r_cut=0.0)
+
+
+def _periodic_trajectory_input_dict(ml: dict[str, Any]) -> dict:
+    """Return a periodic-silicon trajectory input on the Wannier-initialised route."""
+    return {
+        "workflow": {
+            "task": "trajectory",
+            "correction": "ki",
+            "screening_method": "dscf",
+            "init_orbitals": "mlwfs",
+            "alpha_numsteps": 1,
+            "pseudo_library": "SG15/1.2/PBE/SR",
+        },
+        "atoms": {
+            "cell_parameters": {
+                "periodic": True,
+                "ibrav": 2,
+                "celldms": {"1": 10.2622},
+            },
+            "atomic_positions": {
+                "units": "crystal",
+                "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
+            },
+        },
+        "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+        "calculator_parameters": {
+            "ecutwfc": 20.0,
+            "nbnd": 8,
+            "kcp": {"system": {"ecutrho": 80.0}},
+            "wannier90": {
+                "projections": [
+                    [{"site": "Si", "ang_mtm": "sp"}],
+                    [{"site": "Si", "ang_mtm": "sp"}],
+                ],
+            },
+        },
+        "ml": ml,
+    }
+
+
+class TestOrbitalDensityDispatcher:
+    """The periodic (Wannier-initialised) trajectory route with orbital_density."""
+
+    @pytest.fixture
+    def trajectory_codes(
+        self,
+        aiida_profile_clean,
+        installed_pw_code,
+        installed_kcp_code,
+        installed_wannier_codes,
+        installed_fold_codes,
+    ):
+        """Codes dict as load_codes_for_task provides it, plus registered wannier codes."""
+        return {"pw": installed_pw_code, "kcp": installed_kcp_code}
+
+    def _build(self, ml: dict[str, Any], codes):
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        inp = KoopmansInput.model_validate(_periodic_trajectory_input_dict(ml))
+        return _build_trajectory_workgraph(inp, codes)
+
+    @pytest.mark.parametrize("r_cut", [None, 3.0])
+    def test_harvest_blocked_on_missing_dscf_output(
+        self, trajectory_codes, fake_sg15_pseudo_family, r_cut
+    ) -> None:
+        """RECONCILIATION SEAM: flips once KoopmansDSCFOutputs grows wannier_blocks.
+
+        Everything upstream of the harvest works — the wannier route is
+        derived, the decompose keywords are built (with an explicit or a
+        derived r_cut) and injected into the per-snapshot wannier overrides —
+        so the build must fail at exactly the missing-DSCF-output wiring
+        point. Replace with a positive wiring test when the output lands.
+        """
+        ml: dict[str, Any] = {"train": True, "descriptor": "orbital_density"}
+        if r_cut is not None:
+            ml["r_cut"] = r_cut
+        with pytest.raises(NotImplementedError, match="wannier_blocks"):
+            self._build(ml, trajectory_codes)
+
+    def test_self_hartree_still_builds_on_wannier_route(
+        self, trajectory_codes, fake_sg15_pseudo_family
+    ) -> None:
+        """The periodic trajectory route itself works for the self_hartree descriptor."""
+        wg = self._build({"train": True, "descriptor": "self_hartree"}, trajectory_codes)
+        names: list[str] = []
+
+        def _walk(tasks):
+            for t in tasks:
+                names.append(t.name)
+                children = getattr(t, "children", None)
+                if children:
+                    _walk(children)
+
+        _walk(wg.tasks)
+        assert any("dscf_snapshot_1" in n for n in names), names
+        assert sum(1 for n in names if "extract_snapshot_dataset" in n) == 1, names

@@ -27,14 +27,34 @@ class MLConfig(BaseModel):
     n_max: int = Field(
         default=4,
         gt=0,
-        description="the maximum expansion coefficient n for radial basis functions",
+        description="the maximum expansion coefficient n for radial basis functions "
+        "(wannier90's decompose_n_max for the orbital_density descriptor)",
     )
-    l_max: int = Field(default=4, gt=0, description="The maximum angular expansion coefficient")
+    l_max: int = Field(
+        default=4,
+        gt=0,
+        description="The maximum angular expansion coefficient "
+        "(wannier90's decompose_l_max for the orbital_density descriptor)",
+    )
     r_min: float = Field(
-        default=0.5, gt=0.0, description="The width of the narrowest radial basis function"
+        default=0.5,
+        gt=0.0,
+        description="The width (in Å) of the narrowest radial basis function "
+        "(wannier90's decompose_r_min for the orbital_density descriptor)",
     )
     r_max: float = Field(
-        default=4.0, gt=0.0, description="The width of the broadest radial basis function"
+        default=4.0,
+        gt=0.0,
+        description="The width (in Å) of the broadest radial basis function "
+        "(wannier90's decompose_r_max for the orbital_density descriptor)",
+    )
+    r_cut: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="The cutoff radius (in Å) of the sphere within which each orbital's "
+        "density is decomposed (wannier90's decompose_r_cut). If unset, it is derived as "
+        "the inscribed-sphere radius of the Born-von-Kármán supercell — half the shortest "
+        "distance between opposite faces, the largest value wannier90 accepts",
     )
     alphas_from_file: bool = Field(
         default=False,

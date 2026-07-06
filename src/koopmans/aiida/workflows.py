@@ -760,19 +760,25 @@ def _resolve_trajectory_ml_mode(ml_config: Any) -> tuple[str, dict[str, Any] | N
     loaded from ``ml:model_file`` (required for ``test`` and ``predict``).
 
     Raises:
-        NotImplementedError: For descriptors other than ``self_hartree``.
-        ValueError: If a mode needing a trained model lacks ``model_file``.
+        ValueError: For unknown descriptors, or if a mode needing a trained
+            model lacks ``model_file``.
+        NotImplementedError: For ``predict`` with the ``orbital_density``
+            descriptor (the in-DSCF prediction step cannot consume the
+            wannier90 power-spectrum rows yet).
     """
     from json import load as json_load
 
-    if (
-        ml_config.train or ml_config.test or ml_config.predict
-    ) and ml_config.descriptor != "self_hartree":
+    ml_active = ml_config.train or ml_config.test or ml_config.predict
+    if ml_active and ml_config.descriptor not in ("self_hartree", "orbital_density"):
+        raise ValueError(
+            f"ml:descriptor={ml_config.descriptor!r} is not recognised; use "
+            "'self_hartree' or 'orbital_density'."
+        )
+    if ml_config.predict and ml_config.descriptor == "orbital_density":
         raise NotImplementedError(
-            f"ml:descriptor={ml_config.descriptor!r} is not yet supported: the "
-            "orbital_density (power-spectrum) descriptor requires retrieving the "
-            "trial KI's real-space orbital densities from kcp.x. Use "
-            "ml:descriptor='self_hartree'."
+            "ml:predict with ml:descriptor='orbital_density' is not wired up: the "
+            "in-DSCF prediction step cannot consume the wannier90 power-spectrum "
+            "descriptors yet. Use ml:descriptor='self_hartree' for predict runs."
         )
     if ml_config.train:
         ml_mode = "train"
@@ -792,6 +798,86 @@ def _resolve_trajectory_ml_mode(ml_config: Any) -> tuple[str, dict[str, Any] | N
         with open(ml_config.model_file) as handle:
             ml_model = json_load(handle)
     return ml_mode, ml_model
+
+
+def _trajectory_wannier_kwargs(
+    koopmans_input: KoopmansInput,
+    snapshots: dict[str, orm.StructureData],
+    codes: dict[str, orm.AbstractCode],
+    nbnd: int,
+    ml_mode: str,
+) -> tuple[dict[str, Any], float | None]:
+    """Assemble the Wannier-route / descriptor extras for the trajectory builder.
+
+    Returns ``(extra_kwargs, self_hartree_tol)``: the ``TrajectoryWorkflow``
+    inputs for the Wannier-initialised periodic route (plus the ``decompose``
+    keyword payload when the ``orbital_density`` descriptor is active) and
+    the possibly-defaulted orbital-grouping tolerance. Both are pass-throughs
+    for the molecular kohn-sham route.
+    """
+    from koopmans.input_file.workflow import VariationalOrbitalType
+
+    workflow = koopmans_input.workflow
+    ml_config = koopmans_input.ml
+    wannier_init = workflow.init_orbitals in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    )
+
+    extra_kwargs: dict[str, Any] = {}
+    self_hartree_tol = workflow.orbital_groups_self_hartree_tol
+    if wannier_init:
+        if workflow.calculate_bands:
+            raise NotImplementedError(
+                "calculate_bands=True is not wired for the trajectory task; band "
+                "interpolation is a singlepoint feature."
+            )
+        # Snapshots share the cell / species, so the blocks, k-mesh and
+        # codes derived from the first snapshot hold for every frame.
+        first_structure = next(iter(snapshots.values()))
+        wannier_inputs = _dscf_wannier_init_inputs(koopmans_input, first_structure, codes, nbnd)
+        extra_kwargs = {
+            key: wannier_inputs[key]
+            for key in (
+                "codes",
+                "blocks",
+                "kgrid",
+                "kpoints",
+                "gamma_only",
+                "wannier_overrides",
+                "mp_correction",
+                "eps_inf",
+            )
+        }
+        # Same image-grouping stopgap as the singlepoint dispatcher: merge
+        # the physically-equivalent supercell images of each primitive
+        # Wannier function by self-Hartree energy.
+        if self_hartree_tol is None:
+            self_hartree_tol = 1.0e-4
+
+    if ml_mode != "none" and ml_config.descriptor == "orbital_density":
+        if not wannier_init:
+            raise ValueError(
+                "ml:descriptor='orbital_density' reads the wannier90 orbital-density "
+                "decomposition of the trial-KI wannierization, so it requires "
+                "init_orbitals='mlwfs' or 'projwfs' (plus w90 projections and a "
+                "k-point grid)."
+            )
+        from aiida_koopmans import ml_helpers
+
+        r_cut = ml_config.r_cut
+        if r_cut is None:
+            r_cut = ml_helpers.derive_decompose_r_cut(
+                next(iter(snapshots.values())).cell, extra_kwargs["kgrid"]
+            )
+        extra_kwargs["decompose"] = ml_helpers.build_decompose_keywords(
+            n_max=ml_config.n_max,
+            l_max=ml_config.l_max,
+            r_min=ml_config.r_min,
+            r_max=ml_config.r_max,
+            r_cut=r_cut,
+        )
+    return extra_kwargs, self_hartree_tol
 
 
 def _build_trajectory_workgraph(
@@ -814,10 +900,20 @@ def _build_trajectory_workgraph(
     ``cell_parameters``); a plain ``atomic_positions`` block runs as a
     one-snapshot trajectory.
 
+    Descriptors: ``self_hartree`` works on both initialisation routes;
+    ``orbital_density`` requires the Wannier-initialised periodic route
+    (init_orbitals ``mlwfs``/``projwfs``) — the trial-KI wannierization is
+    asked to decompose every Wannier function (wannier90's
+    ``wannier_decompose``) and each orbital's ``.power`` spectrum is its
+    descriptor row. The ``ml:n_max`` / ``l_max`` / ``r_min`` / ``r_max`` /
+    ``r_cut`` knobs map onto the ``decompose_*`` keywords; an unset
+    ``r_cut`` is derived from the snapshot cell and the k-grid.
+
     Current limitations (raise ``NotImplementedError``):
 
-    - Only the ``self_hartree`` descriptor is wired; ``orbital_density``
-      needs kcp.x orbital-density retrieval.
+    - ``orbital_density`` with ``ml:predict`` (the in-DSCF prediction step
+      cannot consume power-spectrum rows yet).
+    - ``calculate_bands`` (band interpolation is a singlepoint feature).
     """
     from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
 
@@ -862,15 +958,23 @@ def _build_trajectory_workgraph(
 
     ensure_pseudo_family_installed(workflow.pseudo_library)
 
+    inputs = _kcp_dscf_inputs(koopmans_input)
+
+    extra_kwargs, self_hartree_tol = _trajectory_wannier_kwargs(
+        koopmans_input, snapshots, codes, inputs["nbnd"], ml_mode
+    )
+    inputs["orbital_groups_self_hartree_tol"] = self_hartree_tol
+
     return TrajectoryWorkflow.build(
         code=codes["kcp"],
         snapshots=snapshots,
-        **_kcp_dscf_inputs(koopmans_input),
+        **inputs,
         ml_mode=ml_mode,
         ml_model=ml_model,
         estimator=ml_config.estimator,
         descriptor=ml_config.descriptor,
         occ_and_emp_together=ml_config.occ_and_emp_together,
+        **extra_kwargs,
     )
 
 
