@@ -89,5 +89,6 @@ Invoked via `/<name>`:
 ## Current status (update as work progresses)
 
 - Input file parsing (`input_file/`): ~95% ported.
-- Dispatcher (`aiida/workflows.py`): covers `DFT_BANDS` and `WANNIERIZE` only. All other `Task` enum values raise `NotImplementedError`.
+- Dispatcher (`aiida/workflows.py`): covers `DFT_BANDS`, `WANNIERIZE`, `SINGLEPOINT` (DSCF via kcp.x with KI/KIPZ; DFPT via kcw.x), and `TRAJECTORY` (ML train/test, `self_hartree` descriptor).
+- Known gaps (raise `NotImplementedError` with pointers in `aiida/workflows.py`): corrections `PKIPZ`/`NONE`/`ALL`; spin-polarized DFPT; gamma-only DFPT; `eps_inf='auto'` (ph.x); `ml:predict`; `orbital_density` descriptor; multi-snapshot trajectory input.
 - Active branch: `core_functionality`.

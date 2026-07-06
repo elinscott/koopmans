@@ -215,16 +215,16 @@ wheels = [
 
 [[package]]
 name = "aiida-pythonjob"
-version = "0.5.1"
+version = "0.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiida-core" },
     { name = "ase" },
     { name = "node-graph" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/3f/1b894e08940c70f7e7d9f122ea9b804ffde2b4071db90a53655f28d2f56f/aiida_pythonjob-0.5.1.tar.gz", hash = "sha256:ef2b5dcdf1f1ad012ff9ef3e845cd0adc025bedd0a1b36282d413059f9c2db04", size = 41641, upload-time = "2026-01-22T15:29:10.647Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/43/f8bb3199d9097dd8c0be0858041bf0a350cd9795b26eab756338fe1d4241/aiida_pythonjob-0.5.2.tar.gz", hash = "sha256:2512a8e3440124a427225188d539ee660302272d3aac2bd12722263f60cd8e82", size = 42115, upload-time = "2026-03-01T19:58:08.686Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/99/155f8f8d8b77b53d7b4bcd575f59a459e573a1db5445ddd26276dea6ecba/aiida_pythonjob-0.5.1-py3-none-any.whl", hash = "sha256:8767eff3f2703de9a8fac0fd638017bc5bbd2391aff80975a986c60136139081", size = 38285, upload-time = "2026-01-22T15:29:09.584Z" },
+    { url = "https://files.pythonhosted.org/packages/44/2a/9646f438580ef5a6681ade6ec2a9f136708f4d65167a1392396ced3ce0bb/aiida_pythonjob-0.5.2-py3-none-any.whl", hash = "sha256:00304fc584cb22c34b0ab8c3eb4b0574a2364349304c1cc7fd3d9c988b30afea", size = 38734, upload-time = "2026-03-01T19:58:07.501Z" },
 ]
 
 [[package]]
@@ -368,10 +368,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiida-core", specifier = "~=2.7.1" },
-    { name = "aiida-core", marker = "extra == 'docs'", specifier = "~=2.7.1" },
+    { name = "aiida-core", specifier = ">=2.7.3,<3.0" },
     { name = "aiida-pseudo", marker = "extra == 'docs'" },
-    { name = "aiida-pythonjob", specifier = "~=0.5.1" },
+    { name = "aiida-pythonjob", specifier = "~=0.5.2" },
     { name = "aiida-quantumespresso", marker = "extra == 'docs'" },
     { name = "aiida-shell", specifier = "~=0.8" },
     { name = "anywidget", marker = "extra == 'docs'" },
@@ -380,6 +379,7 @@ requires-dist = [
     { name = "furo", marker = "extra == 'docs'" },
     { name = "httpx", marker = "extra == 'tests'" },
     { name = "jsonschema" },
+    { name = "mypy", marker = "extra == 'pre-commit'", specifier = "~=2.1.0" },
     { name = "myst-nb", marker = "extra == 'docs'", specifier = "~=1.0.0" },
     { name = "nbsphinx", marker = "extra == 'docs'" },
     { name = "node-graph", specifier = "~=0.6.5" },
@@ -401,6 +401,8 @@ requires-dist = [
     { name = "sphinx-notfound-page", marker = "extra == 'docs'", specifier = "~=1.0" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=3.0" },
     { name = "sphinxext-rediraffe", marker = "extra == 'docs'", specifier = "~=0.2.4" },
+    { name = "types-pyyaml", marker = "extra == 'pre-commit'", specifier = "~=6.0" },
+    { name = "types-tabulate", marker = "extra == 'pre-commit'", specifier = "~=0.9.0" },
 ]
 provides-extras = ["docs", "pre-commit", "tests"]
 
@@ -3020,37 +3022,22 @@ wheels = [
 
 [[package]]
 name = "pydantic-espresso"
-version = "0.0.1.dev0"
+version = "0.0.2.dev0"
 source = { directory = "../pydantic_espresso" }
 dependencies = [
-    { name = "click" },
-    { name = "defusedxml" },
-    { name = "more-click" },
-    { name = "more-itertools" },
-    { name = "numpy" },
     { name = "packaging" },
     { name = "pydantic" },
-    { name = "python-gitlab" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "click" },
-    { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "defusedxml", marker = "extra == 'fetch'" },
-    { name = "more-click" },
-    { name = "more-itertools" },
-    { name = "numpy" },
+    { name = "click", marker = "extra == 'dev'" },
+    { name = "defusedxml", marker = "extra == 'dev'", specifier = ">=0.7.1" },
     { name = "packaging" },
     { name = "pydantic" },
-    { name = "python-gitlab" },
-    { name = "python-gitlab", marker = "extra == 'fetch'" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
+    { name = "python-gitlab", marker = "extra == 'dev'" },
 ]
-provides-extras = ["fetch"]
+provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 build = [
@@ -3095,11 +3082,14 @@ release = [
 ]
 tests = [
     { name = "coverage", extras = ["toml"] },
+    { name = "numpy" },
     { name = "pytest" },
 ]
 typing = [
+    { name = "click" },
     { name = "coverage", extras = ["toml"] },
     { name = "mypy" },
+    { name = "numpy" },
     { name = "pydantic" },
     { name = "pytest" },
 ]
@@ -3325,19 +3315,6 @@ wheels = [
 ]
 
 [[package]]
-name = "python-gitlab"
-version = "8.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests" },
-    { name = "requests-toolbelt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/68/02645bc9d71554e7a263b118e4e55dafe4c4735c1ba74f9712232ed84054/python_gitlab-8.0.0.tar.gz", hash = "sha256:03eae5a9d105448796e6c0e192d402c266057e75790cf4f42c143dddf91313ce", size = 401334, upload-time = "2026-01-28T01:22:27.005Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/60/ba68e51e90a99b14af639463e5d617239029ec25927a0990ff28bd851916/python_gitlab-8.0.0-py3-none-any.whl", hash = "sha256:c635e6722c5710d35ddadfcf95c362b0aa8de11ab3972bc4f230ebd58a6c49ee", size = 144483, upload-time = "2026-01-28T01:22:25.772Z" },
-]
-
-[[package]]
 name = "pytokens"
 version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3553,18 +3530,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c9/74/b3ff8e6c8446842c3f5c837e9c3dfcfe2018ea6ecef224c710c85ef728f4/requests-2.32.5.tar.gz", hash = "sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf", size = 134517, upload-time = "2025-08-18T20:46:02.573Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl", hash = "sha256:2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6", size = 64738, upload-time = "2025-08-18T20:46:00.542Z" },
-]
-
-[[package]]
-name = "requests-toolbelt"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/61/d7545dafb7ac2230c70d38d31cbfe4cc64f7144dc41f6e4e4b78ecd9f5bb/requests-toolbelt-1.0.0.tar.gz", hash = "sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6", size = 206888, upload-time = "2023-05-01T04:11:33.229Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl", hash = "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06", size = 54481, upload-time = "2023-05-01T04:11:28.427Z" },
 ]
 
 [[package]]
