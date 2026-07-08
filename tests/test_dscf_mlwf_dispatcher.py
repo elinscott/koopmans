@@ -96,9 +96,29 @@ class TestDeriveDscfBlocks:
             return f"l={self.angular.value}"
 
     class _FakeProjection:
-        def __init__(self, site, l_value):
+        def __init__(self, site, l_value, fractional_site=None):
             self.site = site
+            self.fractional_site = fractional_site
+            self.cartesian_site = None
             self.ang_mtm = TestDeriveDscfBlocks._FakeQuantumNumbers(l_value)
+
+    def test_fractional_site_projections(self, si_structure):
+        """Point-hosted projections (legacy bond-centred sp3) derive and format.
+
+        One fractional site hosts exactly one orbital set (sp3 -> 4 WFs) and
+        renders as wannier90's ``f=x,y,z:<ang_mtm>`` form.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import _derive_dscf_blocks
+
+        sp3 = [self._FakeProjection(None, -3, fractional_site=[0.25, 0.25, 0.25])]
+        blocks = _derive_dscf_blocks(si_structure, [sp3, sp3], 4, 20, SpinChannel.NONE)
+        occ, emp = blocks
+        assert occ["num_wann"] == 4
+        assert occ["projections"] == ["f=0.25,0.25,0.25:l=-3"]
+        assert emp["num_wann"] == 4
+        assert emp["num_bands"] == 16  # disentanglement pool
 
     def test_occ_emp_split_and_exclusions(self, si_structure):
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
@@ -110,9 +130,32 @@ class TestDeriveDscfBlocks:
         blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "emp_1"]
         assert blocks[0]["include_bands"] == [1, 2, 3, 4]
-        assert blocks[0]["exclude_bands"] == "5-8"
+        assert blocks[0]["exclude_bands"] == [5, 6, 7, 8]
         assert blocks[1]["include_bands"] == [5, 6, 7, 8]
-        assert blocks[1]["exclude_bands"] == "1-4"
+        assert blocks[1]["exclude_bands"] == [1, 2, 3, 4]
+
+    def test_last_block_absorbs_disentanglement_pool(self, si_structure):
+        """Extra bands above the last block become its disentanglement window.
+
+        Mirrors legacy ``ProjectionBlocks.blocks``: the uppermost block gets
+        ``num_bands = num_wann + (nbnd - covered)`` and excludes nothing above
+        itself, so an entangled empty manifold can disentangle.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import _derive_dscf_blocks
+
+        sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
+        blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
+        occ, emp = blocks
+        # occupied block untouched: two-sided exclusion against all 20 bands
+        assert occ["num_bands"] == 4
+        assert occ["exclude_bands"] == list(range(5, 21))
+        # last block: 4 target WFs + 12 pool bands, exclusion only below
+        assert emp["num_wann"] == 4
+        assert emp["num_bands"] == 16
+        assert emp["include_bands"] == [5, 6, 7, 8]
+        assert emp["exclude_bands"] == [1, 2, 3, 4]
 
     def test_middle_block_gets_two_sided_exclusion(self, si_structure):
         """A block sandwiched between others excludes bands on both sides."""
@@ -124,7 +167,7 @@ class TestDeriveDscfBlocks:
         sp = [self._FakeProjection("Si", -1)]  # 4
         blocks = _derive_dscf_blocks(si_structure, [s, s, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "occ_2", "emp_1"]
-        assert blocks[1]["exclude_bands"] == "1-2,5-8"
+        assert blocks[1]["exclude_bands"] == [1, 2, 5, 6, 7, 8]
 
     def test_straddling_block_raises(self, si_structure):
         """A block crossing the occupied/empty boundary is an input error."""

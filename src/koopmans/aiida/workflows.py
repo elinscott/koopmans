@@ -370,14 +370,14 @@ def _build_singlepoint_workgraph(
     )
 
 
-def _band_range_complement(start: int, end: int, nbnd: int) -> str | None:
-    """Return the wannier90 ``exclude_bands`` string for a [start, end] block."""
-    parts = []
-    if start > 1:
-        parts.append(f"1-{start - 1}")
-    if end < nbnd:
-        parts.append(f"{end + 1}-{nbnd}")
-    return ",".join(parts) if parts else None
+def _band_range_complement(start: int, end: int, nbnd: int) -> list[int] | None:
+    """Return the wannier90 ``exclude_bands`` list for a [start, end] block.
+
+    A list of band indices (not the ``.win`` range string): aiida-wannier90's
+    input writer expects integers and does the range compression itself.
+    """
+    excluded = [*range(1, start), *range(end + 1, nbnd + 1)]
+    return excluded or None
 
 
 def _derive_dscf_blocks(
@@ -398,7 +398,7 @@ def _derive_dscf_blocks(
     complete occupied manifold of the supercell kcp.x run).
     """
     from aiida_koopmans.types import ExplicitProjectionBlock, SpinChannel
-    from aiida_koopmans.workgraphs.dfpt import _projection_num_wann
+    from aiida_koopmans.workgraphs.dfpt import _projection_num_wann, projection_win_string
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
     if not projection_blocks:
@@ -436,10 +436,22 @@ def _derive_dscf_blocks(
                 include_bands=list(range(start, end + 1)),
                 exclude_bands=_band_range_complement(start, end, nbnd),
                 projection_type=WannierProjectionType.ANALYTIC,
-                projections=[f"{p.site}:{p.ang_mtm}" for p in block],
+                projections=[projection_win_string(p) for p in block],
             )
         )
         cursor = end
+
+    # Legacy ``ProjectionBlocks.blocks`` (``projections.py:205-227``): the
+    # uppermost block per spin channel absorbs the remaining ``nbnd - cursor``
+    # bands as its disentanglement pool (``num_bands = num_wann +
+    # num_extra_bands``) and excludes nothing above itself — without this an
+    # entangled empty manifold (e.g. Si conduction bands) has no window to
+    # disentangle from and the folded empty states are garbage.
+    if blocks and cursor < nbnd:
+        last = blocks[-1]
+        last["num_bands"] = last["num_wann"] + (nbnd - cursor)
+        start = last["include_bands"][0]
+        last["exclude_bands"] = list(range(1, start)) or None
 
     covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][0] <= nocc)
     if covered_occ != nocc:
@@ -521,10 +533,25 @@ def _dscf_wannier_init_inputs(
         )
 
     parameters = input_to_pw_parameters(koopmans_input)
-    wannier_overrides = {
+    wannier_overrides: dict[str, Any] = {
         key: {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}}
         for key in ("scf", "nscf")
     }
+    # User wannier90 keywords (disentanglement windows, num_iter, ...) feed
+    # every per-block wannier builder. Projections and per-spin sub-blocks
+    # are structural (consumed via ``blocks``), not .win keywords.
+    w90_user_params = {
+        key: value
+        for key, value in calc_params.wannier90.model_dump(
+            exclude_none=True, exclude_defaults=True
+        ).items()
+        if key not in ("projections", "up", "down", "bands_plot")
+    }
+    if w90_user_params:
+        # Flat by design (see ``WannierizeOverrides``): the upstream
+        # namespace-nested override shape is produced only inside
+        # ``BlockWannierize``, next to the builder call.
+        wannier_overrides["w90_keywords"] = w90_user_params
 
     wannier_codes = dict(codes)
     wannier_codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
