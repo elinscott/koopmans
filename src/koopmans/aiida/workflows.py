@@ -6,15 +6,21 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from aiida import orm
+from aiida_koopmans.workgraphs import Codes
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
     input_to_pw_parameters,
 )
-from koopmans.input_file.workflow import CalculateScreeningMethod, Correction, Task
+from koopmans.input_file.workflow import (
+    CalculateScreeningMethod,
+    Correction,
+    Task,
+    VariationalOrbitalType,
+)
 
 if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
@@ -34,7 +40,7 @@ def _load_code(name: str, executable: str) -> orm.AbstractCode:
         ) from exc
 
 
-def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]:
+def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     """Load the AiiDA codes required by the workflow described in ``workflow``.
 
     Which codes are needed depends not only on ``task`` but also on the
@@ -52,7 +58,7 @@ def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]
         NotImplementedError: If the requested code combination is not supported yet.
     """
     task = workflow.task
-    codes: dict[str, orm.AbstractCode] = {}
+    codes: Codes = {}
 
     # All tasks need pw.x
     codes["pw"] = _load_code("pw", "pw.x")
@@ -159,7 +165,7 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
 def _build_dft_bands_workgraph(
     koopmans_input: KoopmansInput,
-    codes: dict[str, orm.AbstractCode],
+    codes: Codes,
 ) -> WorkGraph:
     """Build a workgraph for DFT bands calculation.
 
@@ -183,7 +189,7 @@ def _build_dft_bands_workgraph(
 
 def _build_wannierize_workgraph(
     koopmans_input: KoopmansInput,
-    codes: dict[str, orm.AbstractCode],
+    codes: Codes,
 ) -> WorkGraph:
     """Build a workgraph for Wannierization.
 
@@ -218,7 +224,7 @@ def _build_wannierize_workgraph(
 
 def _build_singlepoint_workgraph(
     koopmans_input: KoopmansInput,
-    codes: dict[str, orm.AbstractCode],
+    codes: Codes,
 ) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
 
@@ -241,50 +247,21 @@ def _build_singlepoint_workgraph(
     if workflow.screening_method == CalculateScreeningMethod.DFPT:
         return _build_singlepoint_dfpt_workgraph(koopmans_input, codes)
 
-    correction = workflow.correction
-    supported = {Correction.KI, Correction.KIPZ}
-    if correction not in supported:
-        raise NotImplementedError(
-            f"correction={correction.value!r} is not yet ported. "
-            f"Supported: {sorted(c.value for c in supported)}. "
-            "PKIPZ requires a perturbative post-processing step; "
-            "NONE / ALL are workflow-control flags."
-        )
+    _require_supported_correction(workflow.correction)
 
     structure = atoms_input_to_structure(koopmans_input.atoms)
-    pseudo_family = workflow.pseudo_library
-    ensure_pseudo_family_installed(pseudo_family)
-
-    ecutwfc, ecutrho, nbnd, nspin = _extract_kcp_scalar_inputs(koopmans_input)
-
-    initial_alpha = (
-        workflow.alpha_guess if isinstance(workflow.alpha_guess, float) else workflow.alpha_guess[0]
-    )
+    ensure_pseudo_family_installed(workflow.pseudo_library)
 
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
         structure=structure,
-        pseudo_family=pseudo_family,
-        ecutwfc=ecutwfc,
-        ecutrho=ecutrho,
-        nbnd=nbnd,
-        nspin=nspin,
-        tot_magnetization=_coerce_optional_int(
-            koopmans_input.calculator_parameters.tot_magnetization
-        ),
-        correction=correction,
-        init_orbitals=workflow.init_orbitals,
-        alpha_numsteps=workflow.alpha_numsteps,
-        fix_spin_contamination=workflow.fix_spin_contamination,
-        initial_alpha=initial_alpha,
-        spin_polarized=workflow.spin_polarized,
-        orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
+        **_kcp_dscf_inputs(koopmans_input),
     )
 
 
 def _build_singlepoint_dfpt_workgraph(
     koopmans_input: KoopmansInput,
-    codes: dict[str, orm.AbstractCode],
+    codes: Codes,
 ) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
 
@@ -307,7 +284,6 @@ def _build_singlepoint_dfpt_workgraph(
         kpoints_input_to_kpoints_mesh,
         kpoints_input_to_kpoints_path,
     )
-    from koopmans.input_file.workflow import VariationalOrbitalType
 
     workflow = koopmans_input.workflow
 
@@ -391,7 +367,7 @@ def _build_singlepoint_dfpt_workgraph(
 
 def _build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
-    codes: dict[str, orm.AbstractCode],
+    codes: Codes,
 ) -> WorkGraph:
     """Build a workgraph for a trajectory (machine-learning train/test) task.
 
@@ -425,13 +401,7 @@ def _build_trajectory_workgraph(
             "is not ported for trajectories."
         )
 
-    correction = workflow.correction
-    supported = {Correction.KI, Correction.KIPZ}
-    if correction not in supported:
-        raise NotImplementedError(
-            f"correction={correction.value!r} is not yet ported. "
-            f"Supported: {sorted(c.value for c in supported)}."
-        )
+    _require_supported_correction(workflow.correction)
 
     ml_config = koopmans_input.ml
 
@@ -461,14 +431,7 @@ def _build_trajectory_workgraph(
             ml_model = json_load(handle)
 
     structure = atoms_input_to_structure(koopmans_input.atoms)
-    pseudo_family = workflow.pseudo_library
-    ensure_pseudo_family_installed(pseudo_family)
-
-    ecutwfc, ecutrho, nbnd, nspin = _extract_kcp_scalar_inputs(koopmans_input)
-
-    initial_alpha = (
-        workflow.alpha_guess if isinstance(workflow.alpha_guess, float) else workflow.alpha_guess[0]
-    )
+    ensure_pseudo_family_installed(workflow.pseudo_library)
 
     # The input schema cannot express multiple snapshots yet, so run the
     # single input structure as a one-snapshot trajectory.
@@ -477,21 +440,7 @@ def _build_trajectory_workgraph(
     return TrajectoryWorkflow.build(
         code=codes["kcp"],
         snapshots=snapshots,
-        pseudo_family=pseudo_family,
-        ecutwfc=ecutwfc,
-        ecutrho=ecutrho,
-        nbnd=nbnd,
-        nspin=nspin,
-        tot_magnetization=_coerce_optional_int(
-            koopmans_input.calculator_parameters.tot_magnetization
-        ),
-        correction=correction,
-        init_orbitals=workflow.init_orbitals,
-        alpha_numsteps=workflow.alpha_numsteps,
-        fix_spin_contamination=workflow.fix_spin_contamination,
-        initial_alpha=initial_alpha,
-        spin_polarized=workflow.spin_polarized,
-        orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
+        **_kcp_dscf_inputs(koopmans_input),
         ml_mode=ml_mode,
         ml_model=ml_model,
         estimator=ml_config.estimator,
@@ -500,16 +449,59 @@ def _build_trajectory_workgraph(
     )
 
 
-def _extract_kcp_scalar_inputs(
-    koopmans_input: KoopmansInput,
-) -> tuple[float, float, int, int]:
-    """Pull ``(ecutwfc, ecutrho, nbnd, nspin)`` out of the ``KoopmansInput``.
+def _require_supported_correction(correction: Correction) -> None:
+    """Raise for corrections the kcp.x (DSCF) route does not support yet."""
+    supported = {Correction.KI, Correction.KIPZ}
+    if correction not in supported:
+        raise NotImplementedError(
+            f"correction={correction.value!r} is not yet supported. "
+            f"Supported: {sorted(c.value for c in supported)}. "
+            "PKIPZ requires a perturbative post-processing step; "
+            "NONE / ALL are workflow-control flags."
+        )
 
-    Prefers the top-level ``calculator_parameters.{ecutwfc,nbnd}`` convenience
-    fields; falls back to the ``kcp.system`` Pydantic block when they are unset.
-    ``ecutrho`` has no top-level convenience field — read from ``kcp.system``
-    and default to ``4 * ecutwfc`` when unset.
+
+class _KcpDscfInputs(TypedDict):
+    """Scalar inputs shared by the kcp.x DSCF builders (singlepoint and trajectory)."""
+
+    pseudo_family: str
+    ecutwfc: float
+    ecutrho: float
+    nbnd: int
+    nspin: int
+    tot_magnetization: int | None
+    correction: Correction
+    init_orbitals: VariationalOrbitalType
+    alpha_numsteps: int
+    fix_spin_contamination: bool
+    initial_alpha: float
+    spin_polarized: bool
+    orbital_groups_self_hartree_tol: float | None
+
+
+def _initial_alpha_from_guess(alpha_guess: float | list) -> float:
+    """Collapse the user ``alpha_guess`` to the scalar the kcp.x DSCF route accepts.
+
+    Accepts the same three input-file shapes as the DFPT side's
+    ``normalize_alpha_guess`` (scalar, flat list, nested per-spin list), but
+    reduces to a single starting alpha since ``KoopmansDSCFWorkflow`` seeds
+    every orbital with the same value.
     """
+    if isinstance(alpha_guess, float):
+        return alpha_guess
+    first = alpha_guess[0]
+    return float(first[0]) if isinstance(first, list) else float(first)
+
+
+def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
+    """Assemble the scalar kwargs shared by the kcp.x DSCF builders.
+
+    ``ecutwfc``/``nbnd`` prefer the top-level ``calculator_parameters``
+    convenience fields and fall back to the ``kcp.system`` Pydantic block;
+    ``ecutrho`` has no top-level field — read from ``kcp.system`` and default
+    to ``4 * ecutwfc`` when unset.
+    """
+    workflow = koopmans_input.workflow
     calc_params = koopmans_input.calculator_parameters
     kcp_system = calc_params.kcp.system
 
@@ -528,13 +520,24 @@ def _extract_kcp_scalar_inputs(
             "nbnd is required for a Koopmans singlepoint calculation. Set it in "
             "``calculator_parameters.nbnd`` or ``calculator_parameters.kcp.system.nbnd``."
         )
-    nbnd = int(nbnd_raw)
 
-    # KI requires nspin=2 for per-spin orbital-dependent screening, regardless of
-    # what ``spin_polarized`` says — closed-shell molecules still need two channels.
-    nspin = 2
-
-    return float(ecutwfc), float(ecutrho), nbnd, nspin
+    return _KcpDscfInputs(
+        pseudo_family=workflow.pseudo_library,
+        ecutwfc=float(ecutwfc),
+        ecutrho=float(ecutrho),
+        nbnd=int(nbnd_raw),
+        # KI requires nspin=2 for per-spin orbital-dependent screening, regardless
+        # of ``spin_polarized`` — closed-shell molecules still need two channels.
+        nspin=2,
+        tot_magnetization=_coerce_optional_int(calc_params.tot_magnetization),
+        correction=workflow.correction,
+        init_orbitals=workflow.init_orbitals,
+        alpha_numsteps=workflow.alpha_numsteps,
+        fix_spin_contamination=workflow.fix_spin_contamination,
+        initial_alpha=_initial_alpha_from_guess(workflow.alpha_guess),
+        spin_polarized=workflow.spin_polarized,
+        orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
+    )
 
 
 def _coerce_optional_int(value: float | None) -> int | None:

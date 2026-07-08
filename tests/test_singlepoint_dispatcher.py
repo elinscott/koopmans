@@ -8,7 +8,7 @@ import pytest
 
 from koopmans.aiida.workflows import (
     _build_singlepoint_workgraph,
-    _extract_kcp_scalar_inputs,
+    _kcp_dscf_inputs,
     load_codes_for_task,
 )
 from koopmans.input_file import KoopmansInput, read_input_file
@@ -89,17 +89,22 @@ class TestOzoneInputParse:
             assert got[3] == pytest.approx(want[3])
 
 
-class TestExtractKcpScalarInputs:
-    """Unit tests for ``_extract_kcp_scalar_inputs``."""
+def _scalars(inputs: dict) -> tuple[float, float, int, int]:
+    """Project the (ecutwfc, ecutrho, nbnd, nspin) corner of a kcp input bundle."""
+    return (inputs["ecutwfc"], inputs["ecutrho"], inputs["nbnd"], inputs["nspin"])
+
+
+class TestKcpDscfInputs:
+    """Unit tests for ``_kcp_dscf_inputs``."""
 
     def test_ozone_default(self, ozone_input: KoopmansInput) -> None:
         """Ozone input should yield (65.0, 260.0, 10, 2)."""
-        assert _extract_kcp_scalar_inputs(ozone_input) == (65.0, 260.0, 10, 2)
+        assert _scalars(_kcp_dscf_inputs(ozone_input)) == (65.0, 260.0, 10, 2)
 
     def test_ecutrho_defaults_to_four_times_ecutwfc(self, ozone_input: KoopmansInput) -> None:
         """With ecutrho unset, it should default to 4 * ecutwfc (4 * 65 = 260)."""
         inp = _copy_with_calc_overrides(ozone_input, **{"kcp.system.ecutrho": 0.0})
-        assert _extract_kcp_scalar_inputs(inp) == (65.0, 260.0, 10, 2)
+        assert _scalars(_kcp_dscf_inputs(inp)) == (65.0, 260.0, 10, 2)
 
     def test_ecutrho_default_with_custom_ecutwfc(self, ozone_input: KoopmansInput) -> None:
         """With ecutwfc=30 and no ecutrho, ecutrho should fall back to 120.0."""
@@ -108,7 +113,7 @@ class TestExtractKcpScalarInputs:
             ecutwfc=30.0,
             **{"kcp.system.ecutrho": 0.0},
         )
-        assert _extract_kcp_scalar_inputs(inp) == (30.0, 120.0, 10, 2)
+        assert _scalars(_kcp_dscf_inputs(inp)) == (30.0, 120.0, 10, 2)
 
     def test_missing_ecutwfc_raises_valueerror(self, ozone_input: KoopmansInput) -> None:
         """Missing ecutwfc (both top-level and kcp.system) should raise ValueError."""
@@ -118,7 +123,7 @@ class TestExtractKcpScalarInputs:
             **{"kcp.system.ecutwfc": 0.0},
         )
         with pytest.raises(ValueError, match="ecutwfc is required"):
-            _extract_kcp_scalar_inputs(inp)
+            _kcp_dscf_inputs(inp)
 
     def test_missing_nbnd_raises_valueerror(self, ozone_input: KoopmansInput) -> None:
         """Missing nbnd (both top-level and kcp.system) should raise ValueError."""
@@ -128,7 +133,17 @@ class TestExtractKcpScalarInputs:
             **{"kcp.system.nbnd": None},
         )
         with pytest.raises(ValueError, match="nbnd is required"):
-            _extract_kcp_scalar_inputs(inp)
+            _kcp_dscf_inputs(inp)
+
+    def test_workflow_fields_forwarded(self, ozone_input: KoopmansInput) -> None:
+        """The workflow-level fields should land in the bundle unchanged."""
+        inputs = _kcp_dscf_inputs(ozone_input)
+        workflow = ozone_input.workflow
+        assert inputs["pseudo_family"] == workflow.pseudo_library
+        assert inputs["correction"] == workflow.correction
+        assert inputs["init_orbitals"] == workflow.init_orbitals
+        assert inputs["alpha_numsteps"] == workflow.alpha_numsteps
+        assert inputs["initial_alpha"] == workflow.alpha_guess
 
 
 class TestBuildSinglepointWorkgraphScopeGuards:
