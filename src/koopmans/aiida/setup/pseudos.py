@@ -260,4 +260,16 @@ def _install_sg15_family(label: str, parts: list[str]) -> None:
 
         family = CutoffsPseudoPotentialFamily.create_from_folder(flat, label, pseudo_type=UpfData)
 
+    # SG15 publishes no per-element recommended cutoffs, but
+    # ``PwBaseWorkChain.get_builder_from_protocol`` unconditionally asks the
+    # family for them before any overrides are merged. Register a uniform
+    # conservative fallback (norm-conserving: rho = 4x wfc) so the lookup
+    # succeeds; a user-supplied ``ecutwfc``/``ecutrho`` overrides these in
+    # every workflow.
+    family.set_cutoffs(
+        {element: {"cutoff_wfc": 80.0, "cutoff_rho": 320.0} for element in family.elements},
+        stringency="standard",
+        unit="Ry",
+    )
+
     click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")
