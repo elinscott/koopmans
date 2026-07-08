@@ -289,26 +289,26 @@ def _build_singlepoint_dfpt_workgraph(
 
     if workflow.spin_polarized:
         raise NotImplementedError(
-            "Spin-polarized DFPT screening is not yet ported (needs the per-spin "
-            "wann2kc/screen/ham fan-out; legacy: _koopmans_dfpt.py spin_components loop)."
+            "Spin-polarized DFPT screening is not yet supported (needs a per-spin "
+            "wann2kc/screen/ham fan-out)."
         )
     if workflow.init_orbitals not in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
     ):
         raise NotImplementedError(
-            "DFPT screening is only ported for Wannier-function variational orbitals "
+            "DFPT screening only supports Wannier-function variational orbitals "
             "(init_orbitals = 'mlwfs' or 'projwfs'). The molecular kcw_at_ks path is "
             "not yet wired."
         )
     if getattr(koopmans_input.kpoints, "gamma_only", False):
         raise NotImplementedError(
-            "Gamma-only DFPT (isolated systems) is not yet ported; provide a k-point grid."
+            "Gamma-only DFPT (isolated systems) is not yet supported; provide a k-point grid."
         )
     if isinstance(workflow.eps_inf, str):
         raise NotImplementedError(
             "eps_inf = 'auto' (computing the dielectric constant with ph.x) is not "
-            "yet ported; provide a numeric value."
+            "yet supported; provide a numeric value."
         )
 
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
