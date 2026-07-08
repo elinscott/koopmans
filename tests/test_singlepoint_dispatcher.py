@@ -1,4 +1,4 @@
-"""Tests for the Koopmans singlepoint dispatcher (Phase 3)."""
+"""Tests for the Koopmans singlepoint dispatcher."""
 
 from __future__ import annotations
 

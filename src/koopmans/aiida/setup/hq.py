@@ -21,9 +21,7 @@ opt-in via env vars (no CLI flags beyond ``koopmans install
 HQ is required for the localhost backend — there is no ``core.direct``
 fallback. Install failure (unsupported platform, network error, checksum
 mismatch) raises and surfaces to the user as a clear ``koopmans install``
-error. The HQ wiring exists only because localhost itself has no native
-queue; once koopmans grows remote-Computer support against a real
-scheduler (Slurm/PBS/etc.), that path will not involve HQ at all.
+error.
 """
 
 from __future__ import annotations

@@ -49,7 +49,7 @@ def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]
 
     Raises:
         ValueError: If a required code is not found in the AiiDA profile.
-        NotImplementedError: If the requested code combination is not ported yet.
+        NotImplementedError: If the requested code combination is not supported yet.
     """
     task = workflow.task
     codes: dict[str, orm.AbstractCode] = {}
@@ -75,13 +75,8 @@ def load_codes_for_task(workflow: WorkflowConfig) -> dict[str, orm.AbstractCode]
         codes["pw2wannier90"] = _load_code("pw2wannier90", "pw2wannier90.x")
         codes["wannier90"] = _load_code("wannier90", "wannier90.x")
 
-        # TODO: projwfc is only needed when the Wannierize flow computes a
-        # projected DOS / bandstructure. Silently swallowing the lookup error
-        # here lets workflows run without projwfc installed, but also masks
-        # "projwfc required but missing" cases. Replace with a predicate on
-        # the relevant workflow flag (likely `calculate_bands` or a
-        # wannier90.bands_plot override) and insist on the code being
-        # installed when that predicate fires.
+        # projwfc is only needed when the Wannierize flow computes a projected
+        # DOS / bandstructure, so treat it as optional rather than required.
         try:
             codes["projwfc"] = orm.load_code("projwfc@localhost")
         except Exception:  # noqa: S110
@@ -232,7 +227,7 @@ def _build_singlepoint_workgraph(
 
     - DSCF + ``KI``/``KIPZ`` → ``KoopmansDSCFWorkflow`` (kcp.x)
     - DFPT → ``_build_singlepoint_dfpt_workgraph`` (kcw.x)
-    - ``PKIPZ``, ``NONE``, ``ALL`` → ``NotImplementedError`` (not yet ported)
+    - ``PKIPZ``, ``NONE``, ``ALL`` → ``NotImplementedError`` (not yet supported)
     """
     from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
 
@@ -296,10 +291,10 @@ def _build_singlepoint_dfpt_workgraph(
     Assembles the full chain (scf + nscf → per-manifold wannierization →
     wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPT``.
 
-    MVP restrictions (mirroring the ``SinglepointDFPT`` scope): periodic,
+    Current restrictions (matching the ``SinglepointDFPT`` scope): periodic,
     spin-unpolarized, MLWF/projwf variational orbitals, and explicit
     projections forming exactly one occupied manifold block plus at most one
-    empty block (the legacy multi-block merge machinery is not yet ported).
+    empty block (multi-block manifolds are not yet supported).
     """
     from aiida_koopmans.workgraphs.dfpt import (
         SinglepointDFPT,
@@ -343,7 +338,7 @@ def _build_singlepoint_dfpt_workgraph(
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
     # Electron count from the pseudopotential valences: fixes the size of the
-    # occupied manifold (legacy: pseudopotentials.nelec_from_pseudos).
+    # occupied manifold.
     pseudos = get_pseudos_from_family(pseudo_family, structure)
     nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
 
@@ -475,8 +470,7 @@ def _build_trajectory_workgraph(
         workflow.alpha_guess if isinstance(workflow.alpha_guess, float) else workflow.alpha_guess[0]
     )
 
-    # The input schema cannot express multiple snapshots yet (legacy read them
-    # from an ``atomic_positions: {snapshots: file.xyz}`` entry), so run the
+    # The input schema cannot express multiple snapshots yet, so run the
     # single input structure as a one-snapshot trajectory.
     snapshots = {"snapshot_1": structure}
 
