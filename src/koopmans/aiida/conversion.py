@@ -337,6 +337,16 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     # Add ecutwfc if specified
     if calc_params.ecutwfc is not None:
         parameters["SYSTEM"]["ecutwfc"] = calc_params.ecutwfc
+        # Pin ecutrho alongside it (kcp.x convention: 4x for norm-conserving,
+        # same fallback as ``_extract_kcp_scalar_inputs``). Without this the
+        # pseudo family's placeholder ecutrho wins in protocol-built PW runs,
+        # putting them on a different grid from the CP supercell run that the
+        # dft_init consistency checks compare against. An explicit
+        # ``pw.system.ecutrho`` still overrides via the update below.
+        kcp_system = calc_params.kcp.system
+        parameters["SYSTEM"]["ecutrho"] = (
+            kcp_system.ecutrho if kcp_system.ecutrho else 4.0 * calc_params.ecutwfc
+        )
 
     # Add nbnd if specified
     if calc_params.nbnd is not None:
