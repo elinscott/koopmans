@@ -319,8 +319,7 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     """Convert KoopmansInput to a PW input-parameter namelist dict.
 
     The dispatcher hands this straight into a builder ``overrides`` mapping;
-    aiida-workgraph wraps it into ``orm.Dict`` at the CalcJob socket. Returning
-    plain Python keeps the workflow layer free of orm round-trips.
+    aiida-workgraph wraps it into ``orm.Dict`` at the CalcJob socket.
     """
     calc_params = koopmans_input.calculator_parameters
     pw_params = calc_params.pw

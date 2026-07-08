@@ -9,9 +9,8 @@ from pydantic import Field, field_validator, model_validator
 from koopmans.base import BaseModel
 
 # Re-export so ``from koopmans.input_file.workflow import Correction``
-# (and ``VariationalOrbitalType``) keeps working — canonical definitions live in
-# ``aiida_koopmans.types`` so the dispatcher can pass enum values
-# across the package boundary without a string round-trip.
+# (and ``VariationalOrbitalType``) keeps working — the canonical
+# definitions live in ``aiida_koopmans.types``.
 __all__ = ["Correction", "VariationalOrbitalType"]
 
 FloatGE1 = Annotated[float, Field(ge=1.0)]
