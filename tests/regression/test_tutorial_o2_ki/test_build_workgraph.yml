@@ -533,6 +533,87 @@ raw:
             required: true
         codes:
           dynamic: false
+          fields:
+            dos:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            kcp:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            kcw:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            merge_evc:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            ph:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            projwfc:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            pw:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            pw2wannier90:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            wann2kcp:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            wannier90:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -617,13 +698,13 @@ raw:
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                required: true
+                required: false
             filled:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                required: true
+                required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -1093,6 +1174,31 @@ raw:
             required: false
         wannier_overrides:
           dynamic: false
+          fields:
+            nscf:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            pw2wannier90_keywords:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            scf:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            w90_keywords:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -1559,6 +1665,87 @@ raw:
                 required: true
             codes:
               dynamic: false
+              fields:
+                dos:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                kcp:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                kcw:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                merge_evc:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                ph:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                projwfc:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                pw:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                pw2wannier90:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                wann2kcp:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                wannier90:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
@@ -1643,13 +1830,13 @@ raw:
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    required: true
+                    required: false
                 filled:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    required: true
+                    required: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
@@ -2119,6 +2306,31 @@ raw:
                 required: false
             wannier_overrides:
               dynamic: false
+              fields:
+                nscf:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                pw2wannier90_keywords:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                scf:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                w90_keywords:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
