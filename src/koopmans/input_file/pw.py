@@ -1,11 +1,11 @@
 """Input parameters for ``pw.x`` calculations."""
 
-from typing import Any, Literal, ClassVar
+from typing import Any, ClassVar, Literal
 
 from pydantic import Field, field_validator
 from pydantic_espresso.models.pw.develop import ControlNamelist as _ControlNamelist
-from pydantic_espresso.models.pw.develop import SystemNamelist as _SystemNamelist
 from pydantic_espresso.models.pw.develop import ElectronsNamelist
+from pydantic_espresso.models.pw.develop import SystemNamelist as _SystemNamelist
 
 from koopmans.base import BaseModel
 

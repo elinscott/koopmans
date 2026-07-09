@@ -25,10 +25,23 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [ "3.14", "3.10" ]
+        python-version: [ "3.13", "3.12" ]
         tox-command: [ "lint", "pyroma", "mypy" ]
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Clone fork dependencies next to the checkout
+        # The [tool.uv.sources] path dependencies point at sibling checkouts
+        # of forks carrying features still working their way upstream. Drop
+        # entries here (and the corresponding uv source) as they merge.
+        run: |
+          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
+          git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
+          git clone --depth 1 --branch patched https://github.com/elinscott/wannier90-input ../wannier90-input
+          git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
+          git clone --depth 1 https://github.com/aiidateam/aiida-core ../aiida-core
       - name: "Install uv"
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
@@ -48,9 +61,22 @@ jobs:
         # We only test documentation on the latest version
         # sphinx 8.0 / sphinx-rtd-theme 3.0 discontinued Python 3.9 support
         # a year early, which prompted re-thinking about this.
-        python-version: [ "3.14" ]
+        python-version: [ "3.13" ]
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Clone fork dependencies next to the checkout
+        # The [tool.uv.sources] path dependencies point at sibling checkouts
+        # of forks carrying features still working their way upstream. Drop
+        # entries here (and the corresponding uv source) as they merge.
+        run: |
+          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
+          git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
+          git clone --depth 1 --branch patched https://github.com/elinscott/wannier90-input ../wannier90-input
+          git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
+          git clone --depth 1 https://github.com/aiidateam/aiida-core ../aiida-core
       - name: "Install uv"
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:
@@ -76,9 +102,22 @@ jobs:
     strategy:
       matrix:
         os: [ ubuntu-latest ]
-        python-version: [ "3.14", "3.10" ]
+        python-version: [ "3.13", "3.12" ]
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - name: Clone fork dependencies next to the checkout
+        # The [tool.uv.sources] path dependencies point at sibling checkouts
+        # of forks carrying features still working their way upstream. Drop
+        # entries here (and the corresponding uv source) as they merge.
+        run: |
+          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
+          git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
+          git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
+          git clone --depth 1 --branch patched https://github.com/elinscott/wannier90-input ../wannier90-input
+          git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
+          git clone --depth 1 https://github.com/aiidateam/aiida-core ../aiida-core
       - name: "Install uv"
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
         with:

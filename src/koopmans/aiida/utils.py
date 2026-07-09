@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from aiida.orm import ProcessNode
 
-__all__ = ["suppress_aiida_logging", "suppress_stdout", "get_node_label"]
+__all__ = ["get_node_label", "suppress_aiida_logging", "suppress_stdout"]
 
 
-def get_node_label(node: "ProcessNode", include_code: bool = True) -> str:
+def get_node_label(node: ProcessNode, include_code: bool = True) -> str:
     """Extract a meaningful label for a ProcessNode.
 
     Traverses up the caller chain to find a descriptive label, skipping
