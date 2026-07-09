@@ -1,6 +1,0 @@
-&INPUTPP
-  atom_proj = .true.
-  outdir = './out/'
-  prefix = 'aiida'
-  seedname = 'aiida'
-/
