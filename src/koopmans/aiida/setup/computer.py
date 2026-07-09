@@ -66,7 +66,7 @@ def get_localhost_computer(nprocs: int | None = None) -> Computer:
 
     click.echo(f"Creating computer '{COMPUTER_LABEL}'...")
 
-    config = get_config()  # type: ignore[no-untyped-call]
+    config = get_config()
     workdir = Path(config.dirpath) / "scratch" / "koopmans"
     workdir.mkdir(parents=True, exist_ok=True)
 

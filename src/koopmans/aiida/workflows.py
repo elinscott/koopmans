@@ -479,7 +479,7 @@ class _KcpDscfInputs(TypedDict):
     orbital_groups_self_hartree_tol: float | None
 
 
-def _initial_alpha_from_guess(alpha_guess: float | list) -> float:
+def _initial_alpha_from_guess(alpha_guess: float | list[float]) -> float:
     """Collapse the user ``alpha_guess`` to the scalar the kcp.x DSCF route accepts.
 
     Accepts the same three input-file shapes as the DFPT side's

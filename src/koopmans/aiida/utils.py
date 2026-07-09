@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aiida.orm import ProcessNode
+    from aiida.orm import Node, ProcessNode
 
 __all__ = ["get_node_label", "suppress_aiida_logging", "suppress_stdout"]
 
@@ -29,7 +30,7 @@ def get_node_label(node: ProcessNode, include_code: bool = True) -> str:
 
     # Get the call link label by traversing up the caller chain
     call_link_label = None
-    current = node
+    current: Node | None = node
     while current is not None:
         try:
             link_triple = current.base.links.get_incoming(
@@ -64,7 +65,7 @@ def get_node_label(node: ProcessNode, include_code: bool = True) -> str:
 
 
 @contextmanager
-def suppress_aiida_logging():
+def suppress_aiida_logging() -> Iterator[None]:
     """Context manager to suppress AiiDA's logging output.
 
     Useful for suppressing verbose output during dump operations or workgraph execution.
@@ -79,7 +80,7 @@ def suppress_aiida_logging():
 
 
 @contextmanager
-def suppress_stdout():
+def suppress_stdout() -> Iterator[None]:
     """Context manager to suppress stdout output.
 
     Useful for suppressing print statements from third-party libraries.

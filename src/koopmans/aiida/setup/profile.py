@@ -20,7 +20,7 @@ def profile_exists() -> bool:
     """Check if the koopmans profile already exists."""
     from aiida.manage.configuration import get_config
 
-    config = get_config()  # type: ignore[no-untyped-call]
+    config = get_config()
     return PROFILE_NAME in config.profile_names
 
 
@@ -39,7 +39,7 @@ def setup_profile(*, use_postgres: bool = False) -> None:
 
     click.echo(f"Creating AiiDA profile '{PROFILE_NAME}'...")
 
-    config = get_config()  # type: ignore[no-untyped-call]
+    config = get_config()
 
     if use_postgres:
         click.echo("  Detecting PostgreSQL configuration...")
@@ -92,8 +92,8 @@ def setup_profile(*, use_postgres: bool = False) -> None:
         broker_config=broker_config,
     )
 
-    config.set_default_profile(PROFILE_NAME)
-    config.store()
+    config.set_default_profile(PROFILE_NAME)  # type: ignore[no-untyped-call]
+    config.store()  # type: ignore[no-untyped-call]
 
     load_profile(PROFILE_NAME)
 
@@ -125,7 +125,7 @@ def koopmans_dir() -> Path:
     """
     from aiida.manage.configuration import get_config
 
-    config = get_config()  # type: ignore[no-untyped-call]
+    config = get_config()
     path = Path(config.dirpath) / "koopmans"
     path.mkdir(parents=True, exist_ok=True)
     return path

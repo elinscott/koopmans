@@ -18,6 +18,7 @@ import os
 import platform
 import tarfile
 from pathlib import Path
+from typing import Any, Literal
 
 import pytest
 
@@ -43,7 +44,7 @@ def _fake_hq_binary_archive() -> tuple[bytes, str]:
 
 
 @pytest.fixture
-def patched_hq(monkeypatch, tmp_path):
+def patched_hq(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """Patch the koopmans-managed dir + the HQ download to use a local stub."""
     from koopmans.aiida.setup import hq as hq_mod
     from koopmans.aiida.setup import profile as profile_mod
@@ -63,13 +64,13 @@ def patched_hq(monkeypatch, tmp_path):
         def read(self) -> bytes:
             return self._data
 
-        def __enter__(self):
+        def __enter__(self) -> _FakeResponse:
             return self
 
-        def __exit__(self, *args):
+        def __exit__(self, *args: object) -> Literal[False]:
             return False
 
-    def fake_urlopen(url):
+    def fake_urlopen(url: str) -> _FakeResponse:
         return _FakeResponse(archive_bytes)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
@@ -109,7 +110,9 @@ def test_install_hq_binary_is_idempotent(patched_hq: Path) -> None:
     assert second.stat().st_mtime == mtime
 
 
-def test_install_hq_binary_fails_on_checksum_mismatch(monkeypatch, tmp_path: Path) -> None:
+def test_install_hq_binary_fails_on_checksum_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Mismatched checksum aborts install and raises ``ClickException``."""
     import click
 
@@ -130,10 +133,10 @@ def test_install_hq_binary_fails_on_checksum_mismatch(monkeypatch, tmp_path: Pat
         def read(self) -> bytes:
             return self._data
 
-        def __enter__(self):
+        def __enter__(self) -> _FakeResponse:
             return self
 
-        def __exit__(self, *args):
+        def __exit__(self, *args: object) -> Literal[False]:
             return False
 
     monkeypatch.setattr("urllib.request.urlopen", lambda url: _FakeResponse(archive_bytes))
@@ -146,7 +149,7 @@ def test_install_hq_binary_fails_on_checksum_mismatch(monkeypatch, tmp_path: Pat
 
 
 @pytest.mark.slow
-def test_hq_lifecycle_with_real_binary(monkeypatch, tmp_path: Path) -> None:
+def test_hq_lifecycle_with_real_binary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """End-to-end smoke test: download real HQ, start server + worker, stop both.
 
     Marked slow because it hits the internet and spins up two child
@@ -178,7 +181,9 @@ def test_hq_lifecycle_with_real_binary(monkeypatch, tmp_path: Path) -> None:
     assert not hq_mod.is_hq_worker_running()
 
 
-def test_get_localhost_computer_uses_hyperqueue(monkeypatch, aiida_profile_clean) -> None:
+def test_get_localhost_computer_uses_hyperqueue(
+    monkeypatch: pytest.MonkeyPatch, aiida_profile_clean: Any
+) -> None:
     """``get_localhost_computer`` always registers with the ``hyperqueue`` scheduler."""
     from koopmans.aiida.setup import computer as computer_mod
 

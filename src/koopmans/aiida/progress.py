@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from time import sleep
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -147,7 +147,7 @@ def get_process_state(process_node: ProcessNode, node_type: str = "") -> str:
         return "unknown"
 
 
-def get_node_type(node) -> str:
+def get_node_type(node: ProcessNode) -> str:
     """Get a short type name for a process node."""
     from aiida.orm import CalcFunctionNode, CalcJobNode, WorkChainNode
 
@@ -161,7 +161,7 @@ def get_node_type(node) -> str:
         return "process"
 
 
-def _is_process_function_node(node) -> bool:
+def _is_process_function_node(node: ProcessNode) -> bool:
     """Return True for ``@calcfunction``/``@workfunction``/``@task`` PyFunctions.
 
     These are internal plumbing — pseudo lookup, electron counts, alpha
@@ -177,7 +177,7 @@ def _is_process_function_node(node) -> bool:
 
 def add_process_rows(
     table: Table,
-    process_node,
+    process_node: ProcessNode,
     depth: int = 0,
     parent_label: str | None = None,
 ) -> None:
@@ -267,13 +267,13 @@ def add_process_rows(
     child_depth = depth if suppress_self else depth + 1
     for pk, _ in called_pks:
         try:
-            child = load_node(pk)
+            child = cast("ProcessNode", load_node(pk))
         except Exception:  # noqa: S112 - skip unreadable children
             continue
         add_process_rows(table, child, child_depth, parent_label=child_parent_label)
 
 
-def _walk_paused_descendants(node) -> list:
+def _walk_paused_descendants(node: ProcessNode) -> list[tuple[int | None, str]]:
     """Collect every paused descendant.
 
     A *paused* sub-process is one whose transport-task retries have been
@@ -283,9 +283,9 @@ def _walk_paused_descendants(node) -> list:
     is paused. Used by :func:`make_progress_table` to surface a hint when
     the live display would otherwise look like a normal slow run.
     """
-    out: list[tuple[int, str]] = []
+    out: list[tuple[int | None, str]] = []
 
-    def _visit(n) -> None:
+    def _visit(n: ProcessNode) -> None:
         if getattr(n, "paused", False):
             out.append((n.pk, n.process_label or n.__class__.__name__))
         try:
@@ -298,7 +298,7 @@ def _walk_paused_descendants(node) -> list:
     return out
 
 
-def make_progress_table(process_node: ProcessNode):
+def make_progress_table(process_node: ProcessNode) -> Table | Group:
     """Build the live progress display: the per-task table plus optional hints.
 
     Returns a ``rich.console.Group`` containing the task table and, when
@@ -372,12 +372,12 @@ def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
 
     # Display live progress by querying actual process nodes
     pk = wg.process.pk
-    process_node = load_node(pk)
+    process_node = cast("ProcessNode", load_node(pk))
     with Live(make_progress_table(process_node), console=console, refresh_per_second=1) as live:
         while not process_node.is_terminated:
             sleep(refresh_interval)
             # Reload the process node to get fresh state
-            process_node = load_node(pk)
+            process_node = cast("ProcessNode", load_node(pk))
             live.update(make_progress_table(process_node))
 
         # Final update to show completed status

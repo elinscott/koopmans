@@ -60,8 +60,8 @@ def start_daemon(wait: bool = True, cache: bool = True) -> bool:
     from aiida.manage import get_config
 
     config = get_config()
-    config.set_option("caching.default_enabled", cache)
-    config.store()
+    config.set_option("caching.default_enabled", cache)  # type: ignore[no-untyped-call]
+    config.store()  # type: ignore[no-untyped-call]
 
     if is_daemon_running():
         return True
@@ -70,7 +70,9 @@ def start_daemon(wait: bool = True, cache: bool = True) -> bool:
 
     try:
         client = get_daemon_client()
-        response = client.start_daemon()
+        # DaemonClient.start_daemon is annotated ``-> None`` upstream, but the
+        # non-wait path historically inspected its return value; preserve that.
+        response = client.start_daemon()  # type: ignore[func-returns-value]
 
         if wait:
             for _ in range(30):

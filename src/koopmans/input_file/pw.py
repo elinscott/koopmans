@@ -13,9 +13,13 @@ from koopmans.base import BaseModel
 class ControlNamelist(_ControlNamelist):
     """``CONTROL`` namelist for ``pw.x`` calculations."""
 
-    pseudo_dir: ClassVar[str | None] = None  # Exclude this field
-    outdir: ClassVar[str | None] = None  # Exclude this field
-    prefix: ClassVar[str | None] = None  # Exclude this field
+    # Excluded fields: koopmans manages these itself, so they are demoted to
+    # class variables to drop them from the pydantic schema. mypy --strict (even
+    # with the pydantic plugin) cannot express a ClassVar overriding a base
+    # model field, hence the targeted ignores.
+    pseudo_dir: ClassVar[str | None] = None  # type: ignore[misc, assignment]
+    outdir: ClassVar[str | None] = None  # type: ignore[misc, assignment]
+    prefix: ClassVar[str | None] = None  # type: ignore[misc, assignment]
 
     @field_validator("verbosity", mode="before")
     @classmethod
@@ -32,15 +36,17 @@ class SystemNamelist(_SystemNamelist):
     still unset when the workgraph is built.
     """
 
-    ibrav: ClassVar[int | None] = None  # Exclude this field
-    nat: ClassVar[int | None] = None  # Exclude this field
-    ntyp: ClassVar[int | None] = None  # Exclude this field
-    ecutwfc: float | None = None
+    # Excluded fields (see ``ControlNamelist`` above for the ClassVar rationale).
+    ibrav: ClassVar[int | None] = None  # type: ignore[misc, assignment]
+    nat: ClassVar[int | None] = None  # type: ignore[misc, assignment]
+    ntyp: ClassVar[int | None] = None  # type: ignore[misc, assignment]
+    # Optional at parse time; the dispatcher raises if still unset at build time.
+    ecutwfc: float | None = None  # type: ignore[assignment]
 
 
 class PWInputParameters(BaseModel):
     """Input parameters for ``pw.x`` calculations."""
 
     control: ControlNamelist = Field(default_factory=lambda: ControlNamelist())
-    system: SystemNamelist = Field(default_factory=lambda: SystemNamelist())
+    system: SystemNamelist = Field(default_factory=lambda: SystemNamelist())  # type: ignore[call-arg]
     electrons: ElectronsNamelist = Field(default_factory=lambda: ElectronsNamelist())

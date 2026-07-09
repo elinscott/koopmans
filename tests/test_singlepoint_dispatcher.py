@@ -9,6 +9,7 @@ import pytest
 from koopmans.aiida.workflows import (
     _build_singlepoint_workgraph,
     _kcp_dscf_inputs,
+    _KcpDscfInputs,
     load_codes_for_task,
 )
 from koopmans.input_file import KoopmansInput, read_input_file
@@ -89,7 +90,7 @@ class TestOzoneInputParse:
             assert got[3] == pytest.approx(want[3])
 
 
-def _scalars(inputs: dict) -> tuple[float, float, int, int]:
+def _scalars(inputs: _KcpDscfInputs) -> tuple[float, float, int, int]:
     """Project the (ecutwfc, ecutrho, nbnd, nspin) corner of a kcp input bundle."""
     return (inputs["ecutwfc"], inputs["ecutrho"], inputs["nbnd"], inputs["nspin"])
 

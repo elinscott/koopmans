@@ -12,27 +12,30 @@ regression tests live in ``aiida-koopmans2/tests/``.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from koopmans.aiida.workflows import build_workgraph
-from koopmans.input_file import read_input_file
+from koopmans.input_file import KoopmansInput, read_input_file
 
 
 @pytest.fixture
-def tutorial_1_ozone_input(tutorials_dir):
+def tutorial_1_ozone_input(tutorials_dir: Path) -> KoopmansInput:
     """Parse the ozone.json tutorial into a ``KoopmansInput``."""
     return read_input_file(tutorials_dir / "ozone.json")
 
 
 def test_build_workgraph(
-    aiida_profile,
-    installed_pw_code,
-    installed_kcp_code,
-    fake_sg15_pseudo_family,
-    tutorial_1_ozone_input,
-    serialize_workgraph,
-    data_regression,
-):
+    aiida_profile: Any,
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    fake_sg15_pseudo_family: Any,
+    tutorial_1_ozone_input: KoopmansInput,
+    serialize_workgraph: Any,
+    data_regression: Any,
+) -> None:
     """Snapshot the WorkGraph shape produced by the dispatcher for tutorial_1 ozone.
 
     The snapshot file (``test_tutorial_1_ozone_ki/test_build_workgraph.yml``)
@@ -72,13 +75,13 @@ def test_build_workgraph(
 
 
 def test_build_workgraph_multi_iteration(
-    aiida_profile,
-    installed_pw_code,
-    installed_kcp_code,
-    fake_sg15_pseudo_family,
-    tutorial_1_ozone_input,
-    serialize_workgraph,
-):
+    aiida_profile: Any,
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    fake_sg15_pseudo_family: Any,
+    tutorial_1_ozone_input: KoopmansInput,
+    serialize_workgraph: Any,
+) -> None:
     """Dispatcher accepts ``alpha_numsteps > 1``.
 
     Rebuilds the tutorial input with ``alpha_numsteps=2`` and verifies
@@ -105,13 +108,13 @@ def test_build_workgraph_multi_iteration(
 
 
 def test_build_workgraph_spin_polarized(
-    aiida_profile,
-    installed_pw_code,
-    installed_kcp_code,
-    fake_sg15_pseudo_family,
-    tutorial_1_ozone_input,
-    serialize_workgraph,
-):
+    aiida_profile: Any,
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    fake_sg15_pseudo_family: Any,
+    tutorial_1_ozone_input: KoopmansInput,
+    serialize_workgraph: Any,
+) -> None:
     """Dispatcher accepts ``spin_polarized=True``.
 
     Rebuilds the ozone input with ``spin_polarized=True`` and verifies
@@ -145,11 +148,11 @@ def test_build_workgraph_spin_polarized(
 
 
 def test_dispatcher_rejects_unsupported_correction(
-    aiida_profile,
-    installed_pw_code,
-    installed_kcp_code,
-    tutorial_1_ozone_input,
-):
+    aiida_profile: Any,
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    tutorial_1_ozone_input: KoopmansInput,
+) -> None:
     """``build_workgraph`` should raise ``NotImplementedError`` for PKIPZ.
 
     Exercises the dispatcher's scope guard without entering the

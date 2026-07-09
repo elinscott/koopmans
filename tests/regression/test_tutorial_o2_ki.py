@@ -24,27 +24,30 @@ construction-level regression test.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from koopmans.aiida.workflows import build_workgraph
-from koopmans.input_file import read_input_file
+from koopmans.input_file import KoopmansInput, read_input_file
 
 
 @pytest.fixture
-def o2_input(tutorials_dir):
+def o2_input(tutorials_dir: Path) -> KoopmansInput:
     """Parse the o2.json tutorial into a ``KoopmansInput``."""
     return read_input_file(tutorials_dir / "o2.json")
 
 
 def test_build_workgraph(
-    aiida_profile,
-    installed_pw_code,
-    installed_kcp_code,
-    fake_sg15_pseudo_family,
-    o2_input,
-    serialize_workgraph,
-    data_regression,
-):
+    aiida_profile: Any,
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    fake_sg15_pseudo_family: Any,
+    o2_input: KoopmansInput,
+    serialize_workgraph: Any,
+    data_regression: Any,
+) -> None:
     """Snapshot the WorkGraph shape produced by the dispatcher for O2 (open-shell).
 
     The snapshot file (``test_tutorial_o2_ki/test_build_workgraph.yml``)

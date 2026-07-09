@@ -14,26 +14,29 @@ diverge. A snapshot here would mostly just double-pin the dispatcher.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from koopmans.aiida.workflows import build_workgraph
-from koopmans.input_file import read_input_file
+from koopmans.input_file import KoopmansInput, read_input_file
 
 
 @pytest.fixture
-def tutorial_1_ozone_kipz_input(tutorials_dir):
+def tutorial_1_ozone_kipz_input(tutorials_dir: Path) -> KoopmansInput:
     """Parse the ozone_kipz.json tutorial into a ``KoopmansInput``."""
     return read_input_file(tutorials_dir / "ozone_kipz.json")
 
 
 def test_dispatcher_accepts_kipz_correction(
-    aiida_profile,
-    installed_pw_code,
-    installed_kcp_code,
-    fake_sg15_pseudo_family,
-    tutorial_1_ozone_kipz_input,
-    serialize_workgraph,
-):
+    aiida_profile: Any,
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    fake_sg15_pseudo_family: Any,
+    tutorial_1_ozone_kipz_input: KoopmansInput,
+    serialize_workgraph: Any,
+) -> None:
     """``build_workgraph`` should produce a valid graph for ``correction=kipz``."""
     workgraph = build_workgraph(tutorial_1_ozone_kipz_input)
 

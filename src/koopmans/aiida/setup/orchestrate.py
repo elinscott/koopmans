@@ -136,7 +136,7 @@ def uninstall_backend() -> None:
         _purge_koopmans_dir()
         return
 
-    config = get_config()  # type: ignore[no-untyped-call]
+    config = get_config()
     profile = config.get_profile(PROFILE_NAME)
 
     storage_config = profile.storage_config
@@ -145,7 +145,7 @@ def uninstall_backend() -> None:
     click.echo(f"Deleting profile '{PROFILE_NAME}'...")
 
     config.delete_profile(PROFILE_NAME, delete_storage=True)
-    config.store()
+    config.store()  # type: ignore[no-untyped-call]
 
     click.echo(f"  Profile '{PROFILE_NAME}' deleted.")
 
@@ -174,7 +174,7 @@ def _purge_koopmans_dir() -> None:
     """Remove the koopmans-managed dir (HQ binary, pid + log files)."""
     from aiida.manage.configuration import get_config
 
-    config = get_config()  # type: ignore[no-untyped-call]
+    config = get_config()
     koopmans_dir_path = Path(config.dirpath) / "koopmans"
     if koopmans_dir_path.exists():
         shutil.rmtree(koopmans_dir_path)

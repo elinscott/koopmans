@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -35,13 +36,13 @@ def tutorials_dir() -> Path:
 
 
 @pytest.fixture(scope="function")
-def clear_database_after_test(aiida_profile):
+def clear_database_after_test(aiida_profile: Any) -> Iterator[Any]:
     """Override the deprecated-and-broken upstream fixture with a no-op yield."""
     yield aiida_profile
 
 
 @pytest.fixture(scope="function")
-def clear_database(clear_database_after_test):
+def clear_database(clear_database_after_test: Any) -> Iterator[None]:
     """Alias override for ``clear_database``."""
     yield
 
@@ -52,7 +53,7 @@ def clear_database(clear_database_after_test):
 
 
 @pytest.fixture
-def installed_pw_code(aiida_code_installed):
+def installed_pw_code(aiida_code_installed: Any) -> Any:
     """Register a dummy ``pw@localhost`` code so ``load_code`` succeeds."""
     return aiida_code_installed(
         label="pw",
@@ -62,7 +63,7 @@ def installed_pw_code(aiida_code_installed):
 
 
 @pytest.fixture
-def installed_kcp_code(aiida_code_installed):
+def installed_kcp_code(aiida_code_installed: Any) -> Any:
     """Register a dummy ``kcp@localhost`` code so ``load_code`` succeeds."""
     return aiida_code_installed(
         label="kcp",
@@ -72,7 +73,7 @@ def installed_kcp_code(aiida_code_installed):
 
 
 @pytest.fixture
-def fake_sg15_pseudo_family(aiida_profile):
+def fake_sg15_pseudo_family(aiida_profile: Any) -> Any:
     """Install a minimal fake ``SG15/1.2/PBE/SR`` family with an oxygen pseudo.
 
     This prevents ``ensure_pseudo_family_installed`` from hitting the network
@@ -145,9 +146,9 @@ def _scrub(value: Any) -> Any:  # noqa: C901
 
     if orm is not None:
         if isinstance(value, orm.Dict):
-            return {"__aiida_dict__": _scrub(value.get_dict())}
+            return {"__aiida_dict__": _scrub(value.get_dict())}  # type: ignore[no-untyped-call]
         if isinstance(value, orm.StructureData):
-            return {"__aiida_structure__": value.get_formula()}
+            return {"__aiida_structure__": value.get_formula()}  # type: ignore[no-untyped-call]
         if isinstance(value, orm.AbstractCode):
             return {"__aiida_code__": value.full_label}
         if isinstance(value, orm.Node):
@@ -183,7 +184,7 @@ def _scrub(value: Any) -> Any:  # noqa: C901
 
 
 @pytest.fixture
-def serialize_workgraph():
+def serialize_workgraph() -> Callable[..., dict[str, Any]]:
     """Return a callable that serializes a ``WorkGraph`` into a stable dict.
 
     The returned dict records the task name list, the task count, and a
