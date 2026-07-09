@@ -50,8 +50,8 @@ def prettify_label(raw: str) -> str:
     'KI Trial'
     >>> prettify_label("kcp-dft_init")
     'DFT Init'
-    >>> prettify_label("ScreeningIteration1")
-    'Screening Iteration 1'
+    >>> prettify_label("ScreeningIteration1")  # workgraph numbers from 0; users from 1
+    'Iteration 2'
     >>> prettify_label("KoopmansDSCFWorkflow")
     'Koopmans DSCF Workflow'
     >>> prettify_label("convert_spin1_to_spin2")
