@@ -176,11 +176,11 @@ def _build_dft_bands_workgraph(
     Returns:
         A WorkGraph for PwBandsWorkChain.
     """
-    from aiida_koopmans.workgraphs.pw import PwBandsTaskViaBuilder
+    from aiida_koopmans.workgraphs.pw import RunPwBands
 
     structure, _pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "bands"])
 
-    return PwBandsTaskViaBuilder.build(
+    return RunPwBands.build(
         code=codes["pw"],
         structure=structure,
         overrides=overrides,
@@ -200,7 +200,7 @@ def _build_wannierize_workgraph(
     Returns:
         A WorkGraph for Wannier90WorkChain.
     """
-    from aiida_koopmans.workgraphs.wannier90 import Wannier90TaskViaBuilder
+    from aiida_koopmans.workgraphs.wannier90 import Wannierize
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
@@ -212,7 +212,7 @@ def _build_wannierize_workgraph(
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
         extra_kwargs["external_projectors_path"] = pw2w_params.atom_proj_dir
 
-    return Wannier90TaskViaBuilder.build(
+    return Wannierize.build(
         codes=codes,
         structure=structure,
         overrides=overrides,
@@ -266,15 +266,15 @@ def _build_singlepoint_dfpt_workgraph(
     """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
 
     Assembles the full chain (scf + nscf → per-manifold wannierization →
-    wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPT``.
+    wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPTWorkflow``.
 
-    Current restrictions (matching the ``SinglepointDFPT`` scope): periodic,
+    Current restrictions (matching the ``SinglepointDFPTWorkflow`` scope): periodic,
     spin-unpolarized, MLWF/projwf variational orbitals, and explicit
     projections forming exactly one occupied manifold block plus at most one
     empty block (multi-block manifolds are not yet supported).
     """
     from aiida_koopmans.workgraphs.dfpt import (
-        SinglepointDFPT,
+        SinglepointDFPTWorkflow,
         derive_dfpt_manifolds,
         normalize_alpha_guess,
     )
@@ -346,7 +346,7 @@ def _build_singlepoint_dfpt_workgraph(
     codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
     codes.setdefault("pw2wannier90", _load_code("pw2wannier90", "pw2wannier90.x"))
 
-    return SinglepointDFPT.build(
+    return SinglepointDFPTWorkflow.build(
         codes=codes,
         structure=structure,
         occ_block=occ_block,

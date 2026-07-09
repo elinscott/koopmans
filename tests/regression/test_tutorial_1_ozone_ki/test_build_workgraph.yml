@@ -4,18 +4,18 @@ raw:
   connectivity:
     child_node:
       ComputeScreeningParameters:
-      - KIFinal
+      - RunFinalKI
       - graph_outputs
-      KIFinal:
+      RunFinalKI:
       - graph_outputs
       convert_spin1_to_spin2:
       - ComputeScreeningParameters
-      - KIFinal
+      - RunFinalKI
       - dft_init_nspin2
       - graph_outputs
       count_electrons_task:
       - ComputeScreeningParameters
-      - KIFinal
+      - RunFinalKI
       - convert_spin1_to_spin2
       - dft_init_nspin1
       - dft_init_nspin2
@@ -23,24 +23,24 @@ raw:
       - graph_outputs
       dft_init_nspin1:
       - ComputeScreeningParameters
-      - KIFinal
+      - RunFinalKI
       - convert_spin1_to_spin2
       - dft_init_nspin2
       - graph_outputs
       dft_init_nspin2:
       - ComputeScreeningParameters
-      - KIFinal
+      - RunFinalKI
       - graph_outputs
       dft_init_nspin2_dummy:
       - ComputeScreeningParameters
-      - KIFinal
+      - RunFinalKI
       - convert_spin1_to_spin2
       - dft_init_nspin2
       - graph_outputs
       graph_ctx: []
       graph_inputs:
       - ComputeScreeningParameters
-      - KIFinal
+      - RunFinalKI
       - convert_spin1_to_spin2
       - count_electrons_task
       - dft_init_nspin1
@@ -51,7 +51,7 @@ raw:
       graph_outputs: []
       resolve_pseudo_family_task:
       - ComputeScreeningParameters
-      - KIFinal
+      - RunFinalKI
       - convert_spin1_to_spin2
       - count_electrons_task
       - dft_init_nspin1
@@ -76,7 +76,7 @@ raw:
       - graph_inputs
       - graph_inputs
       - resolve_pseudo_family_task
-      KIFinal:
+      RunFinalKI:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
@@ -134,24 +134,24 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
-      - KIFinal
-      - KIFinal
-      - KIFinal
-      - KIFinal
-      - KIFinal
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
       resolve_pseudo_family_task:
       - graph_inputs
       - graph_inputs
     output_node:
       ComputeScreeningParameters:
-      - KIFinal
-      - KIFinal
-      - KIFinal
-      - KIFinal
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
       - graph_outputs
       - graph_outputs
       - graph_outputs
-      KIFinal:
+      RunFinalKI:
       - graph_outputs
       - graph_outputs
       - graph_outputs
@@ -163,9 +163,9 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
-      - KIFinal
-      - KIFinal
-      - KIFinal
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
       - dft_init_nspin1
       - dft_init_nspin2
       - dft_init_nspin2
@@ -192,13 +192,13 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
-      - KIFinal
-      - KIFinal
-      - KIFinal
-      - KIFinal
-      - KIFinal
-      - KIFinal
-      - KIFinal
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
+      - RunFinalKI
       - count_electrons_task
       - count_electrons_task
       - dft_init_nspin1
@@ -221,7 +221,7 @@ raw:
       graph_outputs: []
       resolve_pseudo_family_task:
       - ComputeScreeningParameters
-      - KIFinal
+      - RunFinalKI
       - count_electrons_task
       - dft_init_nspin1
       - dft_init_nspin2
@@ -234,7 +234,7 @@ raw:
         - dft_init_nspin2
         - graph_inputs
         - resolve_pseudo_family_task
-      KIFinal:
+      RunFinalKI:
         children: []
         input_tasks:
         - ComputeScreeningParameters
@@ -280,7 +280,7 @@ raw:
         children: []
         input_tasks:
         - ComputeScreeningParameters
-        - KIFinal
+        - RunFinalKI
       resolve_pseudo_family_task:
         children: []
         input_tasks:
@@ -496,81 +496,81 @@ raw:
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: structure
     from_task: graph_inputs
     to_socket: structure
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: _outputs
     from_task: resolve_pseudo_family_task
     to_socket: pseudos
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: ecutwfc
     from_task: graph_inputs
     to_socket: ecutwfc
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: ecutrho
     from_task: graph_inputs
     to_socket: ecutrho
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: nbnd
     from_task: graph_inputs
     to_socket: nbnd
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: nspin
     from_task: graph_inputs
     to_socket: nspin
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: nelec
     from_task: count_electrons_task
     to_socket: nelec
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: nelup
     from_task: count_electrons_task
     to_socket: nelup
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: neldw
     from_task: count_electrons_task
     to_socket: neldw
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: correction
     from_task: graph_inputs
     to_socket: correction
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: alphas
     from_task: ComputeScreeningParameters
     to_socket: alphas
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: alphas.filled
     from_task: ComputeScreeningParameters
     to_socket: alphas.filled
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: alphas.empty
     from_task: ComputeScreeningParameters
     to_socket: alphas.empty
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: trial_remote
     from_task: ComputeScreeningParameters
     to_socket: parent_folder
-    to_task: KIFinal
+    to_task: RunFinalKI
   - from_socket: parameters
-    from_task: KIFinal
+    from_task: RunFinalKI
     to_socket: parameters
     to_task: graph_outputs
   - from_socket: eigenvalues
-    from_task: KIFinal
+    from_task: RunFinalKI
     to_socket: eigenvalues
     to_task: graph_outputs
   - from_socket: lambdas
-    from_task: KIFinal
+    from_task: RunFinalKI
     to_socket: lambdas
     to_task: graph_outputs
   - from_socket: bare_lambdas
-    from_task: KIFinal
+    from_task: RunFinalKI
     to_socket: bare_lambdas
     to_task: graph_outputs
   - from_socket: remote_folder
-    from_task: KIFinal
+    from_task: RunFinalKI
     to_socket: remote_folder
     to_task: graph_outputs
   - from_socket: alphas
@@ -1218,7 +1218,7 @@ raw:
       state: PLANNED
       uuid: <scrubbed:uuid>
       wait: []
-    KIFinal:
+    RunFinalKI:
       action: ''
       children: []
       description: ''
@@ -1231,7 +1231,7 @@ raw:
       log: ''
       metadata:
         pk: <scrubbed:pk>
-      name: KIFinal
+      name: RunFinalKI
       parent_task:
       - null
       position:
@@ -1244,7 +1244,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: KIFinal
+          callable_name: RunFinalKI
           graph_data: null
           metadata: null
           mode: module
@@ -1389,7 +1389,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: DFTInitialization
+          callable_name: InitializeOrbitals
           graph_data: null
           metadata: null
           mode: module
@@ -1440,7 +1440,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: DFTInitialization
+          callable_name: InitializeOrbitals
           graph_data: null
           metadata: null
           mode: module
@@ -1491,7 +1491,7 @@ raw:
         catalog: null
         executor:
           callable_kind: null
-          callable_name: DFTInitialization
+          callable_name: InitializeOrbitals
           graph_data: null
           metadata: null
           mode: module
@@ -2225,7 +2225,7 @@ raw:
   uuid: <scrubbed:uuid>
 task_names:
 - ComputeScreeningParameters
-- KIFinal
+- RunFinalKI
 - convert_spin1_to_spin2
 - count_electrons_task
 - dft_init_nspin1

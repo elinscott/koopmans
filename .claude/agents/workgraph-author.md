@@ -15,12 +15,12 @@ You write and review `aiida-workgraph` code. You are a specialist — stay on to
 
 **WorkChain-as-task at module scope** — not inside the graph function:
 ```python
-PwBaseTask = task(PwBaseWorkChain)
+PwBaseStep = task(PwBaseWorkChain)
 
 @task.graph
 def MyTask(...) -> MyOutputs:
     ...
-    outputs = PwBaseTask(**data)
+    outputs = PwBaseStep(**data)
 ```
 
 **Builder protocol → dict → task**:
@@ -45,7 +45,7 @@ data = get_dict_from_builder(builder)
 
 **Override merging**: use `aiida_quantumespresso.workflows.protocols.utils.recursive_merge` for nested overrides when combining protocol defaults with caller overrides.
 
-**Optional explicit inputs** (e.g. custom kpoints path): thread them as graph arguments with defaults of `None` and inject into `data` *after* `get_dict_from_builder`. See `PwBandsTaskViaBuilder` in [`aiida-koopmans2/src/aiida_koopmans/workgraphs/pw.py`](../../aiida-koopmans2/src/aiida_koopmans/workgraphs/pw.py) for the canonical shape.
+**Optional explicit inputs** (e.g. custom kpoints path): thread them as graph arguments with defaults of `None` and inject into `data` *after* `get_dict_from_builder`. See `RunPwBands` in [`aiida-koopmans2/src/aiida_koopmans/workgraphs/pw.py`](../../aiida-koopmans2/src/aiida_koopmans/workgraphs/pw.py) for the canonical shape.
 
 ## Common bugs you should catch
 

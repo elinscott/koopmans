@@ -8,7 +8,7 @@ All three live as sibling directories under `/home/linsco_e/code/`:
 
 - **`koopmans/`** — the legacy, ASE-based implementation. Read-only source of truth for physics, workflow logic, and tutorial inputs. **Do not add features here.** Consult it to understand *what* the new code needs to do.
 - **`koopmans2/`** (this repo) — user-facing package. Owns: CLI, Pydantic input file schema (`input_file/`), AiiDA profile/code setup, and the dispatcher that turns a `KoopmansInput` into a `WorkGraph` (`aiida/workflows.py`).
-- **`aiida-koopmans2/`** — the AiiDA plugin. Owns: `@task.graph` builders that wrap upstream WorkChains (`PwBandsTaskViaBuilder`, `Wannier90TaskViaBuilder`, …) and, when unavoidable, new CalcJobs/Parsers for QE tools not covered upstream.
+- **`aiida-koopmans2/`** — the AiiDA plugin. Owns: `@task.graph` builders that wrap upstream WorkChains (`RunPwBands`, `Wannierize`, …) and, when unavoidable, new CalcJobs/Parsers for QE tools not covered upstream.
 
 `koopmans2` depends on `aiida-koopmans`. Not the reverse. During development both (and `aiida-quantumespresso`, `aiida-workgraph`) are editable local installs — see `[tool.uv.sources]` in `pyproject.toml`.
 
