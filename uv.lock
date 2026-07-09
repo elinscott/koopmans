@@ -179,6 +179,7 @@ dependencies = [
     { name = "aiida-wannier90-workflows", extra = ["optimization"] },
     { name = "aiida-workgraph" },
     { name = "node-graph" },
+    { name = "pydantic-espresso" },
 ]
 
 [package.metadata]
@@ -192,6 +193,7 @@ requires-dist = [
     { name = "markupsafe", marker = "extra == 'docs'", specifier = "<2.1" },
     { name = "node-graph", editable = "../node-graph" },
     { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = "~=3.5" },
+    { name = "pydantic-espresso", specifier = ">=0.0.1" },
     { name = "sphinx", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-contentui", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-details-directive", marker = "extra == 'docs'" },
