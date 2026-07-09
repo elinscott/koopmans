@@ -39,7 +39,7 @@ jobs:
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
-          git clone --depth 1 --branch patched https://github.com/elinscott/wannier90-input ../wannier90-input
+          git clone --depth 1 https://github.com/elinscott/wannier90-input ../wannier90-input
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
           git clone --depth 1 https://github.com/aiidateam/aiida-core ../aiida-core
       - name: "Install uv"
@@ -74,7 +74,7 @@ jobs:
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
-          git clone --depth 1 --branch patched https://github.com/elinscott/wannier90-input ../wannier90-input
+          git clone --depth 1 https://github.com/elinscott/wannier90-input ../wannier90-input
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
           git clone --depth 1 https://github.com/aiidateam/aiida-core ../aiida-core
       - name: "Install uv"
@@ -115,7 +115,7 @@ jobs:
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
-          git clone --depth 1 --branch patched https://github.com/elinscott/wannier90-input ../wannier90-input
+          git clone --depth 1 https://github.com/elinscott/wannier90-input ../wannier90-input
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
           git clone --depth 1 https://github.com/aiidateam/aiida-core ../aiida-core
       - name: "Install uv"
