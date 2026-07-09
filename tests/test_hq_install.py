@@ -59,9 +59,11 @@ def patched_hq(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
     class _FakeResponse:
         def __init__(self, data: bytes) -> None:
+            """Wrap the canned archive bytes."""
             self._data = data
 
         def read(self) -> bytes:
+            """Return the canned archive bytes."""
             return self._data
 
         def __enter__(self) -> _FakeResponse:
@@ -71,6 +73,7 @@ def patched_hq(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
             return False
 
     def fake_urlopen(url: str) -> _FakeResponse:
+        """Serve the canned archive instead of downloading."""
         return _FakeResponse(archive_bytes)
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
@@ -128,9 +131,11 @@ def test_install_hq_binary_fails_on_checksum_mismatch(
 
     class _FakeResponse:
         def __init__(self, data: bytes) -> None:
+            """Wrap the canned archive bytes."""
             self._data = data
 
         def read(self) -> bytes:
+            """Return the canned archive bytes."""
             return self._data
 
         def __enter__(self) -> _FakeResponse:
