@@ -232,8 +232,8 @@ def _build_singlepoint_workgraph(
     ``workflow.correction``:
 
     - DSCF + ``KI``/``KIPZ`` → ``KoopmansDSCFWorkflow`` (kcp.x)
-    - DFPT → ``_build_singlepoint_dfpt_workgraph`` (kcw.x)
-    - ``PKIPZ``, ``NONE``, ``ALL`` → ``NotImplementedError`` (not yet supported)
+    - DFPT + ``KI`` → ``_build_singlepoint_dfpt_workgraph`` (kcw.x; KI only)
+    - anything else → ``NotImplementedError``
     """
     from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
 
@@ -287,6 +287,12 @@ def _build_singlepoint_dfpt_workgraph(
 
     workflow = koopmans_input.workflow
 
+    if workflow.correction != Correction.KI:
+        raise NotImplementedError(
+            "The DFPT route (kcw.x) only implements the KI correction; "
+            f"correction={workflow.correction.value!r} is not supported. Use "
+            "screening_method = 'dscf' for KIPZ."
+        )
     if workflow.spin_polarized:
         raise NotImplementedError(
             "Spin-polarized DFPT screening is not yet supported (needs a per-spin "

@@ -10,7 +10,6 @@ from koopmans.aiida.workflows import (
     _build_singlepoint_workgraph,
     _kcp_dscf_inputs,
     _KcpDscfInputs,
-    load_codes_for_task,
 )
 from koopmans.input_file import KoopmansInput, read_input_file
 from koopmans.input_file.workflow import (
@@ -169,21 +168,20 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         with pytest.raises(NotImplementedError, match="correction="):
             _build_singlepoint_workgraph(inp, codes={})
 
+    @pytest.mark.parametrize("correction_value", ["kipz", "pkipz", "none", "all"])
+    def test_dfpt_rejects_non_ki_corrections(
+        self, ozone_input: KoopmansInput, correction_value: str
+    ) -> None:
+        """The DFPT route (kcw.x) implements KI only; anything else must raise loudly.
 
-class TestProfileRequired:
-    """Tests that require a loaded AiiDA profile; skipped by default."""
-
-    @pytest.mark.skip(reason="requires loaded AiiDA profile with pw.x code")
-    def test_dfpt_screening_method_raises_notimplemented(self, ozone_input: KoopmansInput) -> None:
-        """``screening_method=dfpt`` should raise ``NotImplementedError``.
-
-        ``load_codes_for_task`` tries to load pw.x FIRST, so without a profile
-        the test would surface a ``ValueError`` about the missing code instead.
-        Skip until we have a profile fixture.
+        Guards against silently running KI physics for a requested KIPZ (etc.)
+        correction: the DFPT branch dispatches on ``screening_method`` before
+        the DSCF correction guard is reached.
         """
         d = ozone_input.model_dump()
         d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["correction"] = correction_value
         inp = KoopmansInput.model_validate(d)
 
-        with pytest.raises(NotImplementedError, match=r"screening_method=.*dfpt"):
-            load_codes_for_task(inp.workflow)
+        with pytest.raises(NotImplementedError, match="only implements the KI correction"):
+            _build_singlepoint_workgraph(inp, codes={})
