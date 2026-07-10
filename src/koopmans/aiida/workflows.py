@@ -210,7 +210,7 @@ def _build_wannierize_workgraph(
     extra_kwargs: dict[str, Any] = {}
     if pw2w_params.atom_proj_ext:
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
-        extra_kwargs["external_projectors_path"] = pw2w_params.atom_proj_dir
+        extra_kwargs["external_projectors_path"] = str(pw2w_params.atom_proj_dir)
 
     return Wannierize.build(
         codes=codes,
