@@ -102,7 +102,14 @@ def setup_code(
             return None
         old_code = orm.load_code(full_label)
         old_code.base.extras.set("replaced", True)
-        old_code.label = f"{label}_old"
+        # Uniquify the retired label: a second forced reinstall would otherwise
+        # collide with the previous <label>_old on the same computer.
+        retired_label = f"{label}_old"
+        suffix = 1
+        while code_exists(f"{retired_label}@{computer.label}"):
+            suffix += 1
+            retired_label = f"{label}_old{suffix}"
+        old_code.label = retired_label
 
     code = InstalledCode(
         label=label,
