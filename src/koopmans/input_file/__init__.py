@@ -114,13 +114,11 @@ class SpinSpecificWannierInput(BaseModel):
     projections: list[list[Projection]] = Field(default_factory=list)
 
 
-class Wannier90InputParametersWithUpDown(RestrictedWannier90InputParameters):  # type: ignore[misc]
+class Wannier90InputParametersWithUpDown(RestrictedWannier90InputParameters):
     """Wannier90 input parameters with optional spin-up/spin-down configuration."""
 
     up: SpinSpecificWannierInput | None = None
     down: SpinSpecificWannierInput | None = None
-    # In the input file, projections are specified as a list of lists to separate each block
-    projections: list[list[Projection]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def check_up_down_exclusivity(self) -> Wannier90InputParametersWithUpDown:
@@ -141,7 +139,7 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: PW2Wannier90InputParameters()
     )
     wannier90: Wannier90InputParametersWithUpDown = Field(
-        default_factory=lambda: Wannier90InputParametersWithUpDown()
+        default_factory=lambda: Wannier90InputParametersWithUpDown()  # type: ignore[call-arg]
     )
     unfold_and_interpolate: UnfoldAndInterpolateConfig = Field(
         default_factory=lambda: UnfoldAndInterpolateConfig()
