@@ -81,3 +81,23 @@ class TestInputFileVersioning:
         """Test that a non-positive-integer `version` raises a clear error."""
         with pytest.raises(ValueError, match="must be a positive integer"):
             migrate_input_dict({"version": version})
+
+
+class TestSchemaValidation:
+    """Validation checks that used to fail late (or not at all) at conversion time."""
+
+    def test_celldms_without_celldm1_rejected(self) -> None:
+        """``celldms`` without celldm(1) has no length scale and must be rejected."""
+        from koopmans.input_file.cell_parameters import CellParametersViaIbrav
+
+        with pytest.raises(ValueError, match=r"celldm\(1\)"):
+            CellParametersViaIbrav.model_validate({"ibrav": 2, "celldms": {2: 0.5}})
+
+    def test_non_integer_nbnd_rejected(self) -> None:
+        """A fractional band count must be rejected, not silently truncated."""
+        from koopmans.input_file import CalculatorParametersInput
+
+        with pytest.raises(ValueError, match="nbnd"):
+            CalculatorParametersInput.model_validate({"nbnd": 10.7})
+
+        assert CalculatorParametersInput.model_validate({"nbnd": 10.0}).nbnd == 10

@@ -132,7 +132,7 @@ class CalculatorParametersInput(BaseModel):
     """Calculator-specific input parameters."""
 
     ecutwfc: float | None = None
-    nbnd: float | None = None
+    nbnd: int | None = None
     tot_magnetization: float | None = None
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(
