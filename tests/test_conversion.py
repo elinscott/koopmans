@@ -90,3 +90,29 @@ class TestKpointsPath:
         x_index = next(i for i, name in labels if name == "X")
         assert kpoints[m_index] == POINT_COORDS["M"]
         assert m_index == x_index + 1
+
+
+class TestSeekpathBasisGuard:
+    """Auto k-path generation must not silently use a standardized cell."""
+
+    def test_non_primitive_cell_raises(self, aiida_profile: Any) -> None:
+        """A conventional (non-primitive) cell is standardized by seekpath -> refuse."""
+        from aiida import orm
+
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+        from koopmans.input_file import GridKpointsInput
+
+        a = 5.43
+        structure = orm.StructureData(  # type: ignore[no-untyped-call]
+            cell=[[a, 0, 0], [0, a, 0], [0, 0, a]]
+        )
+        fcc = [(0.0, 0.0, 0.0), (0.0, 0.5, 0.5), (0.5, 0.0, 0.5), (0.5, 0.5, 0.0)]
+        for tx, ty, tz in fcc:
+            for bx, by, bz in [(0.0, 0.0, 0.0), (0.25, 0.25, 0.25)]:
+                structure.append_atom(  # type: ignore[no-untyped-call]
+                    position=((tx + bx) * a, (ty + by) * a, (tz + bz) * a), symbols="Si"
+                )
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX")
+        with pytest.raises(NotImplementedError, match="standardized"):
+            kpoints_input_to_kpoints_path(kpoints, structure)

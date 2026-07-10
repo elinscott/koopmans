@@ -349,6 +349,21 @@ def kpoints_input_to_kpoints_path(
     result = get_kpoints_path(structure, method="seekpath")  # type: ignore[no-untyped-call]
     point_coords: dict[str, list[float]] = result["parameters"].dict["point_coords"]
 
+    # The special-point coordinates are fractional in seekpath's standardized
+    # primitive cell. If seekpath standardized the input cell (rotated or
+    # re-chose the primitive vectors), those coordinates would be attached to
+    # the wrong reciprocal basis — refuse rather than sample wrong directions.
+    import numpy as np
+
+    primitive_cell = np.array(result["primitive_structure"].cell)
+    if not np.allclose(primitive_cell, np.array(structure.cell), atol=1e-5):
+        raise NotImplementedError(
+            "seekpath standardized the input cell, so the generated k-path would "
+            "not match the input structure's reciprocal basis. Re-express the "
+            "structure in seekpath's standardized primitive cell (see "
+            "https://seekpath.readthedocs.io) or provide the cell in that form."
+        )
+
     if kpoints.path is not None:
         path = _parse_kpoints_path_string(kpoints.path, point_coords)
     else:
