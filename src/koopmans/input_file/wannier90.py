@@ -22,14 +22,14 @@ class RestrictedWannier90InputParameters(Wannier90Input):
     ``pw.py`` for the ClassVar rationale and the mypy ignores).
     """
 
-    num_wann: ClassVar[int | None] = None  # type: ignore[misc, assignment]
-    num_bands: ClassVar[int | None] = None  # type: ignore[misc]
-    exclude_bands: ClassVar[list[int] | None] = None  # type: ignore[misc, assignment]
-    unit_cell_cart: ClassVar[list[Coordinate] | None] = None  # type: ignore[misc, assignment]
-    atoms_cart: ClassVar[list[AtomCart] | None] = None  # type: ignore[misc]
-    atoms_frac: ClassVar[list[AtomFrac] | None] = None  # type: ignore[misc]
-    mp_grid: ClassVar[tuple[int, int, int] | None] = None  # type: ignore[misc, assignment]
-    kpoints: ClassVar[list[FractionalCoordinate] | None] = None  # type: ignore[misc, assignment]
+    num_wann: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    num_bands: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    exclude_bands: ClassVar[list[int] | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    unit_cell_cart: ClassVar[list[Coordinate] | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    atoms_cart: ClassVar[list[AtomCart] | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    atoms_frac: ClassVar[list[AtomFrac] | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    mp_grid: ClassVar[tuple[int, int, int] | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    kpoints: ClassVar[list[FractionalCoordinate] | None] = None  # type: ignore[misc, assignment, unused-ignore]
 
     # Redefined (not excluded): in the input file, projections are specified as a
     # list of lists to separate each block

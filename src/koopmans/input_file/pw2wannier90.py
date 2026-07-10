@@ -12,7 +12,8 @@ class PW2Wannier90InputParameters(InputppNamelist):
     # Excluded fields: koopmans manages these itself, so they are demoted to
     # class variables to drop them from the pydantic schema. mypy --strict (even
     # with the pydantic plugin) cannot express a ClassVar overriding a base
-    # model field, hence the targeted ignores.
-    prefix: ClassVar[str | None] = None  # type: ignore[misc]
-    outdir: ClassVar[Path | None] = None  # type: ignore[misc]
-    seedname: ClassVar[str | None] = None  # type: ignore[misc, assignment]
+    # model field, hence the ignores; unused-ignore is included because the
+    # generated base models' field optionality varies between checkouts.
+    prefix: ClassVar[str | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    outdir: ClassVar[Path | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    seedname: ClassVar[str | None] = None  # type: ignore[misc, assignment, unused-ignore]
