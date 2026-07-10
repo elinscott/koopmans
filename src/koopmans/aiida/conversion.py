@@ -301,7 +301,8 @@ def _calculate_kpoints_along_path(
     kpoint_list: list[list[float]] = []
     label_list: list[tuple[int, str]] = []
 
-    for segment_idx, (start_label, end_label) in enumerate(path):
+    previous_end: str | None = None
+    for start_label, end_label in path:
         start_coord = np.array(point_coords[start_label])
         end_coord = np.array(point_coords[end_label])
 
@@ -309,8 +310,10 @@ def _calculate_kpoints_along_path(
         n_points = max(2, int(np.ceil(segment_length * density)))
 
         for i in range(n_points):
-            if i == 0 and segment_idx > 0:
-                # Skip first point of segments after the first to avoid duplicates
+            if i == 0 and start_label == previous_end:
+                # The previous segment already emitted this point. (At a
+                # discontinuity — a comma in the path string — the labels
+                # differ and the new segment's start point must be kept.)
                 continue
 
             t = i / (n_points - 1) if n_points > 1 else 0.0
@@ -321,6 +324,8 @@ def _calculate_kpoints_along_path(
                 label_list.append((len(kpoint_list) - 1, start_label))
             elif i == n_points - 1:
                 label_list.append((len(kpoint_list) - 1, end_label))
+
+        previous_end = end_label
 
     return kpoint_list, label_list
 
