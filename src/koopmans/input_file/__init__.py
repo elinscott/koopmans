@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from json import load
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_core import ErrorDetails
 from wannier90_input.models.parameters import Projection
 from yaml import safe_load
@@ -25,6 +26,51 @@ from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.ui import UnfoldAndInterpolateConfig
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
 from koopmans.input_file.workflow import WorkflowConfig
+
+INPUT_FILE_FORMAT_VERSION = 1
+"""Current version of the input file format.
+
+Bump this (and register a migration in ``_MIGRATIONS``) only when the format
+changes incompatibly. Adding new optional fields does not require a bump.
+"""
+
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+"""Migrations between input file format versions.
+
+``_MIGRATIONS[n]`` takes a raw input dict in format version ``n`` and returns
+the equivalent dict in format version ``n + 1``. Migrations are applied in
+sequence by :func:`migrate_input_dict` before validation, so the Pydantic
+models only ever describe the current format.
+"""
+
+
+def migrate_input_dict(input_dict: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade a raw input dict to the current input file format version.
+
+    A missing ``version`` key is treated as version 1 (the format predates
+    the key).
+
+    Args:
+        input_dict: The raw input file contents.
+
+    Returns:
+        The input dict, upgraded to ``INPUT_FILE_FORMAT_VERSION``.
+
+    Raises:
+        ValueError: If the version is invalid or newer than this version of
+            ``koopmans`` supports.
+    """
+    version = input_dict.get("version", 1)
+    if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+        raise ValueError(f"`version` must be a positive integer, not `{version!r}`")
+    if version > INPUT_FILE_FORMAT_VERSION:
+        raise ValueError(
+            f"This input file uses format version {version}, but this version of `koopmans` "
+            f"only supports up to version {INPUT_FILE_FORMAT_VERSION}. Please upgrade `koopmans`."
+        )
+    for v in range(version, INPUT_FILE_FORMAT_VERSION):
+        input_dict = _MIGRATIONS[v](input_dict)
+    return {**input_dict, "version": INPUT_FILE_FORMAT_VERSION}
 
 
 class AtomsInput(BaseModel):
@@ -104,6 +150,11 @@ class CalculatorParametersInput(BaseModel):
 class KoopmansInput(BaseModel):
     """Input schema for ``koopmans`` input files."""
 
+    version: int = Field(
+        default=INPUT_FILE_FORMAT_VERSION,
+        description="Version of the input file format (older files are upgraded "
+        "automatically when loaded from disk)",
+    )
     workflow: WorkflowConfig = Field(
         description="Configuration specifying the workflow to be executed"
     )
@@ -120,6 +171,22 @@ class KoopmansInput(BaseModel):
         description="Machine-learning configuration for predicting screening parameters",
     )
 
+    @field_validator("version")
+    @classmethod
+    def check_version_is_current(cls, version: int) -> int:
+        """Validate that the version matches the current format version.
+
+        The model always describes the current format; older files are
+        upgraded by :func:`migrate_input_dict` before they reach validation.
+        """
+        if version != INPUT_FILE_FORMAT_VERSION:
+            raise ValueError(
+                f"unsupported input file format version {version} (this version of `koopmans` "
+                f"uses version {INPUT_FILE_FORMAT_VERSION}; files loaded via `read_input_file` "
+                "are upgraded automatically)"
+            )
+        return version
+
     @classmethod
     def from_file(cls, filename: str | Path) -> KoopmansInput:
         """Load an input file and return a KoopmansInput object."""
@@ -133,7 +200,7 @@ class KoopmansInput(BaseModel):
         else:
             raise ValueError(f"Unrecognized file type for `{filename}`")
 
-        return cls.model_validate(input_dict)
+        return cls.model_validate(migrate_input_dict(input_dict))
 
 
 CUSTOM_MESSAGES = {

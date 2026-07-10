@@ -1,10 +1,16 @@
 """Tests for input file parsing."""
 
+import json
 from pathlib import Path
 
 import pytest
 
-from koopmans.input_file import KoopmansInput, read_input_file
+from koopmans.input_file import (
+    INPUT_FILE_FORMAT_VERSION,
+    KoopmansInput,
+    migrate_input_dict,
+    read_input_file,
+)
 from koopmans.input_file.workflow import Task
 
 
@@ -40,3 +46,38 @@ class TestInputFileParsing:
 
         with pytest.raises(ValueError, match="Unrecognized file type"):
             read_input_file(invalid_file)
+
+
+class TestInputFileVersioning:
+    """Test input file format versioning."""
+
+    def test_missing_version_treated_as_version_1(self, tutorials_dir: Path) -> None:
+        """Test that a file without a `version` key parses as the current version."""
+        koopmans_input = read_input_file(tutorials_dir / "si.json")
+        assert koopmans_input.version == INPUT_FILE_FORMAT_VERSION
+
+    def test_explicit_current_version(self, tutorials_dir: Path, tmp_path: Path) -> None:
+        """Test that a file with an explicit current `version` parses."""
+        input_dict = json.loads((tutorials_dir / "si.json").read_text())
+        input_dict["version"] = INPUT_FILE_FORMAT_VERSION
+        input_file = tmp_path / "si.json"
+        input_file.write_text(json.dumps(input_dict))
+
+        koopmans_input = read_input_file(input_file)
+        assert koopmans_input.version == INPUT_FILE_FORMAT_VERSION
+
+    def test_future_version_raises(self, tutorials_dir: Path, tmp_path: Path) -> None:
+        """Test that a file from a newer format version raises a clear error."""
+        input_dict = json.loads((tutorials_dir / "si.json").read_text())
+        input_dict["version"] = INPUT_FILE_FORMAT_VERSION + 1
+        input_file = tmp_path / "si.json"
+        input_file.write_text(json.dumps(input_dict))
+
+        with pytest.raises(ValueError, match="Please upgrade `koopmans`"):
+            read_input_file(input_file)
+
+    @pytest.mark.parametrize("version", ["banana", 0, -1, 1.5, True])
+    def test_invalid_version_raises(self, version: object) -> None:
+        """Test that a non-positive-integer `version` raises a clear error."""
+        with pytest.raises(ValueError, match="must be a positive integer"):
+            migrate_input_dict({"version": version})
