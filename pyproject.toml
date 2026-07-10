@@ -72,6 +72,7 @@ dependencies = [
     "types-pyyaml>=6.0.12.20250915",
     "seekpath>=1.9.3",
     "aiida-quantumespresso",
+    "qe-tools", # QE's own unit-conversion constants
     # Constraint only (not imported directly): aiida-shell >= 0.9 requires the
     # aiida-core 2.8 Code.Model API, which the pinned aiida-core predates.
     "aiida-shell~=0.8.2",

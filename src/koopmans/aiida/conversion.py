@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiida import orm
 from aiida.tools import get_kpoints_path
+from qe_tools import CONSTANTS
 
 
 def _convert_paths_to_strings(obj: Any) -> Any:
@@ -30,8 +31,8 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
     from koopmans.input_file.input_file import AtomsInput, KpointsInput
 
-# Bohr to Angstrom conversion factor
-BOHR_TO_ANGSTROM = 0.529177210903
+# Quantum ESPRESSO's own value, so that converted quantities match QE output
+BOHR_TO_ANGSTROM = CONSTANTS.bohr_to_ang
 
 
 def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
