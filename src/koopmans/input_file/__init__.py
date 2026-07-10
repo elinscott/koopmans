@@ -23,7 +23,7 @@ from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
-from koopmans.input_file.ui import UnfoldAndInterpolateConfig
+from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
 from koopmans.input_file.workflow import WorkflowConfig
 
@@ -143,7 +143,9 @@ class CalculatorParametersInput(BaseModel):
     wannier90: Wannier90InputParametersWithUpDown = Field(
         default_factory=lambda: Wannier90InputParametersWithUpDown()
     )
-    ui: UnfoldAndInterpolateConfig = Field(default_factory=lambda: UnfoldAndInterpolateConfig())
+    unfold_and_interpolate: UnfoldAndInterpolateConfig = Field(
+        default_factory=lambda: UnfoldAndInterpolateConfig()
+    )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
 
 

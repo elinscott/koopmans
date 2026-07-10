@@ -1,16 +1,15 @@
-"""Settings module for the UI calculator."""
+"""Input parameters for unfold-and-interpolate post-processing."""
 
 from pathlib import Path
 from typing import Any, Literal
 
-from ase.dft.kpoints import BandPath
 from pydantic import Field, field_validator
 
 from koopmans.base import BaseModel
 
 
 class UnfoldAndInterpolateConfig(BaseModel):
-    """Model for the UI calculator settings."""
+    """Input parameters for unfold-and-interpolate post-processing."""
 
     kc_ham_file: Path | None = Field(
         default=None, description="the name of the Hamiltonian file to read in"
@@ -45,10 +44,6 @@ class UnfoldAndInterpolateConfig(BaseModel):
             "crucial for a good interpolation when using coarse MP meshes or, equivalently, small supercells"
         ),
     )
-    kpath: str | BandPath | None = Field(
-        default=None,
-        description='path in the Brillouin zone for generating the band structure, specified by a string e.g. "GXG"',
-    )
     smooth_int_factor: tuple[int, int, int] = Field(
         default=(1, 1, 1),
         description=(
@@ -67,8 +62,8 @@ class UnfoldAndInterpolateConfig(BaseModel):
     do_dos: bool = Field(
         default=True,
         description=(
-            "if True, the density-of-states is interpolated along the input kpath. The DOS is written to a "
-            'file called "dos_interpolated.dat"'
+            "if True, the density-of-states is interpolated along the k-point path specified in the "
+            '`kpoints` block. The DOS is written to a file called "dos_interpolated.dat"'
         ),
     )
     num_wann: int | None = Field(default=None, description="")
