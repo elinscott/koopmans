@@ -185,3 +185,21 @@ class TestBuildSinglepointWorkgraphScopeGuards:
 
         with pytest.raises(NotImplementedError, match="only implements the KI correction"):
             _build_singlepoint_workgraph(inp, codes={})
+
+
+class TestInitialAlphaFromGuess:
+    """The DSCF route seeds one alpha for all orbitals; guard the list handling."""
+
+    def test_scalar_and_uniform_list_pass_through(self) -> None:
+        """A scalar or an all-equal list collapses to that value."""
+        from koopmans.aiida.workflows import _initial_alpha_from_guess
+
+        assert _initial_alpha_from_guess(0.3) == 0.3
+        assert _initial_alpha_from_guess([0.3, 0.3, 0.3]) == 0.3
+
+    def test_distinct_per_orbital_values_raise(self) -> None:
+        """Distinct per-orbital guesses must not be silently collapsed to the first."""
+        from koopmans.aiida.workflows import _initial_alpha_from_guess
+
+        with pytest.raises(NotImplementedError, match="per-orbital alpha_guess"):
+            _initial_alpha_from_guess([0.3, 0.5, 0.7])

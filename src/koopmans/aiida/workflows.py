@@ -488,15 +488,20 @@ class _KcpDscfInputs(TypedDict):
 def _initial_alpha_from_guess(alpha_guess: float | list[float]) -> float:
     """Collapse the user ``alpha_guess`` to the scalar the kcp.x DSCF route accepts.
 
-    Accepts the same three input-file shapes as the DFPT side's
-    ``normalize_alpha_guess`` (scalar, flat list, nested per-spin list), but
-    reduces to a single starting alpha since ``KoopmansDSCFWorkflow`` seeds
-    every orbital with the same value.
+    ``KoopmansDSCFWorkflow`` seeds every orbital with the same starting alpha,
+    so a list is only accepted when all its entries agree.
+
+    Raises:
+        NotImplementedError: If ``alpha_guess`` lists distinct per-orbital values.
     """
     if isinstance(alpha_guess, float):
         return alpha_guess
-    first = alpha_guess[0]
-    return float(first[0]) if isinstance(first, list) else float(first)
+    if len(set(alpha_guess)) > 1:
+        raise NotImplementedError(
+            "Distinct per-orbital alpha_guess values are not yet supported on the "
+            "DSCF route; provide a single starting alpha."
+        )
+    return float(alpha_guess[0])
 
 
 def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
