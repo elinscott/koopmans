@@ -29,9 +29,14 @@ def _convert_paths_to_strings(obj: Any) -> Any:
 
 if TYPE_CHECKING:
     from koopmans.input_file import AtomsInput, KoopmansInput, KpointsInput
+    from koopmans.input_file.cell_parameters import (
+        CellParametersViaAlat,
+        CellParametersViaIbrav,
+        CellParametersViaVectors,
+    )
 
 # Quantum ESPRESSO's own value, so that converted quantities match QE output
-BOHR_TO_ANGSTROM = CONSTANTS.bohr_to_ang
+BOHR_TO_ANGSTROM: float = CONSTANTS.bohr_to_ang
 
 
 def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
@@ -107,6 +112,59 @@ def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
         raise NotImplementedError(f"ibrav={ibrav} is not yet implemented")
 
 
+def cell_in_angstrom(
+    cell_params: CellParametersViaIbrav | CellParametersViaVectors | CellParametersViaAlat,
+) -> list[list[float]]:
+    """Return the cell vectors in Angstrom for any of the specification variants.
+
+    Args:
+        cell_params: The cell parameters from the input file.
+
+    Returns:
+        The cell vectors in Angstrom.
+    """
+    from koopmans.input_file.cell_parameters import (
+        CellParametersViaAlat,
+        CellParametersViaIbrav,
+        CellParametersViaVectors,
+    )
+
+    if isinstance(cell_params, CellParametersViaIbrav):
+        return celldms_to_cell(cell_params.ibrav, cell_params.celldms)
+    if isinstance(cell_params, CellParametersViaVectors):
+        cell = [list(v) for v in cell_params.vectors]
+        if cell_params.units == "bohr":
+            cell = [[x * BOHR_TO_ANGSTROM for x in row] for row in cell]
+        return cell
+    if isinstance(cell_params, CellParametersViaAlat):
+        alat = cell_params.celldms[1] * BOHR_TO_ANGSTROM
+        return [[x * alat for x in v] for v in cell_params.vectors]
+    raise TypeError(f"Unknown cell_parameters type: {type(cell_params)}")
+
+
+def alat_in_angstrom(
+    cell_params: CellParametersViaIbrav | CellParametersViaVectors | CellParametersViaAlat,
+    cell: list[list[float]],
+) -> float:
+    """Return the lattice parameter ``alat`` in Angstrom.
+
+    Follows Quantum ESPRESSO's convention: ``celldm(1)`` when given, otherwise
+    the length of the first cell vector.
+
+    Args:
+        cell_params: The cell parameters from the input file.
+        cell: The cell vectors in Angstrom.
+
+    Returns:
+        The lattice parameter in Angstrom.
+    """
+    from koopmans.input_file.cell_parameters import CellParametersViaVectors
+
+    if isinstance(cell_params, CellParametersViaVectors):
+        return float(sum(x**2 for x in cell[0]) ** 0.5)
+    return cell_params.celldms[1] * BOHR_TO_ANGSTROM
+
+
 def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     """Convert AtomsInput to AiiDA StructureData.
 
@@ -116,27 +174,10 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     Returns:
         AiiDA StructureData node.
     """
-    from koopmans.input_file.cell_parameters import (
-        CellParametersViaAlat,
-        CellParametersViaIbrav,
-        CellParametersViaVectors,
-    )
-
     cell_params = atoms.cell_parameters
     positions = atoms.atomic_positions
 
-    # Determine cell vectors
-    if isinstance(cell_params, CellParametersViaIbrav):
-        cell = celldms_to_cell(cell_params.ibrav, cell_params.celldms)
-    elif isinstance(cell_params, CellParametersViaVectors):
-        cell = [list(v) for v in cell_params.vectors]
-        if cell_params.units == "bohr":
-            cell = [[x * BOHR_TO_ANGSTROM for x in row] for row in cell]
-    elif isinstance(cell_params, CellParametersViaAlat):
-        alat = cell_params.celldms[1] * BOHR_TO_ANGSTROM
-        cell = [[x * alat for x in v] for v in cell_params.vectors]
-    else:
-        raise TypeError(f"Unknown cell_parameters type: {type(cell_params)}")
+    cell = cell_in_angstrom(cell_params)
 
     # Determine periodicity
     pbc = cell_params.periodic
@@ -155,6 +196,8 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
         if units == "crystal":
             # Convert fractional to Cartesian
             cart_coords = [sum(coords[j] * cell[j][i] for j in range(3)) for i in range(3)]
+        elif units == "alat":
+            cart_coords = [c * alat_in_angstrom(cell_params, cell) for c in coords]
         elif units == "bohr":
             cart_coords = [c * BOHR_TO_ANGSTROM for c in coords]
         elif units in ("ang", "angstrom"):
