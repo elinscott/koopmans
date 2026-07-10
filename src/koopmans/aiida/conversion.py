@@ -28,8 +28,7 @@ def _convert_paths_to_strings(obj: Any) -> Any:
 
 
 if TYPE_CHECKING:
-    from koopmans.input_file import KoopmansInput
-    from koopmans.input_file.input_file import AtomsInput, KpointsInput
+    from koopmans.input_file import AtomsInput, KoopmansInput, KpointsInput
 
 # Quantum ESPRESSO's own value, so that converted quantities match QE output
 BOHR_TO_ANGSTROM = CONSTANTS.bohr_to_ang
