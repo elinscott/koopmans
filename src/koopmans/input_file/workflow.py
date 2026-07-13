@@ -3,7 +3,8 @@
 from enum import Enum
 from typing import Annotated, Any, Self
 
-from aiida_koopmans.types import Correction, SpinType, VariationalOrbitalType
+from aiida_koopmans.types import Correction, VariationalOrbitalType
+from aiida_quantumespresso.common.types import SpinType
 from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
@@ -11,7 +12,7 @@ from koopmans.base import BaseModel
 # Re-export so ``from koopmans.input_file.workflow import Correction``
 # (and ``VariationalOrbitalType``) keeps working — the canonical
 # definitions live in ``aiida_koopmans.types``.
-__all__ = ["Correction", "SpinType", "VariationalOrbitalType"]
+__all__ = ["Correction", "VariationalOrbitalType"]
 
 FloatGE1 = Annotated[float, Field(ge=1.0)]
 

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from aiida import orm
 from aiida_koopmans.workgraphs import Codes
+from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
@@ -18,7 +19,6 @@ from koopmans.aiida.conversion import (
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
-    SpinType,
     Task,
     VariationalOrbitalType,
 )
