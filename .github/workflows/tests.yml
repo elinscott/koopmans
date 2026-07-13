@@ -34,7 +34,10 @@ jobs:
         # of forks carrying features still working their way upstream. Drop
         # entries here (and the corresponding uv source) as they merge.
         run: |
-          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          # Prefer the same-named aiida-koopmans branch when one exists, so
+          # stacked cross-repo PRs test against their paired plugin branch;
+          # fall back to the default branch otherwise.
+          git clone --depth 1 --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2 || git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
@@ -69,7 +72,10 @@ jobs:
         # of forks carrying features still working their way upstream. Drop
         # entries here (and the corresponding uv source) as they merge.
         run: |
-          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          # Prefer the same-named aiida-koopmans branch when one exists, so
+          # stacked cross-repo PRs test against their paired plugin branch;
+          # fall back to the default branch otherwise.
+          git clone --depth 1 --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2 || git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
@@ -110,7 +116,10 @@ jobs:
         # of forks carrying features still working their way upstream. Drop
         # entries here (and the corresponding uv source) as they merge.
         run: |
-          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          # Prefer the same-named aiida-koopmans branch when one exists, so
+          # stacked cross-repo PRs test against their paired plugin branch;
+          # fall back to the default branch otherwise.
+          git clone --depth 1 --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2 || git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
