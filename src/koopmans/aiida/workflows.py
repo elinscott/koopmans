@@ -61,6 +61,11 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     task = workflow.task
     codes: Codes = {}
 
+    # The UI (unfold-and-interpolate) task is pure python post-processing of
+    # previously generated Wannier Hamiltonian files; it runs no QE codes.
+    if task == Task.UNFOLD_AND_INTERPOLATE:
+        return codes
+
     # All tasks need pw.x
     codes["pw"] = _load_code("pw", "pw.x")
 
@@ -156,11 +161,14 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         return _build_singlepoint_workgraph(koopmans_input, codes)
     elif task == Task.TRAJECTORY:
         return _build_trajectory_workgraph(koopmans_input, codes)
+    elif task == Task.UNFOLD_AND_INTERPOLATE:
+        return _build_ui_workgraph(koopmans_input, codes)
     else:
         raise ValueError(
             f"Task '{task.value}' is not yet implemented. "
             f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}"
+            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, "
+            f"{Task.UNFOLD_AND_INTERPOLATE.value}"
         )
 
 
@@ -793,6 +801,90 @@ def _require_supported_correction(correction: Correction) -> None:
             "PKIPZ requires a perturbative post-processing step; "
             "NONE / ALL are workflow-control flags."
         )
+
+
+def _ui_file_to_node(path: Any, keyword: str, description: str) -> orm.SinglefileData:
+    """Load a ``calculator_parameters.unfold_and_interpolate`` file path into a ``SinglefileData``.
+
+    Raises:
+        ValueError: If the path is unset or does not point to an existing file.
+    """
+    from pathlib import Path
+
+    if path is None:
+        raise ValueError(
+            f"The unfold-and-interpolate task requires "
+            f"`calculator_parameters.unfold_and_interpolate.{keyword}` ({description})."
+        )
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_file():
+        raise ValueError(
+            f"`calculator_parameters.unfold_and_interpolate.{keyword}` points to `{path}`, "
+            "which does not exist."
+        )
+    return orm.SinglefileData(resolved)
+
+
+def _build_ui_workgraph(
+    koopmans_input: KoopmansInput,
+    codes: Codes,
+) -> WorkGraph:
+    """Build a workgraph for the standalone unfold-and-interpolate (``ui``) task.
+
+    Pure python post-processing — ``codes`` is empty. Consumes previously
+    generated files referenced by paths in ``calculator_parameters.unfold_and_interpolate``:
+    the Hamiltonian to interpolate (``kc_ham_file``), the Wannier90 output
+    supplying centres and spreads (``<wannier90_seedname>.wout``), and —
+    when ``smooth_int_factor`` asks for the smooth-interpolation method —
+    the coarse and dense-grid DFT Hamiltonians. The band path comes from
+    ``kpoints`` (optionally overridden by ``ui.kpath``); the DOS window
+    and smearing from the ``plotting`` block.
+    """
+    from aiida_koopmans.workgraphs.ui import UnfoldAndInterpolateTask
+
+    from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+
+    ui_config = koopmans_input.calculator_parameters.unfold_and_interpolate
+
+    kc_ham_file = _ui_file_to_node(
+        ui_config.kc_ham_file, "kc_ham_file", "the Hamiltonian file to interpolate"
+    )
+    wannier90_wout = _ui_file_to_node(
+        f"{ui_config.wannier90_seedname}.wout",
+        "wannier90_seedname",
+        "the Wannier90 output file providing the Wannier centres and spreads",
+    )
+
+    smooth_kwargs: dict[str, Any] = {}
+    if ui_config.do_smooth_interpolation:
+        smooth_kwargs["dft_ham_file"] = _ui_file_to_node(
+            ui_config.dft_ham_file,
+            "dft_ham_file",
+            "the coarse DFT Hamiltonian, required for smooth interpolation",
+        )
+        smooth_kwargs["dft_smooth_ham_file"] = _ui_file_to_node(
+            ui_config.dft_smooth_ham_file,
+            "dft_smooth_ham_file",
+            "the dense-grid DFT Hamiltonian, required for smooth interpolation",
+        )
+
+    structure = atoms_input_to_structure(koopmans_input.atoms)
+
+    kpath = kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
+
+    return UnfoldAndInterpolateTask.build(
+        kc_ham_file=kc_ham_file,
+        wannier90_wout=wannier90_wout,
+        structure=structure,
+        kpath=kpath,
+        kgrid=list(koopmans_input.kpoints.grid),
+        do_map=ui_config.do_map,
+        use_ws_distance=ui_config.use_ws_distance,
+        w90_input_sc=ui_config.wannier90_input_sc or ui_config.wannier90_calc == "sc",
+        do_dos=ui_config.do_dos,
+        plotting=koopmans_input.plotting.model_dump(),
+        **smooth_kwargs,
+    )
 
 
 class _KcpDscfInputs(TypedDict):
