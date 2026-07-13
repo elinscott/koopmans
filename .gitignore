@@ -900,3 +900,8 @@ FodyWeavers.xsd
 # End of https://www.toptal.com/developers/gitignore/api/macos,linux,windows,python,jupyternotebooks,jetbrains,pycharm,vim,emacs,visualstudiocode,visualstudio
 
 scratch/
+.claude/settings.local.json
+
+# Dumped AiiDA calculation trees produced when running the tutorials —
+# only the tutorial input .json files belong in the repo.
+docs/source/tutorials/*/

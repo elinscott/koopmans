@@ -1,0 +1,5 @@
+# Agent/assistant tooling and memory files are not project documentation —
+# their formatting is owned by the tools that read them.
+.claude/
+.serena/
+CLAUDE.md

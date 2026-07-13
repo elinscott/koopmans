@@ -48,13 +48,34 @@ license-files = [
     "LICENSE",
 ]
 
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "more_itertools", # missing from itertools in stdlib
     "tqdm", # progress bars
+    "rich", # nice terminal output
     "click",
     "more_click",
     "typing-extensions",
+    "aiida-core>=2.7.3",
+    "pydantic>=2.12.5",
+    "wannier90-input",
+    "pydantic-espresso",
+    "ipdb>=0.13.13",
+    "aiida-koopmans",
+    "aiida-hyperqueue~=0.3.0",
+    "aiida-workgraph>=0.8.1",
+    # TEMPORARY: direct dep so [tool.uv.sources] node-graph override is
+    # honoured. Drop this line once the upstream TaggedValue unwrap-at-
+    # graph-body fix is merged in node-graph and released to PyPI.
+    "node-graph",
+    "pyyaml>=6.0.3",
+    "types-pyyaml>=6.0.12.20250915",
+    "seekpath>=1.9.3",
+    "aiida-quantumespresso",
+    "qe-tools", # QE's own unit-conversion constants
+    # Constraint only (not imported directly): aiida-shell >= 0.9 requires the
+    # aiida-core 2.8 Code.Model API, which the pinned aiida-core predates.
+    "aiida-shell~=0.8.2",
 ]
 
 # see https://peps.python.org/pep-0735/ and https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups
@@ -62,13 +83,14 @@ dependencies = [
 tests = [
     "pytest",
     "coverage[toml]",
+    "pytest-regressions",
 ]
 docs = [
     "sphinx>=8,<9",
-    "sphinx-rtd-theme>=3.0","sphinx-click", 
+    "sphinx-rtd-theme>=3.0","sphinx-click",
     "sphinx_automodapi",
     # Include if your project uses Pydantic:
-    # "autodoc_pydantic",
+    "autodoc_pydantic",
     # To include LaTeX comments easily in your docs.
     # If you uncomment this, don't forget to do the same in docs/conf.py
     # texext
@@ -98,6 +120,9 @@ doctests = [
 pyroma = [
     "pyroma",
     "pygments",
+]
+dev = [
+    "pre-commit>=4.6.0",
 ]
 
 # see https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#dependencies-optional-dependencies
@@ -206,6 +231,10 @@ ignore = [
 "docs/source/conf.py" = ["ERA001"]
 # Prints are okay in notebooks
 "notebooks/**/*.ipynb" = ["T201"]
+# Allow assert statements in tests
+"tests/**/*.py" = ["S101"]
+# Allow long lines in input file definitions (Field descriptions)
+"src/koopmans/input_file/*.py" = ["E501"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"
@@ -263,3 +292,13 @@ replace = "VERSION = \"{new_version}\""
 filename = "CITATION.cff"
 search = "version: {current_version}"
 replace = "version: {new_version}"
+
+[tool.uv.sources]
+wannier90-input = { path = "../wannier90-input" }
+pydantic-espresso = { path = "../pydantic_espresso" }
+aiida-core = { path = "../aiida-core" }
+aiida-koopmans = { path = "../aiida-koopmans2", editable = true }
+aiida-quantumespresso = { path = "../aiida-quantumespresso", editable = true }
+aiida-workgraph = { path = "../aiida-workgraph", editable = true }
+node-graph = { path = "../node-graph", editable = true }
+#aiida-core = { git = "https://github.com/Geigerj2/aiida-core", rev = "feature/dump-support-wg" }
