@@ -529,7 +529,7 @@ def _build_trajectory_workgraph(
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(
             "The trajectory task only supports DSCF screening (kcp.x); DFPT screening "
-            "is not ported for trajectories."
+            "is not yet implemented for trajectories."
         )
 
     _require_supported_correction(workflow.correction)
