@@ -345,6 +345,16 @@ def _build_singlepoint_dfpt_workgraph(
 
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
+    # User wannier90 keywords (disentanglement windows, iteration counts, ...)
+    # ride the nested Wannier90WorkChain override namespace into every
+    # per-block wannierisation. Projections and per-spin blocks are consumed
+    # separately by the manifold derivation.
+    w90_user = calc_params.wannier90.model_dump(
+        exclude_unset=True, exclude={"projections", "up", "down"}
+    )
+    if w90_user:
+        overrides["wannier90"] = {"wannier90": {"wannier90": {"parameters": w90_user}}}
+
     # Electron count from the pseudopotential valences: fixes the size of the
     # occupied manifold.
     pseudos = get_pseudos_from_family(pseudo_family, structure)
