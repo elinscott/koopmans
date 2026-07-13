@@ -11,7 +11,7 @@ from koopmans.base import BaseModel
 # Re-export so ``from koopmans.input_file.workflow import Correction``
 # (and ``VariationalOrbitalType``) keeps working — the canonical
 # definitions live in ``aiida_koopmans.types``.
-__all__ = ["Correction", "VariationalOrbitalType"]
+__all__ = ["Correction", "SpinType", "VariationalOrbitalType"]
 
 FloatGE1 = Annotated[float, Field(ge=1.0)]
 

@@ -427,7 +427,15 @@ def _collinear_dfpt_manifold_inputs(
 
     workflow = koopmans_input.workflow
     w90 = koopmans_input.calculator_parameters.wannier90
-    magnetization = int(koopmans_input.calculator_parameters.tot_magnetization)
+    tot_magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    if w90.up is None or w90.down is None or tot_magnetization is None:
+        # Already validated by _build_singlepoint_dfpt_workgraph; re-checked
+        # here so the collinear helper narrows its own inputs.
+        raise ValueError(
+            "spin='collinear' DFPT screening needs per-spin projections "
+            "(``w90.up`` / ``w90.down``) and ``tot_magnetization``."
+        )
+    magnetization = int(tot_magnetization)
     if (nelec + magnetization) % 2:
         raise ValueError(
             f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "
