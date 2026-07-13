@@ -296,11 +296,11 @@ def _band_range_complement(start: int, end: int, nbnd: int) -> str | None:
 
 def _derive_dscf_blocks(
     structure: orm.StructureData,
-    projection_blocks: list,
+    projection_blocks: list[list[Any]],
     nocc: int,
     nbnd: int,
     spin_channel: Any,
-) -> list:
+) -> list[Any]:
     """Turn user projection blocks into DSCF wannierization blocks.
 
     Unlike the DFPT manifolds (one occupied + at most one empty block), the
@@ -322,7 +322,7 @@ def _derive_dscf_blocks(
         )
 
     suffix = f"_{spin_channel.value}" if spin_channel in (SpinChannel.UP, SpinChannel.DOWN) else ""
-    blocks: list = []
+    blocks: list[Any] = []
     cursor = 0
     n_occ = n_emp = 0
     for block in projection_blocks:
