@@ -661,7 +661,7 @@ def _collinear_dfpt_manifold_inputs(
     return inputs
 
 
-def _resolve_trajectory_ml_mode(ml_config: Any) -> tuple[str, dict | None]:
+def _resolve_trajectory_ml_mode(ml_config: Any) -> tuple[str, dict[str, Any] | None]:
     """Map the ``ml`` input block onto a ``TrajectoryWorkflow`` mode and model.
 
     Returns ``(ml_mode, ml_model)`` where ``ml_mode`` is one of ``train`` /
@@ -731,7 +731,8 @@ def _build_trajectory_workgraph(
     from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
-    from koopmans.input_file import AtomsInput, SnapshotsInput
+    from koopmans.input_file import AtomsInput
+    from koopmans.input_file.atomic_positions import SnapshotsInput
 
     workflow = koopmans_input.workflow
 

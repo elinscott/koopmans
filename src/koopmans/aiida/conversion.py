@@ -174,8 +174,15 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     Returns:
         AiiDA StructureData node.
     """
+    from koopmans.input_file.atomic_positions import SnapshotsInput
+
     cell_params = atoms.cell_parameters
     positions = atoms.atomic_positions
+    if isinstance(positions, SnapshotsInput):
+        raise ValueError(
+            "atoms_input_to_structure needs explicit atomic positions; expand a "
+            "snapshots trajectory into per-frame AtomsInputs first."
+        )
 
     cell = cell_in_angstrom(cell_params)
 
