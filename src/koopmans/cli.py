@@ -21,19 +21,15 @@ import click
 
 from koopmans.aiida.dumping import dump_workgraph
 from koopmans.aiida.progress import run_with_progress
-from koopmans.aiida.setup import (
-    ensure_hq_running,
-    install_hq_binary,
-    is_daemon_running,
-    list_codes,
-    load_koopmans_profile,
+from koopmans.aiida.setup.codes import list_codes
+from koopmans.aiida.setup.daemon import is_daemon_running, start_daemon, stop_daemon
+from koopmans.aiida.setup.hq import ensure_hq_running, install_hq_binary
+from koopmans.aiida.setup.orchestrate import (
     print_status,
     setup_computers,
-    setup_profile,
-    start_daemon,
-    stop_daemon,
     uninstall_backend,
 )
+from koopmans.aiida.setup.profile import load_koopmans_profile, setup_profile
 from koopmans.aiida.utils import suppress_aiida_logging
 from koopmans.input_file import read_input_file
 

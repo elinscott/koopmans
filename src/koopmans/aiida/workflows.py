@@ -108,7 +108,7 @@ def _prepare_common_inputs(
     Returns:
         Tuple of (structure, pseudo_family, overrides).
     """
-    from koopmans.aiida.setup import ensure_pseudo_family_installed
+    from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
     structure = atoms_input_to_structure(koopmans_input.atoms)
     parameters = input_to_pw_parameters(koopmans_input)
@@ -237,7 +237,7 @@ def _build_singlepoint_workgraph(
     """
     from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
 
-    from koopmans.aiida.setup import ensure_pseudo_family_installed
+    from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
     workflow = koopmans_input.workflow
 
@@ -397,7 +397,7 @@ def _build_trajectory_workgraph(
 
     from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
 
-    from koopmans.aiida.setup import ensure_pseudo_family_installed
+    from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
     workflow = koopmans_input.workflow
 

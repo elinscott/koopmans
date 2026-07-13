@@ -354,7 +354,7 @@ def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     """
     from aiida.orm import load_node
 
-    from koopmans.aiida.setup import ensure_daemon_running
+    from koopmans.aiida.setup.daemon import ensure_daemon_running
 
     console = Console()
     console.print()

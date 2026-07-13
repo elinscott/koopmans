@@ -4,7 +4,7 @@ This package provides utilities for converting Koopmans input to AiiDA data node
 and setting up the AiiDA environment.
 """
 
-from koopmans.aiida.setup import ensure_pseudo_family_installed
+from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
 __all__ = [
     "ensure_pseudo_family_installed",

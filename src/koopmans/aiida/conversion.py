@@ -440,7 +440,7 @@ def get_pseudos_from_family(
     """
     from aiida_pseudo.groups.family import PseudoPotentialFamily
 
-    from koopmans.aiida.setup import ensure_pseudo_family_installed
+    from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
     ensure_pseudo_family_installed(pseudo_family)
     family = PseudoPotentialFamily.collection.get(label=pseudo_family)
