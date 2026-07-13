@@ -51,7 +51,7 @@ def get_localhost_computer(nprocs: int | None = None) -> Computer:
         if physical is not None and logical is not None and physical != logical:
             click.echo(
                 f"  Detected {physical} physical / {logical} logical cores; "
-                f"using {nprocs} MPI rank(s) per kcp.x run to avoid hyperthread "
+                f"using {nprocs} MPI rank(s) per calculation to avoid hyperthread "
                 f"oversubscription. Override with --procs-per-calc."
             )
 

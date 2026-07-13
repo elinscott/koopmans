@@ -19,8 +19,12 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from aiida.orm import Computer, InstalledCode
 
-# Quantum ESPRESSO and related executables that koopmans needs
-QE_EXECUTABLES: dict[str, str] = {
+# Quantum ESPRESSO and related executables that koopmans needs, mapped to the
+# code's default CalcJob entry point. kcw.x maps to None: the one binary backs
+# three CalcJobs (koopmans.kcw_wann2kc / kcw_screen / kcw_ham, selected via
+# control.calculation), so no single default is honest — the workgraph tasks
+# name their process class explicitly.
+QE_EXECUTABLES: dict[str, str | None] = {
     "pw.x": "quantumespresso.pw",
     "ph.x": "quantumespresso.ph",
     "pp.x": "quantumespresso.pp",
@@ -28,10 +32,7 @@ QE_EXECUTABLES: dict[str, str] = {
     "dos.x": "quantumespresso.dos",
     "wannier90.x": "wannier90.wannier90",
     "pw2wannier90.x": "quantumespresso.pw2wannier90",
-    "kcw.x": "quantumespresso.kcw",
-    "wann2kc.x": "quantumespresso.wann2kc",
-    "kc_screen.x": "quantumespresso.kc_screen",
-    "kc_ham.x": "quantumespresso.kc_ham",
+    "kcw.x": None,
     "kcp.x": "koopmans.kcp",
 }
 
@@ -85,7 +86,7 @@ def code_exists(label: str) -> bool:
 def setup_code(
     executable_name: str,
     executable_path: str,
-    plugin: str,
+    plugin: str | None,
     computer: Computer,
     force: bool = False,
 ) -> InstalledCode | None:
@@ -124,7 +125,7 @@ def setup_code(
     return code
 
 
-def get_codes_to_register(computer: Computer) -> tuple[list[str], dict[str, str]]:
+def get_codes_to_register(computer: Computer) -> tuple[list[str], dict[str, str | None]]:
     """Return ``(existing_codes, codes_to_find)``."""
     existing_codes = []
     codes_to_find = {}
@@ -139,7 +140,7 @@ def get_codes_to_register(computer: Computer) -> tuple[list[str], dict[str, str]
 
 
 def scan_and_register_codes(
-    codes_to_find: dict[str, str],
+    codes_to_find: dict[str, str | None],
     computer: Computer,
     explicit_codes: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
