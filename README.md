@@ -20,7 +20,7 @@
     <a href='https://koopmans.readthedocs.io/en/latest/?badge=latest'>
         <img src='https://readthedocs.org/projects/koopmans/badge/?version=latest' alt='Documentation Status' /></a>
     <a href="https://codecov.io/gh/elinscott/koopmans/branch/main">
-        <img src="https://codecov.io/gh/elinscott/koopmans/branch/main/graph/badge.svg" alt="Codecov status" /></a>  
+        <img src="https://codecov.io/gh/elinscott/koopmans/branch/main/graph/badge.svg" alt="Codecov status" /></a>
     <a href="https://github.com/cthoyt/cookiecutter-python-package">
         <img alt="Cookiecutter template from @cthoyt" src="https://img.shields.io/badge/Cookiecutter-snekpack-blue" /></a>
     <a href="https://github.com/astral-sh/ruff">
@@ -28,8 +28,8 @@
     <a href="https://github.com/elinscott/koopmans/blob/main/.github/CODE_OF_CONDUCT.md">
         <img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg" alt="Contributor Covenant"/></a>
     <!-- uncomment if you archive on zenodo
-    <a href="https://zenodo.org/badge/latestdoi/XXXXXX">
-        <img src="https://zenodo.org/badge/XXXXXX.svg" alt="DOI"></a>
+    <a href="https://doi.org/10.5281/zenodo.XXXXXX">
+        <img src="https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXX.svg" alt="DOI"></a>
     -->
 </p>
 
@@ -86,7 +86,7 @@ $ python3 -m pip install git+https://github.com/elinscott/koopmans.git
 
 Contributions, whether filing an issue, making a pull request, or forking, are
 appreciated. See
-[CONTRIBUTING.md](https://github.com/elinscott/koopmans/blob/master/.github/CONTRIBUTING.md)
+[CONTRIBUTING.md](https://github.com/elinscott/koopmans/blob/main/.github/CONTRIBUTING.md)
 for more information on getting involved.
 
 ## 👋 Attribution
@@ -295,9 +295,9 @@ $ tox -e finish
 This script does the following:
 
 1. Uses [bump-my-version](https://github.com/callowayproject/bump-my-version) to
-   switch the version number in the `pyproject.toml`, `CITATION.cff`,
-   `src/koopmans/version.py`, and [`docs/source/conf.py`](docs/source/conf.py)
-   to not have the `-dev` suffix
+   switch the version number in the `pyproject.toml`, `src/koopmans/version.py`,
+   and [`docs/source/conf.py`](docs/source/conf.py) to not have the `-dev`
+   suffix
 2. Packages the code in both a tar archive and a wheel using
    [`uv build`](https://docs.astral.sh/uv/guides/publish/#building-your-package)
 3. Uploads to PyPI using

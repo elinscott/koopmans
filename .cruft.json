@@ -1,6 +1,6 @@
 {
   "template": "https://github.com/cthoyt/cookiecutter-snekpack",
-  "commit": "d59632c93b5ae63cc8252e8008059c0444e9e7b0",
+  "commit": "6bde7626385247bd41f1a3bf0be5fe47d1563872",
   "checkout": null,
   "context": {
     "cookiecutter": {
@@ -15,6 +15,7 @@
       "command_line_interface": true,
       "gitlab": false,
       "runner": "tox",
+      "citation_file": true,
       "__not_charlie": "true",
       "__runner": "tox -e",
       "__runner_uv": "--with tox-uv tox -e",
@@ -23,8 +24,9 @@
       "__runner_install_pip": "python3 -m pip install tox tox-uv",
       "__runner_tests": "py",
       "__gh_slug": "elinscott/koopmans",
+      "__package_name_dashed": "koopmans",
       "_template": "https://github.com/cthoyt/cookiecutter-snekpack",
-      "_commit": "d59632c93b5ae63cc8252e8008059c0444e9e7b0"
+      "_commit": "6bde7626385247bd41f1a3bf0be5fe47d1563872"
     }
   },
   "directory": null
