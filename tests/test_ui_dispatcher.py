@@ -53,7 +53,7 @@ def _si_ui_dict(**ui_updates: Any) -> dict[str, Any]:
     }
 
 
-def _build(d: dict[str, Any]):
+def _build(d: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
     return _build_ui_workgraph(inp, codes={})
 
@@ -61,7 +61,7 @@ def _build(d: dict[str, Any]):
 class TestCodes:
     """The UI task needs no QE codes."""
 
-    def test_load_codes_returns_empty(self):
+    def test_load_codes_returns_empty(self) -> None:
         """load_codes_for_task must not try to load pw.x for the UI task."""
         inp = KoopmansInput.model_validate(_si_ui_dict())
         assert load_codes_for_task(inp.workflow) == {}
@@ -70,21 +70,21 @@ class TestCodes:
 class TestBuild:
     """Workgraph construction from the input file."""
 
-    def test_builds_interpolation_and_dos_tasks(self, aiida_profile):
+    def test_builds_interpolation_and_dos_tasks(self, aiida_profile: Any) -> None:
         """The full input wires the interpolation and DOS calcfunctions."""
         wg = _build(_si_ui_dict())
         names = wg.get_task_names()
         assert "interpolate_bands" in names
         assert "compute_dos_from_bands" in names
 
-    def test_do_dos_false_skips_the_dos(self, aiida_profile):
+    def test_do_dos_false_skips_the_dos(self, aiida_profile: Any) -> None:
         """do_dos=False leaves only the interpolation task."""
         wg = _build(_si_ui_dict(do_dos=False))
         names = wg.get_task_names()
         assert "interpolate_bands" in names
         assert "compute_dos_from_bands" not in names
 
-    def test_dispatches_via_build_workgraph(self, aiida_profile):
+    def test_dispatches_via_build_workgraph(self, aiida_profile: Any) -> None:
         """Task.UNFOLD_AND_INTERPOLATE routes through the top-level dispatcher without any codes."""
         wg = build_workgraph(KoopmansInput.model_validate(_si_ui_dict()))
         assert "interpolate_bands" in wg.get_task_names()
@@ -93,27 +93,27 @@ class TestBuild:
 class TestMissingFiles:
     """Clear errors for unset or dangling file paths."""
 
-    def test_missing_kc_ham_file_raises(self):
+    def test_missing_kc_ham_file_raises(self) -> None:
         """kc_ham_file is mandatory."""
         with pytest.raises(ValueError, match="kc_ham_file"):
             _build(_si_ui_dict(kc_ham_file=None))
 
-    def test_nonexistent_kc_ham_file_raises(self):
+    def test_nonexistent_kc_ham_file_raises(self) -> None:
         """A dangling kc_ham_file path is reported."""
         with pytest.raises(ValueError, match="does not exist"):
             _build(_si_ui_dict(kc_ham_file="/nonexistent/kc_ham.dat"))
 
-    def test_nonexistent_wout_raises(self):
+    def test_nonexistent_wout_raises(self) -> None:
         """The .wout derived from wannier90_seedname must exist."""
         with pytest.raises(ValueError, match="wannier90_seedname"):
             _build(_si_ui_dict(wannier90_seedname="/nonexistent/wann"))
 
-    def test_smooth_interpolation_requires_smooth_ham(self):
+    def test_smooth_interpolation_requires_smooth_ham(self) -> None:
         """smooth_int_factor > 1 without dft_smooth_ham_file is an error."""
         with pytest.raises(ValueError, match="dft_smooth_ham_file"):
             _build(_si_ui_dict(dft_smooth_ham_file=None))
 
-    def test_no_smoothing_ignores_dft_ham_files(self, aiida_profile):
+    def test_no_smoothing_ignores_dft_ham_files(self, aiida_profile: Any) -> None:
         """With smooth_int_factor=1 the DFT Hamiltonian paths are not required."""
         wg = _build(_si_ui_dict(smooth_int_factor=1, dft_ham_file=None, dft_smooth_ham_file=None))
         assert "interpolate_bands" in wg.get_task_names()
