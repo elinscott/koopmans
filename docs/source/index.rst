@@ -15,13 +15,12 @@ following:
 - Declarative setup with `pyproject.toml` (following `PEP 621
   <https://peps.python.org/pep-0621/>`_)
 - Reproducible workflows configured with ``tox`` - Reproducible tests with ``pytest`` -
-  A command line interface with ``click`` - Reproducible notebooks with `treon
-  <https://github.com/reviewNB/treon>`_ - Documentation build with ``sphinx`` 8.0 and
-  ``sphinx-rtd-theme`` 3.0 - Testing of code quality with ``ruff`` - Testing of
-  documentation coverage with ``docstr-coverage`` - Testing of documentation format -
-  Testing of package metadata completeness with ``pyroma`` - Testing of MANIFEST
-  correctness with ``check-manifest`` - Testing of optional static typing with ``mypy``
-  - Version management with `bump-my-version
+  Reproducible notebooks with `treon <https://github.com/reviewNB/treon>`_ -
+  Documentation build with ``sphinx`` 8.0 and ``sphinx-rtd-theme`` 3.0 - Testing of code
+  quality with ``ruff`` - Testing of documentation coverage with ``docstr-coverage`` -
+  Testing of documentation format - Testing of package metadata completeness with
+  ``pyroma`` - Testing of MANIFEST correctness with ``check-manifest`` - Testing of
+  optional static typing with ``mypy`` - Version management with `bump-my-version
   <https://github.com/callowayproject/bump-my-version>`_ - Building with `uv build
   <https://docs.astral.sh/uv/guides/publish/#building-your-package>`_ - Releasing to
   PyPI with `uv publish
