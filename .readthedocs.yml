@@ -34,5 +34,5 @@ build:
     - git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
     - git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 9acc05b4c792bdf321a3d4a8a41db3b1146d54c6 && git -C ../aiida-core checkout -q FETCH_HEAD
     - uv venv $READTHEDOCS_VIRTUALENV_PATH
-    - VIRTUAL_ENV=$READTHEDOCS_VIRTUALENV_PATH uv pip install --all-extras --group docs .
+    - VIRTUAL_ENV=$READTHEDOCS_VIRTUALENV_PATH uv pip install --group docs .
     - python -m sphinx -T -b html -d docs/_build/doctrees -D language=en docs/source $READTHEDOCS_OUTPUT/html
