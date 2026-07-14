@@ -4,6 +4,7 @@ from enum import Enum
 from typing import Annotated, Any, Self
 
 from aiida_koopmans.types import Correction, VariationalOrbitalType
+from aiida_quantumespresso.common.types import SpinType
 from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
@@ -67,9 +68,12 @@ class WorkflowConfig(BaseModel):
     calculate_bands: bool = Field(
         default=False, description="Calculate the band structure of the system (if relevant)"
     )
-    spin_polarized: bool = Field(
-        default=False,
-        description="if True, the system will be allowed to break spin symmetry i.e. $n^{up}(r) != n^{down}(r)$",
+    spin: SpinType = Field(
+        default=SpinType.NONE,
+        description="how to treat the spin degrees of freedom: 'none' (spin-unpolarized), "
+        "'collinear' (the system may break spin symmetry i.e. $n^{up}(r) != n^{down}(r)$), "
+        "'non_collinear' (spinor wavefunctions), or 'spin_orbit' (spinor wavefunctions with "
+        "spin-orbit coupling)",
     )
     initialize_with_smearing: bool = Field(
         default=False,
@@ -184,9 +188,9 @@ class WorkflowConfig(BaseModel):
 
     @model_validator(mode="after")
     def check_orbital_groups_length(self) -> Self:
-        """Make the spin-dimension of ``orbital_groups`` is consistent with ``spin_polarized``."""
+        """Make the spin-dimension of ``orbital_groups`` is consistent with ``spin``."""
         if self.orbital_groups is not None:
-            target_length = 2 if self.spin_polarized else 1
+            target_length = 2 if self.spin == SpinType.COLLINEAR else 1
             if len(self.orbital_groups) != target_length:
                 raise ValueError(f"'orbital_groups' should be of length {target_length}")
         return self

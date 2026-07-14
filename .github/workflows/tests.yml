@@ -34,12 +34,14 @@ jobs:
         # of forks carrying features still working their way upstream. Drop
         # entries here (and the corresponding uv source) as they merge.
         run: |
-          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          # Prefer the same-named aiida-koopmans branch when one exists, so
+          # stacked cross-repo PRs test against their paired plugin branch;
+          # fall back to the default branch otherwise.
+          git clone --depth 1 --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2 || git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
-          git clone --depth 1 https://github.com/elinscott/wannier90-input ../wannier90-input
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
           git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 9acc05b4c792bdf321a3d4a8a41db3b1146d54c6 && git -C ../aiida-core checkout -q FETCH_HEAD
       - name: "Install uv"
@@ -69,12 +71,14 @@ jobs:
         # of forks carrying features still working their way upstream. Drop
         # entries here (and the corresponding uv source) as they merge.
         run: |
-          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          # Prefer the same-named aiida-koopmans branch when one exists, so
+          # stacked cross-repo PRs test against their paired plugin branch;
+          # fall back to the default branch otherwise.
+          git clone --depth 1 --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2 || git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
-          git clone --depth 1 https://github.com/elinscott/wannier90-input ../wannier90-input
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
           git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 9acc05b4c792bdf321a3d4a8a41db3b1146d54c6 && git -C ../aiida-core checkout -q FETCH_HEAD
       - name: "Install uv"
@@ -110,12 +114,14 @@ jobs:
         # of forks carrying features still working their way upstream. Drop
         # entries here (and the corresponding uv source) as they merge.
         run: |
-          git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
+          # Prefer the same-named aiida-koopmans branch when one exists, so
+          # stacked cross-repo PRs test against their paired plugin branch;
+          # fall back to the default branch otherwise.
+          git clone --depth 1 --branch "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}" https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2 || git clone --depth 1 https://github.com/elinscott/aiida-koopmans ../aiida-koopmans2
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-workgraph ../aiida-workgraph
           git clone --depth 1 --branch patched https://github.com/elinscott/node-graph ../node-graph
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
-          git clone --depth 1 https://github.com/elinscott/wannier90-input ../wannier90-input
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
           git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 9acc05b4c792bdf321a3d4a8a41db3b1146d54c6 && git -C ../aiida-core checkout -q FETCH_HEAD
       - name: "Install uv"

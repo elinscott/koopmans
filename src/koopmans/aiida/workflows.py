@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from aiida import orm
 from aiida_koopmans.workgraphs import Codes
+from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
@@ -249,6 +250,12 @@ def _build_singlepoint_workgraph(
 
     _require_supported_correction(workflow.correction)
 
+    if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
+        raise NotImplementedError(
+            f"spin={workflow.spin.value!r} is not supported by the DSCF (kcp.x) stream: "
+            "kcp.x has no noncollinear mode. Use screening_method='dfpt'."
+        )
+
     structure = atoms_input_to_structure(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
 
@@ -268,16 +275,18 @@ def _build_singlepoint_dfpt_workgraph(
     Assembles the full chain (scf + nscf → per-manifold wannierization →
     wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPTWorkflow``.
 
-    Current restrictions (matching the ``SinglepointDFPTWorkflow`` scope): periodic,
-    spin-unpolarized, MLWF/projwf variational orbitals, and explicit
-    projections forming exactly one occupied manifold block plus at most one
-    empty block (multi-block manifolds are not yet supported).
+    Spin regimes (``workflow.spin``): ``none`` runs the closed-shell chain;
+    ``collinear`` fans the wannierization and the kcw.x chain out per spin
+    channel (needs per-spin projections in ``w90.up`` / ``w90.down`` and a
+    ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the spinor
+    chain (all bands singly occupied, ``num_wann`` doubled).
+
+    Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
+    periodic, MLWF/projwf variational orbitals, and explicit projections
+    forming exactly one occupied manifold block plus at most one empty block
+    per spin channel (multi-block manifolds are not yet supported).
     """
-    from aiida_koopmans.workgraphs.dfpt import (
-        SinglepointDFPTWorkflow,
-        derive_dfpt_manifolds,
-        normalize_alpha_guess,
-    )
+    from aiida_koopmans.workgraphs.dfpt import SinglepointDFPTWorkflow
 
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -292,11 +301,6 @@ def _build_singlepoint_dfpt_workgraph(
             "The DFPT route (kcw.x) only implements the KI correction; "
             f"correction={workflow.correction.value!r} is not supported. Use "
             "screening_method = 'dscf' for KIPZ."
-        )
-    if workflow.spin_polarized:
-        raise NotImplementedError(
-            "Spin-polarized DFPT screening is not yet supported (needs a per-spin "
-            "wann2kc/screen/ham fan-out)."
         )
     if workflow.init_orbitals not in (
         VariationalOrbitalType.MLWFS,
@@ -317,28 +321,47 @@ def _build_singlepoint_dfpt_workgraph(
             "yet supported; provide a numeric value."
         )
 
+    calc_params = koopmans_input.calculator_parameters
+    spin = workflow.spin
+
+    if spin == SpinType.COLLINEAR:
+        if calc_params.wannier90.up is None or calc_params.wannier90.down is None:
+            raise ValueError(
+                "spin='collinear' DFPT screening needs per-spin projections: set "
+                "``calculator_parameters.w90.up.projections`` and "
+                "``calculator_parameters.w90.down.projections``."
+            )
+        if calc_params.tot_magnetization is None:
+            raise ValueError(
+                "spin='collinear' DFPT screening needs "
+                "``calculator_parameters.tot_magnetization`` to fix the per-channel "
+                "occupations."
+            )
+
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
+
+    # User wannier90 keywords (disentanglement windows, iteration counts, ...)
+    # ride the nested Wannier90WorkChain override namespace into every
+    # per-block wannierisation. Projections and per-spin blocks are consumed
+    # separately by the manifold derivation.
+    w90_user = calc_params.wannier90.model_dump(
+        exclude_unset=True, exclude={"projections", "up", "down"}
+    )
+    if w90_user:
+        overrides["wannier90"] = {"wannier90": {"wannier90": {"parameters": w90_user}}}
 
     # Electron count from the pseudopotential valences: fixes the size of the
     # occupied manifold.
     pseudos = get_pseudos_from_family(pseudo_family, structure)
     nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
 
-    calc_params = koopmans_input.calculator_parameters
     nbnd = calc_params.nbnd if calc_params.nbnd is not None else calc_params.pw.system.nbnd
+    nbnd = int(nbnd) if nbnd is not None else None
 
-    occ_block, emp_block, has_disentangle, n_orbitals = derive_dfpt_manifolds(
-        structure=structure,
-        projection_blocks=calc_params.wannier90.projections,
-        nelec=nelec,
-        nbnd=int(nbnd) if nbnd is not None else None,
-    )
-
-    alpha_guess = (
-        None
-        if workflow.calculate_alpha
-        else normalize_alpha_guess(workflow.alpha_guess, n_orbitals)
-    )
+    if spin == SpinType.COLLINEAR:
+        manifolds = _collinear_dfpt_manifolds(koopmans_input, structure, overrides, nelec, nbnd)
+    else:
+        manifolds = _single_channel_dfpt_manifolds(koopmans_input, structure, nelec, nbnd, spin)
 
     bands_kpoints = (
         kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
@@ -355,8 +378,6 @@ def _build_singlepoint_dfpt_workgraph(
     return SinglepointDFPTWorkflow.build(
         codes=codes,
         structure=structure,
-        occ_block=occ_block,
-        emp_block=emp_block,
         kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
         kgrid=list(koopmans_input.kpoints.grid),
         bands_kpoints=bands_kpoints,
@@ -365,10 +386,114 @@ def _build_singlepoint_dfpt_workgraph(
         # eps_inf is FloatGE1 | None after the 'auto' guard above; l_vcut is
         # the Gygi-Baldereschi flag (None -> the periodic default, on).
         eps_inf=workflow.eps_inf,
-        alpha_guess=alpha_guess,
-        has_disentangle=has_disentangle,
         l_vcut=workflow.gb_correction,
+        spin=spin,
+        manifolds=manifolds,
     )
+
+
+def _single_channel_dfpt_manifolds(
+    koopmans_input: KoopmansInput,
+    structure: orm.StructureData,
+    nelec: int,
+    nbnd: int | None,
+    spin: SpinType,
+) -> dict[str, Any]:
+    """Derive the single-channel ``manifolds`` input for an unpolarized or spinor DFPT run.
+
+    Both regimes run one kcw.x chain keyed ``"none"``; the spinor case
+    differs only in the manifold derivation (all bands singly occupied,
+    ``num_wann`` doubled).
+    """
+    from aiida_koopmans.types import SpinChannel
+    from aiida_koopmans.workgraphs.dfpt import (
+        ManifoldBlocks,
+        derive_dfpt_manifolds,
+        normalize_alpha_guess,
+    )
+
+    workflow = koopmans_input.workflow
+    spin_channel = SpinChannel.NONE if spin == SpinType.NONE else SpinChannel.SPINOR
+    occ_block, emp_block, n_orbitals = derive_dfpt_manifolds(
+        structure=structure,
+        projection_blocks=koopmans_input.calculator_parameters.wannier90.projections,
+        nelec=nelec,
+        nbnd=nbnd,
+        spin_channel=spin_channel,
+    )
+    manifold = ManifoldBlocks(occ=occ_block)
+    if emp_block is not None:
+        manifold["emp"] = emp_block
+    if not workflow.calculate_alpha:
+        manifold["alpha_guess"] = normalize_alpha_guess(workflow.alpha_guess, n_orbitals)
+    return {SpinChannel.NONE.value: manifold}
+
+
+def _collinear_dfpt_manifolds(
+    koopmans_input: KoopmansInput,
+    structure: orm.StructureData,
+    overrides: dict[str, Any],
+    nelec: int,
+    nbnd: int | None,
+) -> dict[str, Any]:
+    """Derive the per-spin-channel ``manifolds`` input for a collinear DFPT run.
+
+    Returns the ``SinglepointDFPTWorkflow`` ``manifolds`` dict — one
+    ``ManifoldBlocks`` per spin channel, keyed ``"up"`` / ``"down"`` — from
+    the per-spin projections in ``w90.up`` / ``w90.down`` and the
+    per-channel occupations fixed by ``tot_magnetization``. Also forwards
+    the magnetization into the scf / nscf PW SYSTEM overrides (mutated in
+    place): the PW runs must see the physical magnetization —
+    ``SinglepointDFPTWorkflow`` only forces ``nspin=2`` in this regime.
+    """
+    from aiida_koopmans.types import SpinChannel
+    from aiida_koopmans.workgraphs.dfpt import (
+        ManifoldBlocks,
+        derive_dfpt_manifolds,
+        normalize_alpha_guess,
+    )
+
+    workflow = koopmans_input.workflow
+    w90 = koopmans_input.calculator_parameters.wannier90
+    tot_magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    if w90.up is None or w90.down is None or tot_magnetization is None:
+        # Already validated by _build_singlepoint_dfpt_workgraph; re-checked
+        # here so the collinear helper narrows its own inputs.
+        raise ValueError(
+            "spin='collinear' DFPT screening needs per-spin projections "
+            "(``w90.up`` / ``w90.down``) and ``tot_magnetization``."
+        )
+    magnetization = int(tot_magnetization)
+    if (nelec + magnetization) % 2:
+        raise ValueError(
+            f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "
+            "integer per-channel occupations."
+        )
+    for key in ("scf", "nscf"):
+        overrides[key]["pw"]["parameters"].setdefault("SYSTEM", {})["tot_magnetization"] = (
+            magnetization
+        )
+
+    manifolds: dict[str, Any] = {}
+    for channel, w90_channel in ((SpinChannel.UP, w90.up), (SpinChannel.DOWN, w90.down)):
+        sign = 1 if channel == SpinChannel.UP else -1
+        occ_block, emp_block, n_orbitals = derive_dfpt_manifolds(
+            structure=structure,
+            projection_blocks=w90_channel.projections,
+            nelec=nelec,
+            nbnd=nbnd,
+            spin_channel=channel,
+            nocc=(nelec + sign * magnetization) // 2,
+        )
+        manifold = ManifoldBlocks(occ=occ_block)
+        if emp_block is not None:
+            manifold["emp"] = emp_block
+        if not workflow.calculate_alpha:
+            manifold["alpha_guess"] = normalize_alpha_guess(
+                workflow.alpha_guess, n_orbitals, channel
+            )
+        manifolds[channel.value] = manifold
+    return manifolds
 
 
 def _build_trajectory_workgraph(
@@ -404,10 +529,16 @@ def _build_trajectory_workgraph(
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(
             "The trajectory task only supports DSCF screening (kcp.x); DFPT screening "
-            "is not ported for trajectories."
+            "is not yet implemented for trajectories."
         )
 
     _require_supported_correction(workflow.correction)
+
+    if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
+        raise NotImplementedError(
+            f"spin={workflow.spin.value!r} is not supported by the trajectory (kcp.x) "
+            "stream: kcp.x has no noncollinear mode."
+        )
 
     ml_config = koopmans_input.ml
 
@@ -538,7 +669,7 @@ def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         ecutrho=float(ecutrho),
         nbnd=int(nbnd_raw),
         # KI requires nspin=2 for per-spin orbital-dependent screening, regardless
-        # of ``spin_polarized`` — closed-shell molecules still need two channels.
+        # of what ``spin`` says — closed-shell molecules still need two channels.
         nspin=2,
         tot_magnetization=_coerce_optional_int(calc_params.tot_magnetization),
         correction=workflow.correction,
@@ -546,7 +677,7 @@ def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         alpha_numsteps=workflow.alpha_numsteps,
         fix_spin_contamination=workflow.fix_spin_contamination,
         initial_alpha=_initial_alpha_from_guess(workflow.alpha_guess),
-        spin_polarized=workflow.spin_polarized,
+        spin_polarized=workflow.spin == SpinType.COLLINEAR,
         orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
     )
 
