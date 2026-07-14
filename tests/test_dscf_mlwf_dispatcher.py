@@ -55,15 +55,18 @@ def _si_dscf_dict(**workflow_updates: Any) -> dict[str, Any]:
     return d
 
 
-def _build(d: dict[str, Any], codes: dict[str, Any]):
+def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
     return _build_singlepoint_workgraph(inp, codes=codes)
 
 
 @pytest.fixture
 def dscf_codes(
-    installed_pw_code, installed_kcp_code, installed_wannier_codes, installed_fold_codes
-):
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    installed_wannier_codes: Any,
+    installed_fold_codes: Any,
+) -> dict[str, Any]:
     """Assemble the codes dict the dispatcher receives, plus fold-path dummies.
 
     Only ``pw`` and ``kcp`` are passed in (mirroring ``load_codes_for_task``);
@@ -77,30 +80,34 @@ class TestDeriveDscfBlocks:
     """Unit tests for the projection-block bookkeeping."""
 
     @pytest.fixture
-    def si_structure(self, aiida_profile):
+    def si_structure(self, aiida_profile: Any) -> Any:
         """Return a bare silicon StructureData for projection counting."""
         from aiida.orm import StructureData
 
         cell = [[0.0, 2.715, 2.715], [2.715, 0.0, 2.715], [2.715, 2.715, 0.0]]
-        struct = StructureData(cell=cell, pbc=True)
-        struct.append_atom(position=(0.0, 0.0, 0.0), symbols="Si", name="Si")
-        struct.append_atom(position=(1.3575, 1.3575, 1.3575), symbols="Si", name="Si")
+        struct = StructureData(cell=cell, pbc=True)  # type: ignore[no-untyped-call]
+        struct.append_atom(  # type: ignore[no-untyped-call]
+            position=(0.0, 0.0, 0.0), symbols="Si", name="Si"
+        )
+        struct.append_atom(  # type: ignore[no-untyped-call]
+            position=(1.3575, 1.3575, 1.3575), symbols="Si", name="Si"
+        )
         return struct
 
     class _FakeQuantumNumbers:
-        def __init__(self, l_value):
+        def __init__(self, l_value: int) -> None:
             self.angular = type("A", (), {"value": l_value})()
             self.m_r = None
 
-        def __str__(self):
+        def __str__(self) -> str:
             return f"l={self.angular.value}"
 
     class _FakeProjection:
-        def __init__(self, site, l_value):
+        def __init__(self, site: str, l_value: int) -> None:
             self.site = site
             self.ang_mtm = TestDeriveDscfBlocks._FakeQuantumNumbers(l_value)
 
-    def test_occ_emp_split_and_exclusions(self, si_structure):
+    def test_occ_emp_split_and_exclusions(self, si_structure: Any) -> None:
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
         from aiida_koopmans.types import SpinChannel
 
@@ -114,7 +121,7 @@ class TestDeriveDscfBlocks:
         assert blocks[1]["include_bands"] == [5, 6, 7, 8]
         assert blocks[1]["exclude_bands"] == "1-4"
 
-    def test_middle_block_gets_two_sided_exclusion(self, si_structure):
+    def test_middle_block_gets_two_sided_exclusion(self, si_structure: Any) -> None:
         """A block sandwiched between others excludes bands on both sides."""
         from aiida_koopmans.types import SpinChannel
 
@@ -126,7 +133,7 @@ class TestDeriveDscfBlocks:
         assert [b["label"] for b in blocks] == ["occ_1", "occ_2", "emp_1"]
         assert blocks[1]["exclude_bands"] == "1-2,5-8"
 
-    def test_straddling_block_raises(self, si_structure):
+    def test_straddling_block_raises(self, si_structure: Any) -> None:
         """A block crossing the occupied/empty boundary is an input error."""
         from aiida_koopmans.types import SpinChannel
 
@@ -136,7 +143,7 @@ class TestDeriveDscfBlocks:
         with pytest.raises(ValueError, match="straddles"):
             _derive_dscf_blocks(si_structure, [sp, sp], 6, 8, SpinChannel.NONE)
 
-    def test_uncovered_occupied_bands_raise(self, si_structure):
+    def test_uncovered_occupied_bands_raise(self, si_structure: Any) -> None:
         """Occupied blocks must cover every occupied band."""
         from aiida_koopmans.types import SpinChannel
 
@@ -146,7 +153,7 @@ class TestDeriveDscfBlocks:
         with pytest.raises(ValueError, match="every occupied band"):
             _derive_dscf_blocks(si_structure, [s], 4, 8, SpinChannel.NONE)
 
-    def test_blocks_beyond_nbnd_raise(self, si_structure):
+    def test_blocks_beyond_nbnd_raise(self, si_structure: Any) -> None:
         """Blocks spanning more bands than nbnd are an input error."""
         from aiida_koopmans.types import SpinChannel
 
@@ -160,7 +167,9 @@ class TestDeriveDscfBlocks:
 class TestPeriodicMlwfsBuild:
     """Graph-construction tests for the Wannier-initialised DSCF route."""
 
-    def test_wannier_route_builds(self, aiida_profile, dscf_codes, fake_sg15_pseudo_family):
+    def test_wannier_route_builds(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
         """The periodic mlwfs input builds the Wannier-seeded workgraph."""
         wg = _build(_si_dscf_dict(), dscf_codes)
         names = wg.get_task_names()
@@ -170,21 +179,25 @@ class TestPeriodicMlwfsBuild:
         assert "dft_init_nspin1" not in names
 
     def test_self_hartree_grouping_defaulted(
-        self, aiida_profile, dscf_codes, fake_sg15_pseudo_family
-    ):
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
         """Periodic runs default orbital_groups_self_hartree_tol (image grouping stopgap)."""
         wg = _build(_si_dscf_dict(), dscf_codes)
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol == pytest.approx(1.0e-4)
 
-    def test_user_self_hartree_tol_wins(self, aiida_profile, dscf_codes, fake_sg15_pseudo_family):
+    def test_user_self_hartree_tol_wins(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
         """An explicit orbital_groups_self_hartree_tol overrides the default."""
         d = _si_dscf_dict(orbital_groups_self_hartree_tol=0.05)
         wg = _build(d, dscf_codes)
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol == pytest.approx(0.05)
 
-    def test_eps_inf_auto_not_wired(self, aiida_profile, dscf_codes, fake_sg15_pseudo_family):
+    def test_eps_inf_auto_not_wired(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
         """eps_inf='auto' is still NotImplemented for the DSCF stream."""
         d = _si_dscf_dict(eps_inf="auto")
         with pytest.raises(NotImplementedError, match="eps_inf"):

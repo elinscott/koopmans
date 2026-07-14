@@ -350,8 +350,8 @@ def _derive_dscf_blocks(
     cover every occupied band (the folded ``evc_occupied`` files seed the
     complete occupied manifold of the supercell kcp.x run).
     """
+    from aiida_koopmans.projections import projection_num_wann
     from aiida_koopmans.types import ExplicitProjectionBlock, SpinChannel
-    from aiida_koopmans.workgraphs.dfpt import _projection_num_wann
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
     if not projection_blocks:
@@ -365,7 +365,7 @@ def _derive_dscf_blocks(
     cursor = 0
     n_occ = n_emp = 0
     for block in projection_blocks:
-        num_wann = sum(_projection_num_wann(structure, p) for p in block)
+        num_wann = sum(projection_num_wann(structure, p) for p in block)
         start, end = cursor + 1, cursor + num_wann
         if end <= nocc:
             n_occ += 1
