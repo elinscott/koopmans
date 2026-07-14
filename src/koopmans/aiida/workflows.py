@@ -414,14 +414,14 @@ def _single_channel_dfpt_manifolds(
 
     workflow = koopmans_input.workflow
     spin_channel = SpinChannel.NONE if spin == SpinType.NONE else SpinChannel.SPINOR
-    occ_block, emp_block, has_disentangle, n_orbitals = derive_dfpt_manifolds(
+    occ_block, emp_block, n_orbitals = derive_dfpt_manifolds(
         structure=structure,
         projection_blocks=koopmans_input.calculator_parameters.wannier90.projections,
         nelec=nelec,
         nbnd=nbnd,
         spin_channel=spin_channel,
     )
-    manifold = ManifoldBlocks(occ=occ_block, has_disentangle=has_disentangle)
+    manifold = ManifoldBlocks(occ=occ_block)
     if emp_block is not None:
         manifold["emp"] = emp_block
     if not workflow.calculate_alpha:
@@ -477,7 +477,7 @@ def _collinear_dfpt_manifolds(
     manifolds: dict[str, Any] = {}
     for channel, w90_channel in ((SpinChannel.UP, w90.up), (SpinChannel.DOWN, w90.down)):
         sign = 1 if channel == SpinChannel.UP else -1
-        occ_block, emp_block, has_disentangle, n_orbitals = derive_dfpt_manifolds(
+        occ_block, emp_block, n_orbitals = derive_dfpt_manifolds(
             structure=structure,
             projection_blocks=w90_channel.projections,
             nelec=nelec,
@@ -485,7 +485,7 @@ def _collinear_dfpt_manifolds(
             spin_channel=channel,
             nocc=(nelec + sign * magnetization) // 2,
         )
-        manifold = ManifoldBlocks(occ=occ_block, has_disentangle=has_disentangle)
+        manifold = ManifoldBlocks(occ=occ_block)
         if emp_block is not None:
             manifold["emp"] = emp_block
         if not workflow.calculate_alpha:
