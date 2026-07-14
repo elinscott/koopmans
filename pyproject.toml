@@ -58,7 +58,7 @@ dependencies = [
     "typing-extensions",
     "aiida-core>=2.7.3",
     "pydantic>=2.12.5",
-    "wannier90-input",
+    "wannier90-input>=0.0.2",
     "pydantic-espresso",
     "ipdb>=0.13.13",
     "aiida-koopmans",
@@ -294,7 +294,6 @@ search = "version: {current_version}"
 replace = "version: {new_version}"
 
 [tool.uv.sources]
-wannier90-input = { path = "../wannier90-input" }
 pydantic-espresso = { path = "../pydantic_espresso" }
 aiida-core = { path = "../aiida-core" }
 aiida-koopmans = { path = "../aiida-koopmans2", editable = true }
