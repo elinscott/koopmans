@@ -53,13 +53,15 @@ def _si_dfpt_dict(**workflow_updates: Any) -> dict[str, Any]:
     return d
 
 
-def _build(d: dict[str, Any], codes: dict[str, Any]):
+def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
     return _build_singlepoint_dfpt_workgraph(inp, codes=codes)
 
 
 @pytest.fixture
-def dfpt_codes(installed_pw_code, installed_kcw_code, installed_wannier_codes):
+def dfpt_codes(
+    installed_pw_code: Any, installed_kcw_code: Any, installed_wannier_codes: Any
+) -> dict[str, Any]:
     """Assemble the full DFPT code dict from the dummy-code fixtures."""
     return {
         "pw": installed_pw_code,
@@ -71,7 +73,9 @@ def dfpt_codes(installed_pw_code, installed_kcw_code, installed_wannier_codes):
 class TestUnpolarized:
     """spin='none' builds the closed-shell single chain."""
 
-    def test_single_chain(self, aiida_profile, dfpt_codes, fake_sg15_pseudo_family):
+    def test_single_chain(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
         """One kcw chain, no per-channel task suffixes."""
         wg = _build(_si_dfpt_dict(), dfpt_codes)
         names = wg.get_task_names()
@@ -92,7 +96,9 @@ class TestCollinear:
         d["calculator_parameters"]["tot_magnetization"] = 0
         return d
 
-    def test_fans_out_per_channel(self, aiida_profile, dfpt_codes, fake_sg15_pseudo_family):
+    def test_fans_out_per_channel(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
         """One shared scf+nscf; wannierize + kcw chain per channel."""
         wg = _build(self._collinear_dict(), dfpt_codes)
         names = wg.get_task_names()
@@ -107,14 +113,14 @@ class TestCollinear:
         assert scf_system["nspin"] == 2
         assert scf_system["tot_magnetization"] == 0
 
-    def test_missing_per_spin_projections_raises(self, dfpt_codes):
+    def test_missing_per_spin_projections_raises(self, dfpt_codes: Any) -> None:
         """Collinear DFPT requires w90.up / w90.down projections."""
         d = _si_dfpt_dict(spin="collinear")
         d["calculator_parameters"]["tot_magnetization"] = 0
         with pytest.raises(ValueError, match="per-spin projections"):
             _build(d, dfpt_codes)
 
-    def test_missing_magnetization_raises(self, dfpt_codes):
+    def test_missing_magnetization_raises(self, dfpt_codes: Any) -> None:
         """Collinear DFPT requires tot_magnetization."""
         d = _si_dfpt_dict(spin="collinear")
         per_spin = {"projections": [[{"site": "Si", "ang_mtm": "sp"}]]}
@@ -124,8 +130,8 @@ class TestCollinear:
             _build(d, dfpt_codes)
 
     def test_non_integer_channel_occupations_raise(
-        self, aiida_profile, dfpt_codes, fake_sg15_pseudo_family
-    ):
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
         """Nelec + tot_magnetization must be even."""
         d = self._collinear_dict()
         d["calculator_parameters"]["tot_magnetization"] = 1  # nelec=8 -> 4.5/3.5
@@ -138,8 +144,8 @@ class TestSpinor:
 
     @pytest.mark.parametrize("spin_value", ["non_collinear", "spin_orbit"])
     def test_single_spinor_chain(
-        self, aiida_profile, dfpt_codes, fake_sg15_pseudo_family, spin_value
-    ):
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any, spin_value: str
+    ) -> None:
         """Single chain with noncolin (+ lspinorb for SOC) forced on the PW runs."""
         # Spinor manifold: the sp block doubles to 8 spinor Wannier
         # functions, matching nocc = nelec = 8.
