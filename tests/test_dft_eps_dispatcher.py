@@ -85,11 +85,11 @@ class TestDftEps:
 
     def test_chain(
         self,
-        aiida_profile,
-        installed_pw_code,
-        installed_ph_code,
-        fake_sg15_cutoffs_family,
-    ):
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
         """The full dispatch builds scf, ph, and the tensor reduction."""
         inp = KoopmansInput.model_validate(_si_eps_dict())
         wg = build_workgraph(inp)
@@ -115,8 +115,8 @@ class TestDftEps:
         assert system["ecutwfc"] == pytest.approx(20.0)
 
     def test_missing_ph_code_raises(
-        self, aiida_profile_clean, installed_pw_code, fake_sg15_cutoffs_family
-    ):
+        self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
         """Without a ph@localhost code the dispatcher fails with a setup hint.
 
         Requests ``aiida_profile_clean``: earlier tests may have installed a
@@ -131,7 +131,9 @@ class TestDfptAutoEps:
     """eps_inf='auto' prepends the dielectric chain to the DFPT stream."""
 
     @pytest.fixture
-    def dfpt_codes(self, installed_pw_code, installed_kcw_code, installed_wannier_codes):
+    def dfpt_codes(
+        self, installed_pw_code: Any, installed_kcw_code: Any, installed_wannier_codes: Any
+    ) -> dict[str, Any]:
         """Assemble the DFPT code dict from the dummy-code fixtures."""
         return {
             "pw": installed_pw_code,
@@ -141,11 +143,11 @@ class TestDfptAutoEps:
 
     def test_auto_adds_dielectric_task(
         self,
-        aiida_profile,
-        dfpt_codes,
-        installed_ph_code,
-        fake_sg15_pseudo_family,
-    ):
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
         """A 'dielectric' task appears alongside the kcw chain."""
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
         wg = _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
@@ -154,8 +156,8 @@ class TestDfptAutoEps:
         assert "dfpt" in names
 
     def test_auto_without_ph_code_raises(
-        self, aiida_profile_clean, dfpt_codes, fake_sg15_pseudo_family
-    ):
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
         """eps_inf='auto' without ph@localhost fails with a setup hint.
 
         Requests ``aiida_profile_clean``: earlier tests may have installed a
@@ -165,7 +167,7 @@ class TestDfptAutoEps:
         with pytest.raises(ValueError, match=r"ph\.x"):
             _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
 
-    def test_unknown_eps_string_raises(self, dfpt_codes):
+    def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
         """A non-'auto' string eps_inf is rejected up front."""
         d = _si_dfpt_auto_dict()
         d["workflow"]["eps_inf"] = "automatic"

@@ -140,7 +140,7 @@ def fake_sg15_pseudo_family(aiida_profile: Any) -> Any:
 
 
 @pytest.fixture
-def fake_sg15_cutoffs_family(aiida_profile):
+def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
     """Install a minimal fake ``SG15/1.0/PBE/SR`` cutoffs family (O and Si).
 
     Workgraph builders that call ``get_builder_from_protocol`` eagerly at
