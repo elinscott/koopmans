@@ -93,10 +93,40 @@ class TestKpointsPath:
 
 
 class TestSeekpathBasisGuard:
-    """Auto k-path generation must not silently use a standardized cell."""
+    """Special points are re-expressed in the input frame when seekpath re-vectors the cell."""
 
-    def test_non_primitive_cell_raises(self, aiida_profile: Any) -> None:
-        """A conventional (non-primitive) cell is standardized by seekpath -> refuse."""
+    def test_revectored_primitive_cell_transforms_points(self, aiida_profile: Any) -> None:
+        """A QE ibrav=2 fcc cell gets seekpath's points mapped into its own basis."""
+        import numpy as np
+        from aiida import orm
+
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+        from koopmans.input_file import GridKpointsInput
+
+        a = 5.43
+        cell = np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2
+        structure = orm.StructureData(cell=cell.tolist())  # type: ignore[no-untyped-call]
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(-a / 4, a / 4, a / 4), symbols="Si"
+        )
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX")
+        kpts = kpoints_input_to_kpoints_path(kpoints, structure)
+        labels = dict(kpts.labels)
+        coords = kpts.get_kpoints()  # type: ignore[no-untyped-call]
+        assert labels[0] == "GAMMA"
+        assert np.allclose(coords[0], [0.0, 0.0, 0.0])
+        last = max(labels)
+        assert labels[last] == "X"
+        # X sits on the fcc BZ boundary at Cartesian distance 1/a (in 2*pi
+        # units), whichever primitive basis expresses it.
+        recip_input = np.linalg.inv(cell).T
+        assert np.isclose(np.linalg.norm(coords[last] @ recip_input), 1 / a, atol=1e-8)
+
+    def test_supercell_is_rejected(self, aiida_profile: Any) -> None:
+        """A conventional (non-primitive) fcc cell cannot host the primitive path."""
+        import pytest
         from aiida import orm
 
         from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
@@ -114,5 +144,5 @@ class TestSeekpathBasisGuard:
                 )
 
         kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX")
-        with pytest.raises(NotImplementedError, match="standardized"):
+        with pytest.raises(NotImplementedError, match="not a primitive cell"):
             kpoints_input_to_kpoints_path(kpoints, structure)
