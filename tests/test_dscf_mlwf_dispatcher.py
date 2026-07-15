@@ -117,9 +117,9 @@ class TestDeriveDscfBlocks:
         blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "emp_1"]
         assert blocks[0]["include_bands"] == [1, 2, 3, 4]
-        assert blocks[0]["exclude_bands"] == "5-8"
+        assert blocks[0]["exclude_bands"] == [5, 6, 7, 8]
         assert blocks[1]["include_bands"] == [5, 6, 7, 8]
-        assert blocks[1]["exclude_bands"] == "1-4"
+        assert blocks[1]["exclude_bands"] == [1, 2, 3, 4]
 
     def test_middle_block_gets_two_sided_exclusion(self, si_structure: Any) -> None:
         """A block sandwiched between others excludes bands on both sides."""
@@ -131,7 +131,7 @@ class TestDeriveDscfBlocks:
         sp = [self._FakeProjection("Si", -1)]  # 4
         blocks = _derive_dscf_blocks(si_structure, [s, s, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "occ_2", "emp_1"]
-        assert blocks[1]["exclude_bands"] == "1-2,5-8"
+        assert blocks[1]["exclude_bands"] == [1, 2, 5, 6, 7, 8]
 
     def test_straddling_block_raises(self, si_structure: Any) -> None:
         """A block crossing the occupied/empty boundary is an input error."""

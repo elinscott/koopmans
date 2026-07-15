@@ -513,6 +513,87 @@ raw:
             required: true
         codes:
           dynamic: false
+          fields:
+            dos:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            kcp:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            kcw:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            merge_evc:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            ph:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            projwfc:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            pw:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            pw2wannier90:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            wann2kcp:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
+            wannier90:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -1239,6 +1320,8 @@ raw:
         identifier: <scrubbed:identifier>
         metadata:
           deserializers:
+            aiida.orm.nodes.data.array.kpoints.KpointsData: aiida_koopmans.utils.passthrough_node
+            aiida.orm.nodes.data.singlefile.SinglefileData: aiida_koopmans.utils.passthrough_node
             aiida.orm.nodes.data.structure.StructureData: aiida_koopmans.utils.passthrough_node
             aiida_pseudo.data.pseudo.upf.UpfData: aiida_koopmans.utils.passthrough_node
           non_function_inputs:
@@ -1412,6 +1495,87 @@ raw:
                 required: true
             codes:
               dynamic: false
+              fields:
+                dos:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                kcp:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                kcw:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                merge_evc:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                ph:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                projwfc:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                pw:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                pw2wannier90:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                wann2kcp:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                wannier90:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs

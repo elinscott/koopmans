@@ -323,16 +323,6 @@ def _build_singlepoint_workgraph(
     )
 
 
-def _band_range_complement(start: int, end: int, nbnd: int) -> str | None:
-    """Return the wannier90 ``exclude_bands`` string for a [start, end] block."""
-    parts = []
-    if start > 1:
-        parts.append(f"1-{start - 1}")
-    if end < nbnd:
-        parts.append(f"{end + 1}-{nbnd}")
-    return ",".join(parts) if parts else None
-
-
 def _derive_dscf_blocks(
     structure: orm.StructureData,
     projection_blocks: list[list[Any]],
@@ -350,7 +340,7 @@ def _derive_dscf_blocks(
     cover every occupied band (the folded ``evc_occupied`` files seed the
     complete occupied manifold of the supercell kcp.x run).
     """
-    from aiida_koopmans.projections import projection_num_wann
+    from aiida_koopmans.projections import band_range_complement, projection_num_wann
     from aiida_koopmans.types import ExplicitProjectionBlock, SpinChannel
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
@@ -387,7 +377,7 @@ def _derive_dscf_blocks(
                 num_wann=num_wann,
                 num_bands=num_wann,
                 include_bands=list(range(start, end + 1)),
-                exclude_bands=_band_range_complement(start, end, nbnd),
+                exclude_bands=band_range_complement(start, end, nbnd),
                 projection_type=WannierProjectionType.ANALYTIC,
                 projections=[f"{p.site}:{p.ang_mtm}" for p in block],
             )
