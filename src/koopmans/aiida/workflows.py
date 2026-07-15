@@ -340,7 +340,11 @@ def _derive_dscf_blocks(
     cover every occupied band (the folded ``evc_occupied`` files seed the
     complete occupied manifold of the supercell kcp.x run).
     """
-    from aiida_koopmans.projections import band_range_complement, projection_num_wann
+    from aiida_koopmans.projections import (
+        band_range_complement,
+        projection_num_wann,
+        projection_win_string,
+    )
     from aiida_koopmans.types import ExplicitProjectionBlock, SpinChannel
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
@@ -379,10 +383,22 @@ def _derive_dscf_blocks(
                 include_bands=list(range(start, end + 1)),
                 exclude_bands=band_range_complement(start, end, nbnd),
                 projection_type=WannierProjectionType.ANALYTIC,
-                projections=[f"{p.site}:{p.ang_mtm}" for p in block],
+                projections=[projection_win_string(p) for p in block],
             )
         )
         cursor = end
+
+    # The uppermost block per spin channel absorbs the remaining
+    # ``nbnd - cursor`` bands as its disentanglement pool (``num_bands =
+    # num_wann + num_extra_bands``) and excludes nothing above itself —
+    # without this an entangled empty manifold (e.g. Si conduction bands)
+    # has no window to disentangle from and the folded empty states are
+    # garbage.
+    if blocks and cursor < nbnd:
+        last = blocks[-1]
+        last["num_bands"] = last["num_wann"] + (nbnd - cursor)
+        start = last["include_bands"][0]
+        last["exclude_bands"] = list(range(1, start)) or None
 
     covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][0] <= nocc)
     if covered_occ != nocc:

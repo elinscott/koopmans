@@ -103,9 +103,57 @@ class TestDeriveDscfBlocks:
             return f"l={self.angular.value}"
 
     class _FakeProjection:
-        def __init__(self, site: str, l_value: int) -> None:
+        def __init__(
+            self,
+            site: str | None,
+            l_value: int,
+            fractional_site: list[float] | None = None,
+        ) -> None:
             self.site = site
+            self.fractional_site = fractional_site
+            self.cartesian_site = None
             self.ang_mtm = TestDeriveDscfBlocks._FakeQuantumNumbers(l_value)
+
+    def test_fractional_site_projections(self, si_structure: Any) -> None:
+        """Point-hosted (bond-centred) projections derive and format.
+
+        One fractional site hosts exactly one orbital set (sp3 -> 4 WFs) and
+        renders as wannier90's ``f=x,y,z:<ang_mtm>`` form.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import _derive_dscf_blocks
+
+        sp3 = [self._FakeProjection(None, -3, fractional_site=[0.25, 0.25, 0.25])]
+        blocks = _derive_dscf_blocks(si_structure, [sp3, sp3], 4, 20, SpinChannel.NONE)
+        occ, emp = blocks
+        assert occ["num_wann"] == 4
+        assert occ["projections"] == ["f=0.25,0.25,0.25:l=-3"]
+        assert emp["num_wann"] == 4
+        assert emp["num_bands"] == 16  # disentanglement pool
+
+    def test_last_block_absorbs_disentanglement_pool(self, si_structure: Any) -> None:
+        """Extra bands above the last block become its disentanglement window.
+
+        The uppermost block gets ``num_bands = num_wann + (nbnd - covered)``
+        and excludes nothing above itself, so an entangled empty manifold can
+        disentangle.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import _derive_dscf_blocks
+
+        sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
+        blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
+        occ, emp = blocks
+        # occupied block untouched: two-sided exclusion against all 20 bands
+        assert occ["num_bands"] == 4
+        assert occ["exclude_bands"] == list(range(5, 21))
+        # last block: 4 target WFs + 12 pool bands, exclusion only below
+        assert emp["num_wann"] == 4
+        assert emp["num_bands"] == 16
+        assert emp["include_bands"] == [5, 6, 7, 8]
+        assert emp["exclude_bands"] == [1, 2, 3, 4]
 
     def test_occ_emp_split_and_exclusions(self, si_structure: Any) -> None:
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
