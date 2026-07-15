@@ -146,10 +146,15 @@ jobs:
       - name: Run doctests
         run:
           uvx --with tox-uv tox -e doctests
+      - name: Convert the coverage data to XML
+        # ``just test`` (tox -e py) leaves only the combined ``.coverage``
+        # data file; the codecov CLI needs an XML report.
+        run:
+          uvx coverage xml
       - name: Upload coverage report to codecov
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
         if: success()
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: elinscott/koopmans
-          file: coverage.xml
+          files: coverage.xml
