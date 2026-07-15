@@ -83,6 +83,16 @@ def installed_kcw_code(aiida_code_installed: Any) -> Any:
 
 
 @pytest.fixture
+def installed_ph_code(aiida_code_installed: Any) -> Any:
+    """Register a dummy ``ph@localhost`` code so ``load_code`` succeeds."""
+    return aiida_code_installed(
+        label="ph",
+        default_calc_job_plugin="quantumespresso.ph",
+        filepath_executable="/bin/true",
+    )
+
+
+@pytest.fixture
 def installed_wannier_codes(aiida_code_installed: Any) -> dict[str, Any]:
     """Register dummy ``wannier90`` / ``pw2wannier90`` codes for DFPT builds."""
     return {
@@ -126,6 +136,46 @@ def fake_sg15_pseudo_family(aiida_profile: Any) -> Any:
         )
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
         family.add_nodes([upf.store()])
+    return family
+
+
+@pytest.fixture
+def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
+    """Install a minimal fake ``SG15/1.0/PBE/SR`` cutoffs family (O and Si).
+
+    Workgraph builders that call ``get_builder_from_protocol`` eagerly at
+    build time (e.g. the ``dft_eps`` chain) need a family the aiida-qe
+    protocol machinery accepts: SSSP, PseudoDojo, or a
+    ``CutoffsPseudoPotentialFamily`` with recommended cutoffs — the plain
+    ``PseudoPotentialFamily`` of ``fake_sg15_pseudo_family`` is not found by
+    its query. Uses a different version label so both fixtures can coexist
+    in one session profile.
+    """
+    from aiida.common.exceptions import NotExistent
+    from aiida_pseudo.data.pseudo.upf import UpfData
+    from aiida_pseudo.groups.family import CutoffsPseudoPotentialFamily
+
+    label = "SG15/1.0/PBE/SR"
+    try:
+        return CutoffsPseudoPotentialFamily.collection.get(label=label)
+    except NotExistent:
+        pass
+
+    family = CutoffsPseudoPotentialFamily(label=label)
+    family.store()
+    pseudos = []
+    for element, z_valence in (("O", 6.0), ("Si", 4.0)):
+        content = (
+            f'<UPF version="2.0.1"><PP_HEADER\nelement="{element}"\n'
+            f'z_valence="{z_valence}"\n/></UPF>\n'
+        )
+        upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
+        pseudos.append(upf.store())
+    family.add_nodes(pseudos)
+    family.set_cutoffs(
+        {element: {"cutoff_wfc": 30.0, "cutoff_rho": 240.0} for element in ("O", "Si")},
+        stringency="normal",
+    )
     return family
 
 
