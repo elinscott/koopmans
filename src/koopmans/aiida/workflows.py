@@ -6,7 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from aiida import orm
 from aiida_koopmans.workgraphs import Codes
@@ -332,9 +332,8 @@ def _derive_dscf_blocks(
 ) -> list[Any]:
     """Turn user projection blocks into DSCF wannierization blocks.
 
-    Unlike the DFPT manifolds (one occupied + at most one empty block), the
-    DSCF route wannierises every user block separately and merges them per
-    (filling, spin) via merge_evc.x, so any number of blocks is allowed.
+    The DSCF route wannierises every user block separately and merges them
+    per (filling, spin) via merge_evc.x, so any number of blocks is allowed.
     Each block covers ``num_wann`` consecutive bands; a block straddling the
     occupied/empty boundary is an input error, and the occupied blocks must
     cover every occupied band (the folded ``evc_occupied`` files seed the
@@ -527,9 +526,9 @@ def _build_singlepoint_dfpt_workgraph(
     chain (all bands singly occupied, ``num_wann`` doubled).
 
     Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
-    periodic, MLWF/projwf variational orbitals, and explicit projections
-    forming exactly one occupied manifold block plus at most one empty block
-    per spin channel (multi-block manifolds are not yet supported).
+    periodic, MLWF/projwf variational orbitals, and explicit projections.
+    A manifold may span several projection blocks; their Wannier products
+    are merged back into one file set before kcw.x consumes them.
     """
     from aiida_koopmans.workgraphs.dfpt import SinglepointDFPTWorkflow
 
@@ -659,7 +658,7 @@ def _single_channel_dfpt_manifolds(
     differs only in the manifold derivation (all bands singly occupied,
     ``num_wann`` doubled).
     """
-    from aiida_koopmans.types import SpinChannel
+    from aiida_koopmans.types import ProjectionBlock, SpinChannel
     from aiida_koopmans.workgraphs.dfpt import (
         ManifoldBlocks,
         derive_dfpt_manifolds,
@@ -668,16 +667,18 @@ def _single_channel_dfpt_manifolds(
 
     workflow = koopmans_input.workflow
     spin_channel = SpinChannel.NONE if spin == SpinType.NONE else SpinChannel.SPINOR
-    occ_block, emp_block, n_orbitals = derive_dfpt_manifolds(
+    occ_blocks, emp_blocks, _has_disentangle, n_orbitals = derive_dfpt_manifolds(
         structure=structure,
         projection_blocks=koopmans_input.calculator_parameters.wannier90.projections,
         nelec=nelec,
         nbnd=nbnd,
         spin_channel=spin_channel,
     )
-    manifold = ManifoldBlocks(occ=occ_block)
-    if emp_block is not None:
-        manifold["emp"] = emp_block
+    # derive_dfpt_manifolds narrows to ExplicitProjectionBlock; the manifold
+    # field holds the ProjectionBlock union (list invariance needs the cast).
+    manifold = ManifoldBlocks(occ=cast(list[ProjectionBlock], occ_blocks))
+    if emp_blocks:
+        manifold["emp"] = cast(list[ProjectionBlock], emp_blocks)
     if not workflow.calculate_alpha:
         manifold["alpha_guess"] = normalize_alpha_guess(workflow.alpha_guess, n_orbitals)
     return {SpinChannel.NONE.value: manifold}
@@ -700,7 +701,7 @@ def _collinear_dfpt_manifolds(
     place): the PW runs must see the physical magnetization —
     ``SinglepointDFPTWorkflow`` only forces ``nspin=2`` in this regime.
     """
-    from aiida_koopmans.types import SpinChannel
+    from aiida_koopmans.types import ProjectionBlock, SpinChannel
     from aiida_koopmans.workgraphs.dfpt import (
         ManifoldBlocks,
         derive_dfpt_manifolds,
@@ -731,7 +732,7 @@ def _collinear_dfpt_manifolds(
     manifolds: dict[str, Any] = {}
     for channel, w90_channel in ((SpinChannel.UP, w90.up), (SpinChannel.DOWN, w90.down)):
         sign = 1 if channel == SpinChannel.UP else -1
-        occ_block, emp_block, n_orbitals = derive_dfpt_manifolds(
+        occ_blocks, emp_blocks, _has_disentangle, n_orbitals = derive_dfpt_manifolds(
             structure=structure,
             projection_blocks=w90_channel.projections,
             nelec=nelec,
@@ -739,9 +740,9 @@ def _collinear_dfpt_manifolds(
             spin_channel=channel,
             nocc=(nelec + sign * magnetization) // 2,
         )
-        manifold = ManifoldBlocks(occ=occ_block)
-        if emp_block is not None:
-            manifold["emp"] = emp_block
+        manifold = ManifoldBlocks(occ=cast(list[ProjectionBlock], occ_blocks))
+        if emp_blocks:
+            manifold["emp"] = cast(list[ProjectionBlock], emp_blocks)
         if not workflow.calculate_alpha:
             manifold["alpha_guess"] = normalize_alpha_guess(
                 workflow.alpha_guess, n_orbitals, channel
