@@ -291,6 +291,15 @@ filename = "CITATION.cff"
 search = "version: {current_version}"
 replace = "version: {new_version}"
 
+[tool.uv]
+# QE-driven workflows only run on unix; without this, universal resolution
+# also solves for windows splits, where parts of the AiiDA stack have no
+# compatible releases.
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
+]
+
 [tool.uv.sources]
 pydantic-espresso = { path = "../pydantic_espresso" }
 aiida-core = { path = "../aiida-core" }
