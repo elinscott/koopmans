@@ -46,7 +46,7 @@ keywords = [
 license = "MIT"
 license-files = ["LICENSE"]
 
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "more-itertools", # missing from itertools in stdlib
     "tqdm", # progress bars
@@ -290,6 +290,15 @@ replace = "VERSION = \"{new_version}\""
 filename = "CITATION.cff"
 search = "version: {current_version}"
 replace = "version: {new_version}"
+
+[tool.uv]
+# QE-driven workflows only run on unix; without this, universal resolution
+# also solves for windows splits, where parts of the AiiDA stack have no
+# compatible releases.
+environments = [
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin'",
+]
 
 [tool.uv.sources]
 pydantic-espresso = { path = "../pydantic_espresso" }

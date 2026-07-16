@@ -36,8 +36,11 @@ QE_EXECUTABLES: dict[str, str | None] = {
     "kcp.x": "koopmans.kcp",
 }
 
-# Codes that must always run in serial (no MPI).
-SERIAL_CODES: set[str] = set()
+# Codes that must always run in serial (no MPI): wann2kcp.x races on its
+# buffer scratch under multiple ranks, and merge_evc.x is a plain
+# concatenation tool. The CalcJobs also enforce single-rank resources; this
+# additionally stops mpirun from being prepended at all.
+SERIAL_CODES: set[str] = {"wann2kcp", "merge_evc"}
 
 
 def find_executable(name: str) -> str | None:

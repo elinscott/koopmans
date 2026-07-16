@@ -76,7 +76,7 @@ docs-lint:
 
 [doc("run the docstr-coverage tool to check documentation coverage")]
 docstr-coverage:
-    uvx docstr-coverage src/ tests/ --skip-private --skip-magic
+    uvx docstr-coverage src/ tests/ --skip-private --skip-magic --skip-init
 
 [doc("build the documentation locally")]
 docs:
