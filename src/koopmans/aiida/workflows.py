@@ -479,10 +479,19 @@ def _dscf_wannier_init_inputs(
         )
 
     parameters = input_to_pw_parameters(koopmans_input)
-    wannier_overrides = {
+    wannier_overrides: dict[str, Any] = {
         key: {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}}
         for key in ("scf", "nscf")
     }
+
+    # User wannier90 keywords (disentanglement windows, iteration counts, ...)
+    # ride the nested Wannier90WorkChain override namespace into every
+    # per-block wannierisation, exactly as on the DFPT route.
+    w90_user = calc_params.wannier90.model_dump(
+        exclude_unset=True, exclude={"projections", "up", "down"}
+    )
+    if w90_user:
+        wannier_overrides["wannier90"] = {"wannier90": {"wannier90": {"parameters": w90_user}}}
 
     wannier_codes = dict(codes)
     wannier_codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
