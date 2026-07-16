@@ -19,6 +19,7 @@ from koopmans.aiida.conversion import (
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
+    GroupOrbitalsBy,
     Task,
     VariationalOrbitalType,
 )
@@ -306,14 +307,6 @@ def _build_singlepoint_workgraph(
         VariationalOrbitalType.PROJWFS,
     ):
         extra_kwargs = _dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
-        # The prod(kgrid) supercell images of each primitive Wannier function
-        # are physically equivalent, but constructive image grouping is not
-        # implemented yet. Group them at runtime by self-Hartree energy
-        # instead: a tight tolerance only merges numerically identical
-        # orbitals, so the per-orbital fan-out collapses to the primitive
-        # count without risking real physics.
-        if inputs["orbital_groups_self_hartree_tol"] is None:
-            inputs["orbital_groups_self_hartree_tol"] = 1.0e-4
 
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
@@ -932,7 +925,24 @@ def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         fix_spin_contamination=workflow.fix_spin_contamination,
         initial_alpha=_initial_alpha_from_guess(workflow.alpha_guess),
         spin_polarized=workflow.spin == SpinType.COLLINEAR,
-        orbital_groups_self_hartree_tol=workflow.orbital_groups_self_hartree_tol,
+        orbital_groups_self_hartree_tol=_grouping_tol(workflow),
+    )
+
+
+def _grouping_tol(workflow: WorkflowConfig) -> float | None:
+    """Translate the orbital-grouping fields into the plugin's self-Hartree tolerance.
+
+    The schema resolves ``group_orbitals_by`` / ``group_orbitals_tol``
+    (including their route-dependent defaults) at parse time; here only the
+    implemented criterion passes through.
+    """
+    if workflow.group_orbitals_by == GroupOrbitalsBy.NONE:
+        return None
+    if workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE:
+        return workflow.group_orbitals_tol
+    criterion = workflow.group_orbitals_by.value if workflow.group_orbitals_by else None
+    raise NotImplementedError(
+        f"group_orbitals_by={criterion!r} is not implemented; supported: 'self_hartree', 'none'."
     )
 
 
