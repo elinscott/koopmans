@@ -96,7 +96,36 @@ class TestSeekpathBasisGuard:
     """Special points are re-expressed in the input frame when seekpath re-vectors the cell."""
 
     def test_revectored_primitive_cell_transforms_points(self, aiida_profile: Any) -> None:
-        """A QE ibrav=2 fcc cell gets seekpath's points mapped into its own basis."""
+        """A QE ibrav=2 fcc cell gets seekpath's automatic path mapped into its own basis."""
+        import numpy as np
+        from aiida import orm
+
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+        from koopmans.input_file import GridKpointsInput
+
+        a = 5.43
+        cell = np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2
+        structure = orm.StructureData(cell=cell.tolist())  # type: ignore[no-untyped-call]
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(-a / 4, a / 4, a / 4), symbols="Si"
+        )
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2))
+        kpts = kpoints_input_to_kpoints_path(kpoints, structure)
+        labels = dict(kpts.labels)
+        coords = kpts.get_kpoints()  # type: ignore[no-untyped-call]
+        label_names = list(labels.values())
+        assert "GAMMA" in label_names
+        assert "X" in label_names
+        x_index = next(i for i, name in labels.items() if name == "X")
+        # X sits on the fcc BZ boundary at Cartesian distance 1/a (in 2*pi
+        # units), whichever primitive basis expresses it.
+        recip_input = np.linalg.inv(cell).T
+        assert np.isclose(np.linalg.norm(coords[x_index] @ recip_input), 1 / a, atol=1e-8)
+
+    def test_explicit_path_uses_cell_bravais_points(self, aiida_profile: Any) -> None:
+        """An explicit path resolves against the cell's own Bravais-lattice points."""
         import numpy as np
         from aiida import orm
 
@@ -119,10 +148,40 @@ class TestSeekpathBasisGuard:
         assert np.allclose(coords[0], [0.0, 0.0, 0.0])
         last = max(labels)
         assert labels[last] == "X"
-        # X sits on the fcc BZ boundary at Cartesian distance 1/a (in 2*pi
-        # units), whichever primitive basis expresses it.
         recip_input = np.linalg.inv(cell).T
         assert np.isclose(np.linalg.norm(coords[last] @ recip_input), 1 / a, atol=1e-8)
+
+    def test_explicit_path_survives_near_symmetric_positions(self, aiida_profile: Any) -> None:
+        """Legacy hexagonal labels parse even when positions are only nearly symmetric.
+
+        The ZnO tutorial's ``0.33330`` (vs exactly 1/3) demotes the detected
+        symmetry below hexagonal for seekpath, which renames every special
+        point; the explicit-path vocabulary must come from the cell shape
+        alone so ``"ALMGAHK"`` keeps resolving.
+        """
+        import numpy as np
+        from aiida import orm
+
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+        from koopmans.input_file import GridKpointsInput
+
+        a, c = 3.25, 5.21
+        cell = [[a, 0, 0], [-a / 2, a * np.sqrt(3) / 2, 0], [0, 0, c]]
+        structure = orm.StructureData(cell=cell)  # type: ignore[no-untyped-call]
+        for symbol, scaled in (
+            ("Zn", (0.33330, 0.66670, 0.5)),
+            ("Zn", (0.66670, 0.33330, 0.0)),
+            ("O", (0.33330, 0.66670, 0.11725)),
+            ("O", (0.66670, 0.33330, 0.61725)),
+        ):
+            structure.append_atom(  # type: ignore[no-untyped-call]
+                position=tuple(np.array(scaled) @ np.array(cell)), symbols=symbol
+            )
+
+        kpoints = GridKpointsInput(grid=(4, 4, 4), path="ALMGAHK")
+        kpts = kpoints_input_to_kpoints_path(kpoints, structure)
+        label_names = [name for _, name in kpts.labels]
+        assert label_names == ["A", "L", "M", "GAMMA", "A", "H", "K"]
 
     def test_supercell_is_rejected(self, aiida_profile: Any) -> None:
         """A conventional (non-primitive) fcc cell cannot host the primitive path."""
@@ -143,6 +202,6 @@ class TestSeekpathBasisGuard:
                     position=((tx + bx) * a, (ty + by) * a, (tz + bz) * a), symbols="Si"
                 )
 
-        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX")
+        kpoints = GridKpointsInput(grid=(2, 2, 2))
         with pytest.raises(NotImplementedError, match="not a primitive cell"):
             kpoints_input_to_kpoints_path(kpoints, structure)
