@@ -1239,7 +1239,7 @@ raw:
               meta:
                 child_default_link_limit: 1
                 required: false
-            pw2wannier90_keywords:
+            pw2wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -1251,7 +1251,7 @@ raw:
               meta:
                 child_default_link_limit: 1
                 required: false
-            w90_keywords:
+            wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2391,7 +2391,7 @@ raw:
                   meta:
                     child_default_link_limit: 1
                     required: false
-                pw2wannier90_keywords:
+                pw2wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
@@ -2403,7 +2403,7 @@ raw:
                   meta:
                     child_default_link_limit: 1
                     required: false
-                w90_keywords:
+                wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:

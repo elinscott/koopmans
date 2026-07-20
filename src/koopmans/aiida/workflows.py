@@ -493,7 +493,7 @@ def _dscf_wannier_init_inputs(
         exclude_unset=True, exclude={"projections", "up", "down"}
     )
     if w90_user:
-        wannier_overrides["w90_keywords"] = w90_user
+        wannier_overrides["wannier90"] = w90_user
 
     wannier_codes = dict(codes)
     wannier_codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
@@ -592,7 +592,7 @@ def _build_singlepoint_dfpt_workgraph(
         exclude_unset=True, exclude={"projections", "up", "down"}
     )
     if w90_user:
-        w90_overrides: WannierizeOverrides = {"w90_keywords": w90_user}
+        w90_overrides: WannierizeOverrides = {"wannier90": w90_user}
         overrides.update(w90_overrides)
 
     # Electron count from the pseudopotential valences: fixes the size of the
