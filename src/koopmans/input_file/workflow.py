@@ -1,6 +1,6 @@
 """Settings for a `Workflow` object."""
 
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Annotated, Any, Self
 
 from aiida_koopmans.types import Correction, VariationalOrbitalType
@@ -36,7 +36,7 @@ class CalculateScreeningMethod(Enum):
     DFPT = "dfpt"
 
 
-class GroupOrbitalsBy(str, Enum):
+class GroupOrbitalsBy(StrEnum):
     """Criterion for grouping variational orbitals to share a screening parameter."""
 
     SELF_HARTREE = "self_hartree"
