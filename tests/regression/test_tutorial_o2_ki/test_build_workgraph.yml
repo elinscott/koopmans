@@ -1104,6 +1104,31 @@ raw:
             required: false
         wannier_overrides:
           dynamic: false
+          fields:
+            nscf:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            pw2wannier90:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            scf:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            wannier90:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -2086,6 +2111,31 @@ raw:
                 required: false
             wannier_overrides:
               dynamic: false
+              fields:
+                nscf:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                pw2wannier90:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                scf:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
+                wannier90:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
