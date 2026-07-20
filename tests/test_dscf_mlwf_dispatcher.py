@@ -11,7 +11,10 @@ from typing import Any
 
 import pytest
 
-from koopmans.aiida.workflows import _build_singlepoint_workgraph
+from koopmans.aiida.workflows import (
+    _build_singlepoint_workgraph,
+    _dscf_wannier_init_inputs,
+)
 from koopmans.input_file import KoopmansInput
 
 
@@ -250,3 +253,39 @@ class TestPeriodicMlwfsBuild:
         d = _si_dscf_dict(eps_inf="auto")
         with pytest.raises(NotImplementedError, match="eps_inf"):
             _build(d, dscf_codes)
+
+    def test_w90_keywords_land_flat_in_overrides(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """User wannier90 keywords ride into ``wannier_overrides['wannier90']`` flat.
+
+        The dispatcher assembles the flat ``WannierizeOverrides`` shape (the
+        namespace nesting is added later, inside the block wannierization
+        builder), so the keyword dict appears verbatim under ``wannier90``.
+        """
+        from koopmans.aiida.conversion import atoms_input_to_structure
+
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["wannier90"]["num_iter"] = 17
+        inp = KoopmansInput.model_validate(d)
+        structure = atoms_input_to_structure(inp.atoms)
+        nbnd = inp.calculator_parameters.nbnd
+        assert nbnd is not None
+        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        assert extra["wannier_overrides"]["wannier90"] == {"num_iter": 17}
+        # Projections are consumed by the block derivation, never leaked into
+        # the flat keyword override.
+        assert "projections" not in extra["wannier_overrides"]["wannier90"]
+
+    def test_no_w90_keywords_leaves_overrides_flat(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """With only projections set, no ``wannier90`` override key is added."""
+        from koopmans.aiida.conversion import atoms_input_to_structure
+
+        inp = KoopmansInput.model_validate(_si_dscf_dict())
+        structure = atoms_input_to_structure(inp.atoms)
+        nbnd = inp.calculator_parameters.nbnd
+        assert nbnd is not None
+        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
