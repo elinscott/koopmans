@@ -342,7 +342,7 @@ def _cell_special_points(structure: orm.StructureData) -> dict[str, list[float]]
     import numpy as np
     from ase.cell import Cell
 
-    bandpath = Cell(np.array(structure.cell)).bandpath(npoints=0)
+    bandpath = Cell(np.array(structure.cell)).bandpath(npoints=0)  # type: ignore[no-untyped-call]
     # ASE keys the zone centre "G"; the path parser and the seekpath branch
     # both speak "GAMMA".
     return {
