@@ -6,6 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from aiida import orm
@@ -87,6 +88,11 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     if task == Task.WANNIERIZE:
         codes["pw2wannier90"] = _load_code("pw2wannier90", "pw2wannier90.x")
         codes["wannier90"] = _load_code("wannier90", "wannier90.x")
+
+        # Automated block splitting runs the Wannier.jl CalcJobs (the julia
+        # binary registered via aiida_wannierjl.helpers.get_wannierjl_code).
+        if workflow.block_wannierization_threshold is not None:
+            codes["wannierjl"] = _load_code("wannierjl", "julia (Wannier.jl)")
 
         # projwfc is only needed when the Wannierize flow computes a projected
         # DOS / bandstructure, so treat it as optional rather than required.
@@ -240,10 +246,14 @@ def _build_wannierize_workgraph(
         codes: Dictionary of loaded codes.
 
     Returns:
-        A WorkGraph for Wannier90WorkChain.
+        A WorkGraph for Wannier90WorkChain, or the automated block-splitting
+        flow when ``block_wannierization_threshold`` is set.
     """
     from aiida_koopmans.workgraphs.wannier90 import Wannierize
     from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+    if koopmans_input.workflow.block_wannierization_threshold is not None:
+        return _build_wannierize_split_workgraph(koopmans_input, codes)
 
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
@@ -262,6 +272,169 @@ def _build_wannierize_workgraph(
         print_summary=False,
         **extra_kwargs,
     )
+
+
+def _derive_wannierize_blocks(
+    structure: orm.StructureData,
+    projection_blocks: list[list[Any]],
+    nbnd: int,
+) -> list[Any]:
+    """Turn user projection blocks into wannierization blocks for the split flow.
+
+    Unlike ``_derive_dscf_blocks`` there are no straddle or occupied-coverage
+    constraints: a block that mixes occupied and empty bands — or spans an
+    internal gap — is exactly what the automated splitting handles. Blocks
+    cover consecutive bands in input order; the last block absorbs the
+    remaining ``nbnd - cursor`` bands as its disentanglement pool.
+    """
+    from aiida_koopmans.projections import (
+        band_range_complement,
+        projection_num_wann,
+        projection_win_string,
+    )
+    from aiida_koopmans.types import ExplicitProjectionBlock, SpinChannel
+    from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+    blocks: list[Any] = []
+    cursor = 0
+    for i, block in enumerate(projection_blocks):
+        num_wann = sum(projection_num_wann(structure, p) for p in block)
+        start, end = cursor + 1, cursor + num_wann
+        if end > nbnd:
+            raise ValueError(f"The projection blocks span {end} bands but nbnd = {nbnd}.")
+        blocks.append(
+            ExplicitProjectionBlock(
+                label=f"block_{i + 1}",
+                spin=SpinChannel.NONE,
+                num_wann=num_wann,
+                num_bands=num_wann,
+                include_bands=list(range(start, end + 1)),
+                exclude_bands=band_range_complement(start, end, nbnd),
+                projection_type=WannierProjectionType.ANALYTIC,
+                projections=[projection_win_string(p) for p in block],
+            )
+        )
+        cursor = end
+
+    if blocks and cursor < nbnd:
+        last = blocks[-1]
+        last["num_bands"] = last["num_wann"] + (nbnd - cursor)
+        start = last["include_bands"][0]
+        last["exclude_bands"] = list(range(1, start)) or None
+
+    return blocks
+
+
+def _build_wannierize_split_workgraph(
+    koopmans_input: KoopmansInput,
+    codes: Codes,
+) -> WorkGraph:
+    """Build the Wannierization workgraph with automated block splitting.
+
+    Port of the legacy automated-Wannierization route (branch
+    ``automated_wannierization_3``): a pw.x bands run along the k-path feeds
+    a runtime band-group detection (splitting at every gap wider than
+    ``block_wannierization_threshold`` eV and at the occupied/empty
+    boundary), and each projection block whose bands fall into several
+    groups is Wannierised once, split with Wannier.jl parallel transport,
+    re-Wannierised group by group and its products merged back together.
+
+    Current scope: explicit projections and ``spin = 'none'``.
+    """
+    from aiida_koopmans.workgraphs.auto_wannierize import WannierizeAndSplitBlocks
+
+    from koopmans.aiida.conversion import (
+        get_pseudos_from_family,
+        kpoints_input_to_kpoints_mesh,
+        kpoints_input_to_kpoints_path,
+    )
+    from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
+
+    workflow = koopmans_input.workflow
+    calc_params = koopmans_input.calculator_parameters
+
+    threshold = workflow.block_wannierization_threshold
+    if threshold is None:
+        raise ValueError(
+            "The block-splitting Wannierize builder requires "
+            "`block_wannierization_threshold` to be set."
+        )
+    if workflow.spin != SpinType.NONE:
+        raise NotImplementedError(
+            "block_wannierization_threshold currently supports spin='none' only "
+            "(the group detection and per-block split are single-channel)."
+        )
+    projections = calc_params.wannier90.projections
+    if not projections:
+        raise NotImplementedError(
+            "block_wannierization_threshold requires explicit Wannier90 projections in "
+            "``calculator_parameters.w90.projections``; splitting automatically-projected "
+            "manifolds is a follow-up."
+        )
+    if koopmans_input.kpoints.path is None:
+        raise ValueError(
+            "block_wannierization_threshold needs a k-point path: the band-group "
+            "detection reads the eigenvalues of a bands run along it."
+        )
+
+    structure = atoms_input_to_structure(koopmans_input.atoms)
+    pseudo_family = workflow.pseudo_library
+    ensure_pseudo_family_installed(pseudo_family)
+
+    pseudos = get_pseudos_from_family(pseudo_family, structure)
+    nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
+    if nelec % 2:
+        raise NotImplementedError(
+            f"Odd electron count ({nelec}) requires spin='collinear', which the "
+            "block-splitting flow does not support yet."
+        )
+    num_occ_bands = nelec // 2
+
+    nbnd = calc_params.nbnd if calc_params.nbnd is not None else calc_params.pw.system.nbnd
+    nbnd = int(nbnd) if nbnd is not None else _num_wann_total(structure, projections)
+
+    blocks = _derive_wannierize_blocks(structure, projections, nbnd)
+
+    # The scf needs only the occupied bands (legacy drops nbnd there); the
+    # nscf — and the bands run seeded from its overrides — must cover every
+    # Wannierised band.
+    parameters = input_to_pw_parameters(koopmans_input)
+    scf_parameters = copy.deepcopy(parameters)
+    scf_parameters.get("SYSTEM", {}).pop("nbnd", None)
+    nscf_parameters = copy.deepcopy(parameters)
+    nscf_parameters.setdefault("SYSTEM", {})["nbnd"] = nbnd
+    wannier_overrides: WannierizeOverrides = {
+        "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": scf_parameters}},
+        "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": nscf_parameters}},
+    }
+
+    # User wannier90 keywords (disentanglement windows, iteration counts, ...)
+    # feed every per-block wannierisation; flat by design (see
+    # ``WannierizeOverrides``).
+    w90_user = calc_params.wannier90.model_dump(
+        exclude_unset=True, exclude={"projections", "up", "down"}
+    )
+    if w90_user:
+        wannier_overrides["wannier90"] = w90_user
+
+    return WannierizeAndSplitBlocks.build(
+        codes=codes,
+        structure=structure,
+        blocks=blocks,
+        kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
+        bands_kpoints=kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure),
+        num_occ_bands=num_occ_bands,
+        threshold=float(threshold),
+        pseudo_family=pseudo_family,
+        overrides=wannier_overrides,
+    )
+
+
+def _num_wann_total(structure: orm.StructureData, projection_blocks: list[list[Any]]) -> int:
+    """Total Wannier-function count of a set of user projection blocks."""
+    from aiida_koopmans.projections import projection_num_wann
+
+    return sum(projection_num_wann(structure, p) for block in projection_blocks for p in block)
 
 
 def _build_singlepoint_workgraph(

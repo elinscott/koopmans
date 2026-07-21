@@ -181,6 +181,7 @@ dependencies = [
     { name = "aiida-quantumespresso", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-wannier90", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-wannier90-workflows", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "aiida-wannierjl", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-workgraph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "node-graph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pydantic-espresso", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -192,6 +193,7 @@ requires-dist = [
     { name = "aiida-quantumespresso", specifier = ">=4.16.0" },
     { name = "aiida-wannier90", specifier = ">=2.2.0" },
     { name = "aiida-wannier90-workflows", editable = "../aiida-wannier90-workflows" },
+    { name = "aiida-wannierjl", editable = "../aiida-wannierjl" },
     { name = "aiida-workgraph", editable = "../aiida-workgraph" },
     { name = "furo", marker = "extra == 'docs'" },
     { name = "markupsafe", marker = "extra == 'docs'", specifier = "<2.1" },
@@ -347,6 +349,27 @@ requires-dist = [
     { name = "upf-tools", marker = "extra == 'dev'", specifier = "~=0.1" },
 ]
 provides-extras = ["analysis", "dev", "docs", "optimization", "pre-commit", "tests"]
+
+[[package]]
+name = "aiida-wannierjl"
+source = { editable = "../aiida-wannierjl" }
+dependencies = [
+    { name = "aiida-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiida-core", specifier = ">=2.7.1,<3" },
+    { name = "aiida-quantumespresso", marker = "extra == 'workflows'", specifier = ">=4.6" },
+    { name = "aiida-workgraph", marker = "extra == 'workflows'", specifier = ">=0.8,<0.9" },
+    { name = "furo", marker = "extra == 'docs'" },
+    { name = "markupsafe", marker = "extra == 'docs'", specifier = "<2.1" },
+    { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = "~=3.5" },
+    { name = "sphinx", marker = "extra == 'docs'" },
+    { name = "sphinxcontrib-contentui", marker = "extra == 'docs'" },
+    { name = "sphinxcontrib-details-directive", marker = "extra == 'docs'" },
+]
+provides-extras = ["docs", "pre-commit", "workflows"]
 
 [[package]]
 name = "aiida-workgraph"
