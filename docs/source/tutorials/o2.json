@@ -7,21 +7,46 @@
         "alpha_numsteps": 2,
         "pseudo_library": "SG15/1.2/PBE/SR",
         "spin": "collinear",
-        "orbital_groups_self_hartree_tol": 0.001
+        "group_orbitals_by": "self_hartree",
+        "group_orbitals_tol": 0.001
     },
     "atoms": {
         "cell_parameters": {
-            "vectors": [[13.21, 0.0, 0.0],
-                        [0.0, 12.0, 0.0],
-                        [0.0, 0.0, 12.0]],
+            "vectors": [
+                [
+                    13.21,
+                    0.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    12.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    0.0,
+                    12.0
+                ]
+            ],
             "units": "angstrom",
             "periodic": false
         },
         "atomic_positions": {
             "units": "angstrom",
             "positions": [
-                ["O", 5.395, 6.0, 6.0],
-                ["O", 6.605, 6.0, 6.0]
+                [
+                    "O",
+                    5.395,
+                    6.0,
+                    6.0
+                ],
+                [
+                    "O",
+                    6.605,
+                    6.0,
+                    6.0
+                ]
             ]
         }
     },

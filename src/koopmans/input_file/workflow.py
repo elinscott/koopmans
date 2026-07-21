@@ -1,6 +1,6 @@
 """Settings for a `Workflow` object."""
 
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Annotated, Any, Self
 
 from aiida_koopmans.types import Correction, VariationalOrbitalType
@@ -34,6 +34,14 @@ class CalculateScreeningMethod(Enum):
 
     DSCF = "dscf"
     DFPT = "dfpt"
+
+
+class GroupOrbitalsBy(StrEnum):
+    """Criterion for grouping variational orbitals to share a screening parameter."""
+
+    SELF_HARTREE = "self_hartree"
+    SPREAD = "spread"
+    NONE = "none"
 
 
 class WorkflowConfig(BaseModel):
@@ -120,13 +128,13 @@ class WorkflowConfig(BaseModel):
         default=None,
         description="a list of integers the same length as the total number of bands, denoting which bands to assign the same screening parameter to",
     )
-    orbital_groups_self_hartree_tol: float | None = Field(
+    group_orbitals_by: GroupOrbitalsBy | None = Field(
         default=None,
-        description="when calculating alpha parameters, the code will group orbitals together only if their self-Hartree energy is within this threshold",
+        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (not yet implemented), or "none". Left unset, resolves to "self_hartree" for Wannier-initialised runs (supercell images of one primitive orbital are physically equivalent) and "none" otherwise; the resolved value is recorded on the parsed input',
     )
-    orbital_groups_spread_tol: float | None = Field(
+    group_orbitals_tol: float | None = Field(
         default=None,
-        description="when calculating alpha parameters, the code will group orbitals together only if their spread is within this threshold",
+        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree). Left unset, takes the criterion's default (1e-4 for self_hartree)",
     )
     converge: bool = Field(
         default=False,
@@ -193,4 +201,40 @@ class WorkflowConfig(BaseModel):
             target_length = 2 if self.spin == SpinType.COLLINEAR else 1
             if len(self.orbital_groups) != target_length:
                 raise ValueError(f"'orbital_groups' should be of length {target_length}")
+        return self
+
+    @model_validator(mode="after")
+    def resolve_orbital_grouping(self) -> Self:
+        """Resolve the orbital-grouping criterion and tolerance.
+
+        Left unset, ``group_orbitals_by`` becomes ``self_hartree`` for
+        Wannier-initialised DSCF runs — the supercell images of one primitive
+        orbital are physically equivalent and must share a screening
+        parameter — and ``none`` otherwise. DFPT resolves to ``none``:
+        workflow-level grouping there (python-side grouping with per-orbital
+        kcw.x screen calculations) is not yet ported, and kcw.x's internal
+        ``check_spread`` shortcut is a separate mechanism, not steered by
+        this keyword. Resolving here (rather than in the dispatcher) keeps
+        the effective values visible on the parsed input. Criterion
+        tolerances default per criterion (``self_hartree``: 1e-4 eV); a
+        tolerance without a criterion, or with ``none``, is an error.
+        """
+        if self.group_orbitals_by is None:
+            wannier_init = self.init_orbitals in (
+                VariationalOrbitalType.MLWFS,
+                VariationalOrbitalType.PROJWFS,
+            )
+            dscf = self.screening_method == CalculateScreeningMethod.DSCF
+            self.group_orbitals_by = (
+                GroupOrbitalsBy.SELF_HARTREE if (wannier_init and dscf) else GroupOrbitalsBy.NONE
+            )
+        if self.group_orbitals_by == GroupOrbitalsBy.NONE:
+            if self.group_orbitals_tol is not None:
+                raise ValueError("group_orbitals_tol requires group_orbitals_by != 'none'")
+        elif self.group_orbitals_tol is None:
+            default_tol = {GroupOrbitalsBy.SELF_HARTREE: 1.0e-4}.get(self.group_orbitals_by)
+            # Assigning ``None`` back would re-trigger this validator forever
+            # (validate_assignment), so criteria without a default keep None.
+            if default_tol is not None:
+                self.group_orbitals_tol = default_tol
         return self

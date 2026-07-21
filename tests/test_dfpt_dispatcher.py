@@ -279,6 +279,40 @@ class TestSpinor:
         assert "nspin" not in scf_system
 
 
+class TestOrbitalGrouping:
+    """Workflow-level grouping is DSCF-only for now; DFPT rejects it explicitly."""
+
+    def test_default_resolves_to_none_and_builds(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A DFPT input parses with group_orbitals_by='none' and builds.
+
+        kcw.x's internal check_spread shortcut is a separate mechanism and
+        stays on; this keyword steers only the (unported) python-side
+        grouping with per-orbital screen calculations.
+        """
+        d = _si_dfpt_dict()
+        inp = KoopmansInput.model_validate(d)
+        assert inp.workflow.group_orbitals_by is not None
+        assert inp.workflow.group_orbitals_by.value == "none"
+        wg = _build(d, dfpt_codes)
+        assert "dfpt" in wg.get_task_names()
+
+    def test_explicit_self_hartree_is_rejected(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """An explicit criterion must not be silently ignored on the DFPT route."""
+        with pytest.raises(NotImplementedError, match="not yet"):
+            _build(_si_dfpt_dict(group_orbitals_by="self_hartree"), dfpt_codes)
+
+    def test_explicit_spread_is_rejected(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The spread criterion (the planned DFPT one) is also still unported."""
+        with pytest.raises(NotImplementedError, match="not yet"):
+            _build(_si_dfpt_dict(group_orbitals_by="spread"), dfpt_codes)
+
+
 class TestWannier90Overrides:
     """User wannier90 keywords feed the per-manifold wannierization."""
 

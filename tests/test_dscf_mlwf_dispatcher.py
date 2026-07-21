@@ -232,19 +232,38 @@ class TestPeriodicMlwfsBuild:
     def test_self_hartree_grouping_defaulted(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """Periodic runs default orbital_groups_self_hartree_tol (image grouping stopgap)."""
+        """Wannier-initialised runs resolve to self-Hartree grouping at 1e-4 eV."""
         wg = _build(_si_dscf_dict(), dscf_codes)
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol == pytest.approx(1.0e-4)
 
-    def test_user_self_hartree_tol_wins(
+    def test_user_grouping_tol_wins(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """An explicit orbital_groups_self_hartree_tol overrides the default."""
-        d = _si_dscf_dict(orbital_groups_self_hartree_tol=0.05)
+        """An explicit group_orbitals_tol overrides the criterion default."""
+        d = _si_dscf_dict(group_orbitals_tol=0.05)
         wg = _build(d, dscf_codes)
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol == pytest.approx(0.05)
+
+    def test_grouping_none_disables(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """group_orbitals_by='none' disables grouping even on the Wannier route."""
+        d = _si_dscf_dict(group_orbitals_by="none")
+        wg = _build(d, dscf_codes)
+        tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
+        assert tol is None
+
+    def test_tol_without_criterion_rejected(self, aiida_profile: Any) -> None:
+        """A tolerance alongside group_orbitals_by='none' fails validation."""
+        import pytest as _pytest
+
+        from koopmans.input_file import KoopmansInput
+
+        d = _si_dscf_dict(group_orbitals_by="none", group_orbitals_tol=0.05)
+        with _pytest.raises(ValueError, match="group_orbitals_tol"):
+            KoopmansInput(**d)
 
     def test_eps_inf_auto_not_wired(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
