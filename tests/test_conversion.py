@@ -105,7 +105,7 @@ class TestSeekpathBasisGuard:
 
         a = 5.43
         cell = np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2
-        structure = orm.StructureData(cell=cell.tolist())  # type: ignore[no-untyped-call]
+        structure = orm.StructureData(cell=cell.tolist())
         structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
         structure.append_atom(  # type: ignore[no-untyped-call]
             position=(-a / 4, a / 4, a / 4), symbols="Si"
@@ -134,7 +134,7 @@ class TestSeekpathBasisGuard:
 
         a = 5.43
         cell = np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2
-        structure = orm.StructureData(cell=cell.tolist())  # type: ignore[no-untyped-call]
+        structure = orm.StructureData(cell=cell.tolist())
         structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
         structure.append_atom(  # type: ignore[no-untyped-call]
             position=(-a / 4, a / 4, a / 4), symbols="Si"
@@ -167,7 +167,7 @@ class TestSeekpathBasisGuard:
 
         a, c = 3.25, 5.21
         cell = [[a, 0, 0], [-a / 2, a * np.sqrt(3) / 2, 0], [0, 0, c]]
-        structure = orm.StructureData(cell=cell)  # type: ignore[no-untyped-call]
+        structure = orm.StructureData(cell=cell)
         for symbol, scaled in (
             ("Zn", (0.33330, 0.66670, 0.5)),
             ("Zn", (0.66670, 0.33330, 0.0)),
@@ -192,9 +192,7 @@ class TestSeekpathBasisGuard:
         from koopmans.input_file import GridKpointsInput
 
         a = 5.43
-        structure = orm.StructureData(  # type: ignore[no-untyped-call]
-            cell=[[a, 0, 0], [0, a, 0], [0, 0, a]]
-        )
+        structure = orm.StructureData(cell=[[a, 0, 0], [0, a, 0], [0, 0, a]])
         fcc = [(0.0, 0.0, 0.0), (0.0, 0.5, 0.5), (0.5, 0.0, 0.5), (0.5, 0.5, 0.0)]
         for tx, ty, tz in fcc:
             for bx, by, bz in [(0.0, 0.0, 0.0), (0.25, 0.25, 0.25)]:

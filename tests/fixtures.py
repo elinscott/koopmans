@@ -78,6 +78,7 @@ def localhost_code(localhost_computer: Any) -> Any:
     from aiida.orm import InstalledCode, load_code
 
     def factory(label: str, entry_point: str) -> Any:
+        """Return the ``<label>@localhost`` code, creating it if absent."""
         try:
             return load_code(f"{label}@{localhost_computer.label}")
         except NotExistent:

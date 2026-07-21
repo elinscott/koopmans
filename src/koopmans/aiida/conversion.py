@@ -185,7 +185,7 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
         pbc = (pbc, pbc, pbc)
 
     # Create structure
-    structure = orm.StructureData(cell=cell, pbc=pbc)  # type: ignore[no-untyped-call]
+    structure = orm.StructureData(cell=cell, pbc=pbc)
 
     # Add atoms
     units = positions.units
