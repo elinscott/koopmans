@@ -330,14 +330,36 @@ def _calculate_kpoints_along_path(
     return kpoint_list, label_list
 
 
+def _cell_special_points(structure: orm.StructureData) -> dict[str, list[float]]:
+    """Return the cell's Bravais-lattice special k-points, in its own reciprocal basis.
+
+    An explicit path string speaks the legacy (ASE) label vocabulary, which
+    derives from the cell shape alone. Symmetry-detected (seekpath) labels are
+    position-sensitive: nearly-symmetric positions (``0.3333`` vs ``1/3``)
+    demote the lattice and rename every special point, so a legacy input's
+    ``"ALMGAHK"`` would stop parsing on the very structure it was written for.
+    """
+    import numpy as np
+    from ase.cell import Cell
+
+    bandpath = Cell(np.array(structure.cell)).bandpath(npoints=0)  # type: ignore[no-untyped-call]
+    # ASE keys the zone centre "G"; the path parser and the seekpath branch
+    # both speak "GAMMA".
+    return {
+        ("GAMMA" if label == "G" else label): list(coords)
+        for label, coords in bandpath.special_points.items()
+    }
+
+
 def kpoints_input_to_kpoints_path(
     kpoints: KpointsInput,
     structure: orm.StructureData,
 ) -> orm.KpointsData:
     """Convert KpointsInput to AiiDA KpointsData for bands calculations.
 
-    Uses the k-point path specified in the input, or generates one automatically
-    using seekpath if not specified.
+    An explicit path in the input is resolved against the cell's own
+    Bravais-lattice special points (the legacy ASE vocabulary); when no path
+    is given one is generated automatically with seekpath.
 
     Args:
         kpoints: The kpoints input from KoopmansInput.
@@ -348,41 +370,40 @@ def kpoints_input_to_kpoints_path(
     """
     import numpy as np
 
-    result = get_kpoints_path(structure, method="seekpath")  # type: ignore[no-untyped-call]
-    primitive_cell = np.array(result["primitive_structure"].cell)
-    input_cell = np.array(structure.cell)
-    point_coords: dict[str, list[float]] = result["parameters"].dict["point_coords"]
-    default_path = result["parameters"].dict["path"]
-    if not np.allclose(primitive_cell, input_cell, atol=1e-5):
-        # seekpath re-chose the primitive lattice vectors (e.g. QE's ibrav=2
-        # fcc convention vs the standardized choice), so its special-point
-        # coordinates attach to a different reciprocal basis. When both cells
-        # span the same lattice the mapping between them is an integer
-        # unimodular matrix, and the special points can be re-expressed in the
-        # input cell's own reciprocal basis via their Cartesian coordinates.
-        transfer = input_cell @ np.linalg.inv(primitive_cell)
-        if not (
-            np.allclose(transfer, np.round(transfer), atol=1e-5)
-            and np.isclose(abs(np.linalg.det(transfer)), 1.0, atol=1e-5)
-        ):
-            raise NotImplementedError(
-                "The input cell is not a primitive cell of the lattice seekpath "
-                "identified (it is a supercell or a rotated frame), so an automatic "
-                "k-point path cannot be expressed in the input cell's reciprocal "
-                "basis. Provide the structure as a primitive cell, or specify the "
-                "k-point path explicitly."
-            )
-        recip_primitive = np.linalg.inv(primitive_cell).T
-        recip_input = np.linalg.inv(input_cell).T
-        point_coords = {
-            label: list(np.array(coords) @ recip_primitive @ np.linalg.inv(recip_input))
-            for label, coords in point_coords.items()
-        }
-
     if kpoints.path is not None:
+        point_coords = _cell_special_points(structure)
         path = _parse_kpoints_path_string(kpoints.path, point_coords)
     else:
-        path = default_path
+        result = get_kpoints_path(structure, method="seekpath")  # type: ignore[no-untyped-call]
+        primitive_cell = np.array(result["primitive_structure"].cell)
+        input_cell = np.array(structure.cell)
+        point_coords = result["parameters"].dict["point_coords"]
+        path = result["parameters"].dict["path"]
+        if not np.allclose(primitive_cell, input_cell, atol=1e-5):
+            # seekpath re-chose the primitive lattice vectors (e.g. QE's ibrav=2
+            # fcc convention vs the standardized choice), so its special-point
+            # coordinates attach to a different reciprocal basis. When both cells
+            # span the same lattice the mapping between them is an integer
+            # unimodular matrix, and the special points can be re-expressed in the
+            # input cell's own reciprocal basis via their Cartesian coordinates.
+            transfer = input_cell @ np.linalg.inv(primitive_cell)
+            if not (
+                np.allclose(transfer, np.round(transfer), atol=1e-5)
+                and np.isclose(abs(np.linalg.det(transfer)), 1.0, atol=1e-5)
+            ):
+                raise NotImplementedError(
+                    "The input cell is not a primitive cell of the lattice seekpath "
+                    "identified (it is a supercell or a rotated frame), so an automatic "
+                    "k-point path cannot be expressed in the input cell's reciprocal "
+                    "basis. Provide the structure as a primitive cell, or specify the "
+                    "k-point path explicitly."
+                )
+            recip_primitive = np.linalg.inv(primitive_cell).T
+            recip_input = np.linalg.inv(input_cell).T
+            point_coords = {
+                label: list(np.array(coords) @ recip_primitive @ np.linalg.inv(recip_input))
+                for label, coords in point_coords.items()
+            }
 
     kpoint_list, label_list = _calculate_kpoints_along_path(path, point_coords, kpoints.density)
 
