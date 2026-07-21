@@ -310,3 +310,35 @@ class TestOrbitalGrouping:
         """The spread criterion is not implemented on the DFPT route either."""
         with pytest.raises(NotImplementedError, match="not implemented"):
             _build(_si_dfpt_dict(group_orbitals_by="spread"), dfpt_codes)
+
+
+class TestWannier90Overrides:
+    """User wannier90 keywords feed the per-manifold wannierization."""
+
+    def test_keyword_reaches_wannierize_task(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A user ``num_iter`` overrides the wannierize builder default.
+
+        The dispatcher folds the flat ``{'wannier90': {...}}`` override into
+        the shared ``overrides``; the block wannierization builder then merges
+        it over its own defaults, so the value surfaces on the wannierize
+        task's ``overrides['wannier90']`` namespace socket.
+        """
+        d = _si_dfpt_dict()
+        d["calculator_parameters"]["wannier90"]["num_iter"] = 17
+        wg = _build(d, dfpt_codes)
+        w90_overrides = wg.tasks["wannierize_occ"].inputs["overrides"]["wannier90"].value
+        assert w90_overrides["num_iter"] == 17
+
+    def test_no_keywords_omits_user_override(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """With only projections set, the builder default ``num_iter`` stands.
+
+        Discriminates the override path: absent a user keyword the wannierize
+        task never sees ``num_iter = 17``.
+        """
+        wg = _build(_si_dfpt_dict(), dfpt_codes)
+        w90_overrides = wg.tasks["wannierize_occ"].inputs["overrides"]["wannier90"].value
+        assert w90_overrides.get("num_iter") != 17

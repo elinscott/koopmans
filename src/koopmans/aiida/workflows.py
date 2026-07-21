@@ -25,6 +25,7 @@ from koopmans.input_file.workflow import (
 )
 
 if TYPE_CHECKING:
+    from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
@@ -471,19 +472,20 @@ def _dscf_wannier_init_inputs(
         )
 
     parameters = input_to_pw_parameters(koopmans_input)
-    wannier_overrides: dict[str, Any] = {
-        key: {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}}
-        for key in ("scf", "nscf")
+    wannier_overrides: WannierizeOverrides = {
+        "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
+        "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
     }
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
-    # ride the nested Wannier90WorkChain override namespace into every
-    # per-block wannierisation, exactly as on the DFPT route.
+    # feed every per-block wannierisation. Flat by design (see
+    # ``WannierizeOverrides``): the upstream namespace-nested override shape
+    # is produced only inside the block wannierization builder.
     w90_user = calc_params.wannier90.model_dump(
         exclude_unset=True, exclude={"projections", "up", "down"}
     )
     if w90_user:
-        wannier_overrides["wannier90"] = {"wannier90": {"wannier90": {"parameters": w90_user}}}
+        wannier_overrides["wannier90"] = w90_user
 
     wannier_codes = dict(codes)
     wannier_codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
@@ -574,14 +576,16 @@ def _build_singlepoint_dfpt_workgraph(
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
-    # ride the nested Wannier90WorkChain override namespace into every
-    # per-block wannierisation. Projections and per-spin blocks are consumed
-    # separately by the manifold derivation.
+    # feed every per-block wannierisation. Flat by design (see
+    # ``WannierizeOverrides``): the upstream namespace-nested override shape
+    # is produced only inside the block wannierization builder. Projections
+    # and per-spin blocks are consumed separately by the manifold derivation.
     w90_user = calc_params.wannier90.model_dump(
         exclude_unset=True, exclude={"projections", "up", "down"}
     )
     if w90_user:
-        overrides["wannier90"] = {"wannier90": {"wannier90": {"parameters": w90_user}}}
+        w90_overrides: WannierizeOverrides = {"wannier90": w90_user}
+        overrides.update(w90_overrides)
 
     # Electron count from the pseudopotential valences: fixes the size of the
     # occupied manifold.
