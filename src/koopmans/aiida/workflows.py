@@ -625,6 +625,31 @@ def _build_singlepoint_dfpt_workgraph(
         l_vcut=workflow.gb_correction,
         spin=spin,
         manifolds=manifolds,
+        group_orbitals=_dfpt_group_orbitals(workflow),
+    )
+
+
+def _dfpt_group_orbitals(workflow: WorkflowConfig) -> bool:
+    """Translate the orbital-grouping fields into kcw.x's ``check_spread`` switch.
+
+    kcw.x groups orbitals by self-Hartree natively, with the tolerance
+    hardcoded to 1e-4 in its source — a user tolerance that differs cannot
+    be honoured, so it is rejected rather than silently ignored.
+    """
+    if workflow.group_orbitals_by == GroupOrbitalsBy.NONE:
+        return False
+    if workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE:
+        if workflow.group_orbitals_tol != 1.0e-4:
+            raise NotImplementedError(
+                "DFPT screening groups orbitals inside kcw.x, whose self-Hartree "
+                "tolerance is hardcoded to 1e-4; group_orbitals_tol="
+                f"{workflow.group_orbitals_tol!r} cannot be honoured. Leave it "
+                "unset, or disable grouping with group_orbitals_by='none'."
+            )
+        return True
+    criterion = workflow.group_orbitals_by.value if workflow.group_orbitals_by else None
+    raise NotImplementedError(
+        f"group_orbitals_by={criterion!r} is not implemented; supported: 'self_hartree', 'none'."
     )
 
 

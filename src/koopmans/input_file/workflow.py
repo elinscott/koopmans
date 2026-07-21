@@ -228,7 +228,9 @@ class WorkflowConfig(BaseModel):
             if self.group_orbitals_tol is not None:
                 raise ValueError("group_orbitals_tol requires group_orbitals_by != 'none'")
         elif self.group_orbitals_tol is None:
-            self.group_orbitals_tol = {GroupOrbitalsBy.SELF_HARTREE: 1.0e-4}.get(
-                self.group_orbitals_by
-            )
+            default_tol = {GroupOrbitalsBy.SELF_HARTREE: 1.0e-4}.get(self.group_orbitals_by)
+            # Assigning ``None`` back would re-trigger this validator forever
+            # (validate_assignment), so criteria without a default keep None.
+            if default_tol is not None:
+                self.group_orbitals_tol = default_tol
         return self

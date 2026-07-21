@@ -277,3 +277,36 @@ class TestSpinor:
         assert scf_system["noncolin"] is True
         assert scf_system.get("lspinorb", False) is (spin_value == "spin_orbit")
         assert "nspin" not in scf_system
+
+
+class TestOrbitalGrouping:
+    """group_orbitals_by drives kcw.x's native (check_spread) grouping."""
+
+    def test_default_groups_by_self_hartree(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The wannier-init default (self_hartree, tol 1e-4) switches grouping on."""
+        wg = _build(_si_dfpt_dict(), dfpt_codes)
+        # `==` not `is`: graph inputs arrive as TaggedValue proxies.
+        assert wg.tasks["dfpt"].inputs["group_orbitals"].value == True  # noqa: E712
+
+    def test_none_disables_grouping(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """group_orbitals_by='none' turns kcw.x's check_spread off."""
+        wg = _build(_si_dfpt_dict(group_orbitals_by="none"), dfpt_codes)
+        assert wg.tasks["dfpt"].inputs["group_orbitals"].value == False  # noqa: E712
+
+    def test_non_default_tolerance_is_rejected(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """kcw.x hardcodes its self-Hartree tolerance, so an override must not pass silently."""
+        with pytest.raises(NotImplementedError, match="hardcoded"):
+            _build(_si_dfpt_dict(group_orbitals_tol=1.0e-3), dfpt_codes)
+
+    def test_spread_is_rejected(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The spread criterion is not implemented on the DFPT route either."""
+        with pytest.raises(NotImplementedError, match="not implemented"):
+            _build(_si_dfpt_dict(group_orbitals_by="spread"), dfpt_codes)
