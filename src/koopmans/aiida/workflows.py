@@ -535,6 +535,7 @@ def _build_singlepoint_dfpt_workgraph(
 
     workflow = koopmans_input.workflow
 
+    _reject_dfpt_orbital_grouping(workflow)
     if workflow.correction != Correction.KI:
         raise NotImplementedError(
             "The DFPT route (kcw.x) only implements the KI correction; "
@@ -629,32 +630,27 @@ def _build_singlepoint_dfpt_workgraph(
         l_vcut=workflow.gb_correction,
         spin=spin,
         manifolds=manifolds,
-        group_orbitals=_dfpt_group_orbitals(workflow),
     )
 
 
-def _dfpt_group_orbitals(workflow: WorkflowConfig) -> bool:
-    """Translate the orbital-grouping fields into kcw.x's ``check_spread`` switch.
+def _reject_dfpt_orbital_grouping(workflow: WorkflowConfig) -> None:
+    """Raise on an explicit orbital-grouping request on the DFPT route.
 
-    kcw.x groups orbitals by self-Hartree natively, with the tolerance
-    hardcoded to 1e-4 in its source — a user tolerance that differs cannot
-    be honoured, so it is rejected rather than silently ignored.
+    Workflow-level orbital grouping on the DFPT route — python-side grouping
+    (legacy groups by the wannier90 spreads) followed by one per-orbital
+    ``SCREEN.i_orb`` kcw.x screen calculation per group — is not ported yet,
+    so an explicit criterion must not be silently ignored. This is distinct
+    from kcw.x's *internal* ``check_spread`` self-Hartree grouping, which is
+    a single-calculation shortcut that stays on regardless (legacy parity).
     """
-    if workflow.group_orbitals_by == GroupOrbitalsBy.NONE:
-        return False
-    if workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE:
-        if workflow.group_orbitals_tol != 1.0e-4:
-            raise NotImplementedError(
-                "DFPT screening groups orbitals inside kcw.x, whose self-Hartree "
-                "tolerance is hardcoded to 1e-4; group_orbitals_tol="
-                f"{workflow.group_orbitals_tol!r} cannot be honoured. Leave it "
-                "unset, or disable grouping with group_orbitals_by='none'."
-            )
-        return True
-    criterion = workflow.group_orbitals_by.value if workflow.group_orbitals_by else None
-    raise NotImplementedError(
-        f"group_orbitals_by={criterion!r} is not implemented; supported: 'self_hartree', 'none'."
-    )
+    if workflow.group_orbitals_by not in (None, GroupOrbitalsBy.NONE):
+        raise NotImplementedError(
+            f"group_orbitals_by={workflow.group_orbitals_by.value!r} is not yet "
+            "implemented for DFPT screening: python-side orbital grouping with "
+            "per-orbital kcw.x screen calculations is still to be ported. Remove "
+            "the keyword (kcw.x still avoids re-solving self-Hartree-equivalent "
+            "orbitals internally via check_spread)."
+        )
 
 
 def _validated_eps_inf(eps_inf: float | str | None) -> float | str | None:

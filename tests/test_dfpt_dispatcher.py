@@ -280,35 +280,36 @@ class TestSpinor:
 
 
 class TestOrbitalGrouping:
-    """group_orbitals_by drives kcw.x's native (check_spread) grouping."""
+    """Workflow-level grouping is DSCF-only for now; DFPT rejects it explicitly."""
 
-    def test_default_groups_by_self_hartree(
+    def test_default_resolves_to_none_and_builds(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """The wannier-init default (self_hartree, tol 1e-4) switches grouping on."""
-        wg = _build(_si_dfpt_dict(), dfpt_codes)
-        # `==` not `is`: graph inputs arrive as TaggedValue proxies.
-        assert wg.tasks["dfpt"].inputs["group_orbitals"].value == True  # noqa: E712
+        """A DFPT input parses with group_orbitals_by='none' and builds.
 
-    def test_none_disables_grouping(
+        kcw.x's internal check_spread shortcut is a separate mechanism and
+        stays on; this keyword steers only the (unported) python-side
+        grouping with per-orbital screen calculations.
+        """
+        d = _si_dfpt_dict()
+        inp = KoopmansInput.model_validate(d)
+        assert inp.workflow.group_orbitals_by is not None
+        assert inp.workflow.group_orbitals_by.value == "none"
+        wg = _build(d, dfpt_codes)
+        assert "dfpt" in wg.get_task_names()
+
+    def test_explicit_self_hartree_is_rejected(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """group_orbitals_by='none' turns kcw.x's check_spread off."""
-        wg = _build(_si_dfpt_dict(group_orbitals_by="none"), dfpt_codes)
-        assert wg.tasks["dfpt"].inputs["group_orbitals"].value == False  # noqa: E712
+        """An explicit criterion must not be silently ignored on the DFPT route."""
+        with pytest.raises(NotImplementedError, match="not yet"):
+            _build(_si_dfpt_dict(group_orbitals_by="self_hartree"), dfpt_codes)
 
-    def test_non_default_tolerance_is_rejected(
+    def test_explicit_spread_is_rejected(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """kcw.x hardcodes its self-Hartree tolerance, so an override must not pass silently."""
-        with pytest.raises(NotImplementedError, match="hardcoded"):
-            _build(_si_dfpt_dict(group_orbitals_tol=1.0e-3), dfpt_codes)
-
-    def test_spread_is_rejected(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
-    ) -> None:
-        """The spread criterion is not implemented on the DFPT route either."""
-        with pytest.raises(NotImplementedError, match="not implemented"):
+        """The spread criterion (the planned DFPT one) is also still unported."""
+        with pytest.raises(NotImplementedError, match="not yet"):
             _build(_si_dfpt_dict(group_orbitals_by="spread"), dfpt_codes)
 
 

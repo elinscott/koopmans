@@ -208,21 +208,25 @@ class WorkflowConfig(BaseModel):
         """Resolve the orbital-grouping criterion and tolerance.
 
         Left unset, ``group_orbitals_by`` becomes ``self_hartree`` for
-        Wannier-initialised runs — the supercell images of one primitive
+        Wannier-initialised DSCF runs — the supercell images of one primitive
         orbital are physically equivalent and must share a screening
-        parameter — and ``none`` otherwise. Resolving here (rather than in
-        the dispatcher) keeps the effective values visible on the parsed
-        input. Criterion tolerances default per criterion (``self_hartree``:
-        1e-4 eV); a tolerance without a criterion, or with ``none``, is an
-        error.
+        parameter — and ``none`` otherwise. DFPT resolves to ``none``:
+        workflow-level grouping there (python-side grouping with per-orbital
+        kcw.x screen calculations) is not yet ported, and kcw.x's internal
+        ``check_spread`` shortcut is a separate mechanism, not steered by
+        this keyword. Resolving here (rather than in the dispatcher) keeps
+        the effective values visible on the parsed input. Criterion
+        tolerances default per criterion (``self_hartree``: 1e-4 eV); a
+        tolerance without a criterion, or with ``none``, is an error.
         """
         if self.group_orbitals_by is None:
             wannier_init = self.init_orbitals in (
                 VariationalOrbitalType.MLWFS,
                 VariationalOrbitalType.PROJWFS,
             )
+            dscf = self.screening_method == CalculateScreeningMethod.DSCF
             self.group_orbitals_by = (
-                GroupOrbitalsBy.SELF_HARTREE if wannier_init else GroupOrbitalsBy.NONE
+                GroupOrbitalsBy.SELF_HARTREE if (wannier_init and dscf) else GroupOrbitalsBy.NONE
             )
         if self.group_orbitals_by == GroupOrbitalsBy.NONE:
             if self.group_orbitals_tol is not None:
