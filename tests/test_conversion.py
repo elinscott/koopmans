@@ -203,3 +203,50 @@ class TestSeekpathBasisGuard:
         kpoints = GridKpointsInput(grid=(2, 2, 2))
         with pytest.raises(NotImplementedError, match="not a primitive cell"):
             kpoints_input_to_kpoints_path(kpoints, structure)
+
+
+class TestNpoolCmdline:
+    """workflow.npool lands as -npool on the pw.x command line."""
+
+    def test_npool_lands_in_pw_settings(self, aiida_profile: Any) -> None:
+        """With npool set, every override key carries settings.cmdline."""
+        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_NPOOL_INPUT)
+        _, _, overrides = _prepare_common_inputs(inp, ["scf", "bands"])
+        for key in ("scf", "bands"):
+            assert overrides[key]["pw"]["settings"]["cmdline"] == ["-npool", "4"]
+
+    def test_no_npool_leaves_settings_absent(self, aiida_profile: Any) -> None:
+        """With npool unset, no settings key is injected."""
+        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.input_file import KoopmansInput
+
+        d = dict(_NPOOL_INPUT)
+        d["workflow"] = {k: v for k, v in _NPOOL_INPUT["workflow"].items() if k != "npool"}
+        inp = KoopmansInput.model_validate(d)
+        _, _, overrides = _prepare_common_inputs(inp, ["scf"])
+        assert "settings" not in overrides["scf"]["pw"]
+
+
+_NPOOL_INPUT: dict[str, Any] = {
+    "workflow": {
+        "task": "dft_bands",
+        "pseudo_library": "SG15/1.2/PBE/SR",
+        "npool": 4,
+    },
+    "atoms": {
+        "cell_parameters": {
+            "periodic": True,
+            "ibrav": 2,
+            "celldms": {"1": 10.2622},
+        },
+        "atomic_positions": {
+            "units": "crystal",
+            "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
+        },
+    },
+    "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+    "calculator_parameters": {"ecutwfc": 20.0},
+}

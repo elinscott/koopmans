@@ -123,12 +123,17 @@ def _prepare_common_inputs(
 
     ensure_pseudo_family_installed(pseudo_family)
 
+    pw_overrides: dict[str, Any] = {"parameters": parameters}
+    if koopmans_input.workflow.npool is not None:
+        # -npool rides the calculation's settings.cmdline; only the pw.x
+        # steps are covered here — the kcp.x/kcw.x streams have their own
+        # command assembly and are not wired yet.
+        pw_overrides["settings"] = {"cmdline": ["-npool", str(int(koopmans_input.workflow.npool))]}
+
     overrides: dict[str, Any] = {
         key: {
             "pseudo_family": pseudo_family,
-            "pw": {
-                "parameters": parameters,
-            },
+            "pw": dict(pw_overrides),
         }
         for key in override_keys
     }
