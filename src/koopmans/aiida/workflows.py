@@ -786,8 +786,12 @@ def _build_trajectory_workgraph(
 
     - ``ml:predict`` needs per-orbital alpha injection, which the frozen
       ``KoopmansDSCFWorkflow`` interface does not support.
-    - Only the ``self_hartree`` descriptor is wired; ``orbital_density``
-      needs kcp.x orbital-density retrieval.
+    - Only the ``self_hartree`` descriptor is wired end-to-end; the
+      ``orbital_density`` power-spectrum descriptor has its full
+      pw2wannier90 ``decompose`` route built in ``aiida-koopmans``
+      (``DecomposeDescriptorsWorkflow``), but the trajectory splice awaits
+      ``KoopmansDSCFWorkflow`` exposing the nscf scratch and per-block
+      wannierization outputs.
     - Multi-snapshot (xyz trajectory) input is not representable in the
       ``KoopmansInput`` schema yet, so the single input structure is run as
       a one-snapshot trajectory.
@@ -826,8 +830,12 @@ def _build_trajectory_workgraph(
     if (ml_config.train or ml_config.test) and ml_config.descriptor != "self_hartree":
         raise NotImplementedError(
             f"ml:descriptor={ml_config.descriptor!r} is not yet supported: the "
-            "orbital_density (power-spectrum) descriptor requires retrieving the "
-            "trial KI's real-space orbital densities from kcp.x. Use "
+            "orbital_density (power-spectrum) descriptor is computed by the "
+            "pw2wannier90 wan_mode='decompose' route "
+            "(aiida_koopmans.workgraphs.ml.DecomposeDescriptorsWorkflow), but "
+            "splicing it into the per-snapshot fan-out needs KoopmansDSCFWorkflow "
+            "to expose the primitive-cell nscf scratch and the per-block "
+            "wannierization retrieved folders, which it does not yet. Use "
             "ml:descriptor='self_hartree'."
         )
     ml_mode = "train" if ml_config.train else "test" if ml_config.test else "none"
