@@ -45,7 +45,7 @@ jobs:
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
-          git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 1997b39b05c8ad9e2c614a01696a723b4c6805ec && git -C ../aiida-core checkout -q FETCH_HEAD
+          git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 4c81e9d64ac561325b91c7e6a18ea2cf792e0609 && git -C ../aiida-core checkout -q FETCH_HEAD
       - name: "Install uv"
         uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
@@ -85,7 +85,7 @@ jobs:
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
-          git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 1997b39b05c8ad9e2c614a01696a723b4c6805ec && git -C ../aiida-core checkout -q FETCH_HEAD
+          git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 4c81e9d64ac561325b91c7e6a18ea2cf792e0609 && git -C ../aiida-core checkout -q FETCH_HEAD
       - name: "Install uv"
         uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
@@ -133,7 +133,7 @@ jobs:
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
           git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
           git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
-          git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 1997b39b05c8ad9e2c614a01696a723b4c6805ec && git -C ../aiida-core checkout -q FETCH_HEAD
+          git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 4c81e9d64ac561325b91c7e6a18ea2cf792e0609 && git -C ../aiida-core checkout -q FETCH_HEAD
       - name: "Install uv"
         uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:

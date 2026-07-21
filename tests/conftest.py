@@ -23,6 +23,8 @@ from tests.fixtures import (  # noqa: F401
     installed_ph_code,
     installed_pw_code,
     installed_wannier_codes,
+    localhost_code,
+    localhost_computer,
     serialize_workgraph,
     tutorials_dir,
 )

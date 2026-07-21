@@ -72,9 +72,11 @@ dependencies = [
     "ase>=3.23", # Bravais-lattice special k-points for explicit band paths
     "aiida-quantumespresso",
     "qe-tools", # QE's own unit-conversion constants
-    # Constraint only (not imported directly): aiida-shell >= 0.9 requires the
-    # aiida-core 2.8 Code.Model API, which the pinned aiida-core predates.
-    "aiida-shell~=0.8.2",
+    # Constraint only (not imported directly, but aiida-workgraph imports it):
+    # every *released* aiida-shell subclasses the Code.Model API that
+    # aiida-core removed after v2.8.0 (#6990), so this rides git master (see
+    # [tool.uv.sources]) until a compatible release exists.
+    "aiida-shell",
 ]
 
 # see https://peps.python.org/pep-0735/ and https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups
@@ -308,4 +310,6 @@ aiida-koopmans = { path = "../aiida-koopmans2", editable = true }
 aiida-quantumespresso = { path = "../aiida-quantumespresso", editable = true }
 aiida-workgraph = { path = "../aiida-workgraph", editable = true }
 node-graph = { path = "../node-graph", editable = true }
-#aiida-core = { git = "https://github.com/Geigerj2/aiida-core", rev = "feature/dump-support-wg" }
+# Post-v2.8 aiida-core removed the Code.Model pydantic API (#6990); no
+# aiida-shell release is compatible yet, so pin the adapted git master.
+aiida-shell = { git = "https://github.com/sphuber/aiida-shell", rev = "e2f4ff1c96e5e38d7bafacb0ca65495ebe492167" }

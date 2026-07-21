@@ -67,7 +67,7 @@ requires-dist = [
     { name = "alembic", specifier = "~=1.8" },
     { name = "archive-path", specifier = "~=0.4.2" },
     { name = "ase", marker = "extra == 'atomic-tools'", specifier = "~=3.21" },
-    { name = "asyncssh", specifier = "~=2.21.0" },
+    { name = "asyncssh", specifier = "~=2.22.0" },
     { name = "bpython", marker = "extra == 'bpython'", specifier = "~=0.20" },
     { name = "chardet", marker = "sys_platform == 'win32'", specifier = "~=5.2.0" },
     { name = "circus", specifier = "~=0.19.0" },
@@ -77,12 +77,11 @@ requires-dist = [
     { name = "docstring-parser" },
     { name = "docutils", marker = "extra == 'tests'", specifier = "~=0.20" },
     { name = "flask", marker = "extra == 'rest'", specifier = "~=2.3.3" },
-    { name = "flask-cors", marker = "extra == 'rest'", specifier = "~=3.0" },
+    { name = "flask-cors", marker = "extra == 'rest'", specifier = "~=4.0" },
     { name = "flask-restful", marker = "extra == 'rest'", specifier = "~=0.3.10" },
-    { name = "get-annotations", marker = "python_full_version < '3.10'", specifier = "~=0.1" },
     { name = "graphviz", specifier = "~=0.19" },
     { name = "gssapi", marker = "extra == 'ssh-kerberos'", specifier = "~=1.6" },
-    { name = "importlib-metadata", specifier = "~=6.0" },
+    { name = "importlib-metadata", specifier = "~=9.0" },
     { name = "ipykernel", marker = "extra == 'tests'", specifier = "~=6.9" },
     { name = "ipython", specifier = ">=7.6" },
     { name = "jedi", specifier = "<0.19" },
@@ -91,7 +90,7 @@ requires-dist = [
     { name = "jupyter-client", marker = "extra == 'notebook'", specifier = "~=8.0" },
     { name = "kiwipy", extras = ["rmq"], specifier = "~=0.9.0" },
     { name = "matplotlib", marker = "extra == 'atomic-tools'", specifier = "~=3.3,>=3.3.4" },
-    { name = "mypy", marker = "extra == 'pre-commit'", specifier = "~=1.19.0" },
+    { name = "mypy", marker = "extra == 'pre-commit'", specifier = "~=2.3.0" },
     { name = "myst-nb", marker = "extra == 'docs'", specifier = "~=1.0.0" },
     { name = "nbclient", marker = "extra == 'tests'", specifier = "~=0.10" },
     { name = "nbformat", marker = "extra == 'tests'", specifier = "~=5.10" },
@@ -108,7 +107,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.0.2,<4" },
     { name = "pyasn1", marker = "extra == 'ssh-kerberos'", specifier = "~=0.4.8" },
     { name = "pycifrw", marker = "extra == 'atomic-tools'", specifier = "~=4.4" },
-    { name = "pydantic", specifier = "~=2.6" },
+    { name = "pydantic", specifier = "~=2.12" },
     { name = "pydata-sphinx-theme", marker = "extra == 'docs'", specifier = "~=0.15.1" },
     { name = "pymatgen", marker = "extra == 'atomic-tools'", specifier = ">=2024.3.1" },
     { name = "pympler", marker = "extra == 'tests'", specifier = "~=1.0" },
@@ -153,7 +152,7 @@ requires-dist = [
     { name = "types-requests", marker = "extra == 'pre-commit'", specifier = "~=2.0" },
     { name = "types-tabulate", marker = "extra == 'pre-commit'", specifier = ">=0.9.0,<0.10.0" },
     { name = "types-tqdm", marker = "extra == 'pre-commit'", specifier = "~=4.45" },
-    { name = "typing-extensions", specifier = "~=4.1" },
+    { name = "typing-extensions", specifier = "~=4.13" },
     { name = "upf-to-json", specifier = "~=0.9.2" },
     { name = "wrapt", specifier = "~=1.11" },
 ]
@@ -283,14 +282,10 @@ dev = [{ name = "aiida-quantumespresso", extras = ["docs", "tests", "pre-commit"
 [[package]]
 name = "aiida-shell"
 version = "0.8.2"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/sphuber/aiida-shell?rev=e2f4ff1c96e5e38d7bafacb0ca65495ebe492167#e2f4ff1c96e5e38d7bafacb0ca65495ebe492167" }
 dependencies = [
     { name = "aiida-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "dill", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/23/f5/4c809364d363f90d4b726eac3df85cc60b75cba69a4837cf808aa68d9fe9/aiida_shell-0.8.2.tar.gz", hash = "sha256:7efd2e67cbabe709585fa9c9aaf455bb7da249f2ef9eed2ae0b048a66737e0fd", size = 1474349, upload-time = "2026-01-14T17:55:49.17Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/9f/d61ba43b01b79881c910b93d8ac05cea741f437541fa7d43d01bd96a1bd2/aiida_shell-0.8.2-py3-none-any.whl", hash = "sha256:59feffa45c17c7de1161651601b566cf599ca0b2ec0177fff8328f28adfec85f", size = 20383, upload-time = "2026-01-14T17:55:47.636Z" },
 ]
 
 [[package]]
@@ -514,15 +509,15 @@ wheels = [
 
 [[package]]
 name = "asyncssh"
-version = "2.21.1"
+version = "2.22.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/b8/065c20bb5c9b8991648c0f25b13e445b4f51556cc3fdd0ad13ce4787c156/asyncssh-2.21.1.tar.gz", hash = "sha256:9943802955e2131536c2b1e71aacc68f56973a399937ed0b725086d7461c990c", size = 540515, upload-time = "2025-09-28T16:36:19.468Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fc/d5/957886c316466349d55c4de6a688a10a98295c0b4429deb8db1a17f3eb19/asyncssh-2.22.0.tar.gz", hash = "sha256:c3ce72b01be4f97b40e62844dd384227e5ff5a401a3793007c42f86a5c8eb537", size = 540523, upload-time = "2025-12-21T23:38:30.5Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/89/4a9a61bc120ca68bce92b0ea176ddc0e550e58c60ab820603bd5246e7261/asyncssh-2.21.1-py3-none-any.whl", hash = "sha256:f218f9f303c78df6627d0646835e04039a156d15e174ad63c058d62de61e1968", size = 375529, upload-time = "2025-09-28T16:36:17.68Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/ae/0da2f2214fc183338af1afe5a103a2052fd03464e8eafbd827abff58a4d0/asyncssh-2.22.0-py3-none-any.whl", hash = "sha256:d16465ccdf1ed20eba1131b14415b155e047f6f5be0d19f39c2e0b61331ee0e7", size = 374938, upload-time = "2025-12-21T23:38:28.976Z" },
 ]
 
 [[package]]
@@ -1202,14 +1197,14 @@ wheels = [
 
 [[package]]
 name = "importlib-metadata"
-version = "6.11.0"
+version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "zipp", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ee/eb/58c2ab27ee628ad801f56d4017fe62afab0293116f6d0b08f1d5bd46e06f/importlib_metadata-6.11.0.tar.gz", hash = "sha256:1231cf92d825c9e03cfc4da076a16de6422c863558229ea0b22b675657463443", size = 54593, upload-time = "2023-12-03T17:33:10.693Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/9b/ecce94952ab5ea74c31dcf9ccf78ccd484eebebef06019bf8cb579ab4519/importlib_metadata-6.11.0-py3-none-any.whl", hash = "sha256:f0afba6205ad8f8947c7d338b5342d5db2afbfd82f9cbef7879a9539cc12eb9b", size = 23427, upload-time = "2023-12-03T17:33:08.965Z" },
+    { url = "https://files.pythonhosted.org/packages/38/3d/2d244233ac4f76e38533cfcb2991c9eb4c7bf688ae0a036d30725b8faafe/importlib_metadata-9.0.0-py3-none-any.whl", hash = "sha256:2d21d1cc5a017bd0559e36150c21c830ab1dc304dedd1b7ea85d20f45ef3edd7", size = 27789, upload-time = "2026-03-20T06:42:55.665Z" },
 ]
 
 [[package]]
@@ -1510,7 +1505,7 @@ requires-dist = [
     { name = "aiida-hyperqueue", specifier = "~=0.3.0" },
     { name = "aiida-koopmans", editable = "../aiida-koopmans2" },
     { name = "aiida-quantumespresso", editable = "../aiida-quantumespresso" },
-    { name = "aiida-shell", specifier = "~=0.8.2" },
+    { name = "aiida-shell", git = "https://github.com/sphuber/aiida-shell?rev=e2f4ff1c96e5e38d7bafacb0ca65495ebe492167" },
     { name = "aiida-workgraph", editable = "../aiida-workgraph" },
     { name = "ase", specifier = ">=3.23" },
     { name = "click" },

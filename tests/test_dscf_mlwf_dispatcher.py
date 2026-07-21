@@ -88,7 +88,7 @@ class TestDeriveDscfBlocks:
         from aiida.orm import StructureData
 
         cell = [[0.0, 2.715, 2.715], [2.715, 0.0, 2.715], [2.715, 2.715, 0.0]]
-        struct = StructureData(cell=cell, pbc=True)  # type: ignore[no-untyped-call]
+        struct = StructureData(cell=cell, pbc=True)
         struct.append_atom(  # type: ignore[no-untyped-call]
             position=(0.0, 0.0, 0.0), symbols="Si", name="Si"
         )
