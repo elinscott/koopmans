@@ -594,6 +594,14 @@ raw:
                 extras:
                   py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
+            wannierjl:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -1594,6 +1602,14 @@ raw:
                       py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 wannier90:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    extras:
+                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    required: false
+                wannierjl:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
