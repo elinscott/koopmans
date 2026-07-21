@@ -53,76 +53,83 @@ def clear_database(clear_database_after_test: Any) -> Iterator[None]:
 
 
 @pytest.fixture
-def installed_pw_code(aiida_code_installed: Any) -> Any:
+def localhost_computer(aiida_computer_local: Any) -> Any:
+    """Return a computer whose label is literally ``localhost``.
+
+    aiida-core's ``aiida_localhost`` fixture now suffixes its computer label
+    with the pytest-xdist worker id (``localhost-master``, ...), but the
+    dispatcher resolves codes as ``<name>@localhost`` — the label real
+    profiles use — so the dummy codes must live on a literal one.
+    """
+    return aiida_computer_local(label="localhost")
+
+
+@pytest.fixture
+def localhost_code(localhost_computer: Any) -> Any:
+    """Return a get-or-create factory for dummy codes on the literal ``localhost``.
+
+    Unlike aiida-core's ``aiida_code_installed`` factory, the lookup matches
+    label *and* computer — a same-labelled code another test left on a
+    different computer (e.g. ``test_code_setup``'s ``pw`` on the suffixed
+    ``aiida_localhost``) must not shadow the one the dispatcher resolves as
+    ``<label>@localhost``.
+    """
+    from aiida.common.exceptions import NotExistent
+    from aiida.orm import InstalledCode, load_code
+
+    def factory(label: str, entry_point: str) -> Any:
+        try:
+            return load_code(f"{label}@{localhost_computer.label}")
+        except NotExistent:
+            return InstalledCode(
+                label=label,
+                computer=localhost_computer,
+                default_calc_job_plugin=entry_point,
+                filepath_executable="/bin/true",
+            ).store()
+
+    return factory
+
+
+@pytest.fixture
+def installed_pw_code(localhost_code: Any) -> Any:
     """Register a dummy ``pw@localhost`` code so ``load_code`` succeeds."""
-    return aiida_code_installed(
-        label="pw",
-        default_calc_job_plugin="quantumespresso.pw",
-        filepath_executable="/bin/true",
-    )
+    return localhost_code("pw", "quantumespresso.pw")
 
 
 @pytest.fixture
-def installed_kcp_code(aiida_code_installed: Any) -> Any:
+def installed_kcp_code(localhost_code: Any) -> Any:
     """Register a dummy ``kcp@localhost`` code so ``load_code`` succeeds."""
-    return aiida_code_installed(
-        label="kcp",
-        default_calc_job_plugin="koopmans.kcp",
-        filepath_executable="/bin/true",
-    )
+    return localhost_code("kcp", "koopmans.kcp")
 
 
 @pytest.fixture
-def installed_kcw_code(aiida_code_installed: Any) -> Any:
+def installed_kcw_code(localhost_code: Any) -> Any:
     """Register a dummy ``kcw@localhost`` code so ``load_code`` succeeds."""
-    return aiida_code_installed(
-        label="kcw",
-        default_calc_job_plugin="koopmans.kcw_wann2kc",
-        filepath_executable="/bin/true",
-    )
+    return localhost_code("kcw", "koopmans.kcw_wann2kc")
 
 
 @pytest.fixture
-def installed_ph_code(aiida_code_installed: Any) -> Any:
+def installed_ph_code(localhost_code: Any) -> Any:
     """Register a dummy ``ph@localhost`` code so ``load_code`` succeeds."""
-    return aiida_code_installed(
-        label="ph",
-        default_calc_job_plugin="quantumespresso.ph",
-        filepath_executable="/bin/true",
-    )
+    return localhost_code("ph", "quantumespresso.ph")
 
 
 @pytest.fixture
-def installed_wannier_codes(aiida_code_installed: Any) -> dict[str, Any]:
+def installed_wannier_codes(localhost_code: Any) -> dict[str, Any]:
     """Register dummy ``wannier90`` / ``pw2wannier90`` codes for DFPT builds."""
     return {
-        "wannier90": aiida_code_installed(
-            label="wannier90",
-            default_calc_job_plugin="wannier90.wannier90",
-            filepath_executable="/bin/true",
-        ),
-        "pw2wannier90": aiida_code_installed(
-            label="pw2wannier90",
-            default_calc_job_plugin="quantumespresso.pw2wannier90",
-            filepath_executable="/bin/true",
-        ),
+        "wannier90": localhost_code("wannier90", "wannier90.wannier90"),
+        "pw2wannier90": localhost_code("pw2wannier90", "quantumespresso.pw2wannier90"),
     }
 
 
 @pytest.fixture
-def installed_fold_codes(aiida_code_installed: Any) -> dict[str, Any]:
+def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     """Register dummy ``wann2kcp`` / ``merge_evc`` codes for the fold path."""
     return {
-        "wann2kcp": aiida_code_installed(
-            label="wann2kcp",
-            default_calc_job_plugin="koopmans.wann2kcp",
-            filepath_executable="/bin/true",
-        ),
-        "merge_evc": aiida_code_installed(
-            label="merge_evc",
-            default_calc_job_plugin="koopmans.merge_evc",
-            filepath_executable="/bin/true",
-        ),
+        "wann2kcp": localhost_code("wann2kcp", "koopmans.wann2kcp"),
+        "merge_evc": localhost_code("merge_evc", "koopmans.merge_evc"),
     }
 
 
