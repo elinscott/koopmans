@@ -643,9 +643,10 @@ def _reject_dfpt_orbital_grouping(workflow: WorkflowConfig) -> None:
     from kcw.x's *internal* ``check_spread`` self-Hartree grouping, which is
     a single-calculation shortcut that stays on regardless (legacy parity).
     """
-    if workflow.group_orbitals_by not in (None, GroupOrbitalsBy.NONE):
+    criterion = workflow.group_orbitals_by
+    if criterion is not None and criterion != GroupOrbitalsBy.NONE:
         raise NotImplementedError(
-            f"group_orbitals_by={workflow.group_orbitals_by.value!r} is not yet "
+            f"group_orbitals_by={criterion.value!r} is not yet "
             "implemented for DFPT screening: python-side orbital grouping with "
             "per-orbital kcw.x screen calculations is still to be ported. Remove "
             "the keyword (kcw.x still avoids re-solving self-Hartree-equivalent "
