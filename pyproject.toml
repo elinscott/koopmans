@@ -69,6 +69,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "types-pyyaml>=6.0.12.20250915",
     "seekpath>=1.9.3",
+    "ase>=3.23", # Bravais-lattice special k-points for explicit band paths
     "aiida-quantumespresso",
     "qe-tools", # QE's own unit-conversion constants
     # Constraint only (not imported directly): aiida-shell >= 0.9 requires the
