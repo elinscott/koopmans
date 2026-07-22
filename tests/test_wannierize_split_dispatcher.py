@@ -115,6 +115,7 @@ class TestBlockDerivation:
         blocks = _derive_wannierize_blocks(silicon_structure, self._sp3_block(), nbnd=12)
         assert blocks[0]["num_wann"] == 8
         assert blocks[0]["num_bands"] == 12
+        assert blocks[0]["include_bands"] == list(range(1, 13))
         assert blocks[0].get("exclude_bands") is None
 
     def test_too_few_bands_raises(self, silicon_structure: Any) -> None:

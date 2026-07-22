@@ -320,6 +320,7 @@ def _derive_wannierize_blocks(
         last = blocks[-1]
         last["num_bands"] = last["num_wann"] + (nbnd - cursor)
         start = last["include_bands"][0]
+        last["include_bands"] = list(range(start, nbnd + 1))
         last["exclude_bands"] = list(range(1, start)) or None
 
     return blocks
