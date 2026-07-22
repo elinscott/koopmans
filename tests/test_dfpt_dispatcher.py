@@ -70,38 +70,6 @@ def dfpt_codes(
     }
 
 
-@pytest.fixture
-def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
-    """Install a minimal fake ``PseudoDojo/0.4/LDA/SR/standard/upf`` family.
-
-    Zn (z=20) and O (z=6) synthetic UPF streams — enough for the dispatcher's
-    electron counting, not physically meaningful pseudos. Local so the ZnO
-    test does not fight over the shared fixtures module.
-    """
-    import io
-
-    from aiida.common.exceptions import NotExistent
-    from aiida_pseudo.data.pseudo.upf import UpfData
-    from aiida_pseudo.groups.family import PseudoPotentialFamily
-
-    label = "PseudoDojo/0.4/LDA/SR/standard/upf"
-    try:
-        return PseudoPotentialFamily.collection.get(label=label)
-    except NotExistent:
-        pass
-
-    family = PseudoPotentialFamily(label=label, description="fake PseudoDojo family for tests")
-    family.store()
-    for element, z_valence in (("Zn", 20.0), ("O", 6.0)):
-        content = (
-            f'<UPF version="2.0.1"><PP_HEADER\nelement="{element}"\n'
-            f'z_valence="{z_valence}"\n/></UPF>\n'
-        )
-        upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
-        family.add_nodes([upf.store()])
-    return family
-
-
 class TestUnpolarized:
     """spin='none' builds the closed-shell single chain."""
 

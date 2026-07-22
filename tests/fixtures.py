@@ -134,62 +134,37 @@ def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     }
 
 
-@pytest.fixture
-def fake_sg15_pseudo_family(aiida_profile: Any) -> Any:
-    """Install a minimal fake ``SG15/1.2/PBE/SR`` family (O and Si pseudos).
+def _install_fake_family(
+    label: str,
+    elements: dict[str, float],
+    cutoffs: bool = False,
+) -> Any:
+    """Install (or fetch) a fake pseudopotential family with synthetic UPF streams.
 
-    This prevents ``ensure_pseudo_family_installed`` from hitting the network
-    when the dispatcher builds the workgraph. Uses synthetic UPF streams —
-    enough for ``UpfData`` validation, not physically meaningful pseudos.
+    The streams are enough for ``UpfData`` validation, not physically
+    meaningful pseudos. ``cutoffs=True`` builds a
+    ``CutoffsPseudoPotentialFamily`` with recommended cutoffs — needed by
+    builders that call ``get_builder_from_protocol`` eagerly at build time
+    (the aiida-qe protocol machinery only accepts SSSP, PseudoDojo, or a
+    cutoffs family); plain families cover ``ensure_pseudo_family_installed``.
     """
     from aiida.common.exceptions import NotExistent
     from aiida_pseudo.data.pseudo.upf import UpfData
-    from aiida_pseudo.groups.family import PseudoPotentialFamily
+    from aiida_pseudo.groups.family import (
+        CutoffsPseudoPotentialFamily,
+        PseudoPotentialFamily,
+    )
 
-    label = "SG15/1.2/PBE/SR"
+    cls = CutoffsPseudoPotentialFamily if cutoffs else PseudoPotentialFamily
     try:
-        return PseudoPotentialFamily.collection.get(label=label)
+        return cls.collection.get(label=label)
     except NotExistent:
         pass
 
-    family = PseudoPotentialFamily(label=label, description="fake SG15 family for tests")
-    family.store()
-    for element, z_valence in (("O", 6.0), ("Si", 4.0)):
-        content = (
-            f'<UPF version="2.0.1"><PP_HEADER\nelement="{element}"\n'
-            f'z_valence="{z_valence}"\n/></UPF>\n'
-        )
-        upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
-        family.add_nodes([upf.store()])
-    return family
-
-
-@pytest.fixture
-def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
-    """Install a minimal fake ``SG15/1.0/PBE/SR`` cutoffs family (O and Si).
-
-    Workgraph builders that call ``get_builder_from_protocol`` eagerly at
-    build time (e.g. the ``dft_eps`` chain) need a family the aiida-qe
-    protocol machinery accepts: SSSP, PseudoDojo, or a
-    ``CutoffsPseudoPotentialFamily`` with recommended cutoffs — the plain
-    ``PseudoPotentialFamily`` of ``fake_sg15_pseudo_family`` is not found by
-    its query. Uses a different version label so both fixtures can coexist
-    in one session profile.
-    """
-    from aiida.common.exceptions import NotExistent
-    from aiida_pseudo.data.pseudo.upf import UpfData
-    from aiida_pseudo.groups.family import CutoffsPseudoPotentialFamily
-
-    label = "SG15/1.0/PBE/SR"
-    try:
-        return CutoffsPseudoPotentialFamily.collection.get(label=label)
-    except NotExistent:
-        pass
-
-    family = CutoffsPseudoPotentialFamily(label=label)
+    family = cls(label=label, description=f"fake {label} family for tests")
     family.store()
     pseudos = []
-    for element, z_valence in (("O", 6.0), ("Si", 4.0)):
+    for element, z_valence in elements.items():
         content = (
             f'<UPF version="2.0.1"><PP_HEADER\nelement="{element}"\n'
             f'z_valence="{z_valence}"\n/></UPF>\n'
@@ -197,11 +172,38 @@ def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
         pseudos.append(upf.store())
     family.add_nodes(pseudos)
-    family.set_cutoffs(
-        {element: {"cutoff_wfc": 30.0, "cutoff_rho": 240.0} for element in ("O", "Si")},
-        stringency="normal",
-    )
+    if cutoffs:
+        family.set_cutoffs(
+            {element: {"cutoff_wfc": 30.0, "cutoff_rho": 240.0} for element in elements},
+            stringency="normal",
+        )
     return family
+
+
+@pytest.fixture
+def fake_sg15_pseudo_family(aiida_profile: Any) -> Any:
+    """Install a minimal fake ``SG15/1.2/PBE/SR`` family (O and Si pseudos)."""
+    return _install_fake_family("SG15/1.2/PBE/SR", {"O": 6.0, "Si": 4.0})
+
+
+@pytest.fixture
+def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
+    """Install a minimal fake ``SG15/1.0/PBE/SR`` cutoffs family (O and Si).
+
+    A different version label from ``fake_sg15_pseudo_family`` so both can
+    coexist in one session profile.
+    """
+    return _install_fake_family("SG15/1.0/PBE/SR", {"O": 6.0, "Si": 4.0}, cutoffs=True)
+
+
+@pytest.fixture
+def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
+    """Install a minimal fake ``PseudoDojo/0.4/LDA/SR/standard/upf`` family.
+
+    Zn (z=20) and O (z=6) — enough for the dispatcher's electron counting
+    (ZnO: nelec 52, nocc 26).
+    """
+    return _install_fake_family("PseudoDojo/0.4/LDA/SR/standard/upf", {"Zn": 20.0, "O": 6.0})
 
 
 # ----------------------------------------------------------------------
