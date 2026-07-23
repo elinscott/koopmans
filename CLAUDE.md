@@ -96,9 +96,9 @@ Invoked via `/<name>`:
 6. **Docs decouple orthogonal choices.** Never present a default pairing (e.g. grouping criterion ↔ screening method) as an equivalence; say once that defaults reflect what is wired up, and let the dispatcher reject the rest explicitly.
 7. **Explicit failure over silent ignore.** An input that cannot take effect raises `NotImplementedError`/`ValueError` naming the gap — no keyword is silently dropped.
 8. **Adversarial pass before merge.** Every PR gets a reviewer-agent pass; load-bearing claims (mechanisms, parity, orderings) get skeptic verification or are graded honestly (reproduced / code-read / theory) in the PR body. Claims graded below reproduced are phrased as such.
-8b. **PR descriptions are short.** A summary line, a bulleted change list, a validation/testing section — nothing else. No implementation narratives, no session-local details (database PKs, scratch paths, agent names); those live in the conversation, not the record.
-9. **Squash-merge messages in 50/72** (subject ≤50 chars including the `(#N)`, body wrapped at 72), symptom-not-mechanism, enumerations as bullet lists.
-10. **`OMP_NUM_THREADS=1` on every QE code.** The GNU builds link threaded OpenBLAS; under mpirun each rank spawns its own BLAS threads and oversubscribes the hq allocation. Neither repo sets it yet — until the code-registration fix lands, export it in the codes' `prepend_text`.
+9. **PR descriptions are short.** A summary line, a bulleted change list, a validation/testing section — nothing else. No implementation narratives, no session-local details (database PKs, scratch paths, agent names); those live in the conversation, not the record.
+10. **Squash-merge messages in 50/72** (subject ≤50 chars including the `(#N)`, body wrapped at 72), symptom-not-mechanism, enumerations as bullet lists.
+11. **`OMP_NUM_THREADS=1` on every QE code.** The GNU builds link threaded OpenBLAS; under mpirun each rank spawns its own BLAS threads and oversubscribes the hq allocation. Neither repo sets it yet — until the code-registration fix lands, export it in the codes' `prepend_text`.
 
 ## Current status (update as work progresses)
 
