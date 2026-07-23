@@ -14,6 +14,7 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
+    code_parallelization,
     input_to_pw_parameters,
 )
 from koopmans.input_file.workflow import (
@@ -123,12 +124,24 @@ def _prepare_common_inputs(
 
     ensure_pseudo_family_installed(pseudo_family)
 
+    pw_overrides: dict[str, Any] = {"parameters": parameters}
+    # The pw entry carries the pw.x parallelization directive: -npool rides
+    # settings.cmdline; ntasks rides metadata.options.resources — both survive
+    # get_builder_from_protocol's override merge (verified by eager build).
+    # Seeding the shared scf/nscf/bands overrides here covers the primary pw.x
+    # steps; the full per-code mapping is threaded to every graph builder too,
+    # so pw.x steps assembled inside the graphs (e.g. the dielectric scf) pick
+    # up the same directive.
+    options, settings = code_parallelization(koopmans_input.parallelization.pw)
+    if settings:
+        pw_overrides["settings"] = settings
+    if options:
+        pw_overrides["metadata"] = {"options": options}
+
     overrides: dict[str, Any] = {
         key: {
             "pseudo_family": pseudo_family,
-            "pw": {
-                "parameters": parameters,
-            },
+            "pw": dict(pw_overrides),
         }
         for key in override_keys
     }
@@ -193,6 +206,7 @@ def _build_dft_bands_workgraph(
         code=codes["pw"],
         structure=structure,
         overrides=overrides,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
     )
 
 
@@ -226,6 +240,7 @@ def _build_dft_eps_workgraph(
         structure=structure,
         pseudo_family=pseudo_family,
         overrides=overrides,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
     )
 
 
@@ -260,6 +275,7 @@ def _build_wannierize_workgraph(
         overrides=overrides,
         pseudo_family=pseudo_family,
         print_summary=False,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
         **extra_kwargs,
     )
 
@@ -312,6 +328,7 @@ def _build_singlepoint_workgraph(
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
         structure=structure,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
         **inputs,
         **extra_kwargs,
     )
@@ -631,6 +648,7 @@ def _build_singlepoint_dfpt_workgraph(
         spin=spin,
         manifolds=manifolds,
         group_orbitals_tol=group_orbitals_tol,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
     )
 
 
@@ -859,6 +877,7 @@ def _build_trajectory_workgraph(
     return TrajectoryWorkflow.build(
         code=codes["kcp"],
         snapshots=snapshots,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
         **_kcp_dscf_inputs(koopmans_input),
         ml_mode=ml_mode,
         ml_model=ml_model,

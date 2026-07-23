@@ -101,3 +101,105 @@ class TestSchemaValidation:
             CalculatorParametersInput.model_validate({"nbnd": 10.7})
 
         assert CalculatorParametersInput.model_validate({"nbnd": 10.0}).nbnd == 10
+
+
+def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
+    """Return a minimal silicon input dict for parallelization-block tests."""
+    d: dict[str, object] = {
+        "workflow": {"task": "dft_bands", "pseudo_library": "X"},
+        "atoms": {
+            "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.26}},
+            "atomic_positions": {
+                "units": "crystal",
+                "positions": [["Si", 0, 0, 0], ["Si", 0.25, 0.25, 0.25]],
+            },
+        },
+        "kpoints": {"grid": [2, 2, 2]},
+        "calculator_parameters": {"ecutwfc": 20.0},
+    }
+    if parallelization is not None:
+        d["parallelization"] = parallelization
+    return d
+
+
+class TestParallelizationSchema:
+    """The top-level per-code ``parallelization`` block."""
+
+    def test_per_code_entries_parse(self) -> None:
+        """Each configured code carries its own ntasks / npool / pd."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={"pw": {"npool": 2, "ntasks": 8, "pd": True}, "kcw": {"npool": 4}}
+            )
+        )
+        pw = inp.parallelization.pw
+        kcw = inp.parallelization.kcw
+        assert pw is not None and kcw is not None
+        assert (pw.npool, pw.ntasks, pw.pd) == (2, 8, True)
+        assert kcw.npool == 4
+
+    def test_as_mapping_drops_unset_fields_and_codes(self) -> None:
+        """as_mapping keeps only configured codes and their set fields."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={"pw": {"npool": 2, "pd": True}, "kcw": {"ntasks": 8}}
+            )
+        )
+        assert inp.parallelization.as_mapping() == {
+            "pw": {"npool": 2, "pd": True},
+            "kcw": {"ntasks": 8},
+        }
+
+    def test_no_config_leaves_codes_unset(self) -> None:
+        """Without a block, every code entry stays ``None`` and the mapping is empty."""
+        inp = KoopmansInput.model_validate(_parallelization_input())
+        assert inp.parallelization.pw is None
+        assert inp.parallelization.as_mapping() == {}
+
+    @pytest.mark.parametrize("code", ["kcp", "wann2kcp", "wannier90"])
+    def test_npool_rejected_for_non_pool_codes(self, code: str) -> None:
+        """Only pw, ph, projwfc, pw2wannier90, and kcw parallelize over k-point pools."""
+        with pytest.raises(ValueError, match=r"'npool' is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={code: {"npool": 2}})
+            )
+
+    @pytest.mark.parametrize("code", ["kcp", "wann2kcp", "wannier90"])
+    def test_pd_rejected_for_non_pd_codes(self, code: str) -> None:
+        """Only pw, ph, projwfc, pw2wannier90, and kcw support pencil decomposition."""
+        with pytest.raises(ValueError, match=r"'pd' \(pencil decomposition\) is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={code: {"pd": True}})
+            )
+
+    @pytest.mark.parametrize("code", ["ph", "pw2wannier90"])
+    def test_npool_and_pd_allowed_for_ph_and_pw2wannier90(self, code: str) -> None:
+        """The ph and pw2wannier90 codes accept both flags (verified against QE source)."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={code: {"npool": 2, "pd": True}})
+        )
+        cfg = getattr(inp.parallelization, code)
+        assert cfg is not None
+        assert (cfg.npool, cfg.pd) == (2, True)
+
+    def test_ntasks_allowed_for_any_code(self) -> None:
+        """The ntasks (MPI ranks) field is universal — even wannier90 accepts it."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"wannier90": {"ntasks": 4}})
+        )
+        wannier90 = inp.parallelization.wannier90
+        assert wannier90 is not None
+        assert wannier90.ntasks == 4
+
+    def test_unknown_code_rejected(self) -> None:
+        """An unrecognised code name is not a valid parallelization key."""
+        with pytest.raises(ValueError):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={"foo": {"npool": 2}})
+            )
+
+    @pytest.mark.parametrize("field", ["ntasks", "npool"])
+    def test_positive_ints_only(self, field: str) -> None:
+        """Both integer fields reject zero and negative values."""
+        with pytest.raises(ValueError):
+            KoopmansInput.model_validate(_parallelization_input(parallelization={"pw": {field: 0}}))

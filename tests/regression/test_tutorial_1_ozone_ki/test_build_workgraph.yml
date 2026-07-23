@@ -885,13 +885,6 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
-        options:
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            required: false
         orbital_groups_self_hartree_tol:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1196,6 +1189,13 @@ raw:
               meta:
                 child_default_link_limit: 1
                 required: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        parallelization:
+          dynamic: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -2088,13 +2088,6 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
-            options:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                required: false
             orbital_groups_self_hartree_tol:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2399,6 +2392,13 @@ raw:
                   meta:
                     child_default_link_limit: 1
                     required: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            parallelization:
+              dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs

@@ -203,3 +203,166 @@ class TestSeekpathBasisGuard:
         kpoints = GridKpointsInput(grid=(2, 2, 2))
         with pytest.raises(NotImplementedError, match="not a primitive cell"):
             kpoints_input_to_kpoints_path(kpoints, structure)
+
+
+class TestCodeParallelizationHelper:
+    """``code_parallelization`` maps a per-code config to (options, settings)."""
+
+    def test_ntasks_npool_and_pd(self) -> None:
+        """Ntasks → resources; npool → -npool then pd → -pd true on the cmdline."""
+        from koopmans.aiida.conversion import code_parallelization
+        from koopmans.input_file.parallelization import CodeParallelization
+
+        options, settings = code_parallelization(CodeParallelization(ntasks=8, npool=4, pd=True))
+        assert options == {"resources": {"num_machines": 1, "tot_num_mpiprocs": 8}}
+        assert settings == {"cmdline": ["-npool", "4", "-pd", "true"]}
+
+    def test_partial_and_none(self) -> None:
+        """Unset fields yield empty halves; ``None`` config yields two empties."""
+        from koopmans.aiida.conversion import code_parallelization
+        from koopmans.input_file.parallelization import CodeParallelization
+
+        options, settings = code_parallelization(CodeParallelization(npool=2))
+        assert options == {}
+        assert settings == {"cmdline": ["-npool", "2"]}
+        # pd False must not emit a flag (only pd True does).
+        assert code_parallelization(CodeParallelization(pd=False)) == ({}, {})
+        assert code_parallelization(None) == ({}, {})
+
+
+class TestParallelizationWiring:
+    """The pw parallelization directive threads into the shared pw overrides."""
+
+    def test_npool_lands_in_pw_settings(self, aiida_profile: Any) -> None:
+        """With pw.npool set, every override key carries settings.cmdline."""
+        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"npool": 4}}))
+        _, _, overrides = _prepare_common_inputs(inp, ["scf", "bands"])
+        for key in ("scf", "bands"):
+            assert overrides[key]["pw"]["settings"]["cmdline"] == ["-npool", "4"]
+
+    def test_ntasks_lands_in_pw_metadata_options(self, aiida_profile: Any) -> None:
+        """An explicit pw.ntasks entry rides metadata.options.resources."""
+        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"ntasks": 8}}))
+        _, _, overrides = _prepare_common_inputs(inp, ["scf"])
+        resources = overrides["scf"]["pw"]["metadata"]["options"]["resources"]
+        assert resources == {"num_machines": 1, "tot_num_mpiprocs": 8}
+
+    def test_no_parallelization_leaves_pw_clean(self, aiida_profile: Any) -> None:
+        """With nothing configured, neither settings nor metadata is injected."""
+        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        _, _, overrides = _prepare_common_inputs(inp, ["scf"])
+        assert "settings" not in overrides["scf"]["pw"]
+        assert "metadata" not in overrides["scf"]["pw"]
+
+    def test_survives_get_builder_from_protocol(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """Eager build: the pw overrides reach the CalcJob builder intact.
+
+        Exercises the exact machinery ``RunPwBands`` uses
+        (``PwBandsWorkChain.get_builder_from_protocol``), without building a
+        WorkGraph — so it runs locally despite the aiida-workgraph skew.
+        """
+        from aiida_quantumespresso.workflows.pw.bands import PwBandsWorkChain
+
+        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                parallelization={"pw": {"ntasks": 8, "npool": 4}},
+            )
+        )
+        structure, _, overrides = _prepare_common_inputs(inp, ["scf", "bands"])
+        builder = PwBandsWorkChain.get_builder_from_protocol(
+            code=installed_pw_code, structure=structure, overrides=overrides
+        )
+        assert builder.scf.pw.settings.get_dict()["cmdline"] == ["-npool", "4"]
+        assert builder.scf.pw.metadata.options["resources"]["tot_num_mpiprocs"] == 8
+
+
+class TestDispatcherThreadsParallelization:
+    """The dispatcher forwards the per-code mapping to the workgraph builder."""
+
+    def test_mapping_reaches_the_builder(self, aiida_profile: Any, monkeypatch: Any) -> None:
+        """A configured block is passed as the graph's ``parallelization`` kwarg."""
+        import aiida_koopmans.workgraphs.pw as pw_module
+
+        from koopmans.aiida import workflows as workflows_module
+        from koopmans.aiida.workflows import _build_dft_bands_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        captured: dict[str, Any] = {}
+
+        def fake_build(**kwargs: Any) -> str:
+            """Capture the builder call's kwargs."""
+            captured.update(kwargs)
+            return "workgraph"
+
+        # Stub the profile-dependent structure/pseudo setup and the graph build
+        # so the test isolates the dispatcher's threading logic.
+        monkeypatch.setattr(
+            workflows_module, "_prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+        )
+        monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(parallelization={"pw": {"npool": 4}, "kcw": {"ntasks": 8}})
+        )
+        _build_dft_bands_workgraph(inp, {"pw": object()})
+        assert captured["parallelization"] == {"pw": {"npool": 4}, "kcw": {"ntasks": 8}}
+
+    def test_no_config_passes_none(self, aiida_profile: Any, monkeypatch: Any) -> None:
+        """With nothing configured the builder receives ``parallelization=None``."""
+        import aiida_koopmans.workgraphs.pw as pw_module
+
+        from koopmans.aiida import workflows as workflows_module
+        from koopmans.aiida.workflows import _build_dft_bands_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        captured: dict[str, Any] = {}
+        monkeypatch.setattr(
+            workflows_module, "_prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+        )
+        monkeypatch.setattr(
+            pw_module.RunPwBands, "build", staticmethod(lambda **kw: captured.update(kw))
+        )
+
+        _build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()), {"pw": object()})
+        assert captured["parallelization"] is None
+
+
+def _pw_input(
+    *,
+    pseudo_library: str = "SG15/1.2/PBE/SR",
+    parallelization: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a minimal silicon dft_bands input dict for the wiring tests."""
+    d: dict[str, Any] = {
+        "workflow": {"task": "dft_bands", "pseudo_library": pseudo_library},
+        "atoms": {
+            "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
+            "atomic_positions": {
+                "units": "crystal",
+                "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
+            },
+        },
+        "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+        "calculator_parameters": {"ecutwfc": 20.0},
+    }
+    if parallelization is not None:
+        d["parallelization"] = parallelization
+    return d

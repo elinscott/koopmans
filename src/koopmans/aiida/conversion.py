@@ -34,9 +34,43 @@ if TYPE_CHECKING:
         CellParametersViaIbrav,
         CellParametersViaVectors,
     )
+    from koopmans.input_file.parallelization import CodeParallelization
 
 # Quantum ESPRESSO's own value, so that converted quantities match QE output
 BOHR_TO_ANGSTROM: float = CONSTANTS.bohr_to_ang
+
+
+def code_parallelization(
+    config: CodeParallelization | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Translate a code's parallelization config into ``(options, settings)``.
+
+    ``ntasks`` becomes the scheduler ``metadata.options.resources``
+    (``tot_num_mpiprocs``); ``npool`` becomes ``-npool`` and ``pd`` becomes
+    ``-pd true`` on the code's ``settings.cmdline`` (npool before pd). A
+    missing field yields an empty dict for
+    that half, so callers can merge selectively.
+
+    Args:
+        config: The per-code parallelization settings, or ``None``.
+
+    Returns:
+        A ``(options, settings)`` tuple of dicts, either of which may be empty.
+    """
+    options: dict[str, Any] = {}
+    settings: dict[str, Any] = {}
+    if config is None:
+        return options, settings
+    if config.ntasks is not None:
+        options["resources"] = {"num_machines": 1, "tot_num_mpiprocs": config.ntasks}
+    cmdline: list[str] = []
+    if config.npool is not None:
+        cmdline += ["-npool", str(config.npool)]
+    if config.pd:
+        cmdline += ["-pd", "true"]
+    if cmdline:
+        settings["cmdline"] = cmdline
+    return options, settings
 
 
 def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
