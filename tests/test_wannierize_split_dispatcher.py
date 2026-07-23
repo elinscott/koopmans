@@ -183,7 +183,7 @@ class TestGraphBuild:
     def test_scf_drops_nbnd(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """The scf override must not carry nbnd (legacy parity)."""
+        """The scf override drops nbnd; only the nscf override carries it."""
         wg = _build(_si_split_dict(), split_codes)
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
         assert "nbnd" not in overrides["scf"]["pw"]["parameters"].get("SYSTEM", {})

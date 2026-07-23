@@ -348,13 +348,12 @@ def _build_wannierize_split_workgraph(
 ) -> WorkGraph:
     """Build the Wannierization workgraph with automated block splitting.
 
-    Port of the legacy automated-Wannierization route (branch
-    ``automated_wannierization_3``): a pw.x bands run along the k-path feeds
-    a runtime band-group detection (splitting at every gap wider than
-    ``block_wannierization_threshold`` eV and at the occupied/empty
-    boundary), and each projection block whose bands fall into several
-    groups is Wannierised once, split with Wannier.jl parallel transport,
-    re-Wannierised group by group and its products merged back together.
+    A pw.x bands run along the k-path feeds a runtime band-group detection
+    (splitting at every gap wider than ``block_wannierization_threshold`` eV
+    and at the occupied/empty boundary), and each projection block whose
+    bands fall into several groups is Wannierised once, split with Wannier.jl
+    parallel transport, re-Wannierised group by group and its products merged
+    back together.
 
     Current scope: explicit projections and ``spin = 'none'``.
     """
@@ -412,9 +411,9 @@ def _build_wannierize_split_workgraph(
 
     blocks = _derive_wannierize_blocks(structure, projections, nbnd)
 
-    # The scf needs only the occupied bands (legacy drops nbnd there); the
-    # nscf — and the bands run seeded from its overrides — must cover every
-    # Wannierised band.
+    # The scf needs only the occupied bands, so nbnd is dropped from its
+    # override; the nscf — and the bands run seeded from its overrides —
+    # must cover every Wannierised band.
     parameters = input_to_pw_parameters(koopmans_input)
     scf_parameters = copy.deepcopy(parameters)
     scf_parameters.get("SYSTEM", {}).pop("nbnd", None)
