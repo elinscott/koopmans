@@ -208,27 +208,16 @@ class WorkflowConfig(BaseModel):
         """Resolve the orbital-grouping criterion and tolerance.
 
         Left unset, ``group_orbitals_by`` becomes ``self_hartree`` for
-        Wannier-initialised DSCF runs — the supercell images of one primitive
+        Wannier-initialised DSCF runs — supercell images of one primitive
         orbital are physically equivalent and must share a screening
-        parameter — and ``none`` otherwise. In particular DFPT resolves to
-        ``none``: workflow-level grouping there is opt-in — grouping changes
-        which screen calculations run, so it activates only on an explicit
-        criterion — and
-        kcw.x's internal ``check_spread`` shortcut is a separate mechanism,
-        not steered by this keyword. Resolving here (rather than in the
-        dispatcher) keeps the effective values visible on the parsed input.
-        Criterion tolerances default per criterion (``self_hartree``: 1e-4
-        eV; ``spread``: 0.05 Å², so choosing the criterion suffices to turn
-        the feature on); a tolerance without a criterion, or with ``none``,
-        is an error.
-
-        The criterion and the screening method are independent choices, not
-        a pairing: these defaults reflect what each route currently
-        implements (DSCF groups by self-Hartree, DFPT by spread), but e.g.
-        spread-based grouping of a DSCF run is physically legitimate — the
-        Wannier-initialised orbitals have spreads before the supercell fold
-        — and is simply not wired up yet (the dispatcher rejects the
-        unimplemented combinations explicitly).
+        parameter — and ``none`` otherwise (grouping is opt-in elsewhere).
+        Tolerances default per criterion (``self_hartree``: 1e-4 eV;
+        ``spread``: 0.05 Å²); a tolerance combined with ``none``, or without
+        a criterion, is an error. Resolving here keeps the effective values
+        visible on the parsed input. The criterion is in principle
+        independent of the screening method — the defaults simply reflect
+        the combinations wired up today, and the dispatcher rejects the
+        rest explicitly.
         """
         if self.group_orbitals_by is None:
             wannier_init = self.init_orbitals in (
