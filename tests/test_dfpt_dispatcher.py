@@ -248,16 +248,16 @@ class TestSpinor:
 
 
 class TestOrbitalGrouping:
-    """Workflow-level grouping is DSCF-only for now; DFPT rejects it explicitly."""
+    """The spread criterion drives workflow-level grouping; self_hartree is DSCF-only."""
 
     def test_default_resolves_to_none_and_builds(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """A DFPT input parses with group_orbitals_by='none' and builds.
+        """A DFPT input parses with group_orbitals_by='none' and builds ungrouped.
 
         kcw.x's internal check_spread shortcut is a separate mechanism and
-        stays on; this keyword steers only the (unported) python-side
-        grouping with per-orbital screen calculations.
+        stays on; this keyword steers only the python-side grouping with
+        per-representative SCREEN.i_orb screen calculations.
         """
         d = _si_dfpt_dict()
         inp = KoopmansInput.model_validate(d)
@@ -265,20 +265,32 @@ class TestOrbitalGrouping:
         assert inp.workflow.group_orbitals_by.value == "none"
         wg = _build(d, dfpt_codes)
         assert "dfpt" in wg.get_task_names()
+        assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value is None
 
     def test_explicit_self_hartree_is_rejected(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """An explicit criterion must not be silently ignored on the DFPT route."""
-        with pytest.raises(NotImplementedError, match="not yet"):
+        """The DFPT route has no self-Hartree metric; the criterion must not be ignored."""
+        with pytest.raises(NotImplementedError, match="spread"):
             _build(_si_dfpt_dict(group_orbitals_by="self_hartree"), dfpt_codes)
 
-    def test_explicit_spread_is_rejected(
+    def test_spread_defaults_the_tolerance_and_threads_it(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """The spread criterion (the planned DFPT one) is also still unported."""
-        with pytest.raises(NotImplementedError, match="not yet"):
-            _build(_si_dfpt_dict(group_orbitals_by="spread"), dfpt_codes)
+        """Choosing the criterion suffices: the schema default tol reaches the chain."""
+        d = _si_dfpt_dict(group_orbitals_by="spread")
+        inp = KoopmansInput.model_validate(d)
+        assert inp.workflow.group_orbitals_tol == 0.05
+        wg = _build(d, dfpt_codes)
+        assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.05
+
+    def test_spread_honours_an_explicit_tolerance(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A user tolerance overrides the schema default."""
+        d = _si_dfpt_dict(group_orbitals_by="spread", group_orbitals_tol=0.2)
+        wg = _build(d, dfpt_codes)
+        assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.2
 
 
 class TestWannier90Overrides:

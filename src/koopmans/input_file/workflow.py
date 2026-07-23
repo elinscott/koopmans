@@ -130,11 +130,11 @@ class WorkflowConfig(BaseModel):
     )
     group_orbitals_by: GroupOrbitalsBy | None = Field(
         default=None,
-        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (not yet implemented), or "none". Left unset, resolves to "self_hartree" for Wannier-initialised runs (supercell images of one primitive orbital are physically equivalent) and "none" otherwise; the resolved value is recorded on the parsed input',
+        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Left unset, resolves to "self_hartree" for Wannier-initialised DSCF runs (supercell images of one primitive orbital are physically equivalent) and "none" otherwise; the resolved value is recorded on the parsed input',
     )
     group_orbitals_tol: float | None = Field(
         default=None,
-        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree). Left unset, takes the criterion's default (1e-4 for self_hartree)",
+        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree, Angstrom^2 for spread). Left unset, takes the criterion's default (1e-4 for self_hartree, 0.05 for spread)",
     )
     converge: bool = Field(
         default=False,
@@ -208,16 +208,16 @@ class WorkflowConfig(BaseModel):
         """Resolve the orbital-grouping criterion and tolerance.
 
         Left unset, ``group_orbitals_by`` becomes ``self_hartree`` for
-        Wannier-initialised DSCF runs — the supercell images of one primitive
+        Wannier-initialised DSCF runs — supercell images of one primitive
         orbital are physically equivalent and must share a screening
-        parameter — and ``none`` otherwise. DFPT resolves to ``none``:
-        workflow-level grouping there (python-side grouping with per-orbital
-        kcw.x screen calculations) is not yet ported, and kcw.x's internal
-        ``check_spread`` shortcut is a separate mechanism, not steered by
-        this keyword. Resolving here (rather than in the dispatcher) keeps
-        the effective values visible on the parsed input. Criterion
-        tolerances default per criterion (``self_hartree``: 1e-4 eV); a
-        tolerance without a criterion, or with ``none``, is an error.
+        parameter — and ``none`` otherwise (grouping is opt-in elsewhere).
+        Tolerances default per criterion (``self_hartree``: 1e-4 eV;
+        ``spread``: 0.05 Å²); a tolerance combined with ``none``, or without
+        a criterion, is an error. Resolving here keeps the effective values
+        visible on the parsed input. The criterion is in principle
+        independent of the screening method — the defaults simply reflect
+        the combinations wired up today, and the dispatcher rejects the
+        rest explicitly.
         """
         if self.group_orbitals_by is None:
             wannier_init = self.init_orbitals in (
@@ -232,7 +232,10 @@ class WorkflowConfig(BaseModel):
             if self.group_orbitals_tol is not None:
                 raise ValueError("group_orbitals_tol requires group_orbitals_by != 'none'")
         elif self.group_orbitals_tol is None:
-            default_tol = {GroupOrbitalsBy.SELF_HARTREE: 1.0e-4}.get(self.group_orbitals_by)
+            default_tol = {
+                GroupOrbitalsBy.SELF_HARTREE: 1.0e-4,
+                GroupOrbitalsBy.SPREAD: 0.05,
+            }.get(self.group_orbitals_by)
             # Assigning ``None`` back would re-trigger this validator forever
             # (validate_assignment), so criteria without a default keep None.
             if default_tol is not None:

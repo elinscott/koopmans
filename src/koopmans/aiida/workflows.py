@@ -535,7 +535,7 @@ def _build_singlepoint_dfpt_workgraph(
 
     workflow = koopmans_input.workflow
 
-    _reject_dfpt_orbital_grouping(workflow)
+    group_orbitals_tol = _dfpt_grouping_tol(workflow)
     if workflow.correction != Correction.KI:
         raise NotImplementedError(
             "The DFPT route (kcw.x) only implements the KI correction; "
@@ -630,28 +630,27 @@ def _build_singlepoint_dfpt_workgraph(
         l_vcut=workflow.gb_correction,
         spin=spin,
         manifolds=manifolds,
+        group_orbitals_tol=group_orbitals_tol,
     )
 
 
-def _reject_dfpt_orbital_grouping(workflow: WorkflowConfig) -> None:
-    """Raise on an explicit orbital-grouping request on the DFPT route.
+def _dfpt_grouping_tol(workflow: WorkflowConfig) -> float | None:
+    """Resolve the workflow-level orbital-grouping tolerance for the DFPT route.
 
-    Workflow-level orbital grouping on the DFPT route — python-side grouping
-    (legacy groups by the wannier90 spreads) followed by one per-orbital
-    ``SCREEN.i_orb`` kcw.x screen calculation per group — is not ported yet,
-    so an explicit criterion must not be silently ignored. This is distinct
-    from kcw.x's *internal* ``check_spread`` self-Hartree grouping, which is
-    a single-calculation shortcut that stays on regardless (legacy parity).
+    Returns the tolerance for ``'spread'`` (grouping on), ``None`` for
+    ``'none'`` / unset (no workflow-level grouping), and raises for
+    ``'self_hartree'``, which the DFPT route has no metric for.
     """
     criterion = workflow.group_orbitals_by
-    if criterion is not None and criterion != GroupOrbitalsBy.NONE:
-        raise NotImplementedError(
-            f"group_orbitals_by={criterion.value!r} is not yet "
-            "implemented for DFPT screening: python-side orbital grouping with "
-            "per-orbital kcw.x screen calculations is still to be ported. Remove "
-            "the keyword (kcw.x still avoids re-solving self-Hartree-equivalent "
-            "orbitals internally via check_spread)."
-        )
+    if criterion is None or criterion == GroupOrbitalsBy.NONE:
+        return None
+    if criterion == GroupOrbitalsBy.SPREAD:
+        return workflow.group_orbitals_tol
+    raise NotImplementedError(
+        f"group_orbitals_by={criterion.value!r} is not implemented for DFPT "
+        "screening: the DFPT route clusters orbitals by their wannier90 spread. "
+        "Use group_orbitals_by = 'spread' (or 'none')."
+    )
 
 
 def _validated_eps_inf(eps_inf: float | str | None) -> float | str | None:
