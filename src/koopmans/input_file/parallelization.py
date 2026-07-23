@@ -13,22 +13,14 @@ from __future__ import annotations
 
 from typing import Any, Self, cast
 
-from aiida_koopmans.types import ParallelizationDict
+from aiida_koopmans.types import CODE_NAMES, ParallelizationDict
 from pydantic import Field, model_validator
 
 from koopmans.base import BaseModel
 
-# Every code the parallelization block recognises.
-ALL_CODES: tuple[str, ...] = (
-    "pw",
-    "kcp",
-    "kcw",
-    "ph",
-    "projwfc",
-    "pw2wannier90",
-    "wann2kcp",
-    "wannier90",
-)
+# Every code the parallelization block recognises. Sourced from the single
+# ``aiida_koopmans.types`` vocabulary (``CodeName``) rather than duplicated here.
+ALL_CODES: tuple[str, ...] = CODE_NAMES
 
 # Codes that accept ``-npool`` (k-point pools) and ``-pd`` (pencil
 # decomposition) on their command line. Source-verified against Quantum
