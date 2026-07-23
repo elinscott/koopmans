@@ -220,6 +220,14 @@ class WorkflowConfig(BaseModel):
         eV; ``spread``: 0.05 Å², so choosing the criterion suffices to turn
         the feature on); a tolerance without a criterion, or with ``none``,
         is an error.
+
+        The criterion and the screening method are independent choices, not
+        a pairing: these defaults reflect what each route currently
+        implements (DSCF groups by self-Hartree, DFPT by spread), but e.g.
+        spread-based grouping of a DSCF run is physically legitimate — the
+        Wannier-initialised orbitals have spreads before the supercell fold
+        — and is simply not wired up yet (the dispatcher rejects the
+        unimplemented combinations explicitly).
         """
         if self.group_orbitals_by is None:
             wannier_init = self.init_orbitals in (
