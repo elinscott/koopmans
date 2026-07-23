@@ -130,7 +130,7 @@ class WorkflowConfig(BaseModel):
     )
     group_orbitals_by: GroupOrbitalsBy | None = Field(
         default=None,
-        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV; the DSCF criterion), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2; the DFPT criterion), or "none". Left unset, resolves to "self_hartree" for Wannier-initialised DSCF runs (supercell images of one primitive orbital are physically equivalent) and "none" otherwise; the resolved value is recorded on the parsed input',
+        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Left unset, resolves to "self_hartree" for Wannier-initialised DSCF runs (supercell images of one primitive orbital are physically equivalent) and "none" otherwise; the resolved value is recorded on the parsed input',
     )
     group_orbitals_tol: float | None = Field(
         default=None,
@@ -211,8 +211,9 @@ class WorkflowConfig(BaseModel):
         Wannier-initialised DSCF runs — the supercell images of one primitive
         orbital are physically equivalent and must share a screening
         parameter — and ``none`` otherwise. In particular DFPT resolves to
-        ``none``: workflow-level grouping there is opt-in (legacy parity —
-        legacy only grouped when ``orbital_groups_spread_tol`` was set), and
+        ``none``: workflow-level grouping there is opt-in — grouping changes
+        which screen calculations run, so it activates only on an explicit
+        criterion — and
         kcw.x's internal ``check_spread`` shortcut is a separate mechanism,
         not steered by this keyword. Resolving here (rather than in the
         dispatcher) keeps the effective values visible on the parsed input.

@@ -640,15 +640,15 @@ def _build_singlepoint_dfpt_workgraph(
 def _dfpt_grouping_tol(workflow: WorkflowConfig) -> float | None:
     """Resolve the workflow-level orbital-grouping tolerance for the DFPT route.
 
-    ``group_orbitals_by='spread'`` (the legacy DFPT criterion) turns on
+    ``group_orbitals_by='spread'`` turns on
     python-side grouping: the Wannier functions are clustered by their
     wannier90 spread within ``group_orbitals_tol`` (Å²; the schema defaults
     it when the criterion is chosen) and one ``SCREEN.i_orb`` kcw.x screen
     calculation runs per group representative. ``'none'`` / unset means no
     workflow-level grouping (one screen calculation solves all orbitals).
     This is distinct from kcw.x's *internal* ``check_spread`` self-Hartree
-    grouping, a single-calculation shortcut that stays on regardless
-    (legacy parity).
+    grouping, a single-calculation shortcut that stays on regardless of
+    this keyword.
 
     ``'self_hartree'`` raises: the DFPT route has no self-Hartree metric to
     cluster on (that criterion belongs to the DSCF route's trial-KI step).
