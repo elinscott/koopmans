@@ -1198,6 +1198,12 @@ raw:
                   extras:
                     py_type: aiida.orm.nodes.data.singlefile.SinglefileData
                   required: true
+              output_parameters:
+                dynamic: false
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  required: true
               remote_folder:
                 dynamic: false
                 identifier: <scrubbed:identifier>
@@ -2280,6 +2286,12 @@ raw:
                       child_default_link_limit: 1
                       extras:
                         py_type: aiida.orm.nodes.data.singlefile.SinglefileData
+                      required: true
+                  output_parameters:
+                    dynamic: false
+                    identifier: <scrubbed:identifier>
+                    meta:
+                      child_default_link_limit: 1
                       required: true
                   remote_folder:
                     dynamic: false

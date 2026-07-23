@@ -79,7 +79,7 @@ class TestUnpolarized:
         """One kcw chain, no per-channel task suffixes."""
         wg = _build(_si_dfpt_dict(), dfpt_codes)
         names = wg.get_task_names()
-        assert "wannierize_occ" in names
+        assert "wannierize" in names
         assert "dfpt" in names
         assert "dfpt_up" not in names
         assert "dfpt_down" not in names
@@ -103,7 +103,7 @@ class TestCollinear:
         wg = _build(self._collinear_dict(), dfpt_codes)
         names = wg.get_task_names()
         assert names.count("scf_nscf") == 1
-        for expected in ("wannierize_occ_up", "dfpt_up", "wannierize_occ_down", "dfpt_down"):
+        for expected in ("wannierize_up", "dfpt_up", "wannierize_down", "dfpt_down"):
             assert expected in names, names
 
         # The magnetization reaches the PW SYSTEM namelist alongside the
@@ -204,11 +204,7 @@ class TestMultiBlockZnO:
         wg = _build(self._zno_dict(), dfpt_codes)
         names = wg.get_task_names()
         for expected in (
-            "wannierize_occ_1",
-            "wannierize_occ_2",
-            "wannierize_occ_3",
-            "wannierize_occ_4",
-            "wannierize_emp",
+            "wannierize",
             "dfpt",
         ):
             assert expected in names, names
@@ -236,7 +232,7 @@ class TestSpinor:
         # functions, matching nocc = nelec = 8.
         wg = _build(_si_dfpt_dict(spin=spin_value), dfpt_codes)
         names = wg.get_task_names()
-        assert "wannierize_occ" in names
+        assert "wannierize" in names
         assert "dfpt" in names
         assert "dfpt_down" not in names
 
@@ -309,7 +305,7 @@ class TestWannier90Overrides:
         d = _si_dfpt_dict()
         d["calculator_parameters"]["wannier90"]["num_iter"] = 17
         wg = _build(d, dfpt_codes)
-        w90_overrides = wg.tasks["wannierize_occ"].inputs["overrides"]["wannier90"].value
+        w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides["num_iter"] == 17
 
     def test_no_keywords_omits_user_override(
@@ -321,5 +317,5 @@ class TestWannier90Overrides:
         task never sees ``num_iter = 17``.
         """
         wg = _build(_si_dfpt_dict(), dfpt_codes)
-        w90_overrides = wg.tasks["wannierize_occ"].inputs["overrides"]["wannier90"].value
+        w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides.get("num_iter") != 17
