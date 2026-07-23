@@ -785,8 +785,12 @@ def _build_trajectory_workgraph(
 
     - ``ml:predict`` needs per-orbital alpha injection, which the frozen
       ``KoopmansDSCFWorkflow`` interface does not support.
-    - Only the ``self_hartree`` descriptor is wired; ``orbital_density``
-      needs kcp.x orbital-density retrieval.
+    - Only the ``self_hartree`` descriptor is exposed; the
+      ``orbital_density`` power-spectrum descriptor has its full
+      pw2wannier90 ``decompose`` route built and unit-tested in
+      ``aiida-koopmans`` (``OrbitalDensityDatasetWorkflow``), but stays
+      gated pending a live daemon regression that confirms the per-block
+      Wannier-function-to-alpha ordering against the legacy reference.
     - Multi-snapshot (xyz trajectory) input is not representable in the
       ``KoopmansInput`` schema yet, so the single input structure is run as
       a one-snapshot trajectory.
@@ -824,10 +828,15 @@ def _build_trajectory_workgraph(
         )
     if (ml_config.train or ml_config.test) and ml_config.descriptor != "self_hartree":
         raise NotImplementedError(
-            f"ml:descriptor={ml_config.descriptor!r} is not yet supported: the "
-            "orbital_density (power-spectrum) descriptor requires retrieving the "
-            "trial KI's real-space orbital densities from kcp.x. Use "
-            "ml:descriptor='self_hartree'."
+            f"ml:descriptor={ml_config.descriptor!r} is implemented but gated "
+            "pending live alignment validation. The full pw2wannier90 "
+            "wan_mode='decompose' route is built and unit-tested "
+            "(aiida_koopmans.workgraphs.ml.OrbitalDensityDatasetWorkflow, fed by "
+            "the nscf scratch and per-block wannierizations now on "
+            "KoopmansDSCFOutputs); the decompose math is reproduced to machine "
+            "precision, but the per-block Wannier-function-to-alpha ordering "
+            "awaits a live daemon regression against the legacy reference before "
+            "the descriptor is exposed. Use ml:descriptor='self_hartree'."
         )
     ml_mode = "train" if ml_config.train else "test" if ml_config.test else "none"
 
