@@ -86,6 +86,18 @@ Invoked via `/<name>`:
 - Regression tests live in `tests/regression/` and each consumes a tutorial JSON from `../koopmans/tutorials/` to stay in sync with the legacy reference.
 - Don't mock AiiDA. Use a throwaway profile.
 
+## Code standards
+
+1. **No "legacy" in production code.** Comments and docstrings state constraints and behaviour, never provenance ("ported from", "legacy parity"). Commit messages and PR bodies may reference legacy freely.
+2. **Thread parsed outputs; never re-parse files.** If an upstream parser emits the value (e.g. wannier90 `output_parameters`), expose/thread that socket — even when it means widening an interface. Raw-file access is reserved for data no parser provides (e.g. the u/hr/centres merge inputs).
+3. **No duplication.** Before writing any helper, search `variational_orbitals.py`, `projections.py`, `occupations.py`, `wannier_merge.py`, `ml_helpers.py`, `types.py` (ak2) and `conversion.py` (k2); extend in place. New modules only for genuinely new orchestration.
+4. **Structural authority over conventions.** Band order, manifold membership, block identity travel as explicit lists/fields from the caller — never derived from label prefixes or key-name conventions.
+5. **Consistent naming families.** New symbols join their module's family (`KcwScreenStep` → `GroupedKcwScreening`, not `GroupedDFPTScreening`). Short user-facing keywords (`spin`, not `spin_treatment`).
+6. **Docs decouple orthogonal choices.** Never present a default pairing (e.g. grouping criterion ↔ screening method) as an equivalence; say once that defaults reflect what is wired up, and let the dispatcher reject the rest explicitly.
+7. **Explicit failure over silent ignore.** An input that cannot take effect raises `NotImplementedError`/`ValueError` naming the gap — no keyword is silently dropped.
+8. **Adversarial pass before merge.** Every PR gets a reviewer-agent pass; load-bearing claims (mechanisms, parity, orderings) get skeptic verification or are graded honestly (reproduced / code-read / theory) in the PR body. Claims graded below reproduced are phrased as such.
+9. **Squash-merge messages in 50/72** (subject ≤50 chars including the `(#N)`, body wrapped at 72), symptom-not-mechanism, enumerations as bullet lists.
+
 ## Current status (update as work progresses)
 
 - Input file parsing (`input_file/`): ~95% ported.
@@ -93,8 +105,9 @@ Invoked via `/<name>`:
 - Spin: `workflow.spin` takes aiida-quantumespresso's `SpinType` (`none`/`collinear`/`non_collinear`/`spin_orbit`). DFPT supports all four regimes (collinear fans out per channel; noncollinear runs the spinor chain — QE reference `KCW/examples/example05.1`); the kcp.x streams support `none`/`collinear` only.
 - Periodic DSCF (mlwfs/projwfs): wannierize → fold-to-supercell (wann2kcp.x + merge_evc.x) → Wannier-seeded kcp.x init; supercell-image orbital grouping approximated via the defaulted `group_orbitals_by='self_hartree'` / `group_orbitals_tol=1e-4` (constructive grouping not ported). Fold path has construction-level tests only — needs a live QE smoke test.
 - Multi-block DFPT manifolds: supported end-to-end (per-block wannierize → block-diagonal u/hr merge, concatenated centres, identity-extended u_dis → kcw.x). Live-validated on the ZnO tutorial vs legacy: KS bands ≤0.3 meV, KI occupied ≤3 meV. KI **empty** bands scatter up to ~0.6 eV between codes — genuine MLWF multi-minima for the 2-WF disentangled manifold, gauge-dependence question for the koopmans team (issue to be opened), not a merge bug.
-- Orbital grouping: `group_orbitals_by`/`group_orbitals_tol` (DSCF-only). On DFPT the keyword is reserved for the unported python-side spread grouping + per-orbital `SCREEN.i_orb` fan-out (explicit criterion raises); kcw.x's internal `check_spread` shortcut is a separate mechanism, exposed as an ak2 graph input, on by default.
+- Orbital grouping: `group_orbitals_by`/`group_orbitals_tol`. DSCF groups by self-Hartree (kcp.x metric); DFPT groups by wannier90 spread with a per-representative `SCREEN.i_orb` fan-out + alpha broadcast. Criteria and methods are independent in principle; unwired combinations raise. kcw.x's internal `check_spread` shortcut is separate (ak2 graph input, on by default).
 - Explicit k-paths resolve against the cell's own Bravais lattice (ASE vocabulary, position-insensitive); seekpath only serves automatic paths.
 - aiida-core: builds from `../aiida-core` at current upstream main (post-v2.8, includes the workgraph-dump MRO fix); aiida-shell rides its git master via `[tool.uv.sources]` until a post-`Code.Model` release exists. CI/RTD clone pin: `4c81e9d6`. NOTE: `uv run --project` re-syncs the venv whenever `../aiida-core` changes — keep that checkout where the CI pin points.
-- Known gaps (raise `NotImplementedError` with pointers in `aiida/workflows.py`): corrections `PKIPZ`/`NONE`/`ALL`; `init_orbitals='pz'`; `fix_spin_contamination`; gamma-only/molecular DFPT; `eps_inf='auto'` for DSCF (wired for DFPT); `ml:predict`; `orbital_density` descriptor (planned via wannier90 `feature/decompose`); multi-snapshot trajectory input; DFPT workflow-level orbital grouping (i_orb fan-out); UI inside singlepoints (occ/emp × spin fan-out + smooth-wannierization); `convergence` task; `npool` (parses, unwired).
+- ML descriptors: `self_hartree` wired; `orbital_density` fully built on pw2wannier90 `wan_mode='decompose'` (new ak2 CalcJob+parser, legacy-comparable cross-power, decompose math reproduced to machine precision on live Si) but **gated** pending a live per-block WF-to-alpha alignment regression; flipping the guard is one line.
+- Known gaps (raise `NotImplementedError` with pointers in `aiida/workflows.py`): corrections `PKIPZ`/`NONE`/`ALL`; `init_orbitals='pz'`; `fix_spin_contamination`; gamma-only/molecular DFPT; `eps_inf='auto'` for DSCF (wired for DFPT); `ml:predict`; multi-snapshot trajectory input; UI inside singlepoints; `convergence` task; parallelization entries for non-pw codes (schema accepts, dispatcher raises).
 - Branch state: everything above is merged to `main` in both repos; no open PRs. PR-per-change flow via the `pr` remotes (elinscott forks); merges are the user's.
