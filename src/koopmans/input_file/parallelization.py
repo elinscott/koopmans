@@ -30,12 +30,14 @@ ALL_CODES: tuple[str, ...] = (
 )
 
 # Codes that accept ``-npool`` (k-point pools) and ``-pd`` (pencil
-# decomposition) on their command line. Ground truth is the legacy
-# ``koopmans.commands`` per-executable config classes. ``kcw`` accepts pools
-# for its wann2kc / screen steps but not its ham step — a per-step distinction
-# the workgraph makes; at the schema level ``kcw`` counts as pool-supporting.
-POOL_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "projwfc", "kcw"})
-PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "pw2wannier90", "projwfc", "kcw"})
+# decomposition) on their command line. Source-verified against Quantum
+# ESPRESSO (``Modules/command_line_options.f90`` parses both flags globally for
+# the modern binaries; the koopmans-kcp fork behind kcp.x / wann2kcp.x reads no
+# CLI flags, and wannier90 has no pool/pd concept). ``kcw`` accepts pools for
+# its wann2kc / screen steps but not its ham step — a per-step distinction the
+# workgraph makes; at the schema level ``kcw`` counts as pool-supporting.
+POOL_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
+PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
 
 
 class CodeParallelization(BaseModel):
@@ -52,12 +54,12 @@ class CodeParallelization(BaseModel):
         ge=1,
         description="number of k-point pools to distribute the calculation over "
         "(becomes ``-npool`` on the command line; should be commensurate with the "
-        "k-point grid). Only valid for pw, projwfc, and kcw.",
+        "k-point grid). Only valid for pw, ph, projwfc, pw2wannier90, and kcw.",
     )
     pd: bool | None = Field(
         default=None,
         description="use pencil decomposition of the FFT grid (becomes ``-pd true`` on "
-        "the command line). Only valid for pw, pw2wannier90, projwfc, and kcw.",
+        "the command line). Only valid for pw, ph, projwfc, pw2wannier90, and kcw.",
     )
 
 

@@ -156,30 +156,31 @@ class TestParallelizationSchema:
         assert inp.parallelization.pw is None
         assert inp.parallelization.as_mapping() == {}
 
-    @pytest.mark.parametrize("code", ["kcp", "ph", "pw2wannier90", "wann2kcp", "wannier90"])
+    @pytest.mark.parametrize("code", ["kcp", "wann2kcp", "wannier90"])
     def test_npool_rejected_for_non_pool_codes(self, code: str) -> None:
-        """Only pw, projwfc, and kcw parallelize over k-point pools."""
+        """Only pw, ph, projwfc, pw2wannier90, and kcw parallelize over k-point pools."""
         with pytest.raises(ValueError, match=r"'npool' is not valid"):
             KoopmansInput.model_validate(
                 _parallelization_input(parallelization={code: {"npool": 2}})
             )
 
-    @pytest.mark.parametrize("code", ["kcp", "ph", "wann2kcp", "wannier90"])
+    @pytest.mark.parametrize("code", ["kcp", "wann2kcp", "wannier90"])
     def test_pd_rejected_for_non_pd_codes(self, code: str) -> None:
-        """Only pw, pw2wannier90, projwfc, and kcw support pencil decomposition."""
+        """Only pw, ph, projwfc, pw2wannier90, and kcw support pencil decomposition."""
         with pytest.raises(ValueError, match=r"'pd' \(pencil decomposition\) is not valid"):
             KoopmansInput.model_validate(
                 _parallelization_input(parallelization={code: {"pd": True}})
             )
 
-    def test_pd_allowed_for_pw2wannier90(self) -> None:
-        """pw2wannier90 supports pd but not npool."""
+    @pytest.mark.parametrize("code", ["ph", "pw2wannier90"])
+    def test_npool_and_pd_allowed_for_ph_and_pw2wannier90(self, code: str) -> None:
+        """The ph and pw2wannier90 codes accept both flags (verified against QE source)."""
         inp = KoopmansInput.model_validate(
-            _parallelization_input(parallelization={"pw2wannier90": {"ntasks": 2, "pd": True}})
+            _parallelization_input(parallelization={code: {"npool": 2, "pd": True}})
         )
-        pw2w = inp.parallelization.pw2wannier90
-        assert pw2w is not None
-        assert (pw2w.pd, pw2w.ntasks) == (True, 2)
+        cfg = getattr(inp.parallelization, code)
+        assert cfg is not None
+        assert (cfg.npool, cfg.pd) == (2, True)
 
     def test_ntasks_allowed_for_any_code(self) -> None:
         """The ntasks (MPI ranks) field is universal — even wannier90 accepts it."""
