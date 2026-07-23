@@ -91,10 +91,6 @@ class WorkflowConfig(BaseModel):
         default=False,
         description="if True, steps will be taken to try and avoid spin contamination. This is only sensible when performing a non-spin-polarized calculation, and is turned on by default for such calculations",
     )
-    npool: int | None = Field(
-        default=None,
-        description="Number of pools for parallelizing over kpoints (should be commensurate with the k-point grid)",
-    )
     gb_correction: bool | None = Field(
         default=None,
         description="if True, apply the Gygi-Baldereschi scheme to deal with the q->0 divergence of the Coulomb interation for periodic systems",
