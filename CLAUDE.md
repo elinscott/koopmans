@@ -99,7 +99,8 @@ Invoked via `/<name>`:
 9. **PR descriptions are short.** A summary line, a bulleted change list, a validation/testing section — nothing else. No implementation narratives, no session-local details (database PKs, scratch paths, agent names); those live in the conversation, not the record.
 10. **Squash-merge messages in 50/72** (subject ≤50 chars including the `(#N)`, body wrapped at 72), symptom-not-mechanism, enumerations as bullet lists.
 11. **US spelling in prose** (Wannierize, initialize, normalize, behavior). Exempt: upstream keyword and file names keep their canonical form (`guiding_centres`, `*_centres.xyz` are wannier90's own spelling).
-12. **`OMP_NUM_THREADS=1` on every QE code.** The GNU builds link threaded OpenBLAS; under mpirun each rank spawns its own BLAS threads and oversubscribes the hq allocation. Neither repo sets it yet — until the code-registration fix lands, export it in the codes' `prepend_text`.
+12. **Graph-layout changes need a cross-repo CI pairing.** k2's CI clones the same-named aiida-koopmans branch; an ak2-only PR that changes task names, sockets, or graph shapes must push a same-named k2 branch (even if empty of changes) so the pairing actually runs — otherwise k2 main goes silently red at the ak2 merge.
+13. **`OMP_NUM_THREADS=1` on every QE code.** The GNU builds link threaded OpenBLAS; under mpirun each rank spawns its own BLAS threads and oversubscribes the hq allocation. Neither repo sets it yet — until the code-registration fix lands, export it in the codes' `prepend_text`.
 
 ## Current status (update as work progresses)
 
