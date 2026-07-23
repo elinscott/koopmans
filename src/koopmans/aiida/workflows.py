@@ -15,6 +15,7 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
+    code_parallelization,
     input_to_pw_parameters,
 )
 from koopmans.input_file.workflow import (
@@ -129,12 +130,24 @@ def _prepare_common_inputs(
 
     ensure_pseudo_family_installed(pseudo_family)
 
+    pw_overrides: dict[str, Any] = {"parameters": parameters}
+    # The pw entry carries the pw.x parallelization directive: -npool rides
+    # settings.cmdline; ntasks rides metadata.options.resources — both survive
+    # get_builder_from_protocol's override merge (verified by eager build).
+    # Seeding the shared scf/nscf/bands overrides here covers the primary pw.x
+    # steps; the full per-code mapping is threaded to every graph builder too,
+    # so pw.x steps assembled inside the graphs (e.g. the dielectric scf) pick
+    # up the same directive.
+    options, settings = code_parallelization(koopmans_input.parallelization.pw)
+    if settings:
+        pw_overrides["settings"] = settings
+    if options:
+        pw_overrides["metadata"] = {"options": options}
+
     overrides: dict[str, Any] = {
         key: {
             "pseudo_family": pseudo_family,
-            "pw": {
-                "parameters": parameters,
-            },
+            "pw": dict(pw_overrides),
         }
         for key in override_keys
     }
@@ -199,6 +212,7 @@ def _build_dft_bands_workgraph(
         code=codes["pw"],
         structure=structure,
         overrides=overrides,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
     )
 
 
@@ -232,6 +246,7 @@ def _build_dft_eps_workgraph(
         structure=structure,
         pseudo_family=pseudo_family,
         overrides=overrides,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
     )
 
 
@@ -270,6 +285,7 @@ def _build_wannierize_workgraph(
         overrides=overrides,
         pseudo_family=pseudo_family,
         print_summary=False,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
         **extra_kwargs,
     )
 
@@ -486,6 +502,7 @@ def _build_singlepoint_workgraph(
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
         structure=structure,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
         **inputs,
         **extra_kwargs,
     )
@@ -709,7 +726,7 @@ def _build_singlepoint_dfpt_workgraph(
 
     workflow = koopmans_input.workflow
 
-    _reject_dfpt_orbital_grouping(workflow)
+    group_orbitals_tol = _dfpt_grouping_tol(workflow)
     if workflow.correction != Correction.KI:
         raise NotImplementedError(
             "The DFPT route (kcw.x) only implements the KI correction; "
@@ -804,28 +821,28 @@ def _build_singlepoint_dfpt_workgraph(
         l_vcut=workflow.gb_correction,
         spin=spin,
         manifolds=manifolds,
+        group_orbitals_tol=group_orbitals_tol,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
     )
 
 
-def _reject_dfpt_orbital_grouping(workflow: WorkflowConfig) -> None:
-    """Raise on an explicit orbital-grouping request on the DFPT route.
+def _dfpt_grouping_tol(workflow: WorkflowConfig) -> float | None:
+    """Resolve the workflow-level orbital-grouping tolerance for the DFPT route.
 
-    Workflow-level orbital grouping on the DFPT route — python-side grouping
-    (legacy groups by the wannier90 spreads) followed by one per-orbital
-    ``SCREEN.i_orb`` kcw.x screen calculation per group — is not ported yet,
-    so an explicit criterion must not be silently ignored. This is distinct
-    from kcw.x's *internal* ``check_spread`` self-Hartree grouping, which is
-    a single-calculation shortcut that stays on regardless (legacy parity).
+    Returns the tolerance for ``'spread'`` (grouping on), ``None`` for
+    ``'none'`` / unset (no workflow-level grouping), and raises for
+    ``'self_hartree'``, which the DFPT route has no metric for.
     """
     criterion = workflow.group_orbitals_by
-    if criterion is not None and criterion != GroupOrbitalsBy.NONE:
-        raise NotImplementedError(
-            f"group_orbitals_by={criterion.value!r} is not yet "
-            "implemented for DFPT screening: python-side orbital grouping with "
-            "per-orbital kcw.x screen calculations is still to be ported. Remove "
-            "the keyword (kcw.x still avoids re-solving self-Hartree-equivalent "
-            "orbitals internally via check_spread)."
-        )
+    if criterion is None or criterion == GroupOrbitalsBy.NONE:
+        return None
+    if criterion == GroupOrbitalsBy.SPREAD:
+        return workflow.group_orbitals_tol
+    raise NotImplementedError(
+        f"group_orbitals_by={criterion.value!r} is not implemented for DFPT "
+        "screening: the DFPT route clusters orbitals by their wannier90 spread. "
+        "Use group_orbitals_by = 'spread' (or 'none')."
+    )
 
 
 def _validated_eps_inf(eps_inf: float | str | None) -> float | str | None:
@@ -960,8 +977,12 @@ def _build_trajectory_workgraph(
 
     - ``ml:predict`` needs per-orbital alpha injection, which the frozen
       ``KoopmansDSCFWorkflow`` interface does not support.
-    - Only the ``self_hartree`` descriptor is wired; ``orbital_density``
-      needs kcp.x orbital-density retrieval.
+    - Only the ``self_hartree`` descriptor is exposed; the
+      ``orbital_density`` power-spectrum descriptor has its full
+      pw2wannier90 ``decompose`` route built and unit-tested in
+      ``aiida-koopmans`` (``OrbitalDensityDatasetWorkflow``), but stays
+      gated pending a live daemon regression that confirms the per-block
+      Wannier-function-to-alpha ordering against the legacy reference.
     - Multi-snapshot (xyz trajectory) input is not representable in the
       ``KoopmansInput`` schema yet, so the single input structure is run as
       a one-snapshot trajectory.
@@ -999,10 +1020,15 @@ def _build_trajectory_workgraph(
         )
     if (ml_config.train or ml_config.test) and ml_config.descriptor != "self_hartree":
         raise NotImplementedError(
-            f"ml:descriptor={ml_config.descriptor!r} is not yet supported: the "
-            "orbital_density (power-spectrum) descriptor requires retrieving the "
-            "trial KI's real-space orbital densities from kcp.x. Use "
-            "ml:descriptor='self_hartree'."
+            f"ml:descriptor={ml_config.descriptor!r} is implemented but gated "
+            "pending live alignment validation. The full pw2wannier90 "
+            "wan_mode='decompose' route is built and unit-tested "
+            "(aiida_koopmans.workgraphs.ml.OrbitalDensityDatasetWorkflow, fed by "
+            "the nscf scratch and per-block wannierizations now on "
+            "KoopmansDSCFOutputs); the decompose math is reproduced to machine "
+            "precision, but the per-block Wannier-function-to-alpha ordering "
+            "awaits a live daemon regression against the legacy reference before "
+            "the descriptor is exposed. Use ml:descriptor='self_hartree'."
         )
     ml_mode = "train" if ml_config.train else "test" if ml_config.test else "none"
 
@@ -1025,6 +1051,7 @@ def _build_trajectory_workgraph(
     return TrajectoryWorkflow.build(
         code=codes["kcp"],
         snapshots=snapshots,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
         **_kcp_dscf_inputs(koopmans_input),
         ml_mode=ml_mode,
         ml_model=ml_model,

@@ -893,13 +893,6 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
-        options:
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            required: false
         orbital_groups_self_hartree_tol:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1209,6 +1202,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        parallelization:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         pseudo_family:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1312,6 +1312,49 @@ raw:
             extras:
               py_type: numpy.ndarray
             required: true
+        block_wannierizations:
+          dynamic: true
+          identifier: <scrubbed:identifier>
+          item:
+            dynamic: false
+            fields:
+              hr_retrieved:
+                dynamic: false
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  extras:
+                    py_type: aiida.orm.nodes.data.folder.FolderData
+                  required: true
+              nnkp_file:
+                dynamic: false
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  extras:
+                    py_type: aiida.orm.nodes.data.singlefile.SinglefileData
+                  required: true
+              output_parameters:
+                dynamic: false
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  required: true
+              remote_folder:
+                dynamic: false
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  extras:
+                    py_type: aiida.orm.nodes.data.remote.base.RemoteData
+                  required: true
+            identifier: <scrubbed:identifier>
+            meta:
+              child_default_link_limit: 1
+              required: true
+          meta:
+            child_default_link_limit: 1
+            required: false
         eigenvalues:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1328,6 +1371,14 @@ raw:
             extras:
               py_type: numpy.ndarray
             required: true
+        nscf_remote_folder:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.remote.base.RemoteData
+            required: false
         parameters:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -2053,13 +2104,6 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
-            options:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                required: false
             orbital_groups_self_hartree_tol:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2369,6 +2413,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
+            parallelization:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             pseudo_family:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2503,6 +2554,49 @@ raw:
                 extras:
                   py_type: numpy.ndarray
                 required: true
+            block_wannierizations:
+              dynamic: true
+              identifier: <scrubbed:identifier>
+              item:
+                dynamic: false
+                fields:
+                  hr_retrieved:
+                    dynamic: false
+                    identifier: <scrubbed:identifier>
+                    meta:
+                      child_default_link_limit: 1
+                      extras:
+                        py_type: aiida.orm.nodes.data.folder.FolderData
+                      required: true
+                  nnkp_file:
+                    dynamic: false
+                    identifier: <scrubbed:identifier>
+                    meta:
+                      child_default_link_limit: 1
+                      extras:
+                        py_type: aiida.orm.nodes.data.singlefile.SinglefileData
+                      required: true
+                  output_parameters:
+                    dynamic: false
+                    identifier: <scrubbed:identifier>
+                    meta:
+                      child_default_link_limit: 1
+                      required: true
+                  remote_folder:
+                    dynamic: false
+                    identifier: <scrubbed:identifier>
+                    meta:
+                      child_default_link_limit: 1
+                      extras:
+                        py_type: aiida.orm.nodes.data.remote.base.RemoteData
+                      required: true
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  required: true
+              meta:
+                child_default_link_limit: 1
+                required: false
             eigenvalues:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2519,6 +2613,14 @@ raw:
                 extras:
                   py_type: numpy.ndarray
                 required: true
+            nscf_remote_folder:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.remote.base.RemoteData
+                required: false
             parameters:
               dynamic: false
               identifier: <scrubbed:identifier>

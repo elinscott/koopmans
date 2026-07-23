@@ -70,38 +70,6 @@ def dfpt_codes(
     }
 
 
-@pytest.fixture
-def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
-    """Install a minimal fake ``PseudoDojo/0.4/LDA/SR/standard/upf`` family.
-
-    Zn (z=20) and O (z=6) synthetic UPF streams — enough for the dispatcher's
-    electron counting, not physically meaningful pseudos. Local so the ZnO
-    test does not fight over the shared fixtures module.
-    """
-    import io
-
-    from aiida.common.exceptions import NotExistent
-    from aiida_pseudo.data.pseudo.upf import UpfData
-    from aiida_pseudo.groups.family import PseudoPotentialFamily
-
-    label = "PseudoDojo/0.4/LDA/SR/standard/upf"
-    try:
-        return PseudoPotentialFamily.collection.get(label=label)
-    except NotExistent:
-        pass
-
-    family = PseudoPotentialFamily(label=label, description="fake PseudoDojo family for tests")
-    family.store()
-    for element, z_valence in (("Zn", 20.0), ("O", 6.0)):
-        content = (
-            f'<UPF version="2.0.1"><PP_HEADER\nelement="{element}"\n'
-            f'z_valence="{z_valence}"\n/></UPF>\n'
-        )
-        upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
-        family.add_nodes([upf.store()])
-    return family
-
-
 class TestUnpolarized:
     """spin='none' builds the closed-shell single chain."""
 
@@ -111,7 +79,7 @@ class TestUnpolarized:
         """One kcw chain, no per-channel task suffixes."""
         wg = _build(_si_dfpt_dict(), dfpt_codes)
         names = wg.get_task_names()
-        assert "wannierize_occ" in names
+        assert "wannierize" in names
         assert "dfpt" in names
         assert "dfpt_up" not in names
         assert "dfpt_down" not in names
@@ -135,7 +103,7 @@ class TestCollinear:
         wg = _build(self._collinear_dict(), dfpt_codes)
         names = wg.get_task_names()
         assert names.count("scf_nscf") == 1
-        for expected in ("wannierize_occ_up", "dfpt_up", "wannierize_occ_down", "dfpt_down"):
+        for expected in ("wannierize_up", "dfpt_up", "wannierize_down", "dfpt_down"):
             assert expected in names, names
 
         # The magnetization reaches the PW SYSTEM namelist alongside the
@@ -236,11 +204,7 @@ class TestMultiBlockZnO:
         wg = _build(self._zno_dict(), dfpt_codes)
         names = wg.get_task_names()
         for expected in (
-            "wannierize_occ_1",
-            "wannierize_occ_2",
-            "wannierize_occ_3",
-            "wannierize_occ_4",
-            "wannierize_emp",
+            "wannierize",
             "dfpt",
         ):
             assert expected in names, names
@@ -268,7 +232,7 @@ class TestSpinor:
         # functions, matching nocc = nelec = 8.
         wg = _build(_si_dfpt_dict(spin=spin_value), dfpt_codes)
         names = wg.get_task_names()
-        assert "wannierize_occ" in names
+        assert "wannierize" in names
         assert "dfpt" in names
         assert "dfpt_down" not in names
 
@@ -280,16 +244,16 @@ class TestSpinor:
 
 
 class TestOrbitalGrouping:
-    """Workflow-level grouping is DSCF-only for now; DFPT rejects it explicitly."""
+    """The spread criterion drives workflow-level grouping; self_hartree is DSCF-only."""
 
     def test_default_resolves_to_none_and_builds(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """A DFPT input parses with group_orbitals_by='none' and builds.
+        """A DFPT input parses with group_orbitals_by='none' and builds ungrouped.
 
         kcw.x's internal check_spread shortcut is a separate mechanism and
-        stays on; this keyword steers only the (unported) python-side
-        grouping with per-orbital screen calculations.
+        stays on; this keyword steers only the python-side grouping with
+        per-representative SCREEN.i_orb screen calculations.
         """
         d = _si_dfpt_dict()
         inp = KoopmansInput.model_validate(d)
@@ -297,20 +261,32 @@ class TestOrbitalGrouping:
         assert inp.workflow.group_orbitals_by.value == "none"
         wg = _build(d, dfpt_codes)
         assert "dfpt" in wg.get_task_names()
+        assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value is None
 
     def test_explicit_self_hartree_is_rejected(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """An explicit criterion must not be silently ignored on the DFPT route."""
-        with pytest.raises(NotImplementedError, match="not yet"):
+        """The DFPT route has no self-Hartree metric; the criterion must not be ignored."""
+        with pytest.raises(NotImplementedError, match="spread"):
             _build(_si_dfpt_dict(group_orbitals_by="self_hartree"), dfpt_codes)
 
-    def test_explicit_spread_is_rejected(
+    def test_spread_defaults_the_tolerance_and_threads_it(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """The spread criterion (the planned DFPT one) is also still unported."""
-        with pytest.raises(NotImplementedError, match="not yet"):
-            _build(_si_dfpt_dict(group_orbitals_by="spread"), dfpt_codes)
+        """Choosing the criterion suffices: the schema default tol reaches the chain."""
+        d = _si_dfpt_dict(group_orbitals_by="spread")
+        inp = KoopmansInput.model_validate(d)
+        assert inp.workflow.group_orbitals_tol == 0.05
+        wg = _build(d, dfpt_codes)
+        assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.05
+
+    def test_spread_honours_an_explicit_tolerance(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A user tolerance overrides the schema default."""
+        d = _si_dfpt_dict(group_orbitals_by="spread", group_orbitals_tol=0.2)
+        wg = _build(d, dfpt_codes)
+        assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.2
 
 
 class TestWannier90Overrides:
@@ -329,7 +305,7 @@ class TestWannier90Overrides:
         d = _si_dfpt_dict()
         d["calculator_parameters"]["wannier90"]["num_iter"] = 17
         wg = _build(d, dfpt_codes)
-        w90_overrides = wg.tasks["wannierize_occ"].inputs["overrides"]["wannier90"].value
+        w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides["num_iter"] == 17
 
     def test_no_keywords_omits_user_override(
@@ -341,5 +317,5 @@ class TestWannier90Overrides:
         task never sees ``num_iter = 17``.
         """
         wg = _build(_si_dfpt_dict(), dfpt_codes)
-        w90_overrides = wg.tasks["wannierize_occ"].inputs["overrides"]["wannier90"].value
+        w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides.get("num_iter") != 17
