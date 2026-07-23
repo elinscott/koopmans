@@ -1,9 +1,10 @@
 """Per-code parallelization settings.
 
 The top-level ``parallelization`` block maps each code (``pw``, ``kcp``, …)
-to a small config of MPI-rank count (``ntasks``) and k-point-pool count
-(``npool``). ``ntasks`` becomes the scheduler's ``tot_num_mpiprocs``; ``npool``
-becomes ``-npool`` on the QE command line. See
+to a small config of MPI-rank count (``ntasks``), k-point-pool count
+(``npool``), and a pencil-decomposition switch (``pd``). ``ntasks`` becomes the
+scheduler's ``tot_num_mpiprocs``; ``npool`` becomes ``-npool`` and ``pd``
+becomes ``-pd true`` on the QE command line. See
 :func:`koopmans.aiida.conversion.code_parallelization` for the translation
 into AiiDA ``metadata.options`` / ``settings.cmdline``.
 """
@@ -28,6 +29,14 @@ ALL_CODES: tuple[str, ...] = (
     "wannier90",
 )
 
+# Codes that accept ``-npool`` (k-point pools) and ``-pd`` (pencil
+# decomposition) on their command line. Ground truth is the legacy
+# ``koopmans.commands`` per-executable config classes. ``kcw`` accepts pools
+# for its wann2kc / screen steps but not its ham step — a per-step distinction
+# the workgraph makes; at the schema level ``kcw`` counts as pool-supporting.
+POOL_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "projwfc", "kcw"})
+PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "pw2wannier90", "projwfc", "kcw"})
+
 
 class CodeParallelization(BaseModel):
     """Parallelization settings for a single code."""
@@ -43,7 +52,12 @@ class CodeParallelization(BaseModel):
         ge=1,
         description="number of k-point pools to distribute the calculation over "
         "(becomes ``-npool`` on the command line; should be commensurate with the "
-        "k-point grid). Not valid for wannier90.",
+        "k-point grid). Only valid for pw, projwfc, and kcw.",
+    )
+    pd: bool | None = Field(
+        default=None,
+        description="use pencil decomposition of the FFT grid (becomes ``-pd true`` on "
+        "the command line). Only valid for pw, pw2wannier90, projwfc, and kcw.",
     )
 
 
@@ -65,32 +79,39 @@ class ParallelizationInput(BaseModel):
     wannier90: CodeParallelization | None = None
 
     @model_validator(mode="after")
-    def reject_npool_for_wannier90(self) -> Self:
-        """wannier90 does not parallelize over k-point pools, so reject ``npool``."""
-        if self.wannier90 is not None and self.wannier90.npool is not None:
-            raise ValueError(
-                "'npool' is not valid for wannier90 (it does not parallelize over "
-                "k-point pools); set 'ntasks' instead"
-            )
+    def reject_unsupported_flags(self) -> Self:
+        """Reject ``npool`` / ``pd`` for codes whose command line has no such flag."""
+        for code, cfg in self.as_dict().items():
+            if cfg.npool is not None and code not in POOL_SUPPORTING_CODES:
+                raise ValueError(
+                    f"'npool' is not valid for {code} (it does not parallelize over "
+                    f"k-point pools); pools are only supported by "
+                    f"{sorted(POOL_SUPPORTING_CODES)}. Set 'ntasks' instead."
+                )
+            if cfg.pd is not None and code not in PD_SUPPORTING_CODES:
+                raise ValueError(
+                    f"'pd' (pencil decomposition) is not valid for {code}; it is only "
+                    f"supported by {sorted(PD_SUPPORTING_CODES)}."
+                )
         return self
 
     def as_dict(self) -> dict[str, CodeParallelization]:
         """Return the configured (non-``None``) code entries as a plain dict."""
         return {code: cfg for code in ALL_CODES if (cfg := getattr(self, code)) is not None}
 
-    def as_mapping(self) -> dict[str, dict[str, int]]:
+    def as_mapping(self) -> dict[str, dict[str, int | bool]]:
         """Return the per-code settings as the plain mapping the workgraphs consume.
 
         Each configured code maps to a dict of its set (non-``None``) fields
-        (``ntasks`` / ``npool``). This is the shape ``aiida-koopmans``'s
+        (``ntasks`` / ``npool`` / ``pd``). This is the shape ``aiida-koopmans``'s
         ``resolve_parallelization`` expects — one dict input per graph, keyed
         by code name. A code with no set field is omitted entirely.
         """
-        mapping: dict[str, dict[str, int]] = {}
+        mapping: dict[str, dict[str, int | bool]] = {}
         for code, cfg in self.as_dict().items():
-            fields = {
+            fields: dict[str, int | bool] = {
                 key: value
-                for key, value in (("ntasks", cfg.ntasks), ("npool", cfg.npool))
+                for key, value in (("ntasks", cfg.ntasks), ("npool", cfg.npool), ("pd", cfg.pd))
                 if value is not None
             }
             if fields:

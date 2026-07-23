@@ -208,14 +208,14 @@ class TestSeekpathBasisGuard:
 class TestCodeParallelizationHelper:
     """``code_parallelization`` maps a per-code config to (options, settings)."""
 
-    def test_ntasks_and_npool(self) -> None:
-        """Ntasks → resources.tot_num_mpiprocs; npool → -npool cmdline."""
+    def test_ntasks_npool_and_pd(self) -> None:
+        """Ntasks → resources; npool → -npool then pd → -pd true on the cmdline."""
         from koopmans.aiida.conversion import code_parallelization
         from koopmans.input_file.parallelization import CodeParallelization
 
-        options, settings = code_parallelization(CodeParallelization(ntasks=8, npool=4))
+        options, settings = code_parallelization(CodeParallelization(ntasks=8, npool=4, pd=True))
         assert options == {"resources": {"num_machines": 1, "tot_num_mpiprocs": 8}}
-        assert settings == {"cmdline": ["-npool", "4"]}
+        assert settings == {"cmdline": ["-npool", "4", "-pd", "true"]}
 
     def test_partial_and_none(self) -> None:
         """Unset fields yield empty halves; ``None`` config yields two empties."""
@@ -225,6 +225,8 @@ class TestCodeParallelizationHelper:
         options, settings = code_parallelization(CodeParallelization(npool=2))
         assert options == {}
         assert settings == {"cmdline": ["-npool", "2"]}
+        # pd False must not emit a flag (only pd True does).
+        assert code_parallelization(CodeParallelization(pd=False)) == ({}, {})
         assert code_parallelization(None) == ({}, {})
 
 

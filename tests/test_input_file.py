@@ -126,24 +126,29 @@ class TestParallelizationSchema:
     """The top-level per-code ``parallelization`` block."""
 
     def test_per_code_entries_parse(self) -> None:
-        """Each configured code carries its own ntasks / npool."""
+        """Each configured code carries its own ntasks / npool / pd."""
         inp = KoopmansInput.model_validate(
             _parallelization_input(
-                parallelization={"pw": {"npool": 2, "ntasks": 8}, "kcw": {"npool": 4}}
+                parallelization={"pw": {"npool": 2, "ntasks": 8, "pd": True}, "kcw": {"npool": 4}}
             )
         )
         pw = inp.parallelization.pw
         kcw = inp.parallelization.kcw
         assert pw is not None and kcw is not None
-        assert (pw.npool, pw.ntasks) == (2, 8)
+        assert (pw.npool, pw.ntasks, pw.pd) == (2, 8, True)
         assert kcw.npool == 4
 
     def test_as_mapping_drops_unset_fields_and_codes(self) -> None:
         """as_mapping keeps only configured codes and their set fields."""
         inp = KoopmansInput.model_validate(
-            _parallelization_input(parallelization={"pw": {"npool": 2}, "kcw": {"ntasks": 8}})
+            _parallelization_input(
+                parallelization={"pw": {"npool": 2, "pd": True}, "kcw": {"ntasks": 8}}
+            )
         )
-        assert inp.parallelization.as_mapping() == {"pw": {"npool": 2}, "kcw": {"ntasks": 8}}
+        assert inp.parallelization.as_mapping() == {
+            "pw": {"npool": 2, "pd": True},
+            "kcw": {"ntasks": 8},
+        }
 
     def test_no_config_leaves_codes_unset(self) -> None:
         """Without a block, every code entry stays ``None`` and the mapping is empty."""
@@ -151,15 +156,33 @@ class TestParallelizationSchema:
         assert inp.parallelization.pw is None
         assert inp.parallelization.as_mapping() == {}
 
-    def test_npool_rejected_for_wannier90(self) -> None:
-        """wannier90 has no k-point pools, so npool must be rejected."""
-        with pytest.raises(ValueError, match=r"npool.*not valid for wannier90"):
+    @pytest.mark.parametrize("code", ["kcp", "ph", "pw2wannier90", "wann2kcp", "wannier90"])
+    def test_npool_rejected_for_non_pool_codes(self, code: str) -> None:
+        """Only pw, projwfc, and kcw parallelize over k-point pools."""
+        with pytest.raises(ValueError, match=r"'npool' is not valid"):
             KoopmansInput.model_validate(
-                _parallelization_input(parallelization={"wannier90": {"npool": 2}})
+                _parallelization_input(parallelization={code: {"npool": 2}})
             )
 
-    def test_wannier90_ntasks_allowed(self) -> None:
-        """wannier90 accepts ntasks (only npool is rejected)."""
+    @pytest.mark.parametrize("code", ["kcp", "ph", "wann2kcp", "wannier90"])
+    def test_pd_rejected_for_non_pd_codes(self, code: str) -> None:
+        """Only pw, pw2wannier90, projwfc, and kcw support pencil decomposition."""
+        with pytest.raises(ValueError, match=r"'pd' \(pencil decomposition\) is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={code: {"pd": True}})
+            )
+
+    def test_pd_allowed_for_pw2wannier90(self) -> None:
+        """pw2wannier90 supports pd but not npool."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"pw2wannier90": {"ntasks": 2, "pd": True}})
+        )
+        pw2w = inp.parallelization.pw2wannier90
+        assert pw2w is not None
+        assert (pw2w.pd, pw2w.ntasks) == (True, 2)
+
+    def test_ntasks_allowed_for_any_code(self) -> None:
+        """The ntasks (MPI ranks) field is universal — even wannier90 accepts it."""
         inp = KoopmansInput.model_validate(
             _parallelization_input(parallelization={"wannier90": {"ntasks": 4}})
         )
@@ -176,6 +199,6 @@ class TestParallelizationSchema:
 
     @pytest.mark.parametrize("field", ["ntasks", "npool"])
     def test_positive_ints_only(self, field: str) -> None:
-        """Both fields reject zero and negative values."""
+        """Both integer fields reject zero and negative values."""
         with pytest.raises(ValueError):
             KoopmansInput.model_validate(_parallelization_input(parallelization={"pw": {field: 0}}))

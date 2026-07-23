@@ -46,9 +46,10 @@ def code_parallelization(
     """Translate a code's parallelization config into ``(options, settings)``.
 
     ``ntasks`` becomes the scheduler ``metadata.options.resources``
-    (``tot_num_mpiprocs``), and ``npool`` becomes ``-npool`` on the code's
-    ``settings.cmdline``. A missing field yields an empty dict for that half,
-    so callers can merge selectively.
+    (``tot_num_mpiprocs``); ``npool`` becomes ``-npool`` and ``pd`` becomes
+    ``-pd true`` on the code's ``settings.cmdline`` (npool before pd, matching
+    the legacy command rendering). A missing field yields an empty dict for
+    that half, so callers can merge selectively.
 
     Args:
         config: The per-code parallelization settings, or ``None``.
@@ -62,8 +63,13 @@ def code_parallelization(
         return options, settings
     if config.ntasks is not None:
         options["resources"] = {"num_machines": 1, "tot_num_mpiprocs": config.ntasks}
+    cmdline: list[str] = []
     if config.npool is not None:
-        settings["cmdline"] = ["-npool", str(config.npool)]
+        cmdline += ["-npool", str(config.npool)]
+    if config.pd:
+        cmdline += ["-pd", "true"]
+    if cmdline:
+        settings["cmdline"] = cmdline
     return options, settings
 
 
