@@ -90,8 +90,8 @@ class TestBlockDerivation:
 
         cell = [[0.0, 2.715, 2.715], [2.715, 0.0, 2.715], [2.715, 2.715, 0.0]]
         struct = StructureData(cell=cell, pbc=True)
-        struct.append_atom(position=(0.0, 0.0, 0.0), symbols="Si", name="Si")
-        struct.append_atom(position=(1.3575, 1.3575, 1.3575), symbols="Si", name="Si")
+        struct.append_atom(position=(0.0, 0.0, 0.0), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
+        struct.append_atom(position=(1.3575, 1.3575, 1.3575), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
         return struct
 
     @staticmethod
