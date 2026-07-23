@@ -444,6 +444,7 @@ def _build_wannierize_split_workgraph(
         threshold=float(threshold),
         pseudo_family=pseudo_family,
         overrides=wannier_overrides,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
     )
 
 

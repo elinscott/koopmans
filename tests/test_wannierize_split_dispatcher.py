@@ -188,3 +188,18 @@ class TestGraphBuild:
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
         assert "nbnd" not in overrides["scf"]["pw"]["parameters"].get("SYSTEM", {})
         assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
+
+    def test_parallelization_reaches_the_pw_steps(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The pw parallelization block threads into the split graph's pw steps."""
+        d = _si_split_dict()
+        d["parallelization"] = {"pw": {"ntasks": 3, "npool": 2}}
+        wg = _build(d, split_codes)
+
+        bands_pw = wg.tasks["bands"].inputs["pw"]
+        assert bands_pw["metadata"]["options"]["resources"].value["tot_num_mpiprocs"] == 3
+        assert bands_pw["settings"].value["cmdline"] == ["-npool", "2"]
+        assert wg.tasks["scf_nscf"].inputs["parallelization"].value == {
+            "pw": {"ntasks": 3, "npool": 2}
+        }
