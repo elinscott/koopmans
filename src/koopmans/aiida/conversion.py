@@ -47,8 +47,8 @@ def code_parallelization(
 
     ``ntasks`` becomes the scheduler ``metadata.options.resources``
     (``tot_num_mpiprocs``); ``npool`` becomes ``-npool`` and ``pd`` becomes
-    ``-pd true`` on the code's ``settings.cmdline`` (npool before pd, matching
-    the legacy command rendering). A missing field yields an empty dict for
+    ``-pd true`` on the code's ``settings.cmdline`` (npool before pd). A
+    missing field yields an empty dict for
     that half, so callers can merge selectively.
 
     Args:
