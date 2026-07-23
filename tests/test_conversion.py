@@ -308,6 +308,7 @@ class TestDispatcherThreadsParallelization:
         captured: dict[str, Any] = {}
 
         def fake_build(**kwargs: Any) -> str:
+            """Capture the builder call's kwargs."""
             captured.update(kwargs)
             return "workgraph"
 
