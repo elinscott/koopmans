@@ -19,7 +19,11 @@ class TestExecutableCoverage:
         executables = set(re.findall(r'_load_code\(\s*"[^"]+"\s*,\s*"([^"]+)"', source))
 
         assert executables, "regex matched no _load_code call sites"
-        missing = executables - set(QE_EXECUTABLES)
+        # Codes registered outside the QE install scan (their second argument
+        # is a human-readable name, not an executable on PATH).
+        non_qe = {name for name in executables if not name.endswith(".x")}
+        assert non_qe <= {"julia (Wannier.jl)"}, f"unexpected non-QE load sites: {non_qe}"
+        missing = (executables - non_qe) - set(QE_EXECUTABLES)
         assert not missing, f"dispatcher loads {missing} with no QE_EXECUTABLES entry"
 
     def test_no_non_literal_load_code_calls(self) -> None:
@@ -52,7 +56,7 @@ class TestExecutableCoverage:
         pairs = re.findall(r'_load_code\(\s*"([^"]+)"\s*,\s*"([^"]+)"', source)
 
         assert pairs, "regex matched no _load_code call sites"
-        mismatched = [(n, e) for n, e in pairs if e != f"{n}.x"]
+        mismatched = [(n, e) for n, e in pairs if e.endswith(".x") and e != f"{n}.x"]
         assert not mismatched, f"label/executable mismatch at call sites: {mismatched}"
 
 
