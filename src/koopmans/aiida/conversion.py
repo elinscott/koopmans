@@ -46,10 +46,20 @@ def code_parallelization(
     """Translate a code's parallelization config into ``(options, settings)``.
 
     ``ntasks`` becomes the scheduler ``metadata.options.resources``
-    (``tot_num_mpiprocs``); ``npool`` becomes ``-npool`` and ``pd`` becomes
+    (``num_machines`` + ``num_mpiprocs_per_machine``, the one shape both the
+    hyperqueue and node-counting schedulers consume — hyperqueue silently
+    ignores ``tot_num_mpiprocs``); ``npool`` becomes ``-npool`` and ``pd`` becomes
     ``-pd true`` on the code's ``settings.cmdline`` (npool before pd). A
     missing field yields an empty dict for
     that half, so callers can merge selectively.
+
+    ``omp`` is deliberately *not* translated here. This helper only seeds the
+    shared scf/nscf/bands pw overrides, which ``aiida-koopmans``'s graph
+    builders then re-merge from the same threaded mapping. The ntasks/npool/pd
+    directives survive that double pass because re-merging rewrites them to the
+    same value, but the omp export block is *appended* to any existing
+    ``prepend_text``, so emitting it here as well would duplicate it. omp
+    therefore rides the threaded mapping alone (via ``as_mapping``).
 
     Args:
         config: The per-code parallelization settings, or ``None``.
@@ -62,7 +72,7 @@ def code_parallelization(
     if config is None:
         return options, settings
     if config.ntasks is not None:
-        options["resources"] = {"num_machines": 1, "tot_num_mpiprocs": config.ntasks}
+        options["resources"] = {"num_machines": 1, "num_mpiprocs_per_machine": config.ntasks}
     cmdline: list[str] = []
     if config.npool is not None:
         cmdline += ["-npool", str(config.npool)]

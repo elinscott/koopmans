@@ -2,16 +2,19 @@
 
 The top-level ``parallelization`` block maps each code (``pw``, ``kcp``, …)
 to a small config of MPI-rank count (``ntasks``), k-point-pool count
-(``npool``), and a pencil-decomposition switch (``pd``). ``ntasks`` becomes the
-scheduler's ``tot_num_mpiprocs``; ``npool`` becomes ``-npool`` and ``pd``
-becomes ``-pd true`` on the QE command line. See
+(``npool``), a pencil-decomposition switch (``pd``), and a per-rank
+OpenMP/BLAS thread count (``omp``). ``ntasks`` becomes the scheduler's
+``tot_num_mpiprocs``; ``npool`` becomes ``-npool`` and ``pd`` becomes
+``-pd true`` on the QE command line; ``omp`` sets the ``OMP_NUM_THREADS`` /
+``OPENBLAS_NUM_THREADS`` / ``MKL_NUM_THREADS`` per rank, defaulting to the
+localhost computer's pin of one thread. See
 :func:`koopmans.aiida.conversion.code_parallelization` for the translation
 into AiiDA ``metadata.options`` / ``settings.cmdline``.
 """
 
 from __future__ import annotations
 
-from typing import Any, Self, cast
+from typing import Self, cast
 
 from aiida_koopmans.types import CODE_NAMES, ParallelizationDict
 from pydantic import Field, model_validator
@@ -58,6 +61,14 @@ class CodeParallelization(BaseModel):
         description="use pencil decomposition of the FFT grid (becomes ``-pd true`` on "
         "the command line). Only valid for pw, ph, projwfc, pw2wannier90, and kcw.",
     )
+    omp: int | None = Field(
+        default=None,
+        ge=1,
+        description="number of OpenMP / BLAS threads to run each MPI rank with (sets "
+        "``OMP_NUM_THREADS`` / ``OPENBLAS_NUM_THREADS`` / ``MKL_NUM_THREADS`` per rank). "
+        "Valid for every code; the default is the localhost computer's pin of one thread "
+        "per rank, which stops the threaded BLAS builds oversubscribing the allocation.",
+    )
 
 
 class ParallelizationInput(BaseModel):
@@ -101,20 +112,13 @@ class ParallelizationInput(BaseModel):
     def as_mapping(self) -> ParallelizationDict:
         """Return the per-code settings as the mapping the workgraphs consume.
 
-        Each configured code maps to a dict of its set (non-``None``) fields
-        (``ntasks`` / ``npool`` / ``pd``). This is the ``ParallelizationDict``
-        shape ``aiida-koopmans``'s ``resolve_parallelization`` expects — one
-        dict input per graph, keyed by code name. A code with no set field is
-        omitted entirely. Built as a plain dict (the code keys are dynamic) and
-        cast to the ``TypedDict`` on return.
+        Each configured code maps to its set (non-``None``) fields via
+        pydantic's own dump; a code with no set field is omitted. This is the
+        ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
         """
-        mapping: dict[str, Any] = {}
-        for code, cfg in self.as_dict().items():
-            fields: dict[str, int | bool] = {
-                key: value
-                for key, value in (("ntasks", cfg.ntasks), ("npool", cfg.npool), ("pd", cfg.pd))
-                if value is not None
-            }
-            if fields:
-                mapping[code] = fields
+        mapping = {
+            code: fields
+            for code, cfg in self.as_dict().items()
+            if (fields := cfg.model_dump(exclude_none=True))
+        }
         return cast(ParallelizationDict, mapping)

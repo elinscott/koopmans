@@ -14,7 +14,12 @@ from .codes import (
     print_setup_summary,
     scan_and_register_codes,
 )
-from .computer import COMPUTER_LABEL, computer_exists, get_localhost_computer
+from .computer import (
+    COMPUTER_LABEL,
+    computer_exists,
+    computer_has_thread_pin,
+    get_localhost_computer,
+)
 from .daemon import is_daemon_running, stop_daemon
 from .hq import (
     is_hq_server_running,
@@ -71,6 +76,7 @@ def verify_installation() -> dict[str, bool]:
     status: dict[str, bool] = {
         "profile": False,
         "computer": False,
+        "computer.thread_pin": False,
         "pw.x": False,
         "daemon": False,
         "hq.server": False,
@@ -80,6 +86,8 @@ def verify_installation() -> dict[str, bool]:
     status["profile"] = profile_exists()
 
     if status["profile"]:
+        from aiida import orm
+
         load_koopmans_profile()
         status["computer"] = computer_exists()
         status["daemon"] = is_daemon_running()
@@ -88,6 +96,9 @@ def verify_installation() -> dict[str, bool]:
 
         if status["computer"]:
             status["pw.x"] = code_exists(f"pw@{COMPUTER_LABEL}")
+            status["computer.thread_pin"] = computer_has_thread_pin(
+                orm.load_computer(COMPUTER_LABEL)
+            )
 
     return status
 
