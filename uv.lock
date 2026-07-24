@@ -191,7 +191,7 @@ dependencies = [
 requires-dist = [
     { name = "aiida-core", specifier = ">=2.8,<3" },
     { name = "aiida-quantumespresso", specifier = ">=4.16.0" },
-    { name = "aiida-wannier90", specifier = ">=2.2.0" },
+    { name = "aiida-wannier90", git = "https://github.com/aiidateam/aiida-wannier90?rev=5b9436943fa04643ed44c7f6fd48b361e5470ef4" },
     { name = "aiida-wannier90-workflows", editable = "../aiida-wannier90-workflows" },
     { name = "aiida-wannierjl", editable = "../aiida-wannierjl" },
     { name = "aiida-workgraph", editable = "../aiida-workgraph" },
@@ -293,13 +293,9 @@ dependencies = [
 [[package]]
 name = "aiida-wannier90"
 version = "2.2.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/aiidateam/aiida-wannier90?rev=5b9436943fa04643ed44c7f6fd48b361e5470ef4#5b9436943fa04643ed44c7f6fd48b361e5470ef4" }
 dependencies = [
     { name = "aiida-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/39/a7/31dcf3ed9cc465578f396ffd265668a0c767a5b18093b50358cac388b6b1/aiida_wannier90-2.2.0.tar.gz", hash = "sha256:f75ce0c37f2a0c4d286cb5ff9c71c34784dece233b40f80f900e69d1e781ba28", size = 31408, upload-time = "2024-05-10T12:24:07.251Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/84/5be07fe43040400442e4698a938a11d576411514cc788a67ce4a899a015b/aiida_wannier90-2.2.0-py3-none-any.whl", hash = "sha256:31139c3f67ea3155d3f3fd6cc9e5cacbe0c39c82aba27bf66b2861896b73b595", size = 41561, upload-time = "2024-05-10T12:24:05.669Z" },
 ]
 
 [[package]]
@@ -366,7 +362,6 @@ requires-dist = [
     { name = "markupsafe", marker = "extra == 'docs'", specifier = "<2.1" },
     { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = "~=3.5" },
     { name = "sphinx", marker = "extra == 'docs'" },
-    { name = "sphinxcontrib-contentui", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-details-directive", marker = "extra == 'docs'" },
 ]
 provides-extras = ["docs", "pre-commit", "workflows"]
@@ -1450,6 +1445,7 @@ dependencies = [
     { name = "aiida-koopmans", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-quantumespresso", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-shell", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "aiida-wannier90", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-workgraph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "ase", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1529,6 +1525,7 @@ requires-dist = [
     { name = "aiida-koopmans", editable = "../aiida-koopmans2" },
     { name = "aiida-quantumespresso", editable = "../aiida-quantumespresso" },
     { name = "aiida-shell", git = "https://github.com/sphuber/aiida-shell?rev=e2f4ff1c96e5e38d7bafacb0ca65495ebe492167" },
+    { name = "aiida-wannier90", git = "https://github.com/aiidateam/aiida-wannier90?rev=5b9436943fa04643ed44c7f6fd48b361e5470ef4" },
     { name = "aiida-workgraph", editable = "../aiida-workgraph" },
     { name = "ase", specifier = ">=3.23" },
     { name = "click" },
