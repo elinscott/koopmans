@@ -11,6 +11,7 @@ from koopmans.aiida.conversion import (
     _calculate_kpoints_along_path,
     _parse_kpoints_path_string,
     atoms_input_to_structure,
+    input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
 
@@ -205,6 +206,18 @@ class TestSeekpathBasisGuard:
             kpoints_input_to_kpoints_path(kpoints, structure)
 
 
+class TestInputToPwParameters:
+    """The shared pw parameter dict carries no calculation type of its own."""
+
+    def test_no_calculation_key(self, aiida_profile: Any) -> None:
+        """No ``calculation`` entry: each step owner supplies its own type."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        parameters = input_to_pw_parameters(inp)
+        assert "calculation" not in parameters.get("CONTROL", {})
+
+
 class TestCodeParallelizationHelper:
     """``code_parallelization`` maps a per-code config to (options, settings)."""
 
@@ -292,6 +305,8 @@ class TestParallelizationWiring:
         )
         assert builder.scf.pw.settings.get_dict()["cmdline"] == ["-npool", "4"]
         assert builder.scf.pw.metadata.options["resources"]["tot_num_mpiprocs"] == 8
+        # The bands step's own calculation type survives the shared pw overrides.
+        assert builder.bands.pw.parameters.get_dict()["CONTROL"]["calculation"] == "bands"
 
 
 class TestDispatcherThreadsParallelization:
