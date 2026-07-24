@@ -100,7 +100,7 @@ Invoked via `/<name>`:
 10. **Squash-merge messages in 50/72** (subject ≤50 chars including the `(#N)`, body wrapped at 72), symptom-not-mechanism, enumerations as bullet lists.
 11. **US spelling in prose** (Wannierize, initialize, normalize, behavior). Exempt: upstream keyword and file names keep their canonical form (`guiding_centres`, `*_centres.xyz` are wannier90's own spelling).
 12. **Graph-layout changes need a cross-repo CI pairing.** k2's CI clones the same-named aiida-koopmans branch; an ak2-only PR that changes task names, sockets, or graph shapes must push a same-named k2 branch (even if empty of changes) so the pairing actually runs — otherwise k2 main goes silently red at the ak2 merge.
-13. **`OMP_NUM_THREADS=1` on every QE code.** The GNU builds link threaded OpenBLAS; under mpirun each rank spawns its own BLAS threads and oversubscribes the hq allocation. Neither repo sets it yet — until the code-registration fix lands, export it in the codes' `prepend_text`.
+13. **Per-rank thread pinning is a computer-level default.** The GNU builds link threaded OpenBLAS; under mpirun each rank spawns its own BLAS threads and oversubscribes the hq allocation. The localhost computer's `prepend_text` carries `THREAD_PIN_PREPEND` (`OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`MKL_NUM_THREADS` = 1), set in `aiida/setup/computer.py` on both create and migrate (computers are mutable; code nodes are not). A per-code `omp` in the `parallelization` block raises the count for a given calculation via `metadata.options.prepend_text`, which aiida-core assembles after the computer prepend and so overrides it.
 
 ## Current status (update as work progresses)
 

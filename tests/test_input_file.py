@@ -150,6 +150,30 @@ class TestParallelizationSchema:
             "kcw": {"ntasks": 8},
         }
 
+    def test_omp_parses_and_maps_through(self) -> None:
+        """The omp thread count round-trips and reaches as_mapping."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"pw": {"ntasks": 8, "omp": 4}})
+        )
+        pw = inp.parallelization.pw
+        assert pw is not None and pw.omp == 4
+        assert inp.parallelization.as_mapping() == {"pw": {"ntasks": 8, "omp": 4}}
+
+    @pytest.mark.parametrize("code", ["kcp", "wann2kcp", "wannier90"])
+    def test_omp_allowed_for_every_code(self, code: str) -> None:
+        """The omp knob has no support matrix — even codes that reject npool/pd accept it."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={code: {"omp": 2}})
+        )
+        cfg = getattr(inp.parallelization, code)
+        assert cfg is not None and cfg.omp == 2
+        assert inp.parallelization.as_mapping() == {code: {"omp": 2}}
+
+    def test_omp_rejects_zero(self) -> None:
+        """The omp field is a positive integer."""
+        with pytest.raises(ValueError):
+            KoopmansInput.model_validate(_parallelization_input(parallelization={"pw": {"omp": 0}}))
+
     def test_no_config_leaves_codes_unset(self) -> None:
         """Without a block, every code entry stays ``None`` and the mapping is empty."""
         inp = KoopmansInput.model_validate(_parallelization_input())

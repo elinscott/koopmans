@@ -22,6 +22,22 @@ if TYPE_CHECKING:
 
 COMPUTER_LABEL = "localhost"
 
+# Per-rank thread pin: the threaded-OpenBLAS QE builds oversubscribe under
+# mpirun otherwise. Lives on the (mutable) computer; the per-code ``omp``
+# knob re-exports these later in the submit script to override it.
+THREAD_PIN_PREPEND = "\n".join(
+    [
+        "export OMP_NUM_THREADS=1",
+        "export OPENBLAS_NUM_THREADS=1",
+        "export MKL_NUM_THREADS=1",
+    ]
+)
+
+
+def computer_has_thread_pin(computer: Computer) -> bool:
+    """Check whether the computer's prepend text carries the thread pin."""
+    return THREAD_PIN_PREPEND in (computer.get_prepend_text() or "")
+
 
 def computer_exists() -> bool:
     """Check if the localhost computer already exists."""
@@ -58,6 +74,16 @@ def get_localhost_computer(nprocs: int | None = None) -> Computer:
     if computer_exists():
         computer = orm.load_computer(COMPUTER_LABEL)
         computer.set_default_mpiprocs_per_machine(nprocs)
+        # Update an existing computer created before the thread pin was
+        # introduced. Computers are mutable, so rerunning ``koopmans install``
+        # migrates the stored prepend in place; skip the write when it is
+        # already present so the operation is idempotent, and append rather than
+        # clobber so any prepend the user added survives.
+        if not computer_has_thread_pin(computer):
+            existing = computer.get_prepend_text() or ""
+            computer.set_prepend_text(
+                f"{existing}\n{THREAD_PIN_PREPEND}" if existing else THREAD_PIN_PREPEND
+            )
         click.echo(
             f"Computer '{COMPUTER_LABEL}' already exists "
             f"(scheduler={computer.scheduler_type}, nprocs={nprocs})."
@@ -83,6 +109,7 @@ def get_localhost_computer(nprocs: int | None = None) -> Computer:
     computer.configure()
     computer.set_minimum_job_poll_interval(0.0)
     computer.set_default_mpiprocs_per_machine(nprocs)
+    computer.set_prepend_text(THREAD_PIN_PREPEND)
 
     click.echo(f"Created computer '{COMPUTER_LABEL}' (scheduler=hyperqueue, nprocs={nprocs}).")
     return computer
