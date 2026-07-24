@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 # three CalcJobs (koopmans.kcw_wann2kc / kcw_screen / kcw_ham, selected via
 # control.calculation), so no single default is honest — the workgraph tasks
 # name their process class explicitly.
+#
+# ``pw2wannier90_decompose.x`` is a pseudo-name, not a distinct binary on PATH:
+# the ``wan_mode='decompose'`` route is a separate pw2wannier90.x build, so it
+# is registered only via an explicit override
+# (``koopmans install --code pw2wannier90_decompose=<path>``). When no override
+# is given it stays absent from PATH and lands in the not-found listing, which
+# is non-fatal (only pw.x is treated as essential).
 QE_EXECUTABLES: dict[str, str | None] = {
     "pw.x": "quantumespresso.pw",
     "ph.x": "quantumespresso.ph",
@@ -32,6 +39,9 @@ QE_EXECUTABLES: dict[str, str | None] = {
     "dos.x": "quantumespresso.dos",
     "wannier90.x": "wannier90.wannier90",
     "pw2wannier90.x": "quantumespresso.pw2wannier90",
+    "pw2wannier90_decompose.x": "koopmans.pw2wannier_decompose",
+    "wann2kcp.x": "koopmans.wann2kcp",
+    "merge_evc.x": "koopmans.merge_evc",
     "kcw.x": None,
     "kcp.x": "koopmans.kcp",
 }
