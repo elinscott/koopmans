@@ -77,6 +77,10 @@ dependencies = [
     # aiida-core removed after v2.8.0 (#6990), so this rides git master (see
     # [tool.uv.sources]) until a compatible release exists.
     "aiida-shell",
+    # TEMPORARY: direct dep (imported only by aiida-koopmans) so the
+    # [tool.uv.sources] GitHub override is honored; its PyPI releases are
+    # quarantined. Drop both once they reappear.
+    "aiida-wannier90",
 ]
 
 # see https://peps.python.org/pep-0735/ and https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups
@@ -313,3 +317,7 @@ node-graph = { path = "../node-graph", editable = true }
 # Post-v2.8 aiida-core removed the Code.Model pydantic API (#6990); no
 # aiida-shell release is compatible yet, so pin the adapted git master.
 aiida-shell = { git = "https://github.com/sphuber/aiida-shell", rev = "e2f4ff1c96e5e38d7bafacb0ca65495ebe492167" }
+# aiida-wannier90 was quarantined on PyPI (the simple index lists no files);
+# install the v2.2.0 release from GitHub, pinned to the immutable sha that
+# matches a pre-quarantine local clone, until the releases reappear.
+aiida-wannier90 = { git = "https://github.com/aiidateam/aiida-wannier90", rev = "5b9436943fa04643ed44c7f6fd48b361e5470ef4" }
