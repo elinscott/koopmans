@@ -74,7 +74,7 @@ class TestPseudoNameNonFatal:
         # is never touched) and without raising.
         found, missing = scan_and_register_codes(
             {"pw2wannier90_decompose.x": "koopmans.pw2wannier_decompose"},
-            computer=None,  # never reached: nothing is found to register
+            computer=None,  # type: ignore[arg-type]  # never reached: nothing is found
         )
 
         assert found == []
