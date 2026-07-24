@@ -22,15 +22,9 @@ if TYPE_CHECKING:
 
 COMPUTER_LABEL = "localhost"
 
-# Default per-rank thread pin applied to the localhost computer. The GNU
-# Quantum ESPRESSO builds link threaded OpenBLAS, so under mpirun every rank
-# would otherwise spawn its own BLAS thread pool and oversubscribe the
-# HyperQueue allocation (observed ~220% CPU per rank). Pinning all three thread
-# counts to one keeps each rank single-threaded. Set on the computer (which is
-# mutable) rather than the code nodes (which are immutable once stored). A
-# per-code ``omp`` knob can raise the count for a given calculation by exporting
-# these again in ``metadata.options.prepend_text``, which aiida-core assembles
-# after the computer prepend and so overrides it.
+# Per-rank thread pin: the threaded-OpenBLAS QE builds oversubscribe under
+# mpirun otherwise. Lives on the (mutable) computer; the per-code ``omp``
+# knob re-exports these later in the submit script to override it.
 THREAD_PIN_PREPEND = "\n".join(
     [
         "export OMP_NUM_THREADS=1",

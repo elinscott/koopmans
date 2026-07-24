@@ -14,7 +14,7 @@ into AiiDA ``metadata.options`` / ``settings.cmdline``.
 
 from __future__ import annotations
 
-from typing import Any, Self, cast
+from typing import Self, cast
 
 from aiida_koopmans.types import CODE_NAMES, ParallelizationDict
 from pydantic import Field, model_validator
@@ -112,25 +112,13 @@ class ParallelizationInput(BaseModel):
     def as_mapping(self) -> ParallelizationDict:
         """Return the per-code settings as the mapping the workgraphs consume.
 
-        Each configured code maps to a dict of its set (non-``None``) fields
-        (``ntasks`` / ``npool`` / ``pd`` / ``omp``). This is the
-        ``ParallelizationDict`` shape ``aiida-koopmans``'s
-        ``resolve_parallelization`` expects — one dict input per graph, keyed by
-        code name. A code with no set field is omitted entirely. Built as a plain
-        dict (the code keys are dynamic) and cast to the ``TypedDict`` on return.
+        Each configured code maps to its set (non-``None``) fields via
+        pydantic's own dump; a code with no set field is omitted. This is the
+        ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
         """
-        mapping: dict[str, Any] = {}
-        for code, cfg in self.as_dict().items():
-            fields: dict[str, int | bool] = {
-                key: value
-                for key, value in (
-                    ("ntasks", cfg.ntasks),
-                    ("npool", cfg.npool),
-                    ("pd", cfg.pd),
-                    ("omp", cfg.omp),
-                )
-                if value is not None
-            }
-            if fields:
-                mapping[code] = fields
+        mapping = {
+            code: fields
+            for code, cfg in self.as_dict().items()
+            if (fields := cfg.model_dump(exclude_none=True))
+        }
         return cast(ParallelizationDict, mapping)
