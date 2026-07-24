@@ -51,6 +51,14 @@ def code_parallelization(
     missing field yields an empty dict for
     that half, so callers can merge selectively.
 
+    ``omp`` is deliberately *not* translated here. This helper only seeds the
+    shared scf/nscf/bands pw overrides, which ``aiida-koopmans``'s graph
+    builders then re-merge from the same threaded mapping. The ntasks/npool/pd
+    directives survive that double pass because re-merging rewrites them to the
+    same value, but the omp export block is *appended* to any existing
+    ``prepend_text``, so emitting it here as well would duplicate it. omp
+    therefore rides the threaded mapping alone (via ``as_mapping``).
+
     Args:
         config: The per-code parallelization settings, or ``None``.
 
