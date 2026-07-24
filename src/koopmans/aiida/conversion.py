@@ -457,11 +457,11 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     calc_params = koopmans_input.calculator_parameters
     pw_params = calc_params.pw
 
-    # Build parameters dict
+    # Build parameters dict. No CONTROL.calculation: this dict feeds every
+    # step's overrides, so each step owner's protocol supplies its own
+    # calculation type (scf, bands, nscf) and the override must not force one.
     parameters: dict[str, dict[str, Any]] = {
-        "CONTROL": {
-            "calculation": "scf",
-        },
+        "CONTROL": {},
         "SYSTEM": {},
         "ELECTRONS": {},
     }
