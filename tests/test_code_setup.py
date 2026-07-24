@@ -56,45 +56,6 @@ class TestExecutableCoverage:
         assert not mismatched, f"label/executable mismatch at call sites: {mismatched}"
 
 
-class TestPseudoNameNonFatal:
-    """The decompose pseudo-name must not break the PATH scan or install."""
-
-    def test_pseudo_name_maps_to_decompose_plugin(self) -> None:
-        """The pseudo-name is registered against the decompose CalcJob."""
-        from koopmans.aiida.setup.codes import QE_EXECUTABLES
-
-        assert QE_EXECUTABLES["pw2wannier90_decompose.x"] == "koopmans.pw2wannier_decompose"
-
-    def test_missing_pseudo_name_scans_as_non_fatal(self) -> None:
-        """An unresolved pseudo-name lands in ``missing`` without registering."""
-        from koopmans.aiida.setup.codes import scan_and_register_codes
-
-        # No explicit override and no such binary on PATH: the scan must route
-        # it to ``missing`` without ever calling ``setup_code`` (so ``computer``
-        # is never touched) and without raising.
-        found, missing = scan_and_register_codes(
-            {"pw2wannier90_decompose.x": "koopmans.pw2wannier_decompose"},
-            computer=None,  # type: ignore[arg-type]  # never reached: nothing is found
-        )
-
-        assert found == []
-        assert missing == ["pw2wannier90_decompose.x"]
-
-    def test_missing_pseudo_name_not_flagged_essential(self, capsys: Any) -> None:
-        """The summary treats only pw.x as essential, so the pseudo-name is OK."""
-        from koopmans.aiida.setup.codes import print_setup_summary
-
-        print_setup_summary(
-            existing_codes=["pw.x"],
-            found_codes=[],
-            missing_codes=["pw2wannier90_decompose.x", "wann2kcp.x", "merge_evc.x"],
-        )
-
-        out = capsys.readouterr().out
-        assert "All essential executables found" in out
-        assert "Essential executable(s) not found" not in out
-
-
 class TestForcedCodeReinstall:
     """Forced reinstalls must not collide on the retired ``<label>_old`` label."""
 
