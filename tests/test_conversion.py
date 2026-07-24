@@ -214,7 +214,7 @@ class TestCodeParallelizationHelper:
         from koopmans.input_file.parallelization import CodeParallelization
 
         options, settings = code_parallelization(CodeParallelization(ntasks=8, npool=4, pd=True))
-        assert options == {"resources": {"num_machines": 1, "tot_num_mpiprocs": 8}}
+        assert options == {"resources": {"num_machines": 1, "num_mpiprocs_per_machine": 8}}
         assert settings == {"cmdline": ["-npool", "4", "-pd", "true"]}
 
     def test_partial_and_none(self) -> None:
@@ -251,7 +251,7 @@ class TestParallelizationWiring:
         inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"ntasks": 8}}))
         _, _, overrides = _prepare_common_inputs(inp, ["scf"])
         resources = overrides["scf"]["pw"]["metadata"]["options"]["resources"]
-        assert resources == {"num_machines": 1, "tot_num_mpiprocs": 8}
+        assert resources == {"num_machines": 1, "num_mpiprocs_per_machine": 8}
 
     def test_no_parallelization_leaves_pw_clean(self, aiida_profile: Any) -> None:
         """With nothing configured, neither settings nor metadata is injected."""
@@ -291,7 +291,7 @@ class TestParallelizationWiring:
             code=installed_pw_code, structure=structure, overrides=overrides
         )
         assert builder.scf.pw.settings.get_dict()["cmdline"] == ["-npool", "4"]
-        assert builder.scf.pw.metadata.options["resources"]["tot_num_mpiprocs"] == 8
+        assert builder.scf.pw.metadata.options["resources"]["num_mpiprocs_per_machine"] == 8
 
 
 class TestDispatcherThreadsParallelization:
