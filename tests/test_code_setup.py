@@ -22,6 +22,39 @@ class TestExecutableCoverage:
         missing = executables - set(QE_EXECUTABLES)
         assert not missing, f"dispatcher loads {missing} with no QE_EXECUTABLES entry"
 
+    def test_no_non_literal_load_code_calls(self) -> None:
+        """Every ``_load_code`` call passes two string literals.
+
+        The coverage test above only sees literal arguments; a call built
+        from variables would escape it and could load an unregistered code.
+        """
+        import koopmans.aiida.workflows as workflows
+
+        source = Path(workflows.__file__).read_text()
+        all_calls = len(re.findall(r"_load_code\((?!\s*self)", source))
+        literal_calls = len(re.findall(r'_load_code\(\s*"[^"]+"\s*,\s*"[^"]+"', source))
+        definitions = len(re.findall(r"def _load_code\(", source))
+
+        assert all_calls - definitions == literal_calls, (
+            "a _load_code call site uses non-literal arguments and escapes "
+            "the executable-coverage test"
+        )
+
+    def test_load_code_labels_match_executables(self) -> None:
+        """Each ``_load_code`` label equals its executable minus ``.x``.
+
+        Registration derives the code label from the executable name, so a
+        mismatched pair would pass the coverage test yet fail at runtime.
+        """
+        import koopmans.aiida.workflows as workflows
+
+        source = Path(workflows.__file__).read_text()
+        pairs = re.findall(r'_load_code\(\s*"([^"]+)"\s*,\s*"([^"]+)"', source)
+
+        assert pairs, "regex matched no _load_code call sites"
+        mismatched = [(n, e) for n, e in pairs if e != f"{n}.x"]
+        assert not mismatched, f"label/executable mismatch at call sites: {mismatched}"
+
 
 class TestPseudoNameNonFatal:
     """The decompose pseudo-name must not break the PATH scan or install."""
