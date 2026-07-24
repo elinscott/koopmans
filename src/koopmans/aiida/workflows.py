@@ -357,7 +357,8 @@ def _build_wannierize_split_workgraph(
 
     Current scope: explicit projections and ``spin = 'none'``.
     """
-    from aiida_koopmans.workgraphs.auto_wannierize import WannierizeAndSplitBlocks
+    from aiida_koopmans.workgraphs.block_wannierize import WannierizeBlocks
+    from aiida_wannier90_workflows.utils.kpoints import get_explicit_kpoints
 
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -433,14 +434,22 @@ def _build_wannierize_split_workgraph(
     if w90_user:
         wannier_overrides["wannier90"] = w90_user
 
-    return WannierizeAndSplitBlocks.build(
+    # wannier90 / pw2wannier90 need eigenstates on the full explicit k-list
+    # (wannier90 kmesh.pl ordering, no symmetry reduction) and cannot
+    # re-derive the Monkhorst-Pack dimensions from it, so expand the mesh
+    # here and carry the grid separately.
+    kmesh = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
+    mp_grid = [int(x) for x in kmesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
+
+    return WannierizeBlocks.build(
         codes=codes,
         structure=structure,
         blocks=blocks,
-        kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
+        kpoints=get_explicit_kpoints(kmesh),
+        mp_grid=mp_grid,
         bands_kpoints=kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure),
         num_occ_bands=num_occ_bands,
-        threshold=float(threshold),
+        split_threshold=float(threshold),
         pseudo_family=pseudo_family,
         overrides=wannier_overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,

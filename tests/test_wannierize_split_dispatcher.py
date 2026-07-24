@@ -198,7 +198,7 @@ class TestGraphBuild:
         wg = _build(d, split_codes)
 
         bands_pw = wg.tasks["bands"].inputs["pw"]
-        assert bands_pw["metadata"]["options"]["resources"].value["tot_num_mpiprocs"] == 3
+        assert bands_pw["metadata"]["options"]["resources"].value["num_mpiprocs_per_machine"] == 3
         assert bands_pw["settings"].value["cmdline"] == ["-npool", "2"]
         assert wg.tasks["scf_nscf"].inputs["parallelization"].value == {
             "pw": {"ntasks": 3, "npool": 2}
