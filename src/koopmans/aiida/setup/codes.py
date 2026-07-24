@@ -24,12 +24,7 @@ if TYPE_CHECKING:
 # three CalcJobs (koopmans.kcw_wann2kc / kcw_screen / kcw_ham, selected via
 # control.calculation), so no single default is honest — the workgraph tasks
 # name their process class explicitly.
-#
-# There is deliberately no separate entry for the decompose-enabled
-# pw2wannier90 build: it is a superset of the stock binary, so a build that
-# carries ``wan_mode='decompose'`` is registered under ``pw2wannier90.x``
-# itself (``koopmans install --code pw2wannier90=<path>``) and serves both
-# CalcJobs through the one code.
+
 QE_EXECUTABLES: dict[str, str | None] = {
     "pw.x": "quantumespresso.pw",
     "ph.x": "quantumespresso.ph",
