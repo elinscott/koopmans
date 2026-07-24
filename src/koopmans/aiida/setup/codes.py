@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 # three CalcJobs (koopmans.kcw_wann2kc / kcw_screen / kcw_ham, selected via
 # control.calculation), so no single default is honest — the workgraph tasks
 # name their process class explicitly.
+
 QE_EXECUTABLES: dict[str, str | None] = {
     "pw.x": "quantumespresso.pw",
     "ph.x": "quantumespresso.ph",
@@ -32,6 +33,8 @@ QE_EXECUTABLES: dict[str, str | None] = {
     "dos.x": "quantumespresso.dos",
     "wannier90.x": "wannier90.wannier90",
     "pw2wannier90.x": "quantumespresso.pw2wannier90",
+    "wann2kcp.x": "koopmans.wann2kcp",
+    "merge_evc.x": "koopmans.merge_evc",
     "kcw.x": None,
     "kcp.x": "koopmans.kcp",
 }
