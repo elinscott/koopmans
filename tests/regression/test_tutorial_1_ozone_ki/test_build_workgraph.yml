@@ -1347,7 +1347,7 @@ raw:
                 identifier: <scrubbed:identifier>
                 meta:
                   child_default_link_limit: 1
-                  required: false
+                  required: true
               remote_folder:
                 dynamic: false
                 identifier: <scrubbed:identifier>
@@ -2613,7 +2613,7 @@ raw:
                     identifier: <scrubbed:identifier>
                     meta:
                       child_default_link_limit: 1
-                      required: false
+                      required: true
                   remote_folder:
                     dynamic: false
                     identifier: <scrubbed:identifier>
