@@ -1341,7 +1341,7 @@ raw:
                   child_default_link_limit: 1
                   extras:
                     py_type: aiida.orm.nodes.data.folder.FolderData
-                  required: true
+                  required: false
               nnkp_file:
                 dynamic: false
                 identifier: <scrubbed:identifier>
@@ -1363,7 +1363,7 @@ raw:
                   child_default_link_limit: 1
                   extras:
                     py_type: aiida.orm.nodes.data.remote.base.RemoteData
-                  required: true
+                  required: false
               u_file:
                 dynamic: false
                 identifier: <scrubbed:identifier>
@@ -2607,7 +2607,7 @@ raw:
                       child_default_link_limit: 1
                       extras:
                         py_type: aiida.orm.nodes.data.folder.FolderData
-                      required: true
+                      required: false
                   nnkp_file:
                     dynamic: false
                     identifier: <scrubbed:identifier>
@@ -2629,7 +2629,7 @@ raw:
                       child_default_link_limit: 1
                       extras:
                         py_type: aiida.orm.nodes.data.remote.base.RemoteData
-                      required: true
+                      required: false
                   u_file:
                     dynamic: false
                     identifier: <scrubbed:identifier>
