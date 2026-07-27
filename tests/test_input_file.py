@@ -103,6 +103,66 @@ class TestSchemaValidation:
         assert CalculatorParametersInput.model_validate({"nbnd": 10.0}).nbnd == 10
 
 
+def _minimal_si_input() -> dict[str, object]:
+    """Return a minimal, valid silicon ``KoopmansInput`` dict."""
+    return {
+        "workflow": {"task": "singlepoint", "pseudo_library": "X"},
+        "atoms": {
+            "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.26}},
+            "atomic_positions": {
+                "units": "crystal",
+                "positions": [["Si", 0, 0, 0], ["Si", 0.25, 0.25, 0.25]],
+            },
+        },
+        "kpoints": {"grid": [2, 2, 2]},
+        "calculator_parameters": {"ecutwfc": 20.0},
+    }
+
+
+class TestRemovedKeywordsRejected:
+    """Retired keywords must fail loudly at parse, not be silently ignored."""
+
+    @pytest.mark.parametrize(
+        ("section", "keyword"),
+        [
+            ("workflow", "converge"),
+            ("ml", "train_on_the_fly"),
+            ("ml", "alphas_from_file"),
+        ],
+    )
+    def test_removed_keyword_rejected_by_model(self, section: str, keyword: str) -> None:
+        """A retired keyword is an unknown field under ``extra='forbid'``."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        d.setdefault(section, {})
+        d[section][keyword] = True  # type: ignore[index]
+
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize(
+        ("section", "keyword"),
+        [
+            ("workflow", "converge"),
+            ("ml", "train_on_the_fly"),
+            ("ml", "alphas_from_file"),
+        ],
+    )
+    def test_removed_keyword_gives_friendly_message(
+        self, section: str, keyword: str, tmp_path: Path
+    ) -> None:
+        """``read_input_file`` reports the retired keyword as an invalid keyword."""
+        d = _minimal_si_input()
+        d.setdefault(section, {})
+        d[section][keyword] = True  # type: ignore[index]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError, match=rf"{section}\.{keyword}.*is not a valid keyword"):
+            read_input_file(input_file)
+
+
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
     """Return a minimal silicon input dict for parallelization-block tests."""
     d: dict[str, object] = {
