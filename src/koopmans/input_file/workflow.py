@@ -132,10 +132,6 @@ class WorkflowConfig(BaseModel):
         default=None,
         description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree, Angstrom^2 for spread). Left unset, takes the criterion's default (1e-4 for self_hartree, 0.05 for spread)",
     )
-    converge: bool = Field(
-        default=False,
-        description="If True, repeat the workflow increasing the convergence_parameters until the convergence_observable converges within the convergence_threshold",
-    )
     dfpt_coarse_grid: tuple[int, int, int] | None = Field(
         default=None,
         description="The coarse k-point grid on which to perform the DFPT calculations",

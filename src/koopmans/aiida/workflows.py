@@ -652,6 +652,22 @@ def _build_singlepoint_dfpt_workgraph(
     )
 
 
+def _reject_explicit_orbital_groups(workflow: WorkflowConfig) -> None:
+    """Reject an explicit ``orbital_groups`` list until the fan-out threads it.
+
+    The field parses and validates but is never carried into the per-orbital
+    screening fan-out, so an explicit grouping would be honoured nowhere and
+    orbitals would silently fall back to the criterion-based grouping. Fail
+    loudly instead and point at the criterion that is wired up.
+    """
+    if workflow.orbital_groups is not None:
+        raise NotImplementedError(
+            "explicit orbital_groups are not yet threaded into the screening "
+            "fan-out; use group_orbitals_by / group_orbitals_tol to group "
+            "orbitals by self-Hartree energy (DSCF) or wannier90 spread (DFPT)."
+        )
+
+
 def _dfpt_grouping_tol(workflow: WorkflowConfig) -> float | None:
     """Resolve the workflow-level orbital-grouping tolerance for the DFPT route.
 
@@ -659,6 +675,7 @@ def _dfpt_grouping_tol(workflow: WorkflowConfig) -> float | None:
     ``'none'`` / unset (no workflow-level grouping), and raises for
     ``'self_hartree'``, which the DFPT route has no metric for.
     """
+    _reject_explicit_orbital_groups(workflow)
     criterion = workflow.group_orbitals_by
     if criterion is None or criterion == GroupOrbitalsBy.NONE:
         return None
@@ -990,6 +1007,7 @@ def _grouping_tol(workflow: WorkflowConfig) -> float | None:
     (including their route-dependent defaults) at parse time; here only the
     implemented criterion passes through.
     """
+    _reject_explicit_orbital_groups(workflow)
     if workflow.group_orbitals_by == GroupOrbitalsBy.NONE:
         return None
     if workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE:
