@@ -12,6 +12,7 @@ from koopmans.aiida.workflows import (
     _KcpDscfInputs,
 )
 from koopmans.input_file import KoopmansInput, read_input_file
+from koopmans.input_file.atomic_positions import AtomicPositionsInput
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
@@ -73,7 +74,9 @@ class TestOzoneInputParse:
 
     def test_ozone_has_three_oxygen_atoms(self, ozone_input: KoopmansInput) -> None:
         """The ozone tutorial should have three oxygens at the expected positions."""
-        positions = ozone_input.atoms.atomic_positions.positions
+        atomic_positions = ozone_input.atoms.atomic_positions
+        assert isinstance(atomic_positions, AtomicPositionsInput)
+        positions = atomic_positions.positions
         assert len(positions) == 3
         assert all(atom[0] == "O" for atom in positions)
 

@@ -5,15 +5,25 @@ from __future__ import annotations
 from collections.abc import Callable
 from json import load
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    Discriminator,
+    Field,
+    Tag,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import ErrorDetails
 from wannier90_input.models.parameters import Projection
 from yaml import safe_load
 
 from koopmans.base import BaseModel
-from koopmans.input_file.atomic_positions import AtomicPositionsInput
+from koopmans.input_file.atomic_positions import (
+    AtomicPositionsInput,
+    SnapshotPositionsInput,
+)
 from koopmans.input_file.cell_parameters import (
     CellParametersViaAlat,
     CellParametersViaIbrav,
@@ -74,11 +84,28 @@ def migrate_input_dict(input_dict: dict[str, Any]) -> dict[str, Any]:
     return {**input_dict, "version": INPUT_FILE_FORMAT_VERSION}
 
 
+def _atomic_positions_discriminator(value: Any) -> str:
+    """Return the union tag for an ``atomic_positions`` block.
+
+    A block carrying a ``snapshots`` key is a multi-frame trajectory; anything
+    else is an explicit list of positions.
+    """
+    if isinstance(value, SnapshotPositionsInput):
+        return "snapshots"
+    if isinstance(value, dict):
+        return "snapshots" if "snapshots" in value else "explicit"
+    return "explicit"
+
+
 class AtomsInput(BaseModel):
     """Input model for specifying the cell and atomic positions."""
 
     cell_parameters: CellParametersViaIbrav | CellParametersViaVectors | CellParametersViaAlat
-    atomic_positions: AtomicPositionsInput
+    atomic_positions: Annotated[
+        Annotated[AtomicPositionsInput, Tag("explicit")]
+        | Annotated[SnapshotPositionsInput, Tag("snapshots")],
+        Discriminator(_atomic_positions_discriminator),
+    ]
 
 
 class GammaOnlyKpointsInput(BaseModel):
@@ -205,7 +232,30 @@ class KoopmansInput(BaseModel):
         else:
             raise ValueError(f"Unrecognized file type for `{filename}`")
 
-        return cls.model_validate(migrate_input_dict(input_dict))
+        koopmans_input = cls.model_validate(migrate_input_dict(input_dict))
+        koopmans_input.resolve_paths(filename.parent)
+        return koopmans_input
+
+    def resolve_paths(self, base_dir: str | Path) -> None:
+        """Resolve file-path input fields against the input file's directory.
+
+        ``ml.model_file`` and a snapshots-style ``atoms.atomic_positions`` both
+        name files on disk. A relative path in the input file is interpreted
+        relative to the file's own location, not the process working directory.
+        Absolute paths are left untouched.
+        """
+        base = Path(base_dir)
+
+        def _resolve(path: str) -> str:
+            candidate = Path(path)
+            return str(candidate if candidate.is_absolute() else base / candidate)
+
+        if self.ml.model_file is not None:
+            self.ml.model_file = _resolve(self.ml.model_file)
+
+        positions = self.atoms.atomic_positions
+        if isinstance(positions, SnapshotPositionsInput):
+            positions.snapshots = _resolve(positions.snapshots)
 
 
 CUSTOM_MESSAGES = {

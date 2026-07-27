@@ -14,6 +14,7 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
+    atoms_input_to_structures,
     code_parallelization,
     input_to_pw_parameters,
 )
@@ -809,9 +810,9 @@ def _build_trajectory_workgraph(
       ``aiida-koopmans`` (``OrbitalDensityDatasetWorkflow``), but stays
       gated pending a live daemon regression that confirms the per-block
       Wannier-function-to-alpha ordering against the legacy reference.
-    - Multi-snapshot (xyz trajectory) input is not representable in the
-      ``KoopmansInput`` schema yet, so the single input structure is run as
-      a one-snapshot trajectory.
+
+    Each frame of the ``atoms.atomic_positions.snapshots`` xyz becomes one
+    ``snapshot_N`` structure fed to the dynamic snapshots namespace.
     """
     from json import load as json_load
 
@@ -867,12 +868,8 @@ def _build_trajectory_workgraph(
         with open(ml_config.model_file) as handle:
             ml_model = json_load(handle)
 
-    structure = atoms_input_to_structure(koopmans_input.atoms)
+    snapshots = atoms_input_to_structures(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
-
-    # The input schema cannot express multiple snapshots yet, so run the
-    # single input structure as a one-snapshot trajectory.
-    snapshots = {"snapshot_1": structure}
 
     return TrajectoryWorkflow.build(
         code=codes["kcp"],

@@ -218,8 +218,16 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     Returns:
         AiiDA StructureData node.
     """
+    from koopmans.input_file.atomic_positions import SnapshotPositionsInput
+
     cell_params = atoms.cell_parameters
     positions = atoms.atomic_positions
+
+    if isinstance(positions, SnapshotPositionsInput):
+        raise ValueError(
+            "A snapshots-style `atomic_positions` block (a multi-frame xyz path) is only "
+            "supported by the `trajectory` task; this task expects explicit atomic positions."
+        )
 
     cell = cell_in_angstrom(cell_params)
 
@@ -252,6 +260,58 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
         structure.append_atom(position=cart_coords, symbols=symbol)  # type: ignore[no-untyped-call]
 
     return structure
+
+
+def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]:
+    """Convert a snapshots-style AtomsInput into per-frame StructureData nodes.
+
+    Reads every frame of the ``atomic_positions.snapshots`` xyz file. The cell
+    and periodicity always come from the input file's ``cell_parameters`` block
+    and override whatever the xyz records, on every frame. Frame coordinates are
+    Cartesian Angstrom (the xyz convention), so they bypass the units machinery.
+
+    Args:
+        atoms: The atoms input from KoopmansInput, with a snapshots-style
+            ``atomic_positions`` block.
+
+    Returns:
+        Mapping of ``snapshot_1 .. snapshot_N`` to AiiDA StructureData nodes.
+        The keys are valid AiiDA link labels.
+
+    Raises:
+        ValueError: If ``atomic_positions`` is an explicit-positions block
+            rather than a snapshots block.
+    """
+    from ase.io import read as ase_read
+
+    from koopmans.input_file.atomic_positions import SnapshotPositionsInput
+
+    positions = atoms.atomic_positions
+    if not isinstance(positions, SnapshotPositionsInput):
+        raise ValueError(
+            "atoms_input_to_structures requires a snapshots-style `atomic_positions` block "
+            "(a `snapshots` xyz path); got an explicit-positions block."
+        )
+
+    frames = ase_read(positions.snapshots, index=":")
+
+    cell = cell_in_angstrom(atoms.cell_parameters)
+    pbc = atoms.cell_parameters.periodic
+    if isinstance(pbc, bool):
+        pbc = (pbc, pbc, pbc)
+
+    structures: dict[str, orm.StructureData] = {}
+    for index, frame in enumerate(frames, start=1):
+        structure = orm.StructureData(cell=cell, pbc=pbc)
+        for symbol, position in zip(
+            frame.get_chemical_symbols(), frame.get_positions(), strict=True
+        ):
+            structure.append_atom(  # type: ignore[no-untyped-call]
+                position=[float(x) for x in position], symbols=symbol
+            )
+        structures[f"snapshot_{index}"] = structure
+
+    return structures
 
 
 def kpoints_input_to_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData:

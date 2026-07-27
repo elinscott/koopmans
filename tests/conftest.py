@@ -28,6 +28,7 @@ from tests.fixtures import (  # noqa: F401
     localhost_computer,
     serialize_workgraph,
     tutorials_dir,
+    write_multiframe_xyz,
 )
 
 pytest_plugins = ["aiida.tools.pytest_fixtures"]

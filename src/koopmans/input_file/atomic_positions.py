@@ -15,3 +15,10 @@ class AtomicPositionsInput(BaseModel):
     units: Annotated[Literal["crystal", "ang", "bohr", "alat"], BeforeValidator(tidy_units)] = (
         "alat"
     )
+
+
+class SnapshotPositionsInput(BaseModel):
+    """Input schema for atomic positions supplied as a multi-frame trajectory."""
+
+    snapshots: str
+    """Path to a multi-frame ``xyz`` file (one structure per frame)."""
