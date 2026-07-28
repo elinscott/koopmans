@@ -1,9 +1,9 @@
 """Tests for multi-snapshot trajectory input (schema, conversion, dispatch).
 
-Covers the ``atoms.atomic_positions`` union (explicit positions vs a
-multi-frame ``snapshots`` xyz), path resolution relative to the input file,
-the per-frame ``StructureData`` conversion (including the cell-override rule),
-rejection of a snapshots block by non-trajectory tasks, and a real
+Covers the ``atoms.snapshots`` field (mutually exclusive with explicit
+``atomic_positions``), path resolution relative to the input file, the
+per-frame ``StructureData`` conversion (including the cell-override rule),
+rejection of a snapshots input by non-trajectory tasks, and a real
 ``WorkGraph`` build asserting one ``dscf_snapshot_N`` task per frame
 (throwaway profile, dummy codes, fake pseudos; nothing runs).
 """
@@ -18,21 +18,18 @@ from typing import Any
 import pytest
 
 from koopmans.input_file import AtomsInput, KoopmansInput, read_input_file
-from koopmans.input_file.atomic_positions import (
-    AtomicPositionsInput,
-    SnapshotPositionsInput,
-)
+from koopmans.input_file.atomic_positions import AtomicPositionsInput
 
 
 def _snapshots_atoms_dict(snapshots: str, *, box: float = 6.0) -> dict[str, Any]:
-    """Return an ``atoms`` block using a snapshots-style ``atomic_positions``."""
+    """Return an ``atoms`` block whose positions come from a snapshots xyz."""
     return {
         "cell_parameters": {
             "periodic": True,
             "units": "angstrom",
             "vectors": [[box, 0.0, 0.0], [0.0, box, 0.0], [0.0, 0.0, box]],
         },
-        "atomic_positions": {"snapshots": snapshots},
+        "snapshots": snapshots,
     }
 
 
@@ -63,11 +60,11 @@ def _trajectory_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str,
     return d
 
 
-class TestAtomicPositionsUnion:
-    """The ``atomic_positions`` union discriminates on the ``snapshots`` key."""
+class TestAtomsSnapshotsField:
+    """``atoms.snapshots`` and ``atoms.atomic_positions`` are mutually exclusive."""
 
     def test_explicit_positions_parse(self) -> None:
-        """An explicit-positions block resolves to ``AtomicPositionsInput``."""
+        """An explicit-positions block parses; ``snapshots`` stays unset."""
         atoms = AtomsInput.model_validate(
             {
                 "cell_parameters": {"ibrav": 2, "celldms": {1: 10.2622}},
@@ -78,42 +75,40 @@ class TestAtomicPositionsUnion:
             }
         )
         assert isinstance(atoms.atomic_positions, AtomicPositionsInput)
+        assert atoms.snapshots is None
 
-    def test_snapshots_block_parses(self) -> None:
-        """A ``snapshots`` block resolves to ``SnapshotPositionsInput``."""
+    def test_snapshots_parses(self) -> None:
+        """A ``snapshots`` path parses; ``atomic_positions`` stays unset."""
         atoms = AtomsInput.model_validate(_snapshots_atoms_dict("frames.xyz"))
-        assert isinstance(atoms.atomic_positions, SnapshotPositionsInput)
-        assert atoms.atomic_positions.snapshots == "frames.xyz"
+        assert atoms.snapshots == "frames.xyz"
+        assert atoms.atomic_positions is None
 
-    def test_legacy_tutorial_shape_parses_verbatim(self) -> None:
-        """The legacy ``atoms.atomic_positions.snapshots`` shape parses as-is."""
-        atoms = AtomsInput.model_validate(
-            {
-                "atomic_positions": {"snapshots": "testing_snapshots.xyz"},
-                "cell_parameters": {
-                    "periodic": True,
-                    "units": "angstrom",
-                    "vectors": [
-                        [6.8929, 0.0, 0.0],
-                        [0.0, 6.8929, 0.0],
-                        [0.0, 0.0, 6.8929],
-                    ],
-                },
-            }
-        )
-        assert isinstance(atoms.atomic_positions, SnapshotPositionsInput)
-        assert atoms.atomic_positions.snapshots == "testing_snapshots.xyz"
-
-    def test_snapshots_block_rejects_explicit_keys(self) -> None:
-        """A ``snapshots`` block cannot also carry ``positions`` (extra forbidden)."""
-        with pytest.raises(ValueError):
+    def test_both_sources_rejected(self) -> None:
+        """Supplying both ``atomic_positions`` and ``snapshots`` raises."""
+        with pytest.raises(ValueError, match="exactly one"):
             AtomsInput.model_validate(
                 {
                     "cell_parameters": {"ibrav": 2, "celldms": {1: 10.2622}},
                     "atomic_positions": {
-                        "snapshots": "frames.xyz",
+                        "units": "crystal",
                         "positions": [["Si", 0.0, 0.0, 0.0]],
                     },
+                    "snapshots": "frames.xyz",
+                }
+            )
+
+    def test_neither_source_rejected(self) -> None:
+        """An ``atoms`` block with neither positions source raises."""
+        with pytest.raises(ValueError, match="exactly one"):
+            AtomsInput.model_validate({"cell_parameters": {"ibrav": 2, "celldms": {1: 10.2622}}})
+
+    def test_nested_snapshots_rejected(self) -> None:
+        """The retired ``atomic_positions: {"snapshots": ...}`` nesting raises."""
+        with pytest.raises(ValueError):
+            AtomsInput.model_validate(
+                {
+                    "cell_parameters": {"ibrav": 2, "celldms": {1: 10.2622}},
+                    "atomic_positions": {"snapshots": "frames.xyz"},
                 }
             )
 
@@ -143,9 +138,7 @@ class TestPathResolution:
         koopmans_input = read_input_file(input_file)
 
         assert koopmans_input.ml.model_file == str(sub / "model.json")
-        positions = koopmans_input.atoms.atomic_positions
-        assert isinstance(positions, SnapshotPositionsInput)
-        assert positions.snapshots == str(sub / "frames.xyz")
+        assert koopmans_input.atoms.snapshots == str(sub / "frames.xyz")
 
     def test_relative_paths_are_independent_of_cwd(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -170,9 +163,7 @@ class TestPathResolution:
         input_file = self._write_input(sub, str(tmp_path / "m.json"), absolute)
 
         koopmans_input = read_input_file(input_file)
-        positions = koopmans_input.atoms.atomic_positions
-        assert isinstance(positions, SnapshotPositionsInput)
-        assert positions.snapshots == absolute
+        assert koopmans_input.atoms.snapshots == absolute
 
 
 class TestSnapshotConversion:
@@ -232,8 +223,8 @@ class TestSnapshotConversion:
         structures = atoms_input_to_structures(atoms)
         assert all(re.fullmatch(r"[A-Za-z0-9_]+", key) for key in structures)
 
-    def test_explicit_block_rejected_by_plural_converter(self, aiida_profile: Any) -> None:
-        """The plural converter rejects an explicit-positions block."""
+    def test_explicit_positions_rejected_by_plural_converter(self, aiida_profile: Any) -> None:
+        """The plural converter rejects explicit positions."""
         from koopmans.aiida.conversion import atoms_input_to_structures
 
         atoms = AtomsInput.model_validate(
@@ -248,8 +239,8 @@ class TestSnapshotConversion:
         with pytest.raises(ValueError, match="snapshots"):
             atoms_input_to_structures(atoms)
 
-    def test_snapshots_block_rejected_by_singular_converter(self, aiida_profile: Any) -> None:
-        """The singular converter rejects a snapshots block, naming the trajectory gap."""
+    def test_snapshots_rejected_by_singular_converter(self, aiida_profile: Any) -> None:
+        """The singular converter rejects a snapshots input, naming the trajectory gap."""
         from koopmans.aiida.conversion import atoms_input_to_structure
 
         atoms = AtomsInput.model_validate(_snapshots_atoms_dict("frames.xyz"))

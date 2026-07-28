@@ -218,15 +218,13 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     Returns:
         AiiDA StructureData node.
     """
-    from koopmans.input_file.atomic_positions import SnapshotPositionsInput
-
     cell_params = atoms.cell_parameters
     positions = atoms.atomic_positions
 
-    if isinstance(positions, SnapshotPositionsInput):
+    if positions is None:
         raise ValueError(
-            "A snapshots-style `atomic_positions` block (a multi-frame xyz path) is only "
-            "supported by the `trajectory` task; this task expects explicit atomic positions."
+            "`atoms.snapshots` (a multi-frame xyz path) is only supported by the "
+            "`trajectory` task; this task expects explicit `atomic_positions`."
         )
 
     cell = cell_in_angstrom(cell_params)
@@ -263,37 +261,34 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
 
 
 def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]:
-    """Convert a snapshots-style AtomsInput into per-frame StructureData nodes.
+    """Convert a snapshots-carrying AtomsInput into per-frame StructureData nodes.
 
-    Reads every frame of the ``atomic_positions.snapshots`` xyz file. The cell
-    and periodicity always come from the input file's ``cell_parameters`` block
-    and override whatever the xyz records, on every frame. Frame coordinates are
-    Cartesian Angstrom (the xyz convention), so they bypass the units machinery.
+    Reads every frame of the ``snapshots`` xyz file. The cell and periodicity
+    always come from the input file's ``cell_parameters`` block and override
+    whatever the xyz records, on every frame. Frame coordinates are Cartesian
+    Angstrom (the xyz convention), so they bypass the units machinery.
 
     Args:
-        atoms: The atoms input from KoopmansInput, with a snapshots-style
-            ``atomic_positions`` block.
+        atoms: The atoms input from KoopmansInput, with its ``snapshots``
+            field set.
 
     Returns:
         Mapping of ``snapshot_1 .. snapshot_N`` to AiiDA StructureData nodes.
         The keys are valid AiiDA link labels.
 
     Raises:
-        ValueError: If ``atomic_positions`` is an explicit-positions block
-            rather than a snapshots block.
+        ValueError: If ``atoms`` carries explicit ``atomic_positions`` rather
+            than ``snapshots``.
     """
     from ase.io import read as ase_read
 
-    from koopmans.input_file.atomic_positions import SnapshotPositionsInput
-
-    positions = atoms.atomic_positions
-    if not isinstance(positions, SnapshotPositionsInput):
+    if atoms.snapshots is None:
         raise ValueError(
-            "atoms_input_to_structures requires a snapshots-style `atomic_positions` block "
-            "(a `snapshots` xyz path); got an explicit-positions block."
+            "atoms_input_to_structures requires `atoms.snapshots` (a multi-frame xyz "
+            "path); got explicit `atomic_positions`."
         )
 
-    frames = ase_read(positions.snapshots, index=":")
+    frames = ase_read(atoms.snapshots, index=":")
 
     cell = cell_in_angstrom(atoms.cell_parameters)
     pbc = atoms.cell_parameters.periodic

@@ -1011,8 +1011,8 @@ def _build_trajectory_workgraph(
       gated pending a live daemon regression that confirms the per-block
       Wannier-function-to-alpha ordering against the legacy reference.
 
-    Each frame of the ``atoms.atomic_positions.snapshots`` xyz becomes one
-    ``snapshot_N`` structure fed to the dynamic snapshots namespace.
+    Each frame of the ``atoms.snapshots`` xyz becomes one ``snapshot_N``
+    structure fed to the dynamic snapshots namespace.
     """
     from json import load as json_load
 

@@ -25,4 +25,4 @@ Specifications for all elements of the input file
    :members:
    :imported-members:
    :member-order: alphabetical
-   :exclude-members: KoopmansInput, load, Path, Field, model_validator, field_validator, safe_load, ErrorDetails, BaseModel, convert_errors, prettify_errors, Discriminator, Tag
+   :exclude-members: KoopmansInput, load, Path, Field, model_validator, field_validator, safe_load, ErrorDetails, BaseModel, convert_errors, prettify_errors
