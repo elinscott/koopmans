@@ -102,6 +102,12 @@ class TestAtomsSnapshotsField:
         with pytest.raises(ValueError, match="exactly one"):
             AtomsInput.model_validate({"cell_parameters": {"ibrav": 2, "celldms": {1: 10.2622}}})
 
+    @pytest.mark.parametrize("path", ["", "   "])
+    def test_blank_snapshots_rejected(self, path: str) -> None:
+        """An empty or whitespace-only ``snapshots`` path raises at validation."""
+        with pytest.raises(ValueError, match="non-empty"):
+            AtomsInput.model_validate(_snapshots_atoms_dict(path))
+
     def test_nested_snapshots_rejected(self) -> None:
         """The retired ``atomic_positions: {"snapshots": ...}`` nesting raises."""
         with pytest.raises(ValueError):

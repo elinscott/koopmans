@@ -90,6 +90,8 @@ class AtomsInput(BaseModel):
                 "the `atoms` block must contain exactly one of `atomic_positions` "
                 "(explicit positions) and `snapshots` (a multi-frame xyz path)"
             )
+        if self.snapshots is not None and not self.snapshots.strip():
+            raise ValueError("`snapshots` must be a non-empty path to a multi-frame xyz file")
         return self
 
 

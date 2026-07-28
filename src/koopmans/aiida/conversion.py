@@ -284,8 +284,8 @@ def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]
 
     if atoms.snapshots is None:
         raise ValueError(
-            "atoms_input_to_structures requires `atoms.snapshots` (a multi-frame xyz "
-            "path); got explicit `atomic_positions`."
+            "the `trajectory` task requires `atoms.snapshots` (a multi-frame xyz path); "
+            "got explicit `atomic_positions`."
         )
 
     frames = ase_read(atoms.snapshots, index=":")
