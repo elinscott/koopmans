@@ -80,19 +80,20 @@ def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     return _build_wannierize_split_workgraph(inp, codes)
 
 
+@pytest.fixture
+def silicon_structure(aiida_profile: Any) -> Any:
+    """Return a 2-atom periodic silicon ``StructureData``."""
+    from aiida.orm import StructureData
+
+    cell = [[0.0, 2.715, 2.715], [2.715, 0.0, 2.715], [2.715, 2.715, 0.0]]
+    struct = StructureData(cell=cell, pbc=True)
+    struct.append_atom(position=(0.0, 0.0, 0.0), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
+    struct.append_atom(position=(1.3575, 1.3575, 1.3575), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
+    return struct
+
+
 class TestBlockDerivation:
     """Unit tests for the lenient block derivation."""
-
-    @pytest.fixture
-    def silicon_structure(self, aiida_profile: Any) -> Any:
-        """Return a 2-atom periodic silicon ``StructureData``."""
-        from aiida.orm import StructureData
-
-        cell = [[0.0, 2.715, 2.715], [2.715, 0.0, 2.715], [2.715, 2.715, 0.0]]
-        struct = StructureData(cell=cell, pbc=True)
-        struct.append_atom(position=(0.0, 0.0, 0.0), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
-        struct.append_atom(position=(1.3575, 1.3575, 1.3575), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
-        return struct
 
     @staticmethod
     def _sp3_block() -> list[Any]:
@@ -180,6 +181,42 @@ class TestAutomaticProjections:
         # the projector manifold.
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
         assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
+
+    def test_derived_block_covers_the_projector_manifold_exactly(
+        self, aiida_profile_clean: Any, fake_sg15_cutoffs_family: Any, silicon_structure: Any
+    ) -> None:
+        """The single derived block is pool-free and covers every projector band.
+
+        ``include_bands`` must run over exactly ``1..num_wann`` — a shorter
+        list would silently drop Wannier functions from the runtime split —
+        and ``num_bands == num_wann`` is the no-pool invariant behind the
+        nbnd guards.
+        """
+        from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+        from koopmans.aiida.conversion import get_pseudos_from_family
+        from koopmans.aiida.workflows import _derive_automatic_wannierize_blocks
+
+        pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
+        blocks, nbnd = _derive_automatic_wannierize_blocks(silicon_structure, pseudos, None, 4)
+        [block] = blocks
+        assert block["num_wann"] == 8
+        assert block["num_bands"] == 8
+        assert block["include_bands"] == list(range(1, 9))
+        assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_QE
+        assert block.get("exclude_bands") is None
+        assert nbnd == 8
+
+    def test_projectors_short_of_occupied_manifold_raise(
+        self, aiida_profile_clean: Any, fake_sg15_cutoffs_family: Any, silicon_structure: Any
+    ) -> None:
+        """Projectors that cannot span the occupied manifold are rejected."""
+        from koopmans.aiida.conversion import get_pseudos_from_family
+        from koopmans.aiida.workflows import _derive_automatic_wannierize_blocks
+
+        pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
+        with pytest.raises(ValueError, match="cannot span the occupied manifold"):
+            _derive_automatic_wannierize_blocks(silicon_structure, pseudos, None, 10)
 
     def test_nbnd_above_projector_count_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
