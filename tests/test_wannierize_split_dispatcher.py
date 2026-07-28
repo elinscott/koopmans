@@ -134,15 +134,6 @@ class TestGuards:
         with pytest.raises(NotImplementedError, match="spin='none'"):
             _build(_si_split_dict(spin="collinear"), split_codes)
 
-    def test_missing_projections_not_implemented(
-        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """Automatic projections are a follow-up; explicit ones are required."""
-        d = _si_split_dict()
-        d["calculator_parameters"]["wannier90"] = {}
-        with pytest.raises(NotImplementedError, match="explicit Wannier90 projections"):
-            _build(d, split_codes)
-
     def test_missing_kpath_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
@@ -150,6 +141,74 @@ class TestGuards:
         d = _si_split_dict()
         d["kpoints"].pop("path")
         with pytest.raises(ValueError, match="k-point path"):
+            _build(d, split_codes)
+
+
+def _si_auto_dict(**workflow_updates: Any) -> dict[str, Any]:
+    """Return the silicon split input without explicit projections.
+
+    The fake Si pseudo carries an s+p valence, so the two-atom cell has 8
+    atomic projectors — the automatic block spans bands 1-8 with the
+    occupied/empty boundary at band 4 (nelec 8).
+    """
+    d = _si_split_dict(**workflow_updates)
+    d["calculator_parameters"]["wannier90"] = {}
+    return d
+
+
+class TestAutomaticProjections:
+    """The atomic-projector route taken when no projections are given."""
+
+    def test_automatic_route_builds(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """One atomic-projector block spans the manifold and splits at runtime."""
+        wg = _build(_si_auto_dict(), split_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("scf_nscf") == 1
+        assert names.count("bands") == 1
+        assert names.count("detect_band_groups") == 1
+        assert "wannierize_split_block_1" in names
+
+        detect_task = wg.tasks["detect_band_groups"]
+        # 8 atomic projectors; nelec 8 -> 4 occupied bands; threshold 1.5 eV.
+        assert detect_task.inputs["num_bands_total"].value == 8
+        assert detect_task.inputs["num_occ_bands"].value == 4
+        assert detect_task.inputs["threshold"].value == 1.5
+
+        # The nscf (and the bands run seeded from it) covers every band of
+        # the projector manifold.
+        overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
+        assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
+
+    def test_nbnd_above_projector_count_not_implemented(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A disentanglement pool above the projector manifold cannot split."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["nbnd"] = 12
+        with pytest.raises(NotImplementedError, match="disentangle"):
+            _build(d, split_codes)
+
+    def test_nbnd_below_projector_count_raises(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Fewer bands than atomic projectors is an input error."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["nbnd"] = 6
+        with pytest.raises(ValueError, match="smaller than the 8 atomic projectors"):
+            _build(d, split_codes)
+
+    def test_external_projectors_not_implemented(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """External atomic projectors are not wired into the split flow."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["pw2wannier90"] = {
+            "atom_proj_ext": True,
+            "atom_proj_dir": "/dev/null",
+        }
+        with pytest.raises(NotImplementedError, match="atom_proj_ext"):
             _build(d, split_codes)
 
 

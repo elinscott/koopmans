@@ -203,9 +203,19 @@ def _install_fake_family(
     family.store()
     pseudos = []
     for element, z_valence in elements.items():
+        # Shaped for the line-based block extractors in
+        # aiida-wannier90-workflows' pseudo utilities: ``<PP_HEADER`` and its
+        # ``/>`` sit on their own lines, ``has_so`` is required, and
+        # ``PP_PSWFC`` provides an s+p valence (4 projectors per atom) so
+        # projection counting works.
         content = (
-            f'<UPF version="2.0.1"><PP_HEADER\nelement="{element}"\n'
-            f'z_valence="{z_valence}"\n/></UPF>\n'
+            f'<UPF version="2.0.1">\n'
+            f'<PP_HEADER\nelement="{element}"\n'
+            f'z_valence="{z_valence}"\nhas_so="F"\n/>\n'
+            f"<PP_PSWFC>\n"
+            f'<PP_CHI.1 l="0"/>\n<PP_CHI.2 l="1"/>\n'
+            f"</PP_PSWFC>\n"
+            f"</UPF>\n"
         )
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
         pseudos.append(upf.store())
