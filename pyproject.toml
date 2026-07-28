@@ -311,6 +311,7 @@ environments = [
 pydantic-espresso = { path = "../pydantic_espresso" }
 aiida-core = { path = "../aiida-core" }
 aiida-koopmans = { path = "../aiida-koopmans2", editable = true }
+aiida-wannierjl = { path = "../aiida-wannierjl", editable = true }
 aiida-quantumespresso = { path = "../aiida-quantumespresso", editable = true }
 aiida-workgraph = { path = "../aiida-workgraph", editable = true }
 node-graph = { path = "../node-graph", editable = true }
