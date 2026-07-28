@@ -190,6 +190,47 @@ class TestBuildSinglepointWorkgraphScopeGuards:
             _build_singlepoint_workgraph(inp, codes={})
 
 
+class TestExplicitOrbitalGroupsRejected:
+    """An explicit ``orbital_groups`` list is not wired into the screening fan-out.
+
+    The field parses and validates but reaches nothing downstream, so the
+    dispatcher must reject it loudly rather than silently grouping by the
+    resolved criterion instead.
+    """
+
+    def test_dscf_kcp_inputs_reject_orbital_groups(self, ozone_input: KoopmansInput) -> None:
+        """The DSCF (kcp.x) grouping choke point rejects an explicit grouping."""
+        d = ozone_input.model_dump()
+        d["workflow"]["orbital_groups"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        inp = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="orbital_groups are not yet threaded"):
+            _kcp_dscf_inputs(inp)
+
+    def test_dscf_without_orbital_groups_does_not_raise(self, ozone_input: KoopmansInput) -> None:
+        """Negative control: the guard fires only when ``orbital_groups`` is set."""
+        assert ozone_input.workflow.orbital_groups is None
+        _kcp_dscf_inputs(ozone_input)  # must not raise
+
+    def test_dfpt_dispatcher_rejects_orbital_groups(self, ozone_input: KoopmansInput) -> None:
+        """A tutorial-2-shaped DFPT input with ``orbital_groups`` must raise loudly.
+
+        Mirrors ``tutorials/tutorial_2/si.json`` (DFPT + KI + MLWFs +
+        ``orbital_groups``); the guard fires at the DFPT grouping choke point,
+        before any structure conversion or pseudopotential install.
+        """
+        d = ozone_input.model_dump()
+        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["correction"] = "ki"
+        d["workflow"]["init_orbitals"] = "mlwfs"
+        d["workflow"]["init_empty_orbitals"] = "mlwfs"
+        d["workflow"]["orbital_groups"] = [0, 0, 0, 0, 1, 1, 1, 1]
+        inp = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="orbital_groups are not yet threaded"):
+            _build_singlepoint_workgraph(inp, codes={})
+
+
 class TestInitialAlphaFromGuess:
     """The DSCF route seeds one alpha for all orbitals; guard the list handling."""
 

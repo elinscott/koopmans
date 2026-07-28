@@ -36,14 +36,6 @@ class MLConfig(BaseModel):
     r_max: float = Field(
         default=4.0, gt=0.0, description="The width of the broadest radial basis function"
     )
-    alphas_from_file: bool = Field(
-        default=False,
-        description="If True, read the screening coefficients from file",
-    )
-    train_on_the_fly: bool = Field(
-        default=False,
-        description="If True, train the ML model after each orbital calculation",
-    )
     occ_and_emp_together: bool = Field(
         default=True,
         description="If True, use one ML model for both occupied and empty states",
