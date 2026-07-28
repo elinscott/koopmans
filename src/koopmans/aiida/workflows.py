@@ -364,8 +364,14 @@ def _derive_automatic_wannierize_blocks(
     from aiida_wannier90_workflows.common.types import WannierProjectionType
     from aiida_wannier90_workflows.utils.pseudo import get_number_of_projections
 
+    # SOC-ness is left to upstream's UPF sniffing (``spin_orbit_coupling=None``):
+    # under a fully-relativistic pseudo family pw.x averages each PSWFC pair
+    # into one projector for an nspin=1 run, and the sniffed count halves to
+    # match, whereas a hard ``False`` would double-count. ``spin_non_collinear``
+    # is a calculation property (not sniffable, and not Optional upstream);
+    # ``spin = 'none'`` fixes it to False.
     num_wann = get_number_of_projections(
-        structure=structure, pseudos=pseudos, spin_non_collinear=False, spin_orbit_coupling=False
+        structure=structure, pseudos=pseudos, spin_non_collinear=False, spin_orbit_coupling=None
     )
     if num_wann < num_occ_bands:
         raise ValueError(
