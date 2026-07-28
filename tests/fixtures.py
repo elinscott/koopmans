@@ -26,6 +26,44 @@ def tutorials_dir() -> Path:
     return Path(__file__).parent.parent / "docs" / "source" / "tutorials"
 
 
+@pytest.fixture
+def write_multiframe_xyz() -> Callable[..., Path]:
+    """Return a factory that writes a multi-frame water ``xyz`` file.
+
+    The factory signature is ``(directory, n_frames, *, xyz_cell=...) -> Path``.
+    Each frame is a slightly displaced 3-atom water molecule in Cartesian
+    Angstrom; ``xyz_cell`` (default a 5 Angstrom cube) is written into every
+    frame's ``Lattice=`` header so tests can assert the input-file cell wins
+    over the one embedded in the xyz.
+    """
+
+    def _write(
+        directory: Path,
+        n_frames: int = 3,
+        *,
+        xyz_cell: float = 5.0,
+        filename: str = "snapshots.xyz",
+    ) -> Path:
+        base = [
+            ("O", (0.000, 0.000, 0.000)),
+            ("H", (0.757, 0.586, 0.000)),
+            ("H", (-0.757, 0.586, 0.000)),
+        ]
+        lattice = f"{xyz_cell} 0.0 0.0 0.0 {xyz_cell} 0.0 0.0 0.0 {xyz_cell}"
+        lines: list[str] = []
+        for frame in range(n_frames):
+            shift = 0.01 * frame
+            lines.append(str(len(base)))
+            lines.append(f'Lattice="{lattice}" Properties=species:S:1:pos:R:3 pbc="T T T"')
+            for symbol, (x, y, z) in base:
+                lines.append(f"{symbol} {x + shift:.6f} {y:.6f} {z:.6f}")
+        path = directory / filename
+        path.write_text("\n".join(lines) + "\n")
+        return path
+
+    return _write
+
+
 # ----------------------------------------------------------------------
 # Broken-upstream-fixture overrides
 # ----------------------------------------------------------------------
@@ -182,8 +220,8 @@ def _install_fake_family(
 
 @pytest.fixture
 def fake_sg15_pseudo_family(aiida_profile: Any) -> Any:
-    """Install a minimal fake ``SG15/1.2/PBE/SR`` family (O and Si pseudos)."""
-    return _install_fake_family("SG15/1.2/PBE/SR", {"O": 6.0, "Si": 4.0})
+    """Install a minimal fake ``SG15/1.2/PBE/SR`` family (H, O and Si pseudos)."""
+    return _install_fake_family("SG15/1.2/PBE/SR", {"H": 1.0, "O": 6.0, "Si": 4.0})
 
 
 @pytest.fixture

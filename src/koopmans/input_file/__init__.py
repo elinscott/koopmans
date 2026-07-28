@@ -78,7 +78,21 @@ class AtomsInput(BaseModel):
     """Input model for specifying the cell and atomic positions."""
 
     cell_parameters: CellParametersViaIbrav | CellParametersViaVectors | CellParametersViaAlat
-    atomic_positions: AtomicPositionsInput
+    atomic_positions: AtomicPositionsInput | None = None
+    snapshots: str | None = None
+    """Path to a multi-frame ``xyz`` file (one structure per frame)."""
+
+    @model_validator(mode="after")
+    def _exactly_one_positions_source(self) -> AtomsInput:
+        """Require exactly one of ``atomic_positions`` and ``snapshots``."""
+        if (self.atomic_positions is None) == (self.snapshots is None):
+            raise ValueError(
+                "the `atoms` block must contain exactly one of `atomic_positions` "
+                "(explicit positions) and `snapshots` (a multi-frame xyz path)"
+            )
+        if self.snapshots is not None and not self.snapshots.strip():
+            raise ValueError("`snapshots` must be a non-empty path to a multi-frame xyz file")
+        return self
 
 
 class GammaOnlyKpointsInput(BaseModel):
@@ -205,7 +219,29 @@ class KoopmansInput(BaseModel):
         else:
             raise ValueError(f"Unrecognized file type for `{filename}`")
 
-        return cls.model_validate(migrate_input_dict(input_dict))
+        koopmans_input = cls.model_validate(migrate_input_dict(input_dict))
+        koopmans_input.resolve_paths(filename.parent)
+        return koopmans_input
+
+    def resolve_paths(self, base_dir: str | Path) -> None:
+        """Resolve file-path input fields against the input file's directory.
+
+        ``ml.model_file`` and ``atoms.snapshots`` both name files on disk. A
+        relative path in the input file is interpreted relative to the file's
+        own location, not the process working directory. Absolute paths are
+        left untouched.
+        """
+        base = Path(base_dir)
+
+        def _resolve(path: str) -> str:
+            candidate = Path(path)
+            return str(candidate if candidate.is_absolute() else base / candidate)
+
+        if self.ml.model_file is not None:
+            self.ml.model_file = _resolve(self.ml.model_file)
+
+        if self.atoms.snapshots is not None:
+            self.atoms.snapshots = _resolve(self.atoms.snapshots)
 
 
 CUSTOM_MESSAGES = {

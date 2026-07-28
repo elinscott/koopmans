@@ -221,6 +221,12 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     cell_params = atoms.cell_parameters
     positions = atoms.atomic_positions
 
+    if positions is None:
+        raise ValueError(
+            "`atoms.snapshots` (a multi-frame xyz path) is only supported by the "
+            "`trajectory` task; this task expects explicit `atomic_positions`."
+        )
+
     cell = cell_in_angstrom(cell_params)
 
     # Determine periodicity
@@ -252,6 +258,55 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
         structure.append_atom(position=cart_coords, symbols=symbol)  # type: ignore[no-untyped-call]
 
     return structure
+
+
+def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]:
+    """Convert a snapshots-carrying AtomsInput into per-frame StructureData nodes.
+
+    Reads every frame of the ``snapshots`` xyz file. The cell and periodicity
+    always come from the input file's ``cell_parameters`` block and override
+    whatever the xyz records, on every frame. Frame coordinates are Cartesian
+    Angstrom (the xyz convention), so they bypass the units machinery.
+
+    Args:
+        atoms: The atoms input from KoopmansInput, with its ``snapshots``
+            field set.
+
+    Returns:
+        Mapping of ``snapshot_1 .. snapshot_N`` to AiiDA StructureData nodes.
+        The keys are valid AiiDA link labels.
+
+    Raises:
+        ValueError: If ``atoms`` carries explicit ``atomic_positions`` rather
+            than ``snapshots``.
+    """
+    from ase.io import read as ase_read
+
+    if atoms.snapshots is None:
+        raise ValueError(
+            "the `trajectory` task requires `atoms.snapshots` (a multi-frame xyz path); "
+            "got explicit `atomic_positions`."
+        )
+
+    frames = ase_read(atoms.snapshots, index=":")
+
+    cell = cell_in_angstrom(atoms.cell_parameters)
+    pbc = atoms.cell_parameters.periodic
+    if isinstance(pbc, bool):
+        pbc = (pbc, pbc, pbc)
+
+    structures: dict[str, orm.StructureData] = {}
+    for index, frame in enumerate(frames, start=1):
+        structure = orm.StructureData(cell=cell, pbc=pbc)
+        for symbol, position in zip(
+            frame.get_chemical_symbols(), frame.get_positions(), strict=True
+        ):
+            structure.append_atom(  # type: ignore[no-untyped-call]
+                position=[float(x) for x in position], symbols=symbol
+            )
+        structures[f"snapshot_{index}"] = structure
+
+    return structures
 
 
 def kpoints_input_to_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData:
