@@ -26,6 +26,19 @@ class TestExecutableCoverage:
         missing = (executables - non_qe) - set(QE_EXECUTABLES)
         assert not missing, f"dispatcher loads {missing} with no QE_EXECUTABLES entry"
 
+    def test_dispatched_labels_are_registered(self) -> None:
+        """Each ``_load_code`` label is a label the installer registers."""
+        import koopmans.aiida.workflows as workflows
+        from koopmans.aiida.setup.codes import code_specs
+
+        source = Path(workflows.__file__).read_text()
+        labels = set(re.findall(r'_load_code\(\s*"([^"]+)"\s*,\s*"[^"]+"', source))
+
+        assert labels, "regex matched no _load_code call sites"
+        # ``wannierjl`` is registered by its own plugin helper, not the QE scan.
+        missing = labels - set(code_specs()) - {"wannierjl"}
+        assert not missing, f"dispatcher loads {missing} with no registration entry"
+
     def test_no_non_literal_load_code_calls(self) -> None:
         """Every ``_load_code`` call passes two string literals.
 
@@ -45,18 +58,25 @@ class TestExecutableCoverage:
         )
 
     def test_load_code_labels_match_executables(self) -> None:
-        """Each ``_load_code`` label equals its executable minus ``.x``.
+        """Each ``_load_code`` pair matches how that label is registered.
 
-        Registration derives the code label from the executable name, so a
-        mismatched pair would pass the coverage test yet fail at runtime.
+        Registration pairs a label with an executable, so a call site that
+        names a different executable for a label would pass the coverage
+        test yet load a code built from the wrong binary.
         """
         import koopmans.aiida.workflows as workflows
+        from koopmans.aiida.setup.codes import code_specs
 
         source = Path(workflows.__file__).read_text()
         pairs = re.findall(r'_load_code\(\s*"([^"]+)"\s*,\s*"([^"]+)"', source)
+        specs = code_specs()
 
         assert pairs, "regex matched no _load_code call sites"
-        mismatched = [(n, e) for n, e in pairs if e.endswith(".x") and e != f"{n}.x"]
+        mismatched = [
+            (label, executable)
+            for label, executable in pairs
+            if executable.endswith(".x") and specs.get(label, (None,))[0] != executable
+        ]
         assert not mismatched, f"label/executable mismatch at call sites: {mismatched}"
 
 

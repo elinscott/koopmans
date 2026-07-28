@@ -300,3 +300,116 @@ class TestTrajectoryDispatcher:
 
         with pytest.raises(ValueError, match="trajectory"):
             _build_singlepoint_workgraph(koopmans_input, trajectory_codes)
+
+
+def _wannier_trajectory_input_dict(snapshots: str) -> dict[str, Any]:
+    """Return a periodic Wannier-initialised water trajectory input dict.
+
+    Water in a cube: the O ``sp3`` block covers the four occupied bands and
+    the H ``s`` block the two lowest empty ones, so the projections span the
+    six kcp.x bands.
+    """
+    d = _trajectory_input_dict(snapshots, init_orbitals="mlwfs")
+    d["kpoints"] = {"grid": [1, 1, 1], "offset": [0, 0, 0]}
+    d["calculator_parameters"]["pw"] = {"system": {"nbnd": 12}}
+    d["calculator_parameters"]["wannier90"] = {
+        "projections": [
+            [{"site": "O", "ang_mtm": "sp3"}],
+            [{"site": "H", "ang_mtm": "s"}],
+        ],
+        "dis_froz_max": 1.0,
+    }
+    return d
+
+
+class TestOrbitalDensityDescriptor:
+    """The ``orbital_density`` descriptor reaches the decompose segment."""
+
+    def test_routes_to_decompose_segment(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        installed_decompose_code: Any,
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """Each snapshot gets a descriptor segment instead of the self-Hartree read.
+
+        The discriminator against a dispatcher that accepts the keyword but
+        silently keeps building the self-Hartree dataset.
+        """
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["ml"]["descriptor"] = "orbital_density"
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+
+        names = set(workgraph.get_task_names())
+        assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
+        assert not any("extract_snapshot_dataset" in name for name in names), names
+
+    def test_self_hartree_keeps_direct_read(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """The same Wannier-route input on ``self_hartree`` builds no decompose pass."""
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
+
+        workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+
+        names = set(workgraph.get_task_names())
+        assert not any(name.startswith("descriptors_") for name in names), names
+        assert any("extract_snapshot_dataset" in name for name in names), names
+
+    def test_molecular_route_rejects_orbital_density(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_decompose_code: Any,
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """A Kohn-Sham-initialised trajectory cannot feed the decompose pass."""
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"]["descriptor"] = "orbital_density"
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(ValueError, match="init_orbitals"):
+            _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+
+    def test_basis_settings_reach_the_namelist(self) -> None:
+        """The ``ml`` radial-basis settings become decompose namelist keys.
+
+        Without this mapping the power spectra would silently be built on
+        the CalcJob's default basis rather than the requested one.
+        """
+        from koopmans.aiida.workflows import _decompose_parameters
+        from koopmans.input_file.ml import MLConfig
+
+        ml_config = MLConfig(n_max=6, l_max=5, r_min=1.0, r_max=4.5)
+
+        assert _decompose_parameters(ml_config) == {
+            "decompose_n_max": 6,
+            "decompose_l_max": 5,
+            "decompose_r_min": 1.0,
+            "decompose_r_max": 4.5,
+        }

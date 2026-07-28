@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
+    from koopmans.input_file.ml import MLConfig
     from koopmans.input_file.workflow import WorkflowConfig
 
 
@@ -1000,19 +1001,22 @@ def _build_trajectory_workgraph(
     alphas (``ml:train``) or scores an existing model against them
     (``ml:test``).
 
-    Current limitations (raise ``NotImplementedError`` / ``ValueError``):
+    Both descriptors are available. ``self_hartree`` needs nothing beyond
+    the kcp.x runs themselves. ``orbital_density`` builds its power spectra
+    from a pw2wannier90.x ``wan_mode='decompose'`` pass over each
+    snapshot's per-block Wannier functions, so it requires the
+    Wannier-initialised route (``init_orbitals`` in ``mlwfs`` /
+    ``projwfs``) and the ``pw2wannier90_decompose`` code; the ``ml``
+    radial-basis settings become that pass's namelist keys.
 
-    - ``ml:predict`` needs per-orbital alpha injection, which the frozen
-      ``KoopmansDSCFWorkflow`` interface does not support.
-    - Only the ``self_hartree`` descriptor is exposed; the
-      ``orbital_density`` power-spectrum descriptor has its full
-      pw2wannier90 ``decompose`` route built and unit-tested in
-      ``aiida-koopmans`` (``OrbitalDensityDatasetWorkflow``), but stays
-      gated pending a live daemon regression that confirms the per-block
-      Wannier-function-to-alpha ordering against the legacy reference.
+    ``ml:predict`` still raises: injecting per-orbital predicted alphas
+    needs an extension of the ``KoopmansDSCFWorkflow`` interface, which
+    accepts only a scalar ``initial_alpha``.
 
     Each frame of the ``atoms.snapshots`` xyz becomes one ``snapshot_N``
-    structure fed to the dynamic snapshots namespace.
+    structure fed to the dynamic snapshots namespace. All frames share one
+    cell, composition and projection set, so the Wannier-route inputs are
+    derived once from the first frame.
     """
     from json import load as json_load
 
@@ -1045,18 +1049,6 @@ def _build_trajectory_workgraph(
             "KoopmansDSCFWorkflow interface, which currently accepts only a scalar "
             "initial_alpha."
         )
-    if (ml_config.train or ml_config.test) and ml_config.descriptor != "self_hartree":
-        raise NotImplementedError(
-            f"ml:descriptor={ml_config.descriptor!r} is implemented but gated "
-            "pending live alignment validation. The full pw2wannier90 "
-            "wan_mode='decompose' route is built and unit-tested "
-            "(aiida_koopmans.workgraphs.ml.OrbitalDensityDatasetWorkflow, fed by "
-            "the nscf scratch and per-block wannierizations now on "
-            "KoopmansDSCFOutputs); the decompose math is reproduced to machine "
-            "precision, but the per-block Wannier-function-to-alpha ordering "
-            "awaits a live daemon regression against the legacy reference before "
-            "the descriptor is exposed. Use ml:descriptor='self_hartree'."
-        )
     ml_mode = "train" if ml_config.train else "test" if ml_config.test else "none"
 
     ml_model = None
@@ -1071,17 +1063,49 @@ def _build_trajectory_workgraph(
     snapshots = atoms_input_to_structures(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
 
+    inputs = _kcp_dscf_inputs(koopmans_input)
+
+    extra_kwargs: dict[str, Any] = {}
+    if workflow.init_orbitals in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    ):
+        extra_kwargs = _dscf_wannier_init_inputs(
+            koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
+        )
+
+    if ml_mode != "none" and ml_config.descriptor == "orbital_density":
+        extra_kwargs["pw2wannier90_code"] = _load_code("pw2wannier90_decompose", "pw2wannier90.x")
+        extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
+
     return TrajectoryWorkflow.build(
         code=codes["kcp"],
         snapshots=snapshots,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
-        **_kcp_dscf_inputs(koopmans_input),
+        **inputs,
+        **extra_kwargs,
         ml_mode=ml_mode,
         ml_model=ml_model,
         estimator=ml_config.estimator,
         descriptor=ml_config.descriptor,
         occ_and_emp_together=ml_config.occ_and_emp_together,
     )
+
+
+def _decompose_parameters(ml_config: MLConfig) -> dict[str, float | int]:
+    """Map the ``ml`` radial-basis settings onto the decompose namelist keys.
+
+    The power spectrum is defined by the Gaussian x spherical-harmonic
+    basis the density is projected onto, so ``n_max`` / ``l_max`` /
+    ``r_min`` / ``r_max`` have to reach pw2wannier90.x rather than being
+    left at the CalcJob's defaults.
+    """
+    return {
+        "decompose_n_max": ml_config.n_max,
+        "decompose_l_max": ml_config.l_max,
+        "decompose_r_min": ml_config.r_min,
+        "decompose_r_max": ml_config.r_max,
+    }
 
 
 def _require_supported_correction(correction: Correction) -> None:

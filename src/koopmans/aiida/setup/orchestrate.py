@@ -41,19 +41,19 @@ def setup_computers(
     2. Scans PATH for Quantum ESPRESSO executables.
     3. Registers found executables as AiiDA codes.
     """
-    from .codes import QE_EXECUTABLES
+    from .codes import code_specs
 
     computer = get_localhost_computer(nprocs=nprocs)
 
+    specs = code_specs()
     existing_codes, codes_to_find = get_codes_to_register(computer)
 
     if explicit_codes:
         for label in explicit_codes:
-            executable = f"{label}.x"
-            if executable in QE_EXECUTABLES and executable not in codes_to_find:
-                codes_to_find[executable] = QE_EXECUTABLES[executable]
-                if executable in existing_codes:
-                    existing_codes.remove(executable)
+            if label in specs and label not in codes_to_find:
+                codes_to_find[label] = specs[label]
+                if label in existing_codes:
+                    existing_codes.remove(label)
 
     if existing_codes:
         click.echo(f"\n{len(existing_codes)} code(s) already registered, skipping:")

@@ -39,6 +39,27 @@ QE_EXECUTABLES: dict[str, str | None] = {
     "kcp.x": "koopmans.kcp",
 }
 
+# Codes registered under a label that is not the executable stem, mapped to
+# ``(executable, plugin)``. The orbital-density ML descriptor runs
+# pw2wannier90.x in ``wan_mode='decompose'``, a mode only builds carrying the
+# Koopmans patch provide, through its own CalcJob. It therefore gets its own
+# label rather than displacing the plain pw2wannier90 code, so a site can point
+# the two labels at different binaries.
+ALIAS_CODES: dict[str, tuple[str, str]] = {
+    "pw2wannier90_decompose": ("pw2wannier90.x", "koopmans.pw2wannier_decompose"),
+}
+
+
+def code_specs() -> dict[str, tuple[str, str | None]]:
+    """Return every code koopmans registers, as ``{label: (executable, plugin)}``."""
+    specs: dict[str, tuple[str, str | None]] = {
+        executable.replace(".x", ""): (executable, plugin)
+        for executable, plugin in QE_EXECUTABLES.items()
+    }
+    specs.update(ALIAS_CODES)
+    return specs
+
+
 # Codes that must always run in serial (no MPI): wann2kcp.x races on its
 # buffer scratch under multiple ranks, and merge_evc.x is a plain
 # concatenation tool. The CalcJobs also enforce single-rank resources; this
@@ -95,12 +116,17 @@ def setup_code(
     plugin: str | None,
     computer: Computer,
     force: bool = False,
+    label: str | None = None,
 ) -> InstalledCode | None:
-    """Set up an AiiDA code for an executable."""
+    """Set up an AiiDA code for an executable.
+
+    ``label`` defaults to the executable stem; pass it for the codes that
+    wrap one executable under a second label (see ``ALIAS_CODES``).
+    """
     from aiida import orm
     from aiida.orm import InstalledCode
 
-    label = executable_name.replace(".x", "")
+    label = label or executable_name.replace(".x", "")
     full_label = f"{label}@{computer.label}"
 
     if code_exists(full_label):
@@ -131,44 +157,48 @@ def setup_code(
     return code
 
 
-def get_codes_to_register(computer: Computer) -> tuple[list[str], dict[str, str | None]]:
-    """Return ``(existing_codes, codes_to_find)``."""
+def get_codes_to_register(
+    computer: Computer,
+) -> tuple[list[str], dict[str, tuple[str, str | None]]]:
+    """Return ``(existing_labels, codes_to_find)``, both keyed by code label."""
     existing_codes = []
     codes_to_find = {}
-    for executable, plugin in QE_EXECUTABLES.items():
-        label = executable.replace(".x", "")
-        full_label = f"{label}@{computer.label}"
-        if code_exists(full_label):
-            existing_codes.append(executable)
+    for label, spec in code_specs().items():
+        if code_exists(f"{label}@{computer.label}"):
+            existing_codes.append(label)
         else:
-            codes_to_find[executable] = plugin
+            codes_to_find[label] = spec
     return existing_codes, codes_to_find
 
 
 def scan_and_register_codes(
-    codes_to_find: dict[str, str | None],
+    codes_to_find: dict[str, tuple[str, str | None]],
     computer: Computer,
     explicit_codes: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Scan PATH for executables and register them as AiiDA codes."""
+    """Scan PATH for executables and register them as AiiDA codes.
+
+    ``codes_to_find`` and ``explicit_codes`` are both keyed by code label,
+    so a label whose binary differs from the one PATH resolves (a
+    decompose-capable pw2wannier90.x, say) can be pointed at explicitly.
+    """
     explicit_codes = explicit_codes or {}
-    explicit_by_executable = {f"{label}.x": path for label, path in explicit_codes.items()}
 
     found_codes = []
     missing_codes = []
 
-    for executable, plugin in codes_to_find.items():
-        path = explicit_by_executable.get(executable) or find_executable(executable)
+    for label, (executable, plugin) in codes_to_find.items():
+        path = explicit_codes.get(label) or find_executable(executable)
         if path:
             version = get_executable_version(path)
             version_str = f" (v{version})" if version else ""
-            source = "specified" if executable in explicit_by_executable else "found"
-            click.echo(f"  {source.capitalize()} {executable}{version_str}: {path}")
-            is_explicit = executable in explicit_by_executable
-            setup_code(executable, path, plugin, computer, force=is_explicit)
-            found_codes.append(executable)
+            is_explicit = label in explicit_codes
+            source = "Specified" if is_explicit else "Found"
+            click.echo(f"  {source} {executable}{version_str}: {path}")
+            setup_code(executable, path, plugin, computer, force=is_explicit, label=label)
+            found_codes.append(label)
         else:
-            missing_codes.append(executable)
+            missing_codes.append(label)
 
     return found_codes, missing_codes
 
@@ -217,7 +247,7 @@ def print_setup_summary(
         for code in missing_codes:
             click.echo(f"  - {code}")
 
-    essential = ["pw.x"]
+    essential = ["pw"]
     all_registered = existing_codes + found_codes
     missing_essential = [e for e in essential if e not in all_registered]
     if missing_essential:
