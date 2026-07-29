@@ -28,6 +28,7 @@ from koopmans.input_file.workflow import (
 )
 
 if TYPE_CHECKING:
+    from aiida_koopmans.types import AutomaticProjectionBlock
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
 
@@ -344,6 +345,93 @@ def _derive_wannierize_blocks(
     return blocks
 
 
+def _pseudo_is_fully_relativistic(kind: str, upf: orm.UpfData) -> bool:
+    """Sniff the ``has_so`` flag of a pseudo's UPF header.
+
+    Upstream's ``is_soc_pseudo`` trips over a UPF v2 header that omits
+    ``has_so`` (a bare ``TypeError``); real generators always write the
+    flag, so convert that case into an error naming the pseudo. Old
+    attribute-less v1 headers parse as scalar-relativistic upstream.
+    """
+    from aiida_wannier90_workflows.utils.pseudo.upf import get_upf_content, is_soc_pseudo
+
+    try:
+        return bool(is_soc_pseudo(get_upf_content(upf)))
+    except TypeError as exc:
+        raise ValueError(
+            f"The pseudopotential for {kind} does not declare `has_so` in its UPF header, "
+            "so whether it is fully relativistic cannot be determined (scalar-relativistic "
+            'UPF files normally carry `has_so="F"`).'
+        ) from exc
+
+
+def _derive_automatic_wannierize_blocks(
+    structure: orm.StructureData,
+    pseudos: dict[str, orm.UpfData],
+    nbnd: int | None,
+    num_occ_bands: int,
+) -> tuple[list[AutomaticProjectionBlock], int]:
+    """Derive the wannierization blocks when no explicit projections are given.
+
+    The whole manifold becomes a single automatic block seeded from the
+    pseudopotentials' atomic projectors (pw2wannier90 ``atom_proj``); the
+    runtime band-group detection decides how it splits. ``num_wann`` is
+    fixed by the projector count of the pseudos — the width of the amn
+    matrix pw2wannier90 writes — and the block carries no disentanglement
+    pool: the detected groups cover only the Wannierised manifold, so a
+    block with bands above it cannot be split. Returns the single-block
+    list and the band count the nscf must cover.
+    """
+    from aiida_koopmans.types import AutomaticProjectionBlock, SpinChannel
+    from aiida_wannier90_workflows.common.types import WannierProjectionType
+    from aiida_wannier90_workflows.utils.pseudo import get_number_of_projections
+
+    fully_relativistic = sorted(
+        kind for kind, upf in pseudos.items() if _pseudo_is_fully_relativistic(kind, upf)
+    )
+    if fully_relativistic:
+        raise NotImplementedError(
+            f"The pseudopotentials for {', '.join(fully_relativistic)} are fully relativistic; "
+            "automatic projections support scalar-relativistic pseudopotentials only (the "
+            "split route runs spin='none'). Provide explicit projections in "
+            "`calculator_parameters.w90.projections` or use a scalar-relativistic family."
+        )
+    # Scalar-relativistic guaranteed by the guard above, so the projector count
+    # is exact with the SOC flag pinned off.
+    num_wann = get_number_of_projections(
+        structure=structure, pseudos=pseudos, spin_non_collinear=False, spin_orbit_coupling=False
+    )
+    if num_wann < num_occ_bands:
+        raise ValueError(
+            f"The pseudopotentials provide {num_wann} atomic projectors but the system has "
+            f"{num_occ_bands} occupied bands, so automatic projections cannot span the "
+            "occupied manifold. Provide explicit projections in "
+            "`calculator_parameters.w90.projections`."
+        )
+    if nbnd is not None and nbnd < num_wann:
+        raise ValueError(
+            f"nbnd = {nbnd} is smaller than the {num_wann} atomic projectors of the "
+            "pseudopotentials; automatic projections need one band per projector."
+        )
+    if nbnd is not None and nbnd > num_wann:
+        raise NotImplementedError(
+            f"nbnd = {nbnd} exceeds the {num_wann} atomic projectors of the "
+            "pseudopotentials, which would disentangle the automatic block; splitting a "
+            "disentangled block is not supported. Drop nbnd or provide explicit "
+            "projections in `calculator_parameters.w90.projections`."
+        )
+    block = AutomaticProjectionBlock(
+        label="block_1",
+        spin=SpinChannel.NONE,
+        num_wann=num_wann,
+        num_bands=num_wann,
+        include_bands=list(range(1, num_wann + 1)),
+        exclude_bands=None,
+        projection_type=WannierProjectionType.ATOMIC_PROJECTORS_QE,
+    )
+    return [block], num_wann
+
+
 def _build_wannierize_split_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
@@ -357,7 +445,13 @@ def _build_wannierize_split_workgraph(
     parallel transport, re-Wannierised group by group and its products merged
     back together.
 
-    Current scope: explicit projections and ``spin = 'none'``.
+    With explicit projections in ``calculator_parameters.w90.projections``
+    each user block becomes a wannierization block. Without any, a single
+    atomic-projector block spans the whole manifold
+    (:func:`_derive_automatic_wannierize_blocks`) and the runtime detection
+    decides how it splits.
+
+    Current scope: ``spin = 'none'``.
     """
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeBlocks
     from aiida_wannier90_workflows.utils.kpoints import get_explicit_kpoints
@@ -384,12 +478,6 @@ def _build_wannierize_split_workgraph(
             "(the group detection and per-block split are single-channel)."
         )
     projections = calc_params.wannier90.projections
-    if not projections:
-        raise NotImplementedError(
-            "block_wannierization_threshold requires explicit Wannier90 projections in "
-            "``calculator_parameters.w90.projections``; splitting automatically-projected "
-            "manifolds is a follow-up."
-        )
     if koopmans_input.kpoints.path is None:
         raise ValueError(
             "block_wannierization_threshold needs a k-point path: the band-group "
@@ -410,9 +498,20 @@ def _build_wannierize_split_workgraph(
     num_occ_bands = nelec // 2
 
     nbnd = calc_params.nbnd if calc_params.nbnd is not None else calc_params.pw.system.nbnd
-    nbnd = int(nbnd) if nbnd is not None else _num_wann_total(structure, projections)
-
-    blocks = _derive_wannierize_blocks(structure, projections, nbnd)
+    nbnd = int(nbnd) if nbnd is not None else None
+    if projections:
+        if nbnd is None:
+            nbnd = _num_wann_total(structure, projections)
+        blocks = _derive_wannierize_blocks(structure, projections, nbnd)
+    else:
+        if calc_params.pw2wannier90.atom_proj_ext:
+            raise NotImplementedError(
+                "block_wannierization_threshold does not support external atomic "
+                "projectors (`pw2wannier90.atom_proj_ext`); leave it unset to use the "
+                "pseudopotentials' projectors, or provide explicit projections in "
+                "`calculator_parameters.w90.projections`."
+            )
+        blocks, nbnd = _derive_automatic_wannierize_blocks(structure, pseudos, nbnd, num_occ_bands)
 
     # The scf needs only the occupied bands, so nbnd is dropped from its
     # override; the nscf — and the bands run seeded from its overrides —

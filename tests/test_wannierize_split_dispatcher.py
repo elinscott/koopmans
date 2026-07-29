@@ -80,19 +80,20 @@ def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     return _build_wannierize_split_workgraph(inp, codes)
 
 
+@pytest.fixture
+def silicon_structure(aiida_profile: Any) -> Any:
+    """Return a 2-atom periodic silicon ``StructureData``."""
+    from aiida.orm import StructureData
+
+    cell = [[0.0, 2.715, 2.715], [2.715, 0.0, 2.715], [2.715, 2.715, 0.0]]
+    struct = StructureData(cell=cell, pbc=True)
+    struct.append_atom(position=(0.0, 0.0, 0.0), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
+    struct.append_atom(position=(1.3575, 1.3575, 1.3575), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
+    return struct
+
+
 class TestBlockDerivation:
     """Unit tests for the lenient block derivation."""
-
-    @pytest.fixture
-    def silicon_structure(self, aiida_profile: Any) -> Any:
-        """Return a 2-atom periodic silicon ``StructureData``."""
-        from aiida.orm import StructureData
-
-        cell = [[0.0, 2.715, 2.715], [2.715, 0.0, 2.715], [2.715, 2.715, 0.0]]
-        struct = StructureData(cell=cell, pbc=True)
-        struct.append_atom(position=(0.0, 0.0, 0.0), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
-        struct.append_atom(position=(1.3575, 1.3575, 1.3575), symbols="Si", name="Si")  # type: ignore[no-untyped-call]
-        return struct
 
     @staticmethod
     def _sp3_block() -> list[Any]:
@@ -134,15 +135,6 @@ class TestGuards:
         with pytest.raises(NotImplementedError, match="spin='none'"):
             _build(_si_split_dict(spin="collinear"), split_codes)
 
-    def test_missing_projections_not_implemented(
-        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """Automatic projections are a follow-up; explicit ones are required."""
-        d = _si_split_dict()
-        d["calculator_parameters"]["wannier90"] = {}
-        with pytest.raises(NotImplementedError, match="explicit Wannier90 projections"):
-            _build(d, split_codes)
-
     def test_missing_kpath_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
@@ -151,6 +143,155 @@ class TestGuards:
         d["kpoints"].pop("path")
         with pytest.raises(ValueError, match="k-point path"):
             _build(d, split_codes)
+
+
+def _si_auto_dict(**workflow_updates: Any) -> dict[str, Any]:
+    """Return the silicon split input without explicit projections.
+
+    The fake Si pseudo carries an s+p valence, so the two-atom cell has 8
+    atomic projectors — the automatic block spans bands 1-8 with the
+    occupied/empty boundary at band 4 (nelec 8).
+    """
+    d = _si_split_dict(**workflow_updates)
+    d["calculator_parameters"]["wannier90"] = {}
+    return d
+
+
+class TestAutomaticProjections:
+    """The atomic-projector route taken when no projections are given."""
+
+    def test_automatic_route_builds(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """One atomic-projector block spans the manifold and splits at runtime.
+
+        ``nbnd`` is optional: this input supplies none anywhere, and the
+        projector count alone sizes every step.
+        """
+        d = _si_auto_dict()
+        assert "nbnd" not in d["calculator_parameters"]
+        assert "pw" not in d["calculator_parameters"]
+        wg = _build(d, split_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("scf_nscf") == 1
+        assert names.count("bands") == 1
+        assert names.count("detect_band_groups") == 1
+        assert "wannierize_split_block_1" in names
+
+        detect_task = wg.tasks["detect_band_groups"]
+        # 8 atomic projectors; nelec 8 -> 4 occupied bands; threshold 1.5 eV.
+        assert detect_task.inputs["num_bands_total"].value == 8
+        assert detect_task.inputs["num_occ_bands"].value == 4
+        assert detect_task.inputs["threshold"].value == 1.5
+
+        # The nscf (and the bands run seeded from it) covers every band of
+        # the projector manifold.
+        overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
+        assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
+
+    def test_derived_block_covers_the_projector_manifold_exactly(
+        self, aiida_profile_clean: Any, fake_sg15_cutoffs_family: Any, silicon_structure: Any
+    ) -> None:
+        """The single derived block is pool-free and covers every projector band.
+
+        ``include_bands`` must run over exactly ``1..num_wann`` — a shorter
+        list would silently drop Wannier functions from the runtime split —
+        and ``num_bands == num_wann`` is the no-pool invariant behind the
+        nbnd guards.
+        """
+        from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+        from koopmans.aiida.conversion import get_pseudos_from_family
+        from koopmans.aiida.workflows import _derive_automatic_wannierize_blocks
+
+        pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
+        blocks, nbnd = _derive_automatic_wannierize_blocks(silicon_structure, pseudos, None, 4)
+        [block] = blocks
+        assert block["num_wann"] == 8
+        assert block["num_bands"] == 8
+        assert block["include_bands"] == list(range(1, 9))
+        assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_QE
+        assert block.get("exclude_bands") is None
+        assert nbnd == 8
+
+    def test_projectors_short_of_occupied_manifold_raise(
+        self, aiida_profile_clean: Any, fake_sg15_cutoffs_family: Any, silicon_structure: Any
+    ) -> None:
+        """Projectors that cannot span the occupied manifold are rejected."""
+        from koopmans.aiida.conversion import get_pseudos_from_family
+        from koopmans.aiida.workflows import _derive_automatic_wannierize_blocks
+
+        pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
+        with pytest.raises(ValueError, match="cannot span the occupied manifold"):
+            _derive_automatic_wannierize_blocks(silicon_structure, pseudos, None, 10)
+
+    def test_nbnd_above_projector_count_not_implemented(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A disentanglement pool above the projector manifold cannot split."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["nbnd"] = 12
+        with pytest.raises(NotImplementedError, match="disentangle"):
+            _build(d, split_codes)
+
+    def test_nbnd_below_projector_count_raises(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Fewer bands than atomic projectors is an input error."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["nbnd"] = 6
+        with pytest.raises(ValueError, match="smaller than the 8 atomic projectors"):
+            _build(d, split_codes)
+
+    def test_fully_relativistic_family_not_implemented(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_fr_cutoffs_family: Any
+    ) -> None:
+        """A fully relativistic family is rejected before any projector counting."""
+        d = _si_auto_dict()
+        d["workflow"]["pseudo_library"] = fake_sg15_fr_cutoffs_family.label
+        with pytest.raises(NotImplementedError, match="fully relativistic"):
+            _build(d, split_codes)
+
+    def test_external_projectors_not_implemented(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """External atomic projectors are not wired into the split flow."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["pw2wannier90"] = {
+            "atom_proj_ext": True,
+            "atom_proj_dir": "/dev/null",
+        }
+        with pytest.raises(NotImplementedError, match="atom_proj_ext"):
+            _build(d, split_codes)
+
+
+class TestPseudoSocSniffing:
+    """The ``has_so`` sniffing that gates automatic projections."""
+
+    @staticmethod
+    def _upf(has_so: bool | None) -> Any:
+        import io
+
+        from aiida_pseudo.data.pseudo.upf import UpfData
+
+        from tests.fixtures import fake_upf_content
+
+        content = fake_upf_content("Si", 4.0, has_so=has_so)
+        return UpfData(io.BytesIO(content.encode("utf-8")), filename="Si.upf").store()
+
+    def test_flag_values_are_read(self, aiida_profile: Any) -> None:
+        """``has_so="F"`` reads scalar-relativistic; ``has_so="T"`` fully relativistic."""
+        from koopmans.aiida.workflows import _pseudo_is_fully_relativistic
+
+        assert _pseudo_is_fully_relativistic("Si", self._upf(False)) is False
+        assert _pseudo_is_fully_relativistic("Si", self._upf(True)) is True
+
+    def test_missing_flag_raises_a_named_error(self, aiida_profile: Any) -> None:
+        """A header without ``has_so`` fails naming the pseudo, not with a bare TypeError."""
+        from koopmans.aiida.workflows import _pseudo_is_fully_relativistic
+
+        with pytest.raises(ValueError, match=r"Si does not declare `has_so`"):
+            _pseudo_is_fully_relativistic("Si", self._upf(None))
 
 
 class TestGraphBuild:
