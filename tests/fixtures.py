@@ -172,10 +172,35 @@ def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     }
 
 
+def fake_upf_content(element: str, z_valence: float, has_so: bool | None = False) -> str:
+    """Return a synthetic UPF v2 stream for the fake test pseudos.
+
+    Shaped for the line-based block extractors in aiida-wannier90-workflows'
+    pseudo utilities: ``<PP_HEADER`` and its ``/>`` sit on their own lines and
+    ``PP_PSWFC`` provides an s+p valence (4 projectors per atom) so projection
+    counting works. ``has_so`` must be present for that machinery — real UPF
+    generators always write it, and an attribute-bearing header without it
+    makes the upstream sniffing crash, which the dispatcher converts into an
+    error naming the pseudo. ``has_so=None`` omits the flag to exercise
+    exactly that guard.
+    """
+    has_so_line = "" if has_so is None else f'has_so="{"T" if has_so else "F"}"\n'
+    return (
+        f'<UPF version="2.0.1">\n'
+        f'<PP_HEADER\nelement="{element}"\n'
+        f'z_valence="{z_valence}"\n{has_so_line}/>\n'
+        f"<PP_PSWFC>\n"
+        f'<PP_CHI.1 l="0"/>\n<PP_CHI.2 l="1"/>\n'
+        f"</PP_PSWFC>\n"
+        f"</UPF>\n"
+    )
+
+
 def _install_fake_family(
     label: str,
     elements: dict[str, float],
     cutoffs: bool = False,
+    has_so: bool = False,
 ) -> Any:
     """Install (or fetch) a fake pseudopotential family with synthetic UPF streams.
 
@@ -185,6 +210,7 @@ def _install_fake_family(
     builders that call ``get_builder_from_protocol`` eagerly at build time
     (the aiida-qe protocol machinery only accepts SSSP, PseudoDojo, or a
     cutoffs family); plain families cover ``ensure_pseudo_family_installed``.
+    ``has_so=True`` marks every pseudo fully relativistic.
     """
     from aiida.common.exceptions import NotExistent
     from aiida_pseudo.data.pseudo.upf import UpfData
@@ -203,10 +229,7 @@ def _install_fake_family(
     family.store()
     pseudos = []
     for element, z_valence in elements.items():
-        content = (
-            f'<UPF version="2.0.1"><PP_HEADER\nelement="{element}"\n'
-            f'z_valence="{z_valence}"\n/></UPF>\n'
-        )
+        content = fake_upf_content(element, z_valence, has_so=has_so)
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
         pseudos.append(upf.store())
     family.add_nodes(pseudos)
@@ -232,6 +255,12 @@ def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
     coexist in one session profile.
     """
     return _install_fake_family("SG15/1.0/PBE/SR", {"O": 6.0, "Si": 4.0}, cutoffs=True)
+
+
+@pytest.fixture
+def fake_sg15_fr_cutoffs_family(aiida_profile: Any) -> Any:
+    """Install a fake fully-relativistic ``SG15/1.0/PBE/FR`` cutoffs family (O and Si)."""
+    return _install_fake_family("SG15/1.0/PBE/FR", {"O": 6.0, "Si": 4.0}, cutoffs=True, has_so=True)
 
 
 @pytest.fixture
