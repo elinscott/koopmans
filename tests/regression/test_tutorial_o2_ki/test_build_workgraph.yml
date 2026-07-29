@@ -1267,6 +1267,12 @@ raw:
             extras:
               py_type: numpy.ndarray
             required: true
+        merge_groups:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            required: false
         nscf_remote_folder:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -2388,6 +2394,12 @@ raw:
                 extras:
                   py_type: numpy.ndarray
                 required: true
+            merge_groups:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
             nscf_remote_folder:
               dynamic: false
               identifier: <scrubbed:identifier>
