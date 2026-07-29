@@ -583,17 +583,13 @@ def _derive_dscf_blocks(
         )
         cursor = end
 
-    # The uppermost block per spin channel absorbs the remaining
-    # ``nbnd - cursor`` bands as its disentanglement pool (``num_bands =
-    # num_wann + num_extra_bands``) and excludes nothing above itself —
-    # without this an entangled empty manifold (e.g. Si conduction bands)
-    # has no window to disentangle from and the folded empty states are
-    # garbage.
-    if blocks and cursor < nbnd:
-        last = blocks[-1]
-        last["num_bands"] = last["num_wann"] + (nbnd - cursor)
-        start = last["include_bands"][0]
-        last["exclude_bands"] = list(range(1, start)) or None
+    # Every block is sized ``num_bands == num_wann``, excluding the bands
+    # below *and* above its own manifold. The Wannier functions then span
+    # exactly the bands the projections name, U_dis is the identity, and the
+    # folded manifold carries no weight from outside the block. Handing the
+    # uppermost block a pool instead makes its Wannier functions depend on a
+    # disentanglement window: one sized too narrowly admits conduction weight
+    # and the folded orbitals no longer reproduce the reference eigenvalues.
 
     covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][0] <= nocc)
     if covered_occ != nocc:
@@ -639,6 +635,21 @@ def _dscf_wannier_init_inputs(
     pseudos = get_pseudos_from_family(pseudo_family, structure)
     nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
 
+    parameters = input_to_pw_parameters(koopmans_input)
+    # A block's band window indexes the *nscf* bands: ``num_bands`` counts what
+    # wannier90 reads out of the mmn, and ``exclude_bands`` must name every
+    # nscf band the block does not use. Sizing them by the kcp.x orbital count
+    # instead leaves the bands above it neither included nor excluded, and
+    # wannier90 rejects the mmn it is then handed.
+    nscf_nbnd = int(parameters.get("SYSTEM", {}).get("nbnd") or nbnd)
+    if nscf_nbnd < nbnd:
+        raise ValueError(
+            f"The nscf runs {nscf_nbnd} bands but the kcp.x steps need {nbnd} "
+            "variational orbitals, which the Wannier functions cannot span. Raise "
+            "``calculator_parameters.pw.system.nbnd`` to at least "
+            f"{nbnd}."
+        )
+
     if workflow.spin == SpinType.COLLINEAR:
         w90 = calc_params.wannier90
         if w90.up is None or w90.down is None:
@@ -659,9 +670,17 @@ def _dscf_wannier_init_inputs(
                 "integer per-channel occupations."
             )
         blocks = _derive_dscf_blocks(
-            structure, w90.up.projections, (nelec + magnetization) // 2, nbnd, SpinChannel.UP
+            structure,
+            w90.up.projections,
+            (nelec + magnetization) // 2,
+            nscf_nbnd,
+            SpinChannel.UP,
         ) + _derive_dscf_blocks(
-            structure, w90.down.projections, (nelec - magnetization) // 2, nbnd, SpinChannel.DOWN
+            structure,
+            w90.down.projections,
+            (nelec - magnetization) // 2,
+            nscf_nbnd,
+            SpinChannel.DOWN,
         )
     else:
         if nelec % 2:
@@ -670,10 +689,13 @@ def _dscf_wannier_init_inputs(
                 "Wannier-initialised DSCF route."
             )
         blocks = _derive_dscf_blocks(
-            structure, calc_params.wannier90.projections, nelec // 2, nbnd, SpinChannel.NONE
+            structure,
+            calc_params.wannier90.projections,
+            nelec // 2,
+            nscf_nbnd,
+            SpinChannel.NONE,
         )
 
-    parameters = input_to_pw_parameters(koopmans_input)
     wannier_overrides: WannierizeOverrides = {
         "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
         "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},

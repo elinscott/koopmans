@@ -133,14 +133,15 @@ class TestDeriveDscfBlocks:
         assert occ["num_wann"] == 4
         assert occ["projections"] == ["f=0.25,0.25,0.25:l=-3"]
         assert emp["num_wann"] == 4
-        assert emp["num_bands"] == 16  # disentanglement pool
+        assert emp["num_bands"] == 4  # sized to its own manifold, no pool
 
-    def test_last_block_absorbs_disentanglement_pool(self, si_structure: Any) -> None:
-        """Extra bands above the last block become its disentanglement window.
+    def test_every_block_is_sized_to_its_own_manifold(self, si_structure: Any) -> None:
+        """No block is given a disentanglement pool, not even the uppermost.
 
-        The uppermost block gets ``num_bands = num_wann + (nbnd - covered)``
-        and excludes nothing above itself, so an entangled empty manifold can
-        disentangle.
+        Each block spans exactly the bands its projections name
+        (``num_bands == num_wann``) and excludes everything below *and*
+        above, so U_dis is the identity and the Wannier functions carry no
+        weight from outside the block.
         """
         from aiida_koopmans.types import SpinChannel
 
@@ -149,14 +150,14 @@ class TestDeriveDscfBlocks:
         sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
         blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
         occ, emp = blocks
-        # occupied block untouched: two-sided exclusion against all 20 bands
         assert occ["num_bands"] == 4
         assert occ["exclude_bands"] == list(range(5, 21))
-        # last block: 4 target WFs + 12 pool bands, exclusion only below
+        # The uppermost block is sized the same way: no pool, excluded on
+        # both sides of bands 5-8.
         assert emp["num_wann"] == 4
-        assert emp["num_bands"] == 16
+        assert emp["num_bands"] == 4
         assert emp["include_bands"] == [5, 6, 7, 8]
-        assert emp["exclude_bands"] == [1, 2, 3, 4]
+        assert emp["exclude_bands"] == [1, 2, 3, 4, *range(9, 21)]
 
     def test_occ_emp_split_and_exclusions(self, si_structure: Any) -> None:
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
