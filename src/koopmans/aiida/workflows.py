@@ -28,6 +28,7 @@ from koopmans.input_file.workflow import (
 )
 
 if TYPE_CHECKING:
+    from aiida_koopmans.types import AutomaticProjectionBlock
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
 
@@ -343,12 +344,32 @@ def _derive_wannierize_blocks(
     return blocks
 
 
+def _pseudo_is_fully_relativistic(kind: str, upf: orm.UpfData) -> bool:
+    """Sniff the ``has_so`` flag of a pseudo's UPF header.
+
+    Upstream's ``is_soc_pseudo`` trips over a UPF v2 header that omits
+    ``has_so`` (a bare ``TypeError``); real generators always write the
+    flag, so convert that case into an error naming the pseudo. Old
+    attribute-less v1 headers parse as scalar-relativistic upstream.
+    """
+    from aiida_wannier90_workflows.utils.pseudo.upf import get_upf_content, is_soc_pseudo
+
+    try:
+        return bool(is_soc_pseudo(get_upf_content(upf)))
+    except TypeError as exc:
+        raise ValueError(
+            f"The pseudopotential for {kind} does not declare `has_so` in its UPF header, "
+            "so whether it is fully relativistic cannot be determined (scalar-relativistic "
+            'UPF files normally carry `has_so="F"`).'
+        ) from exc
+
+
 def _derive_automatic_wannierize_blocks(
     structure: orm.StructureData,
-    pseudos: dict[str, Any],
+    pseudos: dict[str, orm.UpfData],
     nbnd: int | None,
     num_occ_bands: int,
-) -> tuple[list[Any], int]:
+) -> tuple[list[AutomaticProjectionBlock], int]:
     """Derive the wannierization blocks when no explicit projections are given.
 
     The whole manifold becomes a single automatic block seeded from the
@@ -364,14 +385,20 @@ def _derive_automatic_wannierize_blocks(
     from aiida_wannier90_workflows.common.types import WannierProjectionType
     from aiida_wannier90_workflows.utils.pseudo import get_number_of_projections
 
-    # SOC-ness is left to upstream's UPF sniffing (``spin_orbit_coupling=None``):
-    # under a fully-relativistic pseudo family pw.x averages each PSWFC pair
-    # into one projector for an nspin=1 run, and the sniffed count halves to
-    # match, whereas a hard ``False`` would double-count. ``spin_non_collinear``
-    # is a calculation property (not sniffable, and not Optional upstream);
-    # ``spin = 'none'`` fixes it to False.
+    fully_relativistic = sorted(
+        kind for kind, upf in pseudos.items() if _pseudo_is_fully_relativistic(kind, upf)
+    )
+    if fully_relativistic:
+        raise NotImplementedError(
+            f"The pseudopotentials for {', '.join(fully_relativistic)} are fully relativistic; "
+            "automatic projections support scalar-relativistic pseudopotentials only (the "
+            "split route runs spin='none'). Provide explicit projections in "
+            "`calculator_parameters.w90.projections` or use a scalar-relativistic family."
+        )
+    # Scalar-relativistic guaranteed by the guard above, so the projector count
+    # is exact with the SOC flag pinned off.
     num_wann = get_number_of_projections(
-        structure=structure, pseudos=pseudos, spin_non_collinear=False, spin_orbit_coupling=None
+        structure=structure, pseudos=pseudos, spin_non_collinear=False, spin_orbit_coupling=False
     )
     if num_wann < num_occ_bands:
         raise ValueError(

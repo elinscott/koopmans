@@ -163,8 +163,15 @@ class TestAutomaticProjections:
     def test_automatic_route_builds(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """One atomic-projector block spans the manifold and splits at runtime."""
-        wg = _build(_si_auto_dict(), split_codes)
+        """One atomic-projector block spans the manifold and splits at runtime.
+
+        ``nbnd`` is optional: this input supplies none anywhere, and the
+        projector count alone sizes every step.
+        """
+        d = _si_auto_dict()
+        assert "nbnd" not in d["calculator_parameters"]
+        assert "pw" not in d["calculator_parameters"]
+        wg = _build(d, split_codes)
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
         assert names.count("bands") == 1
@@ -236,6 +243,15 @@ class TestAutomaticProjections:
         with pytest.raises(ValueError, match="smaller than the 8 atomic projectors"):
             _build(d, split_codes)
 
+    def test_fully_relativistic_family_not_implemented(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_fr_cutoffs_family: Any
+    ) -> None:
+        """A fully relativistic family is rejected before any projector counting."""
+        d = _si_auto_dict()
+        d["workflow"]["pseudo_library"] = fake_sg15_fr_cutoffs_family.label
+        with pytest.raises(NotImplementedError, match="fully relativistic"):
+            _build(d, split_codes)
+
     def test_external_projectors_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
@@ -247,6 +263,35 @@ class TestAutomaticProjections:
         }
         with pytest.raises(NotImplementedError, match="atom_proj_ext"):
             _build(d, split_codes)
+
+
+class TestPseudoSocSniffing:
+    """The ``has_so`` sniffing that gates automatic projections."""
+
+    @staticmethod
+    def _upf(has_so: bool | None) -> Any:
+        import io
+
+        from aiida_pseudo.data.pseudo.upf import UpfData
+
+        from tests.fixtures import fake_upf_content
+
+        content = fake_upf_content("Si", 4.0, has_so=has_so)
+        return UpfData(io.BytesIO(content.encode("utf-8")), filename="Si.upf").store()
+
+    def test_flag_values_are_read(self, aiida_profile: Any) -> None:
+        """``has_so="F"`` reads scalar-relativistic; ``has_so="T"`` fully relativistic."""
+        from koopmans.aiida.workflows import _pseudo_is_fully_relativistic
+
+        assert _pseudo_is_fully_relativistic("Si", self._upf(False)) is False
+        assert _pseudo_is_fully_relativistic("Si", self._upf(True)) is True
+
+    def test_missing_flag_raises_a_named_error(self, aiida_profile: Any) -> None:
+        """A header without ``has_so`` fails naming the pseudo, not with a bare TypeError."""
+        from koopmans.aiida.workflows import _pseudo_is_fully_relativistic
+
+        with pytest.raises(ValueError, match=r"Si does not declare `has_so`"):
+            _pseudo_is_fully_relativistic("Si", self._upf(None))
 
 
 class TestGraphBuild:
