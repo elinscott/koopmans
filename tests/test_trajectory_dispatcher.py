@@ -300,3 +300,19 @@ class TestTrajectoryDispatcher:
 
         with pytest.raises(ValueError, match="trajectory"):
             _build_singlepoint_workgraph(koopmans_input, trajectory_codes)
+
+    def test_external_projectors_rejected(
+        self,
+        tmp_path: Path,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """``atom_proj_ext`` is rejected: the trajectory route never consults it."""
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _trajectory_input_dict(str(xyz))
+        d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="not wired into the trajectory route"):
+            _build_trajectory_workgraph(koopmans_input, codes={})

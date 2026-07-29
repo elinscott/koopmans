@@ -471,10 +471,15 @@ def _load_external_projectors(
     pw2wannier90 stages and reads) plus a ``projectors.json`` holding each
     element's orbital entries (``label`` / ``l`` / ``alpha`` per
     projector), which size the Wannier manifold and select the
-    Lowdin-frozen projectors. A directory without ``projectors.json`` is
-    rejected: the tables cannot be reconstructed from the ``.dat`` files
-    alone (those carry no ``alpha``, whose absence would silently freeze
-    every projector).
+    Lowdin-frozen projectors. ``projectors.json`` is part of upstream's
+    external-projector contract and is required here: the projector counts
+    could be rebuilt from the ``.dat`` files, but the ``alpha``
+    (frozen-projector selection) and ``j`` (spin-orbit) metadata could
+    not.
+
+    The directory is validated on the local filesystem, so it must live on
+    the machine building the workflow; projector directories that exist
+    only on a remote computer are not supported yet.
 
     Returns the tables and the resolved directory path.
     """
@@ -487,7 +492,12 @@ def _load_external_projectors(
         )
     directory = Path(proj_dir).expanduser().resolve()
     if not directory.is_dir():
-        raise ValueError(f"`pw2wannier90.atom_proj_dir` is not a directory: {directory}")
+        raise ValueError(
+            f"`pw2wannier90.atom_proj_dir` does not exist on this machine: {directory}. "
+            "The projector directory must be present on the machine building the "
+            "workflow; projector directories that exist only on a remote computer "
+            "are not supported yet."
+        )
     table_file = directory / "projectors.json"
     if not table_file.is_file():
         raise ValueError(
@@ -547,6 +557,20 @@ def _derive_external_wannierize_blocks(
         WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL,
         "the external projector files",
     )
+
+
+def _reject_unwired_external_projectors(koopmans_input: KoopmansInput, route: str) -> None:
+    """Reject ``atom_proj_ext`` on a route that does not consume it.
+
+    The singlepoint and trajectory routes build their Wannierizations
+    without consulting the external projector keywords, so accepting the
+    switch there would silently drop it.
+    """
+    if koopmans_input.calculator_parameters.pw2wannier90.atom_proj_ext:
+        raise NotImplementedError(
+            f"`pw2wannier90.atom_proj_ext` is not wired into the {route} route; "
+            "external projectors are currently supported by the `wannierize` task only."
+        )
 
 
 def _build_wannierize_split_workgraph(
@@ -715,6 +739,8 @@ def _build_singlepoint_workgraph(
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
     workflow = koopmans_input.workflow
+
+    _reject_unwired_external_projectors(koopmans_input, "singlepoint")
 
     # DFPT routes on the screening method alone: calculate_alpha = False is
     # the alpha_guess path inside the DFPT builder (screen step skipped),
@@ -1254,6 +1280,8 @@ def _build_trajectory_workgraph(
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
     workflow = koopmans_input.workflow
+
+    _reject_unwired_external_projectors(koopmans_input, "trajectory")
 
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(
