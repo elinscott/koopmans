@@ -273,6 +273,34 @@ def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
     return _install_fake_family("PseudoDojo/0.4/LDA/SR/standard/upf", {"Zn": 20.0, "O": 6.0})
 
 
+#: Silicon external-projector orbital tables: s + p per atom, so a two-atom
+#: cell carries 8 projectors. The fitted numeric ``alpha`` marks every
+#: projector as non-frozen.
+SI_EXTERNAL_PROJECTORS: dict[str, list[dict[str, Any]]] = {
+    "Si": [
+        {"label": "3S", "l": 0, "alpha": 1.5},
+        {"label": "3P", "l": 1, "alpha": 1.5},
+    ]
+}
+
+
+@pytest.fixture
+def si_external_projector_dir(tmp_path: Path) -> Path:
+    """Write a silicon external projector directory in the upstream layout.
+
+    One ``Si.dat`` radial file (the dispatcher only checks its presence;
+    pw2wannier90 is what reads it) plus the ``projectors.json`` orbital
+    tables (:data:`SI_EXTERNAL_PROJECTORS`).
+    """
+    import json
+
+    directory = tmp_path / "projectors"
+    directory.mkdir()
+    (directory / "Si.dat").write_text("# radial projector table stand-in\n4 2\n0 1\n")
+    (directory / "projectors.json").write_text(json.dumps(SI_EXTERNAL_PROJECTORS))
+    return directory
+
+
 # ----------------------------------------------------------------------
 # WorkGraph → stable dict for snapshot regressions
 # ----------------------------------------------------------------------

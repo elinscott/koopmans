@@ -252,17 +252,177 @@ class TestAutomaticProjections:
         with pytest.raises(NotImplementedError, match="fully relativistic"):
             _build(d, split_codes)
 
-    def test_external_projectors_not_implemented(
-        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+
+def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, Any]:
+    """Return the silicon split input using external projectors.
+
+    No explicit projections; the projector directory's tables (s + p per
+    atom, 8 projectors for the two-atom cell) size the manifold.
+    """
+    d = _si_auto_dict(**workflow_updates)
+    d["calculator_parameters"]["pw2wannier90"] = {
+        "atom_proj_ext": True,
+        "atom_proj_dir": str(projector_dir),
+    }
+    return d
+
+
+class TestExternalProjectors:
+    """The external-projector route (`pw2wannier90.atom_proj_ext`)."""
+
+    def test_external_route_builds_and_forwards_projector_inputs(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
     ) -> None:
-        """External atomic projectors are not wired into the split flow."""
-        d = _si_auto_dict()
+        """The auto block is sized from the tables and the inputs thread through.
+
+        Topology matches the pseudo-projector route; additionally the
+        nested per-block graph carries the projector directory and tables
+        (only the whole-block wannierisation consumes them).
+        """
+        from tests.fixtures import SI_EXTERNAL_PROJECTORS
+
+        wg = _build(_si_external_dict(si_external_projector_dir), split_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("scf_nscf") == 1
+        assert names.count("detect_band_groups") == 1
+        assert "wannierize_split_block_1" in names
+
+        detect_task = wg.tasks["detect_band_groups"]
+        # 8 external projectors; nelec 8 -> 4 occupied bands.
+        assert detect_task.inputs["num_bands_total"].value == 8
+        assert detect_task.inputs["num_occ_bands"].value == 4
+
+        split_task = wg.tasks["wannierize_split_block_1"]
+        assert split_task.inputs["external_projectors_path"].value == str(si_external_projector_dir)
+        assert split_task.inputs["external_projectors"].value == SI_EXTERNAL_PROJECTORS
+
+        # The nscf covers exactly the projector manifold.
+        overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
+        assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
+
+    def test_derived_block_is_external_and_pool_free(
+        self,
+        aiida_profile_clean: Any,
+        fake_sg15_cutoffs_family: Any,
+        silicon_structure: Any,
+    ) -> None:
+        """The derived block carries the external type and the no-pool shape."""
+        from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+        from koopmans.aiida.workflows import _derive_external_wannierize_blocks
+        from tests.fixtures import SI_EXTERNAL_PROJECTORS
+
+        blocks, nbnd = _derive_external_wannierize_blocks(
+            silicon_structure, SI_EXTERNAL_PROJECTORS, None, 4
+        )
+        [block] = blocks
+        assert block["num_wann"] == 8
+        assert block["num_bands"] == 8
+        assert block["include_bands"] == list(range(1, 9))
+        assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
+        assert block.get("exclude_bands") is None
+        assert nbnd == 8
+
+    def test_explicit_projections_and_external_projectors_conflict(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """Explicit projections would silently shadow the external projectors."""
+        d = _si_split_dict()
         d["calculator_parameters"]["pw2wannier90"] = {
             "atom_proj_ext": True,
-            "atom_proj_dir": "/dev/null",
+            "atom_proj_dir": str(si_external_projector_dir),
         }
-        with pytest.raises(NotImplementedError, match="atom_proj_ext"):
+        with pytest.raises(ValueError, match="Drop one of the two"):
             _build(d, split_codes)
+
+    def test_missing_projector_table_file_raises(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """A directory without `projectors.json` is rejected naming the layout."""
+        (si_external_projector_dir / "projectors.json").unlink()
+        with pytest.raises(ValueError, match=r"no `projectors\.json`"):
+            _build(_si_external_dict(si_external_projector_dir), split_codes)
+
+    def test_missing_dat_file_raises(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """A directory without the element's `.dat` file is rejected naming it."""
+        (si_external_projector_dir / "Si.dat").unlink()
+        with pytest.raises(ValueError, match=r"missing the projector files \['Si.dat'\]"):
+            _build(_si_external_dict(si_external_projector_dir), split_codes)
+
+    def test_missing_atom_proj_dir_raises(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """`atom_proj_ext` without `atom_proj_dir` is an input error."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
+        with pytest.raises(ValueError, match="atom_proj_dir"):
+            _build(d, split_codes)
+
+    def test_nbnd_above_external_projector_count_not_implemented(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """The no-pool constraint applies to the external source too."""
+        d = _si_external_dict(si_external_projector_dir)
+        d["calculator_parameters"]["nbnd"] = 12
+        with pytest.raises(NotImplementedError, match="external projector files"):
+            _build(d, split_codes)
+
+    def test_plain_route_stages_the_projector_inputs(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """Without the threshold the plain Wannierize route consumes them too.
+
+        The upstream builder demands the orbital tables alongside the
+        directory path, so the plain route must load both; its eager build
+        exercises that translation end-to-end down to the pw2wannier90
+        step's staged inputs.
+        """
+        from koopmans.aiida.workflows import _build_wannierize_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        d = _si_external_dict(si_external_projector_dir)
+        del d["workflow"]["block_wannierization_threshold"]
+        inp = KoopmansInput.model_validate(d)
+        wg = _build_wannierize_workgraph(inp, split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        p2w = w90_task.inputs["pw2wannier90"]["pw2wannier90"]
+        inputpp = p2w["parameters"].value.get_dict()["INPUTPP"]
+        assert inputpp["atom_proj"] is True
+        assert inputpp["atom_proj_ext"] is True
+        assert inputpp["atom_proj_dir"] == "external_projectors/"
+        assert p2w["external_projectors_path"].value.get_remote_path() == str(
+            si_external_projector_dir
+        )
+        assert p2w["external_projectors_list"].value.get_dict() == {"Si": "Si"}
 
 
 class TestPseudoSocSniffing:
