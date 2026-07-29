@@ -296,6 +296,31 @@ class TestPeriodicMlwfsBuild:
         # the flat keyword override.
         assert "projections" not in extra["wannier_overrides"]["wannier90"]
 
+    def test_mismatched_pw_nbnd_rejected(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A pw band count differing from the kcp.x one fails at build time.
+
+        Left unchecked the nscf computes 12 bands while the blocks span the 8
+        kcp.x ones, and only wannier90 notices — after the whole PW chain ran.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["pw"] = {"system": {"nbnd": 12}}
+        with pytest.raises(ValueError) as excinfo:
+            _build(d, dscf_codes)
+        message = str(excinfo.value)
+        assert "calculator_parameters.pw.system.nbnd = 12" in message
+        assert "calculator_parameters.nbnd = 8" in message
+
+    def test_matching_pw_nbnd_builds(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """An agreeing pw band count passes the guard and builds."""
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["pw"] = {"system": {"nbnd": 8}}
+        wg = _build(d, dscf_codes)
+        assert "wannier_initialization" in wg.get_task_names()
+
     def test_no_w90_keywords_leaves_overrides_flat(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:

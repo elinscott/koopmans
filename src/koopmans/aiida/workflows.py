@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
 
-    from koopmans.input_file import KoopmansInput
+    from koopmans.input_file import CalculatorParametersInput, KoopmansInput
     from koopmans.input_file.workflow import WorkflowConfig
 
 
@@ -703,6 +703,34 @@ def _derive_dscf_blocks(
     return blocks
 
 
+def _reject_inconsistent_pw_nbnd(calc_params: CalculatorParametersInput, nbnd: int) -> None:
+    """Reject a PW band count that disagrees with the kcp.x one.
+
+    The wannierization blocks span ``nbnd`` bands (the kcp.x count), while
+    ``pw.system.nbnd`` sets how many bands the nscf actually computes. When
+    the two disagree the graph still builds and only wannier90 notices, after
+    the whole scf + nscf + bands chain has run.
+
+    Raises:
+        ValueError: If ``pw.system.nbnd`` is set and differs from ``nbnd``.
+    """
+    pw_nbnd = calc_params.pw.system.nbnd
+    if pw_nbnd is None or int(pw_nbnd) == nbnd:
+        return
+    source = (
+        "calculator_parameters.nbnd"
+        if calc_params.nbnd is not None
+        else "calculator_parameters.kcp.system.nbnd"
+    )
+    raise ValueError(
+        f"calculator_parameters.pw.system.nbnd = {int(pw_nbnd)} disagrees with "
+        f"{source} = {nbnd}. The Wannier-initialised DSCF route spans the kcp.x "
+        "bands with its wannierization blocks, so the nscf must compute exactly "
+        "that many bands. Drop calculator_parameters.pw.system.nbnd or set it to "
+        f"{nbnd}."
+    )
+
+
 def _dscf_wannier_init_inputs(
     koopmans_input: KoopmansInput,
     structure: orm.StructureData,
@@ -726,6 +754,8 @@ def _dscf_wannier_init_inputs(
     workflow = koopmans_input.workflow
     calc_params = koopmans_input.calculator_parameters
     kpoints_input = koopmans_input.kpoints
+
+    _reject_inconsistent_pw_nbnd(calc_params, nbnd)
 
     if isinstance(workflow.eps_inf, str):
         raise NotImplementedError(
