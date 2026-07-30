@@ -543,6 +543,7 @@ def _read_projector_angular_momenta(projector_file: Path) -> list[int]:
     """
 
     def malformed(reason: str) -> ValueError:
+        """Build the rejection error for this projector file."""
         return ValueError(f"The projector file {projector_file} is malformed: {reason}")
 
     records = list(
