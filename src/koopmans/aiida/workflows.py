@@ -265,14 +265,19 @@ def _build_dft_eps_workgraph(
     )
 
 
-def _explicit_projection_sources(koopmans_input: KoopmansInput) -> str:
+def _explicit_projection_sources(
+    koopmans_input: KoopmansInput, *, channels_only: bool = False
+) -> str:
     """Describe the input paths that carry explicit Wannier projection blocks.
 
-    Returns a ``in `a`, `b` and `c``` phrase over the top-level and the two
-    spin-channel projection blocks, or an empty string when none is set.
+    Returns a ``in `a`, `b` and `c``` phrase over the two spin-channel
+    projection blocks and, unless ``channels_only``, the top-level one; or
+    an empty string when none of them is set.
     """
     w90 = koopmans_input.calculator_parameters.wannier90
-    paths = ["`calculator_parameters.w90.projections`"] if w90.projections else []
+    paths = (
+        ["`calculator_parameters.w90.projections`"] if w90.projections and not channels_only else []
+    )
     paths += [
         f"`calculator_parameters.w90.{name}.projections`"
         for name in ("up", "down")
@@ -292,7 +297,7 @@ def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
     projector files of ``pw2wannier90.atom_proj_ext``. Explicit blocks
     define the full set themselves, so they combine with neither of the
     others; the external files only choose where the projector functions
-    come from, leaving the blocks to the automatic derivation, so they
+    come from, not whether the projections are derived at all, so they
     require the flag.
     """
     external = koopmans_input.calculator_parameters.pw2wannier90.atom_proj_ext
@@ -313,9 +318,9 @@ def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
     if external and not automatic:
         raise ValueError(
             "`pw2wannier90.atom_proj_ext` was given without `workflow.auto_projections`; "
-            "external projector files supply the projector functions but do not define "
-            "the Wannierization blocks, which are still derived automatically. Set "
-            "`workflow.auto_projections` as well."
+            "external projector files choose where the projector functions come from, "
+            "but they do not by themselves ask for the projections to be derived "
+            "automatically. Set `workflow.auto_projections` as well."
         )
 
 
@@ -767,11 +772,20 @@ def _resolve_wannierize_blocks(
     every block themselves; with ``workflow.auto_projections`` a single
     automatic block is derived instead, from the external projector files
     when ``pw2wannier90.atom_proj_ext`` is set and from the
-    pseudopotentials otherwise. Returns the blocks, the band count the nscf
-    must cover, and the extra builder kwargs of the external route. The
-    combinations are validated by :func:`_validate_projection_sources`.
+    pseudopotentials otherwise. Projections given per spin channel are
+    rejected: this route is single-channel and reads the top-level block
+    only. Returns the blocks, the band count the nscf must cover, and the
+    extra builder kwargs of the external route. The combinations are
+    validated by :func:`_validate_projection_sources`.
     """
     calc_params = koopmans_input.calculator_parameters
+    channels = _explicit_projection_sources(koopmans_input, channels_only=True)
+    if channels:
+        raise NotImplementedError(
+            f"Explicit projections {channels} are not wired into the block-splitting "
+            "wannierize route, which is single-channel: give them in "
+            "`calculator_parameters.w90.projections` instead."
+        )
     projections = calc_params.wannier90.projections
     if projections:
         if nbnd is None:

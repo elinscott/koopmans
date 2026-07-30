@@ -144,6 +144,29 @@ class TestGuards:
         with pytest.raises(ValueError, match="k-point path"):
             _build(d, split_codes)
 
+    @pytest.mark.parametrize("keep_top_level", [False, True])
+    def test_spin_channel_projections_not_wired(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        keep_top_level: bool,
+    ) -> None:
+        """This route reads the top-level block only, so channel blocks must not pass.
+
+        Whether or not a top-level block accompanies them: on their own
+        they used to be reported as no projection source at all, and
+        alongside one they would have gone unread.
+        """
+        d = _si_split_dict()
+        projections = d["calculator_parameters"]["wannier90"]["projections"]
+        if not keep_top_level:
+            del d["calculator_parameters"]["wannier90"]["projections"]
+        d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
+        d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
+        with pytest.raises(NotImplementedError, match=r"w90.up.projections.*block-splitting"):
+            _build(d, split_codes)
+
 
 def _si_auto_dict(**workflow_updates: Any) -> dict[str, Any]:
     """Return the silicon split input with automatic projections.
