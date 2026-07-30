@@ -125,7 +125,6 @@ class SpinSpecificWannierInput(BaseModel):
     dis_froz_min: float | None = None
     dis_win_max: float | None = None
     dis_win_min: float | None = None
-    auto_projections: bool = False
     projections: list[list[Projection]] = Field(default_factory=list)
 
 

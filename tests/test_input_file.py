@@ -119,45 +119,45 @@ def _minimal_si_input() -> dict[str, object]:
     }
 
 
+_REMOVED_KEYWORDS = [
+    ("workflow", "converge"),
+    ("workflow", "automated_wannierization"),
+    ("ml", "train_on_the_fly"),
+    ("ml", "alphas_from_file"),
+    ("calculator_parameters.wannier90.up", "auto_projections"),
+    ("calculator_parameters.wannier90.down", "auto_projections"),
+]
+
+
+def _set_removed_keyword(d: dict[str, object], section: str, keyword: str) -> None:
+    """Set ``keyword`` under the (dotted) ``section`` path of an input dict."""
+    target = d
+    for part in section.split("."):
+        target = target.setdefault(part, {})  # type: ignore[assignment]
+    target[keyword] = True  # type: ignore[index]
+
+
 class TestRemovedKeywordsRejected:
     """Retired keywords must fail loudly at parse, not be silently ignored."""
 
-    @pytest.mark.parametrize(
-        ("section", "keyword"),
-        [
-            ("workflow", "converge"),
-            ("workflow", "automated_wannierization"),
-            ("ml", "train_on_the_fly"),
-            ("ml", "alphas_from_file"),
-        ],
-    )
+    @pytest.mark.parametrize(("section", "keyword"), _REMOVED_KEYWORDS)
     def test_removed_keyword_rejected_by_model(self, section: str, keyword: str) -> None:
         """A retired keyword is an unknown field under ``extra='forbid'``."""
         from pydantic import ValidationError
 
         d = _minimal_si_input()
-        d.setdefault(section, {})
-        d[section][keyword] = True  # type: ignore[index]
+        _set_removed_keyword(d, section, keyword)
 
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             KoopmansInput.model_validate(d)
 
-    @pytest.mark.parametrize(
-        ("section", "keyword"),
-        [
-            ("workflow", "converge"),
-            ("workflow", "automated_wannierization"),
-            ("ml", "train_on_the_fly"),
-            ("ml", "alphas_from_file"),
-        ],
-    )
+    @pytest.mark.parametrize(("section", "keyword"), _REMOVED_KEYWORDS)
     def test_removed_keyword_gives_friendly_message(
         self, section: str, keyword: str, tmp_path: Path
     ) -> None:
         """``read_input_file`` reports the retired keyword as an invalid keyword."""
         d = _minimal_si_input()
-        d.setdefault(section, {})
-        d[section][keyword] = True  # type: ignore[index]
+        _set_removed_keyword(d, section, keyword)
         input_file = tmp_path / "input.json"
         input_file.write_text(json.dumps(d))
 
