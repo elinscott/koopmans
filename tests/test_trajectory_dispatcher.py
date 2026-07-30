@@ -327,7 +327,7 @@ def _wannier_trajectory_input_dict(snapshots: str) -> dict[str, Any]:
     """
     d = _trajectory_input_dict(snapshots, init_orbitals="mlwfs")
     d["kpoints"] = {"grid": [1, 1, 1], "offset": [0, 0, 0]}
-    d["calculator_parameters"]["pw"] = {"system": {"nbnd": 12}}
+    d["calculator_parameters"]["pw"] = {"system": {"nbnd": 6}}
     d["calculator_parameters"]["wannier90"] = {
         "projections": [
             [{"site": "O", "ang_mtm": "sp3"}],

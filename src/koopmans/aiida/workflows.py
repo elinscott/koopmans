@@ -946,10 +946,10 @@ def _derive_dscf_blocks(
     # Every block is sized ``num_bands == num_wann``, excluding the bands
     # below *and* above its own manifold. The Wannier functions then span
     # exactly the bands the projections name, U_dis is the identity, and the
-    # folded manifold carries no weight from outside the block. Handing the
-    # uppermost block a pool instead makes its Wannier functions depend on a
-    # disentanglement window: one sized too narrowly admits conduction weight
-    # and the folded orbitals no longer reproduce the reference eigenvalues.
+    # folded manifold carries no weight from outside the block. Leftover nscf
+    # bands above the last block would form a disentanglement pool, and the
+    # fold-to-supercell step cannot consume a non-identity U_dis — so
+    # headroom is an input error rather than a silently truncated pool.
 
     covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][0] <= nocc)
     if covered_occ != nocc:
@@ -957,6 +957,15 @@ def _derive_dscf_blocks(
             f"The occupied projection blocks span {covered_occ} Wannier functions but "
             f"the system has {nocc} occupied bands per primitive cell; every occupied "
             "band must be covered for the Wannier-seeded kcp.x initialisation."
+        )
+
+    if cursor < nbnd:
+        raise ValueError(
+            f"The projection blocks span {cursor} bands but the nscf runs {nbnd}: the "
+            f"{nbnd - cursor} leftover bands would form a disentanglement pool, and "
+            "the fold-to-supercell step cannot consume disentangled Wannier "
+            "functions. Reduce ``calculator_parameters.pw.system.nbnd`` to "
+            f"{cursor}, or add projections spanning the extra bands."
         )
     return blocks
 

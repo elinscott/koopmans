@@ -128,7 +128,7 @@ class TestDeriveDscfBlocks:
         from koopmans.aiida.workflows import _derive_dscf_blocks
 
         sp3 = [self._FakeProjection(None, -3, fractional_site=[0.25, 0.25, 0.25])]
-        blocks = _derive_dscf_blocks(si_structure, [sp3, sp3], 4, 20, SpinChannel.NONE)
+        blocks = _derive_dscf_blocks(si_structure, [sp3, sp3], 4, 8, SpinChannel.NONE)
         occ, emp = blocks
         assert occ["num_wann"] == 4
         assert occ["projections"] == ["f=0.25,0.25,0.25:l=-3"]
@@ -148,16 +148,29 @@ class TestDeriveDscfBlocks:
         from koopmans.aiida.workflows import _derive_dscf_blocks
 
         sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
-        blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
+        blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         occ, emp = blocks
         assert occ["num_bands"] == 4
-        assert occ["exclude_bands"] == list(range(5, 21))
-        # The uppermost block is sized the same way: no pool, excluded on
-        # both sides of bands 5-8.
+        assert occ["exclude_bands"] == [5, 6, 7, 8]
         assert emp["num_wann"] == 4
         assert emp["num_bands"] == 4
         assert emp["include_bands"] == [5, 6, 7, 8]
-        assert emp["exclude_bands"] == [1, 2, 3, 4, *range(9, 21)]
+        assert emp["exclude_bands"] == [1, 2, 3, 4]
+
+    def test_leftover_nscf_bands_raise(self, si_structure: Any) -> None:
+        """Reject nscf headroom above the blocks instead of silently pooling it.
+
+        The leftover bands would demand disentanglement, which the
+        fold-to-supercell step cannot consume; the error tells the user to
+        reduce nbnd to the spanned count.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import _derive_dscf_blocks
+
+        sp = [self._FakeProjection("Si", -1)]  # 4
+        with pytest.raises(ValueError, match="Reduce ``calculator_parameters"):
+            _derive_dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
 
     def test_occ_emp_split_and_exclusions(self, si_structure: Any) -> None:
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
