@@ -339,7 +339,7 @@ def _wannier_trajectory_input_dict(snapshots: str) -> dict[str, Any]:
 
 
 class TestOrbitalDensityDescriptor:
-    """The ``orbital_density`` descriptor reaches the decompose segment."""
+    """The ``power_spectrum`` descriptor reaches the decompose segment."""
 
     def test_routes_to_decompose_segment(
         self,
@@ -361,7 +361,7 @@ class TestOrbitalDensityDescriptor:
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _wannier_trajectory_input_dict(str(xyz))
-        d["ml"]["descriptor"] = "orbital_density"
+        d["ml"]["descriptor"] = "power_spectrum"
         koopmans_input = KoopmansInput.model_validate(d)
 
         workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
@@ -392,7 +392,7 @@ class TestOrbitalDensityDescriptor:
         assert not any(name.startswith("descriptors_") for name in names), names
         assert any("extract_snapshot_dataset" in name for name in names), names
 
-    def test_molecular_route_rejects_orbital_density(
+    def test_molecular_route_rejects_power_spectrum(
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
@@ -406,7 +406,7 @@ class TestOrbitalDensityDescriptor:
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz))
-        d["ml"]["descriptor"] = "orbital_density"
+        d["ml"]["descriptor"] = "power_spectrum"
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="init_orbitals"):

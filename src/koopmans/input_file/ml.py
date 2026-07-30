@@ -3,6 +3,7 @@
 from typing import Self
 from warnings import warn
 
+from aiida_koopmans.types import MLDescriptor
 from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
@@ -43,8 +44,9 @@ class MLConfig(BaseModel):
     estimator: str = Field(
         default="ridge_regression", description="What to use as the estimator for the ML model"
     )
-    descriptor: str = Field(
-        default="orbital_density", description="What to use as the descriptor for the ML model"
+    descriptor: MLDescriptor = Field(
+        default=MLDescriptor.POWER_SPECTRUM,
+        description="What to use as the descriptor for the ML model",
     )
 
     @model_validator(mode="after")

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from aiida import orm
+from aiida_koopmans.types import MLDescriptor
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
 
@@ -1383,7 +1384,7 @@ def _build_trajectory_workgraph(
     (``ml:test``).
 
     Both descriptors are available. ``self_hartree`` needs nothing beyond
-    the kcp.x runs themselves. ``orbital_density`` builds its power spectra
+    the kcp.x runs themselves. ``power_spectrum`` builds its power spectra
     from a pw2wannier90.x ``wan_mode='decompose'`` pass over each
     snapshot's per-block Wannier functions, so it requires the
     Wannier-initialised route (``init_orbitals`` in ``mlwfs`` /
@@ -1457,7 +1458,7 @@ def _build_trajectory_workgraph(
             koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
         )
 
-    if ml_mode != "none" and ml_config.descriptor == "orbital_density":
+    if ml_mode != "none" and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         extra_kwargs["pw2wannier90_code"] = _load_code("pw2wannier90_decompose", "pw2wannier90.x")
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
