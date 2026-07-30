@@ -16,10 +16,11 @@ from wannier90_input.models.parameters import (
 class RestrictedWannier90InputParameters(Wannier90Input):
     """Wannier90 input parameters, excluding those that ``koopmans`` manages itself.
 
-    The structure and k-points are stored centrally in the input file, and the
-    band/projection bookkeeping is derived by the workflow, so those keywords
-    are demoted to class variables to drop them from the pydantic schema (see
-    ``pw.py`` for the ClassVar rationale and the mypy ignores).
+    The structure and k-points are stored centrally in the input file, the
+    band/projection bookkeeping is derived by the workflow, and automatic
+    projections are requested via ``workflow.auto_projections``, so those
+    keywords are demoted to class variables to drop them from the pydantic
+    schema (see ``pw.py`` for the ClassVar rationale and the mypy ignores).
     """
 
     num_wann: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
@@ -30,6 +31,7 @@ class RestrictedWannier90InputParameters(Wannier90Input):
     atoms_frac: ClassVar[list[AtomFrac] | None] = None  # type: ignore[misc, assignment, unused-ignore]
     mp_grid: ClassVar[tuple[int, int, int] | None] = None  # type: ignore[misc, assignment, unused-ignore]
     kpoints: ClassVar[list[FractionalCoordinate] | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    auto_projections: ClassVar[bool | None] = None  # type: ignore[misc, assignment, unused-ignore]
 
     # Redefined (not excluded): in the input file, projections are specified as a
     # list of lists to separate each block

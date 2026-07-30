@@ -124,6 +124,7 @@ _REMOVED_KEYWORDS = [
     ("workflow", "automated_wannierization"),
     ("ml", "train_on_the_fly"),
     ("ml", "alphas_from_file"),
+    ("calculator_parameters.wannier90", "auto_projections"),
     ("calculator_parameters.wannier90.up", "auto_projections"),
     ("calculator_parameters.wannier90.down", "auto_projections"),
 ]
