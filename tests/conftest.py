@@ -19,6 +19,7 @@ from tests.fixtures import (  # noqa: F401
     fake_sg15_cutoffs_family,
     fake_sg15_fr_cutoffs_family,
     fake_sg15_pseudo_family,
+    installed_decompose_code,
     installed_fold_codes,
     installed_kcp_code,
     installed_kcw_code,

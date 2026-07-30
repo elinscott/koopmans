@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from aiida import orm
+from aiida_koopmans.types import MLDescriptor, MLMode
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
 
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
+    from koopmans.input_file.ml import MLConfig
     from koopmans.input_file.workflow import WorkflowConfig
 
 
@@ -941,17 +943,13 @@ def _derive_dscf_blocks(
         )
         cursor = end
 
-    # The uppermost block per spin channel absorbs the remaining
-    # ``nbnd - cursor`` bands as its disentanglement pool (``num_bands =
-    # num_wann + num_extra_bands``) and excludes nothing above itself —
-    # without this an entangled empty manifold (e.g. Si conduction bands)
-    # has no window to disentangle from and the folded empty states are
-    # garbage.
-    if blocks and cursor < nbnd:
-        last = blocks[-1]
-        last["num_bands"] = last["num_wann"] + (nbnd - cursor)
-        start = last["include_bands"][0]
-        last["exclude_bands"] = list(range(1, start)) or None
+    # Every block is sized ``num_bands == num_wann``, excluding the bands
+    # below *and* above its own manifold. The Wannier functions then span
+    # exactly the bands the projections name, U_dis is the identity, and the
+    # folded manifold carries no weight from outside the block. Leftover nscf
+    # bands above the last block would form a disentanglement pool, and the
+    # fold-to-supercell step cannot consume a non-identity U_dis — so
+    # headroom is an input error rather than a silently truncated pool.
 
     covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][0] <= nocc)
     if covered_occ != nocc:
@@ -959,6 +957,15 @@ def _derive_dscf_blocks(
             f"The occupied projection blocks span {covered_occ} Wannier functions but "
             f"the system has {nocc} occupied bands per primitive cell; every occupied "
             "band must be covered for the Wannier-seeded kcp.x initialisation."
+        )
+
+    if cursor < nbnd:
+        raise ValueError(
+            f"The projection blocks span {cursor} bands but the nscf runs {nbnd}: the "
+            f"{nbnd - cursor} leftover bands would form a disentanglement pool, and "
+            "the fold-to-supercell step cannot consume disentangled Wannier "
+            "functions. Reduce ``calculator_parameters.pw.system.nbnd`` to "
+            f"{cursor}, or add projections spanning the extra bands."
         )
     return blocks
 
@@ -997,6 +1004,21 @@ def _dscf_wannier_init_inputs(
     pseudos = get_pseudos_from_family(pseudo_family, structure)
     nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
 
+    parameters = input_to_pw_parameters(koopmans_input)
+    # A block's band window indexes the *nscf* bands: ``num_bands`` counts what
+    # wannier90 reads out of the mmn, and ``exclude_bands`` must name every
+    # nscf band the block does not use. Sizing them by the kcp.x orbital count
+    # instead leaves the bands above it neither included nor excluded, and
+    # wannier90 rejects the mmn it is then handed.
+    nscf_nbnd = int(parameters.get("SYSTEM", {}).get("nbnd") or nbnd)
+    if nscf_nbnd < nbnd:
+        raise ValueError(
+            f"The nscf runs {nscf_nbnd} bands but the kcp.x steps need {nbnd} "
+            "variational orbitals, which the Wannier functions cannot span. Raise "
+            "``calculator_parameters.pw.system.nbnd`` to at least "
+            f"{nbnd}."
+        )
+
     if workflow.spin == SpinType.COLLINEAR:
         w90 = calc_params.wannier90
         if w90.up is None or w90.down is None:
@@ -1017,9 +1039,17 @@ def _dscf_wannier_init_inputs(
                 "integer per-channel occupations."
             )
         blocks = _derive_dscf_blocks(
-            structure, w90.up.projections, (nelec + magnetization) // 2, nbnd, SpinChannel.UP
+            structure,
+            w90.up.projections,
+            (nelec + magnetization) // 2,
+            nscf_nbnd,
+            SpinChannel.UP,
         ) + _derive_dscf_blocks(
-            structure, w90.down.projections, (nelec - magnetization) // 2, nbnd, SpinChannel.DOWN
+            structure,
+            w90.down.projections,
+            (nelec - magnetization) // 2,
+            nscf_nbnd,
+            SpinChannel.DOWN,
         )
     else:
         if nelec % 2:
@@ -1028,10 +1058,13 @@ def _dscf_wannier_init_inputs(
                 "Wannier-initialised DSCF route."
             )
         blocks = _derive_dscf_blocks(
-            structure, calc_params.wannier90.projections, nelec // 2, nbnd, SpinChannel.NONE
+            structure,
+            calc_params.wannier90.projections,
+            nelec // 2,
+            nscf_nbnd,
+            SpinChannel.NONE,
         )
 
-    parameters = input_to_pw_parameters(koopmans_input)
     wannier_overrides: WannierizeOverrides = {
         "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
         "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
@@ -1359,19 +1392,21 @@ def _build_trajectory_workgraph(
     alphas (``ml:train``) or scores an existing model against them
     (``ml:test``).
 
-    Current limitations (raise ``NotImplementedError`` / ``ValueError``):
+    ``self_hartree`` needs nothing beyond the kcp.x runs themselves.
+    ``power_spectrum`` builds its power spectra from a pw2wannier90.x
+    ``wan_mode='decompose'`` pass over each snapshot's per-block Wannier
+    functions, so it requires the Wannier-initialised route
+    (``init_orbitals`` in ``mlwfs`` / ``projwfs``); the ``ml``
+    radial-basis settings become that pass's namelist keys.
 
-    - ``ml:predict`` needs per-orbital alpha injection, which the frozen
-      ``KoopmansDSCFWorkflow`` interface does not support.
-    - Only the ``self_hartree`` descriptor is exposed; the
-      ``orbital_density`` power-spectrum descriptor has its full
-      pw2wannier90 ``decompose`` route built and unit-tested in
-      ``aiida-koopmans`` (``OrbitalDensityDatasetWorkflow``), but stays
-      gated pending a live daemon regression that confirms the per-block
-      Wannier-function-to-alpha ordering against the legacy reference.
+    ``ml:predict`` still raises: injecting per-orbital predicted alphas
+    needs an extension of the ``KoopmansDSCFWorkflow`` interface, which
+    accepts only a scalar ``initial_alpha``.
 
     Each frame of the ``atoms.snapshots`` xyz becomes one ``snapshot_N``
-    structure fed to the dynamic snapshots namespace.
+    structure fed to the dynamic snapshots namespace. All frames share one
+    cell, composition and projection set, so the Wannier-route inputs are
+    derived once from the first frame.
     """
     from json import load as json_load
 
@@ -1406,22 +1441,10 @@ def _build_trajectory_workgraph(
             "KoopmansDSCFWorkflow interface, which currently accepts only a scalar "
             "initial_alpha."
         )
-    if (ml_config.train or ml_config.test) and ml_config.descriptor != "self_hartree":
-        raise NotImplementedError(
-            f"ml:descriptor={ml_config.descriptor!r} is implemented but gated "
-            "pending live alignment validation. The full pw2wannier90 "
-            "wan_mode='decompose' route is built and unit-tested "
-            "(aiida_koopmans.workgraphs.ml.OrbitalDensityDatasetWorkflow, fed by "
-            "the nscf scratch and per-block wannierizations now on "
-            "KoopmansDSCFOutputs); the decompose math is reproduced to machine "
-            "precision, but the per-block Wannier-function-to-alpha ordering "
-            "awaits a live daemon regression against the legacy reference before "
-            "the descriptor is exposed. Use ml:descriptor='self_hartree'."
-        )
-    ml_mode = "train" if ml_config.train else "test" if ml_config.test else "none"
+    ml_mode = MLMode.TRAIN if ml_config.train else MLMode.TEST if ml_config.test else MLMode.NONE
 
     ml_model = None
-    if ml_mode == "test":
+    if ml_mode == MLMode.TEST:
         if ml_config.model_file is None:
             raise ValueError(
                 "ml:test requires ml:model_file (the JSON model produced by an ml:train run)."
@@ -1432,17 +1455,49 @@ def _build_trajectory_workgraph(
     snapshots = atoms_input_to_structures(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
 
+    inputs = _kcp_dscf_inputs(koopmans_input)
+
+    extra_kwargs: dict[str, Any] = {}
+    if workflow.init_orbitals in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    ):
+        extra_kwargs = _dscf_wannier_init_inputs(
+            koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
+        )
+
+    if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
+        extra_kwargs["pw2wannier90_code"] = _load_code("pw2wannier90", "pw2wannier90.x")
+        extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
+
     return TrajectoryWorkflow.build(
         code=codes["kcp"],
         snapshots=snapshots,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
-        **_kcp_dscf_inputs(koopmans_input),
+        **inputs,
+        **extra_kwargs,
         ml_mode=ml_mode,
         ml_model=ml_model,
         estimator=ml_config.estimator,
         descriptor=ml_config.descriptor,
         occ_and_emp_together=ml_config.occ_and_emp_together,
     )
+
+
+def _decompose_parameters(ml_config: MLConfig) -> dict[str, float | int]:
+    """Map the ``ml`` radial-basis settings onto the decompose namelist keys.
+
+    The power spectrum is defined by the Gaussian x spherical-harmonic
+    basis the density is projected onto, so ``n_max`` / ``l_max`` /
+    ``r_min`` / ``r_max`` have to reach pw2wannier90.x rather than being
+    left at the CalcJob's defaults.
+    """
+    return {
+        "decompose_n_max": ml_config.n_max,
+        "decompose_l_max": ml_config.l_max,
+        "decompose_r_min": ml_config.r_min,
+        "decompose_r_max": ml_config.r_max,
+    }
 
 
 def _require_supported_correction(correction: Correction) -> None:
