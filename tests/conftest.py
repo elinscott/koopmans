@@ -29,6 +29,7 @@ from tests.fixtures import (  # noqa: F401
     localhost_code,
     localhost_computer,
     serialize_workgraph,
+    si_external_projector_dir,
     tutorials_dir,
     write_multiframe_xyz,
 )

@@ -7,6 +7,9 @@ based on the task specified in a KoopmansInput.
 from __future__ import annotations
 
 import copy
+import itertools
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from aiida import orm
@@ -28,6 +31,8 @@ from koopmans.input_file.workflow import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from aiida_koopmans.types import AutomaticProjectionBlock
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
@@ -279,8 +284,12 @@ def _build_wannierize_workgraph(
     pw2w_params = koopmans_input.calculator_parameters.pw2wannier90
     extra_kwargs: dict[str, Any] = {}
     if pw2w_params.atom_proj_ext:
+        external_projectors, projector_path = _load_external_projectors(
+            structure, pw2w_params.atom_proj_dir
+        )
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
-        extra_kwargs["external_projectors_path"] = str(pw2w_params.atom_proj_dir)
+        extra_kwargs["external_projectors_path"] = projector_path
+        extra_kwargs["external_projectors"] = external_projectors
 
     return Wannierize.build(
         codes=codes,
@@ -382,7 +391,6 @@ def _derive_automatic_wannierize_blocks(
     block with bands above it cannot be split. Returns the single-block
     list and the band count the nscf must cover.
     """
-    from aiida_koopmans.types import AutomaticProjectionBlock, SpinChannel
     from aiida_wannier90_workflows.common.types import WannierProjectionType
     from aiida_wannier90_workflows.utils.pseudo import get_number_of_projections
 
@@ -401,22 +409,48 @@ def _derive_automatic_wannierize_blocks(
     num_wann = get_number_of_projections(
         structure=structure, pseudos=pseudos, spin_non_collinear=False, spin_orbit_coupling=False
     )
+    return _validated_single_automatic_block(
+        num_wann,
+        nbnd,
+        num_occ_bands,
+        WannierProjectionType.ATOMIC_PROJECTORS_QE,
+        "the pseudopotentials",
+    )
+
+
+def _validated_single_automatic_block(
+    num_wann: int,
+    nbnd: int | None,
+    num_occ_bands: int,
+    projection_type: Any,
+    source: str,
+) -> tuple[list[AutomaticProjectionBlock], int]:
+    """Build the single whole-manifold automatic block, validating its size.
+
+    Shared by the projector sources that span the manifold with one
+    automatic block (pseudopotential projectors, external projector files);
+    ``source`` names the projector origin in the error messages. The block
+    carries no disentanglement pool: the detected groups cover only the
+    Wannierised manifold, so a block with bands above it cannot be split.
+    """
+    from aiida_koopmans.types import AutomaticProjectionBlock, SpinChannel
+
     if num_wann < num_occ_bands:
         raise ValueError(
-            f"The pseudopotentials provide {num_wann} atomic projectors but the system has "
-            f"{num_occ_bands} occupied bands, so automatic projections cannot span the "
-            "occupied manifold. Provide explicit projections in "
+            f"{source[0].upper()}{source[1:]} provide {num_wann} atomic projectors but the "
+            f"system has {num_occ_bands} occupied bands, so automatic projections cannot "
+            "span the occupied manifold. Provide explicit projections in "
             "`calculator_parameters.w90.projections`."
         )
     if nbnd is not None and nbnd < num_wann:
         raise ValueError(
-            f"nbnd = {nbnd} is smaller than the {num_wann} atomic projectors of the "
-            "pseudopotentials; automatic projections need one band per projector."
+            f"nbnd = {nbnd} is smaller than the {num_wann} atomic projectors of "
+            f"{source}; automatic projections need one band per projector."
         )
     if nbnd is not None and nbnd > num_wann:
         raise NotImplementedError(
-            f"nbnd = {nbnd} exceeds the {num_wann} atomic projectors of the "
-            "pseudopotentials, which would disentangle the automatic block; splitting a "
+            f"nbnd = {nbnd} exceeds the {num_wann} atomic projectors of "
+            f"{source}, which would disentangle the automatic block; splitting a "
             "disentangled block is not supported. Drop nbnd or provide explicit "
             "projections in `calculator_parameters.w90.projections`."
         )
@@ -427,9 +461,217 @@ def _derive_automatic_wannierize_blocks(
         num_bands=num_wann,
         include_bands=list(range(1, num_wann + 1)),
         exclude_bands=None,
-        projection_type=WannierProjectionType.ATOMIC_PROJECTORS_QE,
+        projection_type=projection_type,
     )
     return [block], num_wann
+
+
+def _int_or_none(word: str) -> int | None:
+    """Parse an integer token, returning None when it is not one."""
+    try:
+        return int(word)
+    except ValueError:
+        return None
+
+
+def _expand_repeat_token(token: str) -> list[int] | None:
+    """Parse one list-directed integer token, expanding an ``r*v`` repeat count."""
+    prefix, star, value = token.partition("*")
+    if not star:
+        parsed = _int_or_none(token)
+        return None if parsed is None else [parsed]
+    repeat = _int_or_none(prefix)
+    parsed = _int_or_none(value)
+    if repeat is None or parsed is None or repeat < 1:
+        return None
+    return [parsed] * repeat
+
+
+def _read_list_directed_ints(
+    records: list[str],
+    start: int,
+    count: int,
+    what: str,
+    malformed: Callable[[str], ValueError],
+) -> tuple[list[int], int]:
+    """Read ``count`` integers as one Fortran list-directed READ statement.
+
+    Consume whole records from ``records[start:]``: blank records are
+    skipped, values are separated by blanks and/or commas and may continue
+    over records, and ``r*v`` repeat counts expand to ``r`` copies of
+    ``v``. Return the values plus the index of the record after the last
+    one consumed — the remainder of that record is discarded, because the
+    next READ starts on a fresh record. A ``/`` terminator before the
+    count is met, or a null value from adjacent commas within a record,
+    would leave Fortran values undefined, so both are rejected rather
+    than reproduced (nulls formed at the start of a record or across a
+    record boundary are not detected and read as regular separators).
+    """
+    values: list[int] = []
+    for index in range(start, len(records)):
+        record = records[index]
+        if re.search(r",[ \t]*,", record):
+            raise malformed(f"adjacent commas in the {what} leave a value undefined.")
+        for token in record.replace(",", " ").split():
+            before_slash, slash, _ = token.partition("/")
+            if before_slash:
+                expanded = _expand_repeat_token(before_slash)
+                if expanded is None:
+                    raise malformed(f"the {what} value {before_slash!r} is not an integer.")
+                values.extend(expanded)
+            if len(values) >= count:
+                return values[:count], index + 1
+            if slash:
+                raise malformed(
+                    f"a `/` ends the {what} after {len(values)} of {count} values, "
+                    "leaving the rest undefined."
+                )
+    raise malformed(f"it ends before the {what} is complete ({len(values)} of {count} values).")
+
+
+def _read_projector_angular_momenta(projector_file: Path) -> list[int]:
+    """Read the per-projector angular momenta of an external projector file.
+
+    Follow pw2wannier90's reader: leading comment lines (first non-space
+    character ``#``; a tab-indented ``#`` is not a comment there) are
+    skipped, then one list-directed read takes the ``<ngrid> <nproj>``
+    header and a second, starting on a fresh record, takes the ``nproj``
+    angular momenta (:func:`_read_list_directed_ints`). The radial tables
+    that follow are pw2wannier90's business. Deliberately stricter than
+    the Fortran reader in three cases it lets through with undefined or
+    unusable values: a zero projector count, a ``/`` terminating the read
+    early, and negative angular momenta all raise.
+    """
+
+    def malformed(reason: str) -> ValueError:
+        """Build the rejection error for this projector file."""
+        return ValueError(f"The projector file {projector_file} is malformed: {reason}")
+
+    records = list(
+        itertools.dropwhile(
+            lambda record: record.lstrip(" ").startswith("#"),
+            projector_file.read_text().splitlines(),
+        )
+    )
+    (_, nproj), momenta_start = _read_list_directed_ints(
+        records, 0, 2, "`<ngrid> <nproj>` header", malformed
+    )
+    if nproj < 1:
+        raise malformed(f"the projector count is {nproj}; at least one projector is required.")
+    momenta, _ = _read_list_directed_ints(
+        records, momenta_start, nproj, "angular-momentum list", malformed
+    )
+    negative = [angular_momentum for angular_momentum in momenta if angular_momentum < 0]
+    if negative:
+        raise malformed(f"it lists negative angular momenta: {negative}.")
+    return momenta
+
+
+def _load_external_projectors(
+    structure: orm.StructureData,
+    proj_dir: Path | None,
+) -> tuple[dict[str, Any], str]:
+    """Build the per-element projector tables from an external projector directory.
+
+    The directory holds one ``<element>.dat`` radial-projector file per
+    element — the filename pw2wannier90 stages and reads — and those files
+    are the whole user-facing contract: each contributes 2l+1 projectors
+    per listed angular momentum (:func:`_read_projector_angular_momenta`).
+
+    The returned dict exists only to satisfy upstream's
+    ``get_builder_from_protocol``, which demands ``external_projectors``
+    tables: each entry carries the parsed ``l`` and ``frozen: False``, so
+    every projector is Lowdin-orthonormalized. Partial freezing of the
+    projector set is deliberately unsupported.
+
+    The directory is ultimately consumed on the pw2wannier90 code's
+    computer (it is staged into each calculation from there), but the
+    files are parsed and validated here on the local filesystem — a check
+    that coincides with the real one only when that computer shares this
+    filesystem, i.e. the localhost setup. Projector directories that exist
+    only on a remote computer are not supported yet.
+
+    Returns the tables and the resolved directory path.
+    """
+    if proj_dir is None:
+        raise ValueError(
+            "`pw2wannier90.atom_proj_dir` must be set when `pw2wannier90.atom_proj_ext` "
+            "is true: it locates the external projector files."
+        )
+    directory = Path(proj_dir).expanduser().resolve()
+    if not directory.is_dir():
+        raise ValueError(
+            f"`pw2wannier90.atom_proj_dir` does not exist on this machine: {directory}. "
+            "The directory is read on the computer the pw2wannier90 code runs on, and "
+            "this check assumes that computer shares the local filesystem (the "
+            "localhost setup); projector directories that exist only on a remote "
+            "computer are not supported yet."
+        )
+    elements = sorted(
+        {structure.get_kind(site.kind_name).symbol for site in structure.sites}  # type: ignore[no-untyped-call]
+    )
+    missing_files = [
+        f"{element}.dat" for element in elements if not (directory / f"{element}.dat").is_file()
+    ]
+    if missing_files:
+        raise ValueError(
+            f"{directory} is missing the projector files {missing_files}; "
+            "pw2wannier90 reads one `<element>.dat` per element of the structure."
+        )
+    external_projectors = {
+        element: [
+            {"l": angular_momentum, "frozen": False}
+            for angular_momentum in _read_projector_angular_momenta(directory / f"{element}.dat")
+        ]
+        for element in elements
+    }
+    return external_projectors, str(directory)
+
+
+def _derive_external_wannierize_blocks(
+    structure: orm.StructureData,
+    external_projectors: dict[str, Any],
+    nbnd: int | None,
+    num_occ_bands: int,
+) -> tuple[list[AutomaticProjectionBlock], int]:
+    """Derive the wannierization blocks from external projector tables.
+
+    The external-projector analogue of
+    :func:`_derive_automatic_wannierize_blocks`: the whole manifold becomes
+    a single automatic block (pw2wannier90 ``atom_proj_ext``) whose
+    ``num_wann`` is the projector count of the synthesized tables — one
+    band per 2l+1 multiplet member — under the same no-pool constraints.
+    """
+    from aiida_wannier90_workflows.common.types import WannierProjectionType
+    from aiida_wannier90_workflows.utils.pseudo import get_number_of_projections_ext
+
+    num_wann = get_number_of_projections_ext(
+        structure=structure,
+        external_projectors=external_projectors,
+        spin_non_collinear=False,
+        spin_orbit_coupling=False,
+    )
+    return _validated_single_automatic_block(
+        num_wann,
+        nbnd,
+        num_occ_bands,
+        WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL,
+        "the external projector files",
+    )
+
+
+def _reject_unwired_external_projectors(koopmans_input: KoopmansInput, route: str) -> None:
+    """Reject ``atom_proj_ext`` on a route that does not consume it.
+
+    The singlepoint and trajectory routes build their Wannierizations
+    without consulting the external projector keywords, so accepting the
+    switch there would silently drop it.
+    """
+    if koopmans_input.calculator_parameters.pw2wannier90.atom_proj_ext:
+        raise NotImplementedError(
+            f"`pw2wannier90.atom_proj_ext` is not wired into the {route} route; "
+            "external projectors are currently supported by the `wannierize` task only."
+        )
 
 
 def _build_wannierize_split_workgraph(
@@ -447,9 +689,12 @@ def _build_wannierize_split_workgraph(
 
     With explicit projections in ``calculator_parameters.w90.projections``
     each user block becomes a wannierization block. Without any, a single
-    atomic-projector block spans the whole manifold
-    (:func:`_derive_automatic_wannierize_blocks`) and the runtime detection
-    decides how it splits.
+    atomic-projector block spans the whole manifold and the runtime
+    detection decides how it splits; the projectors come from the
+    pseudopotentials (:func:`_derive_automatic_wannierize_blocks`) or, with
+    ``pw2wannier90.atom_proj_ext``, from the external projector directory
+    ``pw2wannier90.atom_proj_dir``
+    (:func:`_derive_external_wannierize_blocks`).
 
     Current scope: ``spin = 'none'``.
     """
@@ -499,18 +744,30 @@ def _build_wannierize_split_workgraph(
 
     nbnd = calc_params.nbnd if calc_params.nbnd is not None else calc_params.pw.system.nbnd
     nbnd = int(nbnd) if nbnd is not None else None
+    external_kwargs: dict[str, Any] = {}
     if projections:
+        if calc_params.pw2wannier90.atom_proj_ext:
+            raise ValueError(
+                "Explicit projections in `calculator_parameters.w90.projections` and "
+                "`pw2wannier90.atom_proj_ext` were both given; the explicit projections "
+                "define every block, so the external projectors would be silently "
+                "ignored. Drop one of the two."
+            )
         if nbnd is None:
             nbnd = _num_wann_total(structure, projections)
         blocks = _derive_wannierize_blocks(structure, projections, nbnd)
+    elif calc_params.pw2wannier90.atom_proj_ext:
+        external_projectors, projector_path = _load_external_projectors(
+            structure, calc_params.pw2wannier90.atom_proj_dir
+        )
+        blocks, nbnd = _derive_external_wannierize_blocks(
+            structure, external_projectors, nbnd, num_occ_bands
+        )
+        external_kwargs = {
+            "external_projectors_path": projector_path,
+            "external_projectors": external_projectors,
+        }
     else:
-        if calc_params.pw2wannier90.atom_proj_ext:
-            raise NotImplementedError(
-                "block_wannierization_threshold does not support external atomic "
-                "projectors (`pw2wannier90.atom_proj_ext`); leave it unset to use the "
-                "pseudopotentials' projectors, or provide explicit projections in "
-                "`calculator_parameters.w90.projections`."
-            )
         blocks, nbnd = _derive_automatic_wannierize_blocks(structure, pseudos, nbnd, num_occ_bands)
 
     # The scf needs only the occupied bands, so nbnd is dropped from its
@@ -554,6 +811,7 @@ def _build_wannierize_split_workgraph(
         pseudo_family=pseudo_family,
         overrides=wannier_overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
+        **external_kwargs,
     )
 
 
@@ -582,6 +840,8 @@ def _build_singlepoint_workgraph(
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
     workflow = koopmans_input.workflow
+
+    _reject_unwired_external_projectors(koopmans_input, "singlepoint")
 
     # DFPT routes on the screening method alone: calculate_alpha = False is
     # the alpha_guess path inside the DFPT builder (screen step skipped),
@@ -1146,6 +1406,8 @@ def _build_trajectory_workgraph(
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
     workflow = koopmans_input.workflow
+
+    _reject_unwired_external_projectors(koopmans_input, "trajectory")
 
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(

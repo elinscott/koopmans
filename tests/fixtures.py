@@ -279,6 +279,30 @@ def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
     return _install_fake_family("PseudoDojo/0.4/LDA/SR/standard/upf", {"Zn": 20.0, "O": 6.0})
 
 
+def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:
+    """Return the tables the dispatcher synthesizes from the fixture's ``Si.dat``.
+
+    s + p per atom, so a two-atom cell carries 8 projectors; every entry
+    is explicitly unfrozen.
+    """
+    return {"Si": [{"l": angular_momentum, "frozen": False} for angular_momentum in [0, 1]]}
+
+
+@pytest.fixture
+def si_external_projector_dir(tmp_path: Path) -> Path:
+    """Write a silicon external projector directory.
+
+    One ``Si.dat`` in pw2wannier90's radial-projector format: a leading
+    comment, the ``<ngrid> <nproj>`` header, and the angular momenta (s +
+    p). The radial table that would follow is never read at build time, so
+    it is omitted.
+    """
+    directory = tmp_path / "projectors"
+    directory.mkdir()
+    (directory / "Si.dat").write_text("# radial projector table stand-in\n4 2\n0 1\n")
+    return directory
+
+
 # ----------------------------------------------------------------------
 # WorkGraph → stable dict for snapshot regressions
 # ----------------------------------------------------------------------

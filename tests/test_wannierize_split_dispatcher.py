@@ -252,17 +252,251 @@ class TestAutomaticProjections:
         with pytest.raises(NotImplementedError, match="fully relativistic"):
             _build(d, split_codes)
 
-    def test_external_projectors_not_implemented(
-        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+
+def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, Any]:
+    """Return the silicon split input using external projectors.
+
+    No explicit projections; the projector directory's ``Si.dat`` (s + p
+    per atom, 8 projectors for the two-atom cell) sizes the manifold.
+    """
+    d = _si_auto_dict(**workflow_updates)
+    d["calculator_parameters"]["pw2wannier90"] = {
+        "atom_proj_ext": True,
+        "atom_proj_dir": str(projector_dir),
+    }
+    return d
+
+
+class TestProjectorFileParsing:
+    """The pw2wannier90-format reader behind the external projector sizing.
+
+    Differentially validated against a transcription of QE's
+    ``read_atomproj`` on a 30-file corpus: the reader agrees with it on
+    every case except three deliberately stricter rejections — a zero
+    projector count, an early ``/`` terminator and negative angular
+    momenta — where the Fortran reader proceeds with undefined or
+    unusable values.
+    """
+
+    @staticmethod
+    def _read(tmp_path: Any, content: str) -> list[int]:
+        from koopmans.aiida.workflows import _read_projector_angular_momenta
+
+        projector_file = tmp_path / "X.dat"
+        projector_file.write_text(content)
+        return _read_projector_angular_momenta(projector_file)
+
+    @pytest.mark.parametrize(
+        ("content", "momenta"),
+        [
+            # Space-indented comments are skipped, as QE's ADJUSTL check does.
+            ("# a\n  # b\n100 3\n0 1 2\n0.0 0.1\n", [0, 1, 2]),
+            # Blank records are skipped anywhere a list-directed read runs:
+            # after the comment block (the QE example07 shape), before any
+            # data at all, and between the header and the momenta.
+            ("# c\n\n100 2\n0 1\n", [0, 1]),
+            ("\n100 2\n0 1\n", [0, 1]),
+            ("100 2\n\n0 1\n", [0, 1]),
+            # The header itself is a list-directed read: it may span records.
+            ("100\n2\n0 1\n", [0, 1]),
+            # Blanks and/or commas separate values.
+            ("100, 2\n0, 1\n", [0, 1]),
+            ("100,2\n0,1\n", [0, 1]),
+            # r*v repeat counts expand.
+            ("100 4\n4*0\n", [0, 0, 0, 0]),
+            # The momenta may continue over records...
+            ("100 4\n0 1\n1 2\n", [0, 1, 1, 2]),
+            # ...and the read stops mid-record once the count is met, so
+            # surplus tokens (the radial tables) are never inspected.
+            ("100 2\n0 1 99 98\n", [0, 1]),
+            ("100 3\n0 1\n5 0.1 0.2\n", [0, 1, 5]),
+            # Explicit plus signs are plain integers.
+            ("100 2\n+0 +1\n", [0, 1]),
+        ],
+    )
+    def test_list_directed_acceptance(
+        self, tmp_path: Any, content: str, momenta: list[int]
     ) -> None:
-        """External atomic projectors are not wired into the split flow."""
-        d = _si_auto_dict()
+        """Files QE's reader accepts parse to the same angular momenta."""
+        assert self._read(tmp_path, content) == momenta
+
+    @pytest.mark.parametrize(
+        ("content", "match"),
+        [
+            # A tab-indented `#` is not a comment to QE (ADJUSTL shifts
+            # spaces only); it becomes the header record and fails there.
+            ("\t# tab comment\n100 2\n0 1\n", "'#' is not an integer"),
+            # Each read starts on a fresh record, so momenta on the header
+            # record are discarded — exactly as QE then fails at EOF.
+            ("100 2 0 1\n", "ends before the angular-momentum list"),
+            ("# only comments\n", r"ends before the `<ngrid> <nproj>` header"),
+            ("", r"ends before the `<ngrid> <nproj>` header"),
+            ("100 x\n0 1\n", "'x' is not an integer"),
+            # A one-token header pulls nproj from the next record: here 0.
+            ("100\n0 1\n", "at least one projector"),
+            ("100 0\n\n", "at least one projector"),
+            ("100 -2\n0 1\n", "at least one projector"),
+            ("100 3\n0 1\n", "ends before the angular-momentum list"),
+            ("100 2\n0 q\n", "'q' is not an integer"),
+            ("100 2\n0 1.0\n", "'1.0' is not an integer"),
+            ("100 2\n0 -1\n", r"negative angular momenta: \[-1\]"),
+            ("100 2\n0 /\n", "leaving the rest undefined"),
+            ("100 2\n0,,1\n", "adjacent commas"),
+        ],
+    )
+    def test_rejected_files_raise(self, tmp_path: Any, content: str, match: str) -> None:
+        """Every rejection fails naming the file and the reason."""
+        with pytest.raises(ValueError, match=match):
+            self._read(tmp_path, content)
+
+
+class TestExternalProjectors:
+    """The external-projector route (`pw2wannier90.atom_proj_ext`)."""
+
+    def test_external_route_builds_and_forwards_projector_inputs(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """The auto block is sized from the `.dat` files and the inputs thread through.
+
+        Topology matches the pseudo-projector route; additionally the
+        nested per-block graph carries the projector directory and the
+        synthesized tables (only the whole-block wannierisation consumes
+        them).
+        """
+        from tests.fixtures import si_external_projector_tables
+
+        wg = _build(_si_external_dict(si_external_projector_dir), split_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("scf_nscf") == 1
+        assert names.count("detect_band_groups") == 1
+        assert "wannierize_split_block_1" in names
+
+        detect_task = wg.tasks["detect_band_groups"]
+        # 8 external projectors; nelec 8 -> 4 occupied bands.
+        assert detect_task.inputs["num_bands_total"].value == 8
+        assert detect_task.inputs["num_occ_bands"].value == 4
+
+        split_task = wg.tasks["wannierize_split_block_1"]
+        assert split_task.inputs["external_projectors_path"].value == str(si_external_projector_dir)
+        assert split_task.inputs["external_projectors"].value == si_external_projector_tables()
+
+        # The nscf covers exactly the projector manifold.
+        overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
+        assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
+
+    def test_derived_block_is_external_and_pool_free(
+        self,
+        aiida_profile_clean: Any,
+        fake_sg15_cutoffs_family: Any,
+        silicon_structure: Any,
+    ) -> None:
+        """The derived block carries the external type and the no-pool shape."""
+        from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+        from koopmans.aiida.workflows import _derive_external_wannierize_blocks
+        from tests.fixtures import si_external_projector_tables
+
+        blocks, nbnd = _derive_external_wannierize_blocks(
+            silicon_structure, si_external_projector_tables(), None, 4
+        )
+        [block] = blocks
+        assert block["num_wann"] == 8
+        assert block["num_bands"] == 8
+        assert block["include_bands"] == list(range(1, 9))
+        assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
+        assert block.get("exclude_bands") is None
+        assert nbnd == 8
+
+    def test_explicit_projections_and_external_projectors_conflict(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """Explicit projections would silently shadow the external projectors."""
+        d = _si_split_dict()
         d["calculator_parameters"]["pw2wannier90"] = {
             "atom_proj_ext": True,
-            "atom_proj_dir": "/dev/null",
+            "atom_proj_dir": str(si_external_projector_dir),
         }
-        with pytest.raises(NotImplementedError, match="atom_proj_ext"):
+        with pytest.raises(ValueError, match="Drop one of the two"):
             _build(d, split_codes)
+
+    def test_missing_dat_file_raises(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """A directory without the element's `.dat` file is rejected naming it."""
+        (si_external_projector_dir / "Si.dat").unlink()
+        with pytest.raises(ValueError, match=r"missing the projector files \['Si.dat'\]"):
+            _build(_si_external_dict(si_external_projector_dir), split_codes)
+
+    def test_missing_atom_proj_dir_raises(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """`atom_proj_ext` without `atom_proj_dir` is an input error."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
+        with pytest.raises(ValueError, match="atom_proj_dir"):
+            _build(d, split_codes)
+
+    def test_nbnd_above_external_projector_count_not_implemented(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """The no-pool constraint applies to the external source too."""
+        d = _si_external_dict(si_external_projector_dir)
+        d["calculator_parameters"]["nbnd"] = 12
+        with pytest.raises(NotImplementedError, match="external projector files"):
+            _build(d, split_codes)
+
+    def test_plain_route_stages_the_projector_inputs(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """Without the threshold the plain Wannierize route consumes them too.
+
+        The upstream builder demands the orbital tables alongside the
+        directory path, so the plain route must synthesize both; its eager
+        build exercises that translation end-to-end down to the
+        pw2wannier90 step's staged inputs. No frozen list is ever emitted:
+        every external projector is Lowdin-orthonormalized.
+        """
+        from koopmans.aiida.workflows import _build_wannierize_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        d = _si_external_dict(si_external_projector_dir)
+        del d["workflow"]["block_wannierization_threshold"]
+        inp = KoopmansInput.model_validate(d)
+        wg = _build_wannierize_workgraph(inp, split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        p2w = w90_task.inputs["pw2wannier90"]["pw2wannier90"]
+        inputpp = p2w["parameters"].value.get_dict()["INPUTPP"]
+        assert inputpp["atom_proj"] is True
+        assert inputpp["atom_proj_ext"] is True
+        assert inputpp["atom_proj_dir"] == "external_projectors/"
+        assert "atom_proj_frozen" not in inputpp
+        assert p2w["external_projectors_path"].value.get_remote_path() == str(
+            si_external_projector_dir
+        )
+        assert p2w["external_projectors_list"].value.get_dict() == {"Si": "Si"}
 
 
 class TestPseudoSocSniffing:

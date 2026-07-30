@@ -189,6 +189,24 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         with pytest.raises(NotImplementedError, match="only implements the KI correction"):
             _build_singlepoint_workgraph(inp, codes={})
 
+    @pytest.mark.parametrize("screening_method", ["dscf", "dfpt"])
+    def test_external_projectors_rejected(
+        self, ozone_input: KoopmansInput, screening_method: str
+    ) -> None:
+        """``atom_proj_ext`` is rejected on both singlepoint streams.
+
+        Neither stream consults the external projector keywords when it
+        builds its Wannierization, so accepting the switch would silently
+        drop it.
+        """
+        d = ozone_input.model_dump()
+        d["workflow"]["screening_method"] = screening_method
+        d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
+        inp = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="not wired into the singlepoint route"):
+            _build_singlepoint_workgraph(inp, codes={})
+
 
 class TestExplicitOrbitalGroupsRejected:
     """An explicit ``orbital_groups`` list is not wired into the screening fan-out.
