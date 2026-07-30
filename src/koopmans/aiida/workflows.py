@@ -178,6 +178,12 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """
     task = koopmans_input.workflow.task
 
+    if koopmans_input.workflow.auto_projections and task != Task.WANNIERIZE:
+        raise NotImplementedError(
+            f"`workflow.auto_projections` is not wired into the {task.value} route; "
+            "automatic projections are currently supported by the `wannierize` task only."
+        )
+
     # Load required codes
     codes = load_codes_for_task(koopmans_input.workflow)
 
@@ -259,6 +265,24 @@ def _build_dft_eps_workgraph(
     )
 
 
+def _reject_conflicting_projection_sources(koopmans_input: KoopmansInput) -> None:
+    """Reject ``auto_projections`` alongside explicit projection blocks.
+
+    Explicit projections define every block themselves, so combining them
+    with the automatic derivation would silently discard one of the two.
+    """
+    w90 = koopmans_input.calculator_parameters.wannier90
+    channels = [w90.projections]
+    channels += [spin.projections for spin in (w90.up, w90.down) if spin is not None]
+    if koopmans_input.workflow.auto_projections and any(channels):
+        raise ValueError(
+            "`workflow.auto_projections` and explicit projections in "
+            "`calculator_parameters.w90.projections` were both given; the automatic "
+            "derivation and the explicit blocks each define the full set of "
+            "projections. Drop one of the two."
+        )
+
+
 def _build_wannierize_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
@@ -279,9 +303,20 @@ def _build_wannierize_workgraph(
     if koopmans_input.workflow.block_wannierization_threshold is not None:
         return _build_wannierize_split_workgraph(koopmans_input, codes)
 
+    _reject_conflicting_projection_sources(koopmans_input)
+    if koopmans_input.calculator_parameters.wannier90.projections:
+        raise NotImplementedError(
+            "Explicit projections in `calculator_parameters.w90.projections` are not "
+            "wired into the plain wannierize route; set "
+            "`workflow.block_wannierization_threshold` (whose route consumes them) or "
+            "drop them and set `workflow.auto_projections`."
+        )
+
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
-    # Check if external projectors are requested
+    # The projections come from external projector files, or — with
+    # `auto_projections` — from the pseudopotentials' atomic orbitals
+    # (upstream's ATOMIC_PROJECTORS_QE mechanism).
     pw2w_params = koopmans_input.calculator_parameters.pw2wannier90
     extra_kwargs: dict[str, Any] = {}
     if pw2w_params.atom_proj_ext:
@@ -291,6 +326,14 @@ def _build_wannierize_workgraph(
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
         extra_kwargs["external_projectors_path"] = projector_path
         extra_kwargs["external_projectors"] = external_projectors
+    elif not koopmans_input.workflow.auto_projections:
+        raise ValueError(
+            "Nothing defines the Wannier projections: set `workflow.auto_projections` "
+            "to derive them from the pseudopotentials, point "
+            "`pw2wannier90.atom_proj_ext` at external projector files, or provide "
+            "explicit projections in `calculator_parameters.w90.projections` together "
+            "with `workflow.block_wannierization_threshold`."
+        )
 
     return Wannierize.build(
         codes=codes,
@@ -675,6 +718,58 @@ def _reject_unwired_external_projectors(koopmans_input: KoopmansInput, route: st
         )
 
 
+def _resolve_wannierize_blocks(
+    koopmans_input: KoopmansInput,
+    structure: orm.StructureData,
+    pseudos: dict[str, orm.UpfData],
+    nbnd: int | None,
+    num_occ_bands: int,
+) -> tuple[list[Any], int, dict[str, Any]]:
+    """Resolve the wannierization blocks from the input's projection source.
+
+    Explicit projections in ``calculator_parameters.w90.projections`` define
+    every block themselves; otherwise a single automatic block is derived
+    from the external projector files (``pw2wannier90.atom_proj_ext``) or,
+    with ``workflow.auto_projections``, from the pseudopotentials. Returns
+    the blocks, the band count the nscf must cover, and the extra builder
+    kwargs of the external route.
+    """
+    calc_params = koopmans_input.calculator_parameters
+    projections = calc_params.wannier90.projections
+    if projections:
+        if calc_params.pw2wannier90.atom_proj_ext:
+            raise ValueError(
+                "Explicit projections in `calculator_parameters.w90.projections` and "
+                "`pw2wannier90.atom_proj_ext` were both given; the explicit projections "
+                "define every block, so the external projectors would be silently "
+                "ignored. Drop one of the two."
+            )
+        if nbnd is None:
+            nbnd = _num_wann_total(structure, projections)
+        return _derive_wannierize_blocks(structure, projections, nbnd), nbnd, {}
+    if calc_params.pw2wannier90.atom_proj_ext:
+        external_projectors, projector_path = _load_external_projectors(
+            structure, calc_params.pw2wannier90.atom_proj_dir
+        )
+        blocks, nbnd = _derive_external_wannierize_blocks(
+            structure, external_projectors, nbnd, num_occ_bands
+        )
+        external_kwargs = {
+            "external_projectors_path": projector_path,
+            "external_projectors": external_projectors,
+        }
+        return blocks, nbnd, external_kwargs
+    if koopmans_input.workflow.auto_projections:
+        blocks, nbnd = _derive_automatic_wannierize_blocks(structure, pseudos, nbnd, num_occ_bands)
+        return blocks, nbnd, {}
+    raise ValueError(
+        "Nothing defines the Wannier projections: provide explicit projections in "
+        "`calculator_parameters.w90.projections`, set `workflow.auto_projections` "
+        "to derive them from the pseudopotentials, or point "
+        "`pw2wannier90.atom_proj_ext` at external projector files."
+    )
+
+
 def _build_wannierize_split_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
@@ -691,11 +786,12 @@ def _build_wannierize_split_workgraph(
     With explicit projections in ``calculator_parameters.w90.projections``
     each user block becomes a wannierization block. Without any, a single
     atomic-projector block spans the whole manifold and the runtime
-    detection decides how it splits; the projectors come from the
-    pseudopotentials (:func:`_derive_automatic_wannierize_blocks`) or, with
-    ``pw2wannier90.atom_proj_ext``, from the external projector directory
-    ``pw2wannier90.atom_proj_dir``
-    (:func:`_derive_external_wannierize_blocks`).
+    detection decides how it splits; the projectors come from the external
+    projector directory ``pw2wannier90.atom_proj_dir`` when
+    ``pw2wannier90.atom_proj_ext`` is set
+    (:func:`_derive_external_wannierize_blocks`) or, with
+    ``workflow.auto_projections``, from the pseudopotentials
+    (:func:`_derive_automatic_wannierize_blocks`).
 
     Current scope: ``spin = 'none'``.
     """
@@ -723,7 +819,7 @@ def _build_wannierize_split_workgraph(
             "block_wannierization_threshold currently supports spin='none' only "
             "(the group detection and per-block split are single-channel)."
         )
-    projections = calc_params.wannier90.projections
+    _reject_conflicting_projection_sources(koopmans_input)
     if koopmans_input.kpoints.path is None:
         raise ValueError(
             "block_wannierization_threshold needs a k-point path: the band-group "
@@ -745,31 +841,9 @@ def _build_wannierize_split_workgraph(
 
     nbnd = calc_params.nbnd if calc_params.nbnd is not None else calc_params.pw.system.nbnd
     nbnd = int(nbnd) if nbnd is not None else None
-    external_kwargs: dict[str, Any] = {}
-    if projections:
-        if calc_params.pw2wannier90.atom_proj_ext:
-            raise ValueError(
-                "Explicit projections in `calculator_parameters.w90.projections` and "
-                "`pw2wannier90.atom_proj_ext` were both given; the explicit projections "
-                "define every block, so the external projectors would be silently "
-                "ignored. Drop one of the two."
-            )
-        if nbnd is None:
-            nbnd = _num_wann_total(structure, projections)
-        blocks = _derive_wannierize_blocks(structure, projections, nbnd)
-    elif calc_params.pw2wannier90.atom_proj_ext:
-        external_projectors, projector_path = _load_external_projectors(
-            structure, calc_params.pw2wannier90.atom_proj_dir
-        )
-        blocks, nbnd = _derive_external_wannierize_blocks(
-            structure, external_projectors, nbnd, num_occ_bands
-        )
-        external_kwargs = {
-            "external_projectors_path": projector_path,
-            "external_projectors": external_projectors,
-        }
-    else:
-        blocks, nbnd = _derive_automatic_wannierize_blocks(structure, pseudos, nbnd, num_occ_bands)
+    blocks, nbnd, external_kwargs = _resolve_wannierize_blocks(
+        koopmans_input, structure, pseudos, nbnd, num_occ_bands
+    )
 
     # The scf needs only the occupied bands, so nbnd is dropped from its
     # override; the nscf — and the bands run seeded from its overrides —

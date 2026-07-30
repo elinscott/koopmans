@@ -126,6 +126,7 @@ class TestRemovedKeywordsRejected:
         ("section", "keyword"),
         [
             ("workflow", "converge"),
+            ("workflow", "automated_wannierization"),
             ("ml", "train_on_the_fly"),
             ("ml", "alphas_from_file"),
         ],
@@ -145,6 +146,7 @@ class TestRemovedKeywordsRejected:
         ("section", "keyword"),
         [
             ("workflow", "converge"),
+            ("workflow", "automated_wannierization"),
             ("ml", "train_on_the_fly"),
             ("ml", "alphas_from_file"),
         ],

@@ -146,19 +146,37 @@ class TestGuards:
 
 
 def _si_auto_dict(**workflow_updates: Any) -> dict[str, Any]:
-    """Return the silicon split input without explicit projections.
+    """Return the silicon split input with automatic projections.
 
-    The fake Si pseudo carries an s+p valence, so the two-atom cell has 8
-    atomic projectors — the automatic block spans bands 1-8 with the
+    ``auto_projections`` replaces the explicit projections. The fake Si
+    pseudo carries an s+p valence, so the two-atom cell has 8 atomic
+    projectors — the automatic block spans bands 1-8 with the
     occupied/empty boundary at band 4 (nelec 8).
     """
     d = _si_split_dict(**workflow_updates)
     d["calculator_parameters"]["wannier90"] = {}
+    d["workflow"].setdefault("auto_projections", True)
     return d
 
 
 class TestAutomaticProjections:
-    """The atomic-projector route taken when no projections are given."""
+    """The atomic-projector route behind ``workflow.auto_projections``."""
+
+    def test_flag_with_explicit_projections_conflicts(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The flag and explicit projections each define the full projection set."""
+        d = _si_split_dict(auto_projections=True)
+        with pytest.raises(ValueError, match=r"auto_projections.*were both given"):
+            _build(d, split_codes)
+
+    def test_no_projection_source_raises(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Dropping the projections without opting into the flag is an error."""
+        d = _si_auto_dict(auto_projections=False)
+        with pytest.raises(ValueError, match="Nothing defines the Wannier projections"):
+            _build(d, split_codes)
 
     def test_automatic_route_builds(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -256,10 +274,12 @@ class TestAutomaticProjections:
 def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, Any]:
     """Return the silicon split input using external projectors.
 
-    No explicit projections; the projector directory's ``Si.dat`` (s + p
-    per atom, 8 projectors for the two-atom cell) sizes the manifold.
+    No explicit projections and no ``auto_projections``: ``atom_proj_ext``
+    is its own opt-in, and the projector directory's ``Si.dat`` (s + p per
+    atom, 8 projectors for the two-atom cell) sizes the manifold.
     """
-    d = _si_auto_dict(**workflow_updates)
+    d = _si_split_dict(**workflow_updates)
+    d["calculator_parameters"]["wannier90"] = {}
     d["calculator_parameters"]["pw2wannier90"] = {
         "atom_proj_ext": True,
         "atom_proj_dir": str(projector_dir),
@@ -427,6 +447,23 @@ class TestExternalProjectors:
         with pytest.raises(ValueError, match="Drop one of the two"):
             _build(d, split_codes)
 
+    def test_flag_composes_with_external_projectors(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """``auto_projections`` alongside ``atom_proj_ext`` takes the external source.
+
+        Both request automatically derived projections; ``atom_proj_ext``
+        selects the projector origin, so the combination is not a conflict.
+        """
+        d = _si_external_dict(si_external_projector_dir, auto_projections=True)
+        wg = _build(d, split_codes)
+        split_task = wg.tasks["wannierize_split_block_1"]
+        assert split_task.inputs["external_projectors_path"].value == str(si_external_projector_dir)
+
     def test_missing_dat_file_raises(
         self,
         aiida_profile_clean: Any,
@@ -497,6 +534,58 @@ class TestExternalProjectors:
             si_external_projector_dir
         )
         assert p2w["external_projectors_list"].value.get_dict() == {"Si": "Si"}
+
+
+def _build_plain(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+    from koopmans.aiida.workflows import _build_wannierize_workgraph
+    from koopmans.input_file import KoopmansInput
+
+    del d["workflow"]["block_wannierization_threshold"]
+    inp = KoopmansInput.model_validate(d)
+    return _build_wannierize_workgraph(inp, codes)
+
+
+class TestPlainRoute:
+    """Projection gating on the plain (non-split) wannierize route."""
+
+    def test_flag_builds_the_qe_projector_route(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The flag routes through upstream's pseudo-atomic-projector mechanism.
+
+        The eager build reaches the staged wannier90 / pw2wannier90 inputs:
+        ``auto_projections`` in the wannier90 parameters and ``atom_proj``
+        in pw2wannier90 are upstream's own automatic-projection switches.
+        """
+        wg = _build_plain(_si_auto_dict(), split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90_params = w90_task.inputs["wannier90"]["wannier90"]["parameters"].value.get_dict()
+        assert w90_params["auto_projections"] is True
+        inputpp = w90_task.inputs["pw2wannier90"]["pw2wannier90"]["parameters"].value.get_dict()[
+            "INPUTPP"
+        ]
+        assert inputpp["atom_proj"] is True
+
+    def test_flag_with_explicit_projections_conflicts(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The flag-vs-explicit conflict applies on this route too."""
+        with pytest.raises(ValueError, match=r"auto_projections.*were both given"):
+            _build_plain(_si_split_dict(auto_projections=True), split_codes)
+
+    def test_explicit_projections_not_wired(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Explicit projections reach nothing here; only the split route consumes them."""
+        with pytest.raises(NotImplementedError, match="plain wannierize route"):
+            _build_plain(_si_split_dict(), split_codes)
+
+    def test_no_projection_source_raises(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Without any projection source the route fails naming the options."""
+        with pytest.raises(ValueError, match="Nothing defines the Wannier projections"):
+            _build_plain(_si_auto_dict(auto_projections=False), split_codes)
 
 
 class TestPseudoSocSniffing:
