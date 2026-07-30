@@ -104,3 +104,48 @@ class TestForcedCodeReinstall:
             if code.label.startswith("pw")
         }
         assert labels == {"pw", "pw_old", "pw_old2"}
+
+
+class TestLabelKeyedRegistration:
+    """The install scan is keyed by code label, not executable name."""
+
+    def test_registered_labels_split_from_missing(
+        self, aiida_profile_clean: Any, aiida_localhost: Any, tmp_path: Any
+    ) -> None:
+        """An already-registered label lands in existing, the rest in to-find."""
+        from koopmans.aiida.setup.codes import get_codes_to_register, setup_code
+
+        exe = tmp_path / "pw.x"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        setup_code("pw.x", str(exe), "quantumespresso.pw", aiida_localhost)
+
+        existing, to_find = get_codes_to_register(aiida_localhost)
+        assert existing == ["pw"]
+        assert "pw" not in to_find
+        assert to_find["pw2wannier90"] == ("pw2wannier90.x", "quantumespresso.pw2wannier90")
+
+    def test_explicit_path_wins_over_the_scan(
+        self, aiida_profile_clean: Any, aiida_localhost: Any, tmp_path: Any
+    ) -> None:
+        """An explicit per-label path registers that binary; absent ones report missing."""
+        from aiida.orm import load_code
+
+        from koopmans.aiida.setup.codes import scan_and_register_codes
+
+        exe = tmp_path / "special_pw2wannier90.x"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+
+        found, missing = scan_and_register_codes(
+            {
+                "pw2wannier90": ("pw2wannier90.x", "quantumespresso.pw2wannier90"),
+                "kcp": ("definitely_not_on_path.x", "koopmans.kcp"),
+            },
+            aiida_localhost,
+            explicit_codes={"pw2wannier90": str(exe)},
+        )
+        assert found == ["pw2wannier90"]
+        assert missing == ["kcp"]
+        code = load_code(f"pw2wannier90@{aiida_localhost.label}")
+        assert str(code.filepath_executable) == str(exe)
