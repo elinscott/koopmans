@@ -256,8 +256,8 @@ class TestAutomaticProjections:
 def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, Any]:
     """Return the silicon split input using external projectors.
 
-    No explicit projections; the projector directory's tables (s + p per
-    atom, 8 projectors for the two-atom cell) size the manifold.
+    No explicit projections; the projector directory's ``Si.dat`` (s + p
+    per atom, 8 projectors for the two-atom cell) sizes the manifold.
     """
     d = _si_auto_dict(**workflow_updates)
     d["calculator_parameters"]["pw2wannier90"] = {
@@ -265,6 +265,47 @@ def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, 
         "atom_proj_dir": str(projector_dir),
     }
     return d
+
+
+class TestProjectorFileParsing:
+    """The pw2wannier90-format reader behind the external projector sizing."""
+
+    @staticmethod
+    def _read(tmp_path: Any, content: str) -> list[int]:
+        from koopmans.aiida.workflows import _read_projector_angular_momenta
+
+        projector_file = tmp_path / "X.dat"
+        projector_file.write_text(content)
+        return _read_projector_angular_momenta(projector_file)
+
+    def test_leading_comments_are_skipped(self, tmp_path: Any) -> None:
+        """Lines whose first non-blank character is `#` are skipped, as in QE."""
+        assert self._read(tmp_path, "# a\n  # b\n100 3\n0 1 2\n0.0 0.1\n") == [0, 1, 2]
+
+    def test_momenta_may_continue_over_lines(self, tmp_path: Any) -> None:
+        """The l values are a list-directed read: they may span several lines."""
+        assert self._read(tmp_path, "100 4\n0 1\n1 2\n") == [0, 1, 1, 2]
+
+    def test_surplus_tokens_after_the_momenta_are_ignored(self, tmp_path: Any) -> None:
+        """Radial data following the declared l count is not misread as momenta."""
+        assert self._read(tmp_path, "100 2\n0 1 99 98\n") == [0, 1]
+
+    @pytest.mark.parametrize(
+        ("content", "match"),
+        [
+            ("# only comments\n", "only comments"),
+            ("100\n0 1\n", r"must start with `<ngrid> <nproj>`"),
+            ("100 x\n0 1\n", r"must start with `<ngrid> <nproj>`"),
+            ("100 0\n\n", "at least one projector"),
+            ("100 3\n0 1\n", "lists only 2 angular momenta"),
+            ("100 2\n0 q\n", "'q' is not an integer"),
+            ("100 2\n0 -1\n", r"negative angular momenta: \[-1\]"),
+        ],
+    )
+    def test_malformed_files_raise(self, tmp_path: Any, content: str, match: str) -> None:
+        """Every malformation fails naming the file and the reason."""
+        with pytest.raises(ValueError, match=match):
+            self._read(tmp_path, content)
 
 
 class TestExternalProjectors:
@@ -277,13 +318,15 @@ class TestExternalProjectors:
         fake_sg15_cutoffs_family: Any,
         si_external_projector_dir: Any,
     ) -> None:
-        """The auto block is sized from the tables and the inputs thread through.
+        """The auto block is sized from the `.dat` files and the inputs thread through.
 
         Topology matches the pseudo-projector route; additionally the
-        nested per-block graph carries the projector directory and tables
-        (only the whole-block wannierisation consumes them).
+        nested per-block graph carries the projector directory and the
+        synthesized tables (only the whole-block wannierisation consumes
+        them). With no `atom_proj_frozen`, no entry carries the frozen
+        sentinel.
         """
-        from tests.fixtures import SI_EXTERNAL_PROJECTORS
+        from tests.fixtures import si_external_projector_tables
 
         wg = _build(_si_external_dict(si_external_projector_dir), split_codes)
         names = [t.name for t in wg.tasks]
@@ -298,11 +341,34 @@ class TestExternalProjectors:
 
         split_task = wg.tasks["wannierize_split_block_1"]
         assert split_task.inputs["external_projectors_path"].value == str(si_external_projector_dir)
-        assert split_task.inputs["external_projectors"].value == SI_EXTERNAL_PROJECTORS
+        assert split_task.inputs["external_projectors"].value == si_external_projector_tables()
 
         # The nscf covers exactly the projector manifold.
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
         assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
+
+    def test_frozen_indices_reach_the_forwarded_tables(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """`atom_proj_frozen` marks whole orbitals with the sentinel encoding.
+
+        Indices 1 and 5 are the s projector on each of the two Si sites, so
+        the s orbital (position 0) carries the sentinel and the p orbital
+        does not.
+        """
+        from tests.fixtures import si_external_projector_tables
+
+        d = _si_external_dict(si_external_projector_dir)
+        d["calculator_parameters"]["pw2wannier90"]["atom_proj_frozen"] = [1, 5]
+        wg = _build(d, split_codes)
+        split_task = wg.tasks["wannierize_split_block_1"]
+        assert split_task.inputs["external_projectors"].value == si_external_projector_tables(
+            frozen_orbitals=frozenset({0})
+        )
 
     def test_derived_block_is_external_and_pool_free(
         self,
@@ -314,10 +380,10 @@ class TestExternalProjectors:
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.workflows import _derive_external_wannierize_blocks
-        from tests.fixtures import SI_EXTERNAL_PROJECTORS
+        from tests.fixtures import si_external_projector_tables
 
         blocks, nbnd = _derive_external_wannierize_blocks(
-            silicon_structure, SI_EXTERNAL_PROJECTORS, None, 4
+            silicon_structure, si_external_projector_tables(), None, 4
         )
         [block] = blocks
         assert block["num_wann"] == 8
@@ -343,17 +409,45 @@ class TestExternalProjectors:
         with pytest.raises(ValueError, match="Drop one of the two"):
             _build(d, split_codes)
 
-    def test_missing_projector_table_file_raises(
+    @pytest.mark.parametrize(
+        ("frozen", "match"),
+        [
+            ([9], r"outside 1\.\.8"),
+            ([2], "covers only part of orbital 2 of Si"),
+            ([1], "covers only part of orbital 1 of Si"),
+        ],
+    )
+    def test_unrepresentable_frozen_indices_raise(
         self,
         aiida_profile_clean: Any,
         split_codes: Any,
         fake_sg15_cutoffs_family: Any,
         si_external_projector_dir: Any,
+        frozen: list[int],
+        match: str,
     ) -> None:
-        """A directory without `projectors.json` is rejected naming the layout."""
-        (si_external_projector_dir / "projectors.json").unlink()
-        with pytest.raises(ValueError, match=r"no `projectors\.json`"):
-            _build(_si_external_dict(si_external_projector_dir), split_codes)
+        """Out-of-range, m-partial and site-partial frozen sets are rejected.
+
+        Index 2 covers one m-component of the p multiplet; index 1 freezes
+        the s projector on one Si site but not the other. Both fall outside
+        the per-element-orbital encoding, so each names the orbital and its
+        full index set.
+        """
+        d = _si_external_dict(si_external_projector_dir)
+        d["calculator_parameters"]["pw2wannier90"]["atom_proj_frozen"] = frozen
+        with pytest.raises(ValueError, match=match):
+            _build(d, split_codes)
+
+    def test_frozen_without_external_rejected_by_the_schema(self) -> None:
+        """`atom_proj_frozen` without `atom_proj_ext` cannot take effect."""
+        from pydantic import ValidationError
+
+        from koopmans.input_file import KoopmansInput
+
+        d = _si_auto_dict()
+        d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_frozen": [1]}
+        with pytest.raises(ValidationError, match=r"requires `pw2wannier90\.atom_proj_ext`"):
+            KoopmansInput.model_validate(d)
 
     def test_missing_dat_file_raises(
         self,
@@ -392,6 +486,23 @@ class TestExternalProjectors:
         with pytest.raises(NotImplementedError, match="external projector files"):
             _build(d, split_codes)
 
+    @staticmethod
+    def _plain_route_pw2wannier90(
+        si_external_projector_dir: Any, split_codes: Any, frozen: list[int] | None
+    ) -> Any:
+        """Build the plain (no-threshold) route and return its pw2wannier90 inputs."""
+        from koopmans.aiida.workflows import _build_wannierize_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        d = _si_external_dict(si_external_projector_dir)
+        del d["workflow"]["block_wannierization_threshold"]
+        if frozen is not None:
+            d["calculator_parameters"]["pw2wannier90"]["atom_proj_frozen"] = frozen
+        inp = KoopmansInput.model_validate(d)
+        wg = _build_wannierize_workgraph(inp, split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        return w90_task.inputs["pw2wannier90"]["pw2wannier90"]
+
     def test_plain_route_stages_the_projector_inputs(
         self,
         aiida_profile_clean: Any,
@@ -402,27 +513,39 @@ class TestExternalProjectors:
         """Without the threshold the plain Wannierize route consumes them too.
 
         The upstream builder demands the orbital tables alongside the
-        directory path, so the plain route must load both; its eager build
-        exercises that translation end-to-end down to the pw2wannier90
-        step's staged inputs.
+        directory path, so the plain route must synthesize both; its eager
+        build exercises that translation end-to-end down to the
+        pw2wannier90 step's staged inputs. With no `atom_proj_frozen`, no
+        frozen list is emitted — everything is Lowdin-orthonormalized.
         """
-        from koopmans.aiida.workflows import _build_wannierize_workgraph
-        from koopmans.input_file import KoopmansInput
-
-        d = _si_external_dict(si_external_projector_dir)
-        del d["workflow"]["block_wannierization_threshold"]
-        inp = KoopmansInput.model_validate(d)
-        wg = _build_wannierize_workgraph(inp, split_codes)
-        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
-        p2w = w90_task.inputs["pw2wannier90"]["pw2wannier90"]
+        p2w = self._plain_route_pw2wannier90(si_external_projector_dir, split_codes, None)
         inputpp = p2w["parameters"].value.get_dict()["INPUTPP"]
         assert inputpp["atom_proj"] is True
         assert inputpp["atom_proj_ext"] is True
         assert inputpp["atom_proj_dir"] == "external_projectors/"
+        assert "atom_proj_frozen" not in inputpp
         assert p2w["external_projectors_path"].value.get_remote_path() == str(
             si_external_projector_dir
         )
         assert p2w["external_projectors_list"].value.get_dict() == {"Si": "Si"}
+
+    def test_plain_route_emits_the_frozen_list(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """`atom_proj_frozen` lands verbatim in the pw2wannier90 namelist.
+
+        Freezing the p multiplet on both Si sites is indices 2-4 and 6-8;
+        the sentinel-encoded tables must round-trip back to exactly that
+        list through upstream's frozen-list derivation.
+        """
+        frozen = [2, 3, 4, 6, 7, 8]
+        p2w = self._plain_route_pw2wannier90(si_external_projector_dir, split_codes, frozen)
+        inputpp = p2w["parameters"].value.get_dict()["INPUTPP"]
+        assert inputpp["atom_proj_frozen"] == frozen
 
 
 class TestPseudoSocSniffing:

@@ -7,6 +7,7 @@ based on the task specified in a KoopmansInput.
 from __future__ import annotations
 
 import copy
+import itertools
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -29,6 +30,8 @@ from koopmans.input_file.workflow import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from aiida_koopmans.types import AutomaticProjectionBlock
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
@@ -280,7 +283,7 @@ def _build_wannierize_workgraph(
     extra_kwargs: dict[str, Any] = {}
     if pw2w_params.atom_proj_ext:
         external_projectors, projector_path = _load_external_projectors(
-            structure, pw2w_params.atom_proj_dir
+            structure, pw2w_params.atom_proj_dir, pw2w_params.atom_proj_frozen
         )
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
         extra_kwargs["external_projectors_path"] = projector_path
@@ -461,21 +464,150 @@ def _validated_single_automatic_block(
     return [block], num_wann
 
 
-def _load_external_projectors(
-    structure: orm.StructureData, proj_dir: Path | None
-) -> tuple[dict[str, Any], str]:
-    """Load the per-element orbital tables of an external projector directory.
+def _int_or_none(word: str) -> int | None:
+    """Parse an integer token, returning None when it is not one."""
+    try:
+        return int(word)
+    except ValueError:
+        return None
 
-    The directory follows aiida-wannier90-workflows' layout: one
-    ``<element>.dat`` radial-projector file per element (the filename
-    pw2wannier90 stages and reads) plus a ``projectors.json`` holding each
-    element's orbital entries (``label`` / ``l`` / ``alpha`` per
-    projector), which size the Wannier manifold and select the
-    Lowdin-frozen projectors. ``projectors.json`` is part of upstream's
-    external-projector contract and is required here: the projector counts
-    could be rebuilt from the ``.dat`` files, but the ``alpha``
-    (frozen-projector selection) and ``j`` (spin-orbit) metadata could
-    not.
+
+def _leading_momenta(
+    lines: list[str], nproj: int, malformed: Callable[[str], ValueError]
+) -> list[int]:
+    """Collect ``nproj`` angular momenta from the lines after the header.
+
+    A list-directed read: the values may continue over several lines, and
+    any surplus tokens on the line that completes the count are ignored
+    (they belong to the radial tables that follow).
+    """
+    momenta: list[int] = []
+    for line in lines:
+        for word in line.split()[: nproj - len(momenta)]:
+            angular_momentum = _int_or_none(word)
+            if angular_momentum is None:
+                raise malformed(f"the angular momentum {word!r} is not an integer.")
+            momenta.append(angular_momentum)
+        if len(momenta) == nproj:
+            return momenta
+    raise malformed(
+        f"it declares {nproj} projectors but lists only {len(momenta)} angular momenta."
+    )
+
+
+def _read_projector_angular_momenta(projector_file: Path) -> list[int]:
+    """Read the per-projector angular momenta of an external projector file.
+
+    Mirror pw2wannier90's reader: leading lines whose first non-blank
+    character is ``#`` are comments, the first data line starts with
+    ``<ngrid> <nproj>``, and the following line(s) list each projector's
+    angular momentum l. The radial tables that follow are pw2wannier90's
+    business.
+    """
+
+    def malformed(reason: str) -> ValueError:
+        return ValueError(f"The projector file {projector_file} is malformed: {reason}")
+
+    lines = list(
+        itertools.dropwhile(
+            lambda line: line.lstrip().startswith("#"),
+            projector_file.read_text().splitlines(),
+        )
+    )
+    if not lines:
+        raise malformed("it holds no data lines, only comments.")
+    header = lines[0].split()
+    nproj = _int_or_none(header[1]) if len(header) >= 2 else None
+    if nproj is None:
+        raise malformed("its first data line must start with `<ngrid> <nproj>`.")
+    if nproj < 1:
+        raise malformed(f"the projector count is {nproj}; at least one projector is required.")
+    momenta = _leading_momenta(lines[1:], nproj, malformed)
+    negative = [angular_momentum for angular_momentum in momenta if angular_momentum < 0]
+    if negative:
+        raise malformed(f"it lists negative angular momenta: {negative}.")
+    return momenta
+
+
+#: Filler ``alpha`` for unfrozen synthesized projector-table entries: the only
+#: upstream read of ``alpha`` is the ``== "UPF"`` frozen test in
+#: ``get_frozen_list_ext``, so any non-sentinel value is inert.
+_UNFROZEN_ALPHA = 1.0
+
+
+def _frozen_orbitals(
+    structure: orm.StructureData,
+    momenta: dict[str, list[int]],
+    frozen_indices: list[int] | None,
+) -> set[tuple[str, int]]:
+    """Map the user's frozen projector indices onto whole element orbitals.
+
+    ``atom_proj_frozen`` uses pw2wannier90's global projector indexing —
+    sites in structure order, each site's orbitals in file order, 2l+1
+    projectors per orbital — while the synthesized tables carry the frozen
+    flag per element orbital. An orbital is frozen only when the indices
+    cover every one of its projectors on every site of its element; a set
+    that splits an orbital's m-components, or freezes it on one site but
+    not another, cannot be represented and is rejected.
+    """
+    if not frozen_indices:
+        return set()
+    index_sets: dict[tuple[str, int], set[int]] = {}
+    n_proj = 0
+    for site in structure.sites:
+        element = structure.get_kind(site.kind_name).symbol  # type: ignore[no-untyped-call]
+        for position, angular_momentum in enumerate(momenta[element]):
+            multiplicity = 2 * angular_momentum + 1
+            index_sets.setdefault((element, position), set()).update(
+                range(n_proj + 1, n_proj + multiplicity + 1)
+            )
+            n_proj += multiplicity
+    requested = set(frozen_indices)
+    out_of_range = sorted(index for index in requested if index < 1 or index > n_proj)
+    if out_of_range:
+        raise ValueError(
+            f"`pw2wannier90.atom_proj_frozen` lists indices outside 1..{n_proj} (the "
+            f"projector count of the external files): {out_of_range}."
+        )
+    frozen: set[tuple[str, int]] = set()
+    for orbital, indices in index_sets.items():
+        overlap = requested & indices
+        if not overlap:
+            continue
+        if overlap == indices:
+            frozen.add(orbital)
+            continue
+        element, position = orbital
+        raise ValueError(
+            f"`pw2wannier90.atom_proj_frozen` covers only part of orbital {position + 1} "
+            f"of {element}: it spans projectors {sorted(indices)} (all 2l+1 components "
+            f"on every {element} site) but only {sorted(overlap)} were given. Freezing "
+            "is applied per element orbital, so list either all of these indices or "
+            "none of them."
+        )
+    return frozen
+
+
+def _load_external_projectors(
+    structure: orm.StructureData,
+    proj_dir: Path | None,
+    frozen_indices: list[int] | None,
+) -> tuple[dict[str, Any], str]:
+    """Build the per-element projector tables from an external projector directory.
+
+    The directory holds one ``<element>.dat`` radial-projector file per
+    element — the filename pw2wannier90 stages and reads — and those files
+    are the whole user-facing contract: each contributes 2l+1 projectors
+    per listed angular momentum (:func:`_read_projector_angular_momenta`).
+
+    The returned dict is an adapter to upstream's
+    ``get_builder_from_protocol``, which demands ``external_projectors``
+    tables: each entry carries the parsed ``l`` plus an ``alpha`` whose
+    only upstream consumer is the ``== "UPF"`` equality selecting the
+    Lowdin-frozen list, so the sentinel encodes the user's
+    ``atom_proj_frozen`` choice (:func:`_frozen_orbitals`) and
+    :data:`_UNFROZEN_ALPHA` carries no meaning. With no frozen indices no
+    entry gets the sentinel, so every projector is Lowdin-orthonormalized.
 
     The directory is validated on the local filesystem, so it must live on
     the machine building the workflow; projector directories that exist
@@ -483,8 +615,6 @@ def _load_external_projectors(
 
     Returns the tables and the resolved directory path.
     """
-    import json
-
     if proj_dir is None:
         raise ValueError(
             "`pw2wannier90.atom_proj_dir` must be set when `pw2wannier90.atom_proj_ext` "
@@ -498,16 +628,6 @@ def _load_external_projectors(
             "workflow; projector directories that exist only on a remote computer "
             "are not supported yet."
         )
-    table_file = directory / "projectors.json"
-    if not table_file.is_file():
-        raise ValueError(
-            f"{directory} contains no `projectors.json`; an external projector "
-            "directory follows aiida-wannier90-workflows' layout — one "
-            "`<element>.dat` per element plus a `projectors.json` mapping each "
-            "element to its orbital entries (`label` / `l` / `alpha`), as written "
-            "by that package's `dev/projectors` generation script."
-        )
-    external_projectors = json.loads(table_file.read_text())
     elements = sorted(
         {structure.get_kind(site.kind_name).symbol for site in structure.sites}  # type: ignore[no-untyped-call]
     )
@@ -519,9 +639,21 @@ def _load_external_projectors(
             f"{directory} is missing the projector files {missing_files}; "
             "pw2wannier90 reads one `<element>.dat` per element of the structure."
         )
-    missing_tables = [element for element in elements if element not in external_projectors]
-    if missing_tables:
-        raise ValueError(f"`projectors.json` in {directory} has no entry for {missing_tables}.")
+    momenta = {
+        element: _read_projector_angular_momenta(directory / f"{element}.dat")
+        for element in elements
+    }
+    frozen = _frozen_orbitals(structure, momenta, frozen_indices)
+    external_projectors = {
+        element: [
+            {
+                "l": angular_momentum,
+                "alpha": "UPF" if (element, position) in frozen else _UNFROZEN_ALPHA,
+            }
+            for position, angular_momentum in enumerate(momenta[element])
+        ]
+        for element in elements
+    }
     return external_projectors, str(directory)
 
 
@@ -536,10 +668,8 @@ def _derive_external_wannierize_blocks(
     The external-projector analogue of
     :func:`_derive_automatic_wannierize_blocks`: the whole manifold becomes
     a single automatic block (pw2wannier90 ``atom_proj_ext``) whose
-    ``num_wann`` is the projector count of the orbital tables, under the
-    same no-pool constraints. The upstream counter also rejects
-    spin-orbit-coupled (``j``-resolved) projector tables, which the
-    spin='none' split route cannot consume.
+    ``num_wann`` is the projector count of the synthesized tables — one
+    band per 2l+1 multiplet member — under the same no-pool constraints.
     """
     from aiida_wannier90_workflows.common.types import WannierProjectionType
     from aiida_wannier90_workflows.utils.pseudo import get_number_of_projections_ext
@@ -657,7 +787,9 @@ def _build_wannierize_split_workgraph(
         blocks = _derive_wannierize_blocks(structure, projections, nbnd)
     elif calc_params.pw2wannier90.atom_proj_ext:
         external_projectors, projector_path = _load_external_projectors(
-            structure, calc_params.pw2wannier90.atom_proj_dir
+            structure,
+            calc_params.pw2wannier90.atom_proj_dir,
+            calc_params.pw2wannier90.atom_proj_frozen,
         )
         blocks, nbnd = _derive_external_wannierize_blocks(
             structure, external_projectors, nbnd, num_occ_bands
