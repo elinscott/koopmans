@@ -198,8 +198,8 @@ def fake_upf_content(element: str, z_valence: float, has_so: bool | None = False
 
 @pytest.fixture
 def installed_decompose_code(localhost_code: Any) -> Any:
-    """Register a dummy ``pw2wannier90_decompose@localhost`` code."""
-    return localhost_code("pw2wannier90_decompose", "koopmans.pw2wannier_decompose")
+    """Register a dummy ``pw2wannier90@localhost`` code for the decompose pass."""
+    return localhost_code("pw2wannier90", "quantumespresso.pw2wannier90")
 
 
 def _install_fake_family(

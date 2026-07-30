@@ -39,25 +39,13 @@ QE_EXECUTABLES: dict[str, str | None] = {
     "kcp.x": "koopmans.kcp",
 }
 
-# Codes registered under a label that is not the executable stem, mapped to
-# ``(executable, plugin)``. The orbital-density ML descriptor runs
-# pw2wannier90.x in ``wan_mode='decompose'``, a mode only builds carrying the
-# Koopmans patch provide, through its own CalcJob. It therefore gets its own
-# label rather than displacing the plain pw2wannier90 code, so a site can point
-# the two labels at different binaries.
-ALIAS_CODES: dict[str, tuple[str, str]] = {
-    "pw2wannier90_decompose": ("pw2wannier90.x", "koopmans.pw2wannier_decompose"),
-}
-
 
 def code_specs() -> dict[str, tuple[str, str | None]]:
     """Return every code koopmans registers, as ``{label: (executable, plugin)}``."""
-    specs: dict[str, tuple[str, str | None]] = {
+    return {
         executable.replace(".x", ""): (executable, plugin)
         for executable, plugin in QE_EXECUTABLES.items()
     }
-    specs.update(ALIAS_CODES)
-    return specs
 
 
 # Codes that must always run in serial (no MPI): wann2kcp.x races on its
@@ -120,8 +108,7 @@ def setup_code(
 ) -> InstalledCode | None:
     """Set up an AiiDA code for an executable.
 
-    ``label`` defaults to the executable stem; pass it for the codes that
-    wrap one executable under a second label (see ``ALIAS_CODES``).
+    ``label`` defaults to the executable stem.
     """
     from aiida import orm
     from aiida.orm import InstalledCode

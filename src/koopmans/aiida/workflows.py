@@ -1392,12 +1392,11 @@ def _build_trajectory_workgraph(
     alphas (``ml:train``) or scores an existing model against them
     (``ml:test``).
 
-    Both descriptors are available. ``self_hartree`` needs nothing beyond
-    the kcp.x runs themselves. ``power_spectrum`` builds its power spectra
-    from a pw2wannier90.x ``wan_mode='decompose'`` pass over each
-    snapshot's per-block Wannier functions, so it requires the
-    Wannier-initialised route (``init_orbitals`` in ``mlwfs`` /
-    ``projwfs``) and the ``pw2wannier90_decompose`` code; the ``ml``
+    ``self_hartree`` needs nothing beyond the kcp.x runs themselves.
+    ``power_spectrum`` builds its power spectra from a pw2wannier90.x
+    ``wan_mode='decompose'`` pass over each snapshot's per-block Wannier
+    functions, so it requires the Wannier-initialised route
+    (``init_orbitals`` in ``mlwfs`` / ``projwfs``); the ``ml``
     radial-basis settings become that pass's namelist keys.
 
     ``ml:predict`` still raises: injecting per-orbital predicted alphas
@@ -1468,7 +1467,7 @@ def _build_trajectory_workgraph(
         )
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
-        extra_kwargs["pw2wannier90_code"] = _load_code("pw2wannier90_decompose", "pw2wannier90.x")
+        extra_kwargs["pw2wannier90_code"] = _load_code("pw2wannier90", "pw2wannier90.x")
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
     return TrajectoryWorkflow.build(
