@@ -265,21 +265,57 @@ def _build_dft_eps_workgraph(
     )
 
 
-def _reject_conflicting_projection_sources(koopmans_input: KoopmansInput) -> None:
-    """Reject ``auto_projections`` alongside explicit projection blocks.
+def _explicit_projection_sources(koopmans_input: KoopmansInput) -> str:
+    """Describe the input paths that carry explicit Wannier projection blocks.
 
-    Explicit projections define every block themselves, so combining them
-    with the automatic derivation would silently discard one of the two.
+    Returns a ``in `a`, `b` and `c``` phrase over the top-level and the two
+    spin-channel projection blocks, or an empty string when none is set.
     """
     w90 = koopmans_input.calculator_parameters.wannier90
-    channels = [w90.projections]
-    channels += [spin.projections for spin in (w90.up, w90.down) if spin is not None]
-    if koopmans_input.workflow.auto_projections and any(channels):
+    paths = ["`calculator_parameters.w90.projections`"] if w90.projections else []
+    paths += [
+        f"`calculator_parameters.w90.{name}.projections`"
+        for name in ("up", "down")
+        if getattr(w90, name) is not None and getattr(w90, name).projections
+    ]
+    if not paths:
+        return ""
+    return "in " + " and ".join([", ".join(paths[:-1]), paths[-1]] if len(paths) > 1 else paths)
+
+
+def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
+    """Validate how the input asks for the Wannier projections to be defined.
+
+    Three inputs can speak for the projections: explicit blocks in
+    ``calculator_parameters.w90(.up/.down).projections``, the automatic
+    derivation requested by ``workflow.auto_projections``, and the external
+    projector files of ``pw2wannier90.atom_proj_ext``. Explicit blocks
+    define the full set themselves, so they combine with neither of the
+    others; the external files only choose where the projector functions
+    come from, leaving the blocks to the automatic derivation, so they
+    require the flag.
+    """
+    external = koopmans_input.calculator_parameters.pw2wannier90.atom_proj_ext
+    automatic = koopmans_input.workflow.auto_projections
+    explicit = _explicit_projection_sources(koopmans_input)
+    if explicit and automatic:
         raise ValueError(
-            "`workflow.auto_projections` and explicit projections in "
-            "`calculator_parameters.w90.projections` were both given; the automatic "
-            "derivation and the explicit blocks each define the full set of "
-            "projections. Drop one of the two."
+            f"`workflow.auto_projections` and explicit projections ({explicit}) were "
+            "both given; the automatic derivation and the explicit blocks each define "
+            "the full set of projections. Drop one of the two."
+        )
+    if explicit and external:
+        raise ValueError(
+            f"Explicit projections ({explicit}) and `pw2wannier90.atom_proj_ext` were "
+            "both given; the explicit projections define every block, so the external "
+            "projectors would be silently ignored. Drop one of the two."
+        )
+    if external and not automatic:
+        raise ValueError(
+            "`pw2wannier90.atom_proj_ext` was given without `workflow.auto_projections`; "
+            "external projector files supply the projector functions but do not define "
+            "the Wannierization blocks, which are still derived automatically. Set "
+            "`workflow.auto_projections` as well."
         )
 
 
@@ -303,20 +339,28 @@ def _build_wannierize_workgraph(
     if koopmans_input.workflow.block_wannierization_threshold is not None:
         return _build_wannierize_split_workgraph(koopmans_input, codes)
 
-    _reject_conflicting_projection_sources(koopmans_input)
-    if koopmans_input.calculator_parameters.wannier90.projections:
+    _validate_projection_sources(koopmans_input)
+    explicit = _explicit_projection_sources(koopmans_input)
+    if explicit:
         raise NotImplementedError(
-            "Explicit projections in `calculator_parameters.w90.projections` are not "
-            "wired into the plain wannierize route; set "
-            "`workflow.block_wannierization_threshold` (whose route consumes them) or "
-            "drop them and set `workflow.auto_projections`."
+            f"Explicit projections ({explicit}) are not wired into the plain "
+            "wannierize route; set `workflow.block_wannierization_threshold` (whose "
+            "route consumes them) or drop them and set `workflow.auto_projections`."
+        )
+    if not koopmans_input.workflow.auto_projections:
+        raise ValueError(
+            "Nothing defines the Wannier projections: set `workflow.auto_projections` "
+            "to derive them from the pseudopotentials — or, alongside it, point "
+            "`pw2wannier90.atom_proj_ext` at external projector files — or provide "
+            "explicit projections in `calculator_parameters.w90.projections` together "
+            "with `workflow.block_wannierization_threshold`."
         )
 
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
-    # The projections come from external projector files, or — with
-    # `auto_projections` — from the pseudopotentials' atomic orbitals
-    # (upstream's ATOMIC_PROJECTORS_QE mechanism).
+    # The automatically derived projections are the pseudopotentials' atomic
+    # orbitals (upstream's ATOMIC_PROJECTORS_QE mechanism) unless external
+    # projector files supply the projector functions instead.
     pw2w_params = koopmans_input.calculator_parameters.pw2wannier90
     extra_kwargs: dict[str, Any] = {}
     if pw2w_params.atom_proj_ext:
@@ -326,14 +370,6 @@ def _build_wannierize_workgraph(
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
         extra_kwargs["external_projectors_path"] = projector_path
         extra_kwargs["external_projectors"] = external_projectors
-    elif not koopmans_input.workflow.auto_projections:
-        raise ValueError(
-            "Nothing defines the Wannier projections: set `workflow.auto_projections` "
-            "to derive them from the pseudopotentials, point "
-            "`pw2wannier90.atom_proj_ext` at external projector files, or provide "
-            "explicit projections in `calculator_parameters.w90.projections` together "
-            "with `workflow.block_wannierization_threshold`."
-        )
 
     return Wannierize.build(
         codes=codes,
@@ -728,44 +764,38 @@ def _resolve_wannierize_blocks(
     """Resolve the wannierization blocks from the input's projection source.
 
     Explicit projections in ``calculator_parameters.w90.projections`` define
-    every block themselves; otherwise a single automatic block is derived
-    from the external projector files (``pw2wannier90.atom_proj_ext``) or,
-    with ``workflow.auto_projections``, from the pseudopotentials. Returns
-    the blocks, the band count the nscf must cover, and the extra builder
-    kwargs of the external route.
+    every block themselves; with ``workflow.auto_projections`` a single
+    automatic block is derived instead, from the external projector files
+    when ``pw2wannier90.atom_proj_ext`` is set and from the
+    pseudopotentials otherwise. Returns the blocks, the band count the nscf
+    must cover, and the extra builder kwargs of the external route. The
+    combinations are validated by :func:`_validate_projection_sources`.
     """
     calc_params = koopmans_input.calculator_parameters
     projections = calc_params.wannier90.projections
     if projections:
-        if calc_params.pw2wannier90.atom_proj_ext:
-            raise ValueError(
-                "Explicit projections in `calculator_parameters.w90.projections` and "
-                "`pw2wannier90.atom_proj_ext` were both given; the explicit projections "
-                "define every block, so the external projectors would be silently "
-                "ignored. Drop one of the two."
-            )
         if nbnd is None:
             nbnd = _num_wann_total(structure, projections)
         return _derive_wannierize_blocks(structure, projections, nbnd), nbnd, {}
-    if calc_params.pw2wannier90.atom_proj_ext:
-        external_projectors, projector_path = _load_external_projectors(
-            structure, calc_params.pw2wannier90.atom_proj_dir
-        )
-        blocks, nbnd = _derive_external_wannierize_blocks(
-            structure, external_projectors, nbnd, num_occ_bands
-        )
-        external_kwargs = {
-            "external_projectors_path": projector_path,
-            "external_projectors": external_projectors,
-        }
-        return blocks, nbnd, external_kwargs
     if koopmans_input.workflow.auto_projections:
+        if calc_params.pw2wannier90.atom_proj_ext:
+            external_projectors, projector_path = _load_external_projectors(
+                structure, calc_params.pw2wannier90.atom_proj_dir
+            )
+            blocks, nbnd = _derive_external_wannierize_blocks(
+                structure, external_projectors, nbnd, num_occ_bands
+            )
+            external_kwargs = {
+                "external_projectors_path": projector_path,
+                "external_projectors": external_projectors,
+            }
+            return blocks, nbnd, external_kwargs
         blocks, nbnd = _derive_automatic_wannierize_blocks(structure, pseudos, nbnd, num_occ_bands)
         return blocks, nbnd, {}
     raise ValueError(
         "Nothing defines the Wannier projections: provide explicit projections in "
-        "`calculator_parameters.w90.projections`, set `workflow.auto_projections` "
-        "to derive them from the pseudopotentials, or point "
+        "`calculator_parameters.w90.projections`, or set `workflow.auto_projections` "
+        "to derive them from the pseudopotentials — or, alongside it, point "
         "`pw2wannier90.atom_proj_ext` at external projector files."
     )
 
@@ -784,13 +814,13 @@ def _build_wannierize_split_workgraph(
     back together.
 
     With explicit projections in ``calculator_parameters.w90.projections``
-    each user block becomes a wannierization block. Without any, a single
-    atomic-projector block spans the whole manifold and the runtime
-    detection decides how it splits; the projectors come from the external
-    projector directory ``pw2wannier90.atom_proj_dir`` when
-    ``pw2wannier90.atom_proj_ext`` is set
-    (:func:`_derive_external_wannierize_blocks`) or, with
-    ``workflow.auto_projections``, from the pseudopotentials
+    each user block becomes a wannierization block. With
+    ``workflow.auto_projections`` instead, a single atomic-projector block
+    spans the whole manifold and the runtime detection decides how it
+    splits; its projectors come from the external projector directory
+    ``pw2wannier90.atom_proj_dir`` when ``pw2wannier90.atom_proj_ext`` is
+    set (:func:`_derive_external_wannierize_blocks`) and from the
+    pseudopotentials otherwise
     (:func:`_derive_automatic_wannierize_blocks`).
 
     Current scope: ``spin = 'none'``.
@@ -819,7 +849,7 @@ def _build_wannierize_split_workgraph(
             "block_wannierization_threshold currently supports spin='none' only "
             "(the group detection and per-block split are single-channel)."
         )
-    _reject_conflicting_projection_sources(koopmans_input)
+    _validate_projection_sources(koopmans_input)
     if koopmans_input.kpoints.path is None:
         raise ValueError(
             "block_wannierization_threshold needs a k-point path: the band-group "

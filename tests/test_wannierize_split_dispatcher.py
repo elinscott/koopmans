@@ -274,12 +274,12 @@ class TestAutomaticProjections:
 def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, Any]:
     """Return the silicon split input using external projectors.
 
-    No explicit projections and no ``auto_projections``: ``atom_proj_ext``
-    is its own opt-in, and the projector directory's ``Si.dat`` (s + p per
-    atom, 8 projectors for the two-atom cell) sizes the manifold.
+    ``auto_projections`` asks for the block to be derived automatically and
+    ``atom_proj_ext`` points the derivation at the projector directory,
+    whose ``Si.dat`` (s + p per atom, 8 projectors for the two-atom cell)
+    sizes the manifold.
     """
-    d = _si_split_dict(**workflow_updates)
-    d["calculator_parameters"]["wannier90"] = {}
+    d = _si_auto_dict(**workflow_updates)
     d["calculator_parameters"]["pw2wannier90"] = {
         "atom_proj_ext": True,
         "atom_proj_dir": str(projector_dir),
@@ -431,38 +431,51 @@ class TestExternalProjectors:
         assert block.get("exclude_bands") is None
         assert nbnd == 8
 
+    @pytest.mark.parametrize("channels", [False, True])
     def test_explicit_projections_and_external_projectors_conflict(
         self,
         aiida_profile_clean: Any,
         split_codes: Any,
         fake_sg15_cutoffs_family: Any,
         si_external_projector_dir: Any,
+        channels: bool,
     ) -> None:
-        """Explicit projections would silently shadow the external projectors."""
+        """Explicit projections would silently shadow the external projectors.
+
+        Both where they live at the top level and where they live only in
+        the spin channels: the channel blocks are just as explicit, so the
+        conflict must name them rather than let the build proceed with the
+        channel projections quietly dropped.
+        """
         d = _si_split_dict()
+        if channels:
+            projections = d["calculator_parameters"]["wannier90"].pop("projections")
+            d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
+            d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
         d["calculator_parameters"]["pw2wannier90"] = {
             "atom_proj_ext": True,
             "atom_proj_dir": str(si_external_projector_dir),
         }
-        with pytest.raises(ValueError, match="Drop one of the two"):
+        expected = "w90.up.projections" if channels else "w90.projections"
+        with pytest.raises(ValueError, match=rf"{expected}.*Drop one of the two"):
             _build(d, split_codes)
 
-    def test_flag_composes_with_external_projectors(
+    def test_external_projectors_require_the_flag(
         self,
         aiida_profile_clean: Any,
         split_codes: Any,
         fake_sg15_cutoffs_family: Any,
         si_external_projector_dir: Any,
     ) -> None:
-        """``auto_projections`` alongside ``atom_proj_ext`` takes the external source.
+        """``atom_proj_ext`` alone does not ask for automatic blocks.
 
-        Both request automatically derived projections; ``atom_proj_ext``
-        selects the projector origin, so the combination is not a conflict.
+        The external files supply projector functions; the single block
+        spanning the manifold comes from the automatic derivation, so
+        without the flag nothing has asked for it.
         """
-        d = _si_external_dict(si_external_projector_dir, auto_projections=True)
-        wg = _build(d, split_codes)
-        split_task = wg.tasks["wannierize_split_block_1"]
-        assert split_task.inputs["external_projectors_path"].value == str(si_external_projector_dir)
+        d = _si_external_dict(si_external_projector_dir, auto_projections=False)
+        with pytest.raises(ValueError, match=r"atom_proj_ext.*without `workflow.auto_projections`"):
+            _build(d, split_codes)
 
     def test_missing_dat_file_raises(
         self,
@@ -579,6 +592,29 @@ class TestPlainRoute:
         """Explicit projections reach nothing here; only the split route consumes them."""
         with pytest.raises(NotImplementedError, match="plain wannierize route"):
             _build_plain(_si_split_dict(), split_codes)
+
+    def test_spin_channel_projections_not_wired(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Projections given only per spin channel are just as unwired here."""
+        d = _si_split_dict()
+        projections = d["calculator_parameters"]["wannier90"].pop("projections")
+        d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
+        d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
+        with pytest.raises(NotImplementedError, match=r"w90.up.projections.*plain wannierize"):
+            _build_plain(d, split_codes)
+
+    def test_external_projectors_require_the_flag(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        si_external_projector_dir: Any,
+    ) -> None:
+        """The flag requirement holds on this route too, before the route's own gates."""
+        d = _si_external_dict(si_external_projector_dir, auto_projections=False)
+        with pytest.raises(ValueError, match=r"atom_proj_ext.*without `workflow.auto_projections`"):
+            _build_plain(d, split_codes)
 
     def test_no_projection_source_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
