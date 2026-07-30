@@ -566,12 +566,6 @@ def _read_projector_angular_momenta(projector_file: Path) -> list[int]:
     return momenta
 
 
-#: Filler ``alpha`` for the synthesized projector-table entries: the only
-#: upstream read of ``alpha`` is the ``== "UPF"`` frozen test in
-#: ``get_frozen_list_ext``, so any numeric value is inert at runtime.
-_UNFROZEN_ALPHA = 1.0
-
-
 def _load_external_projectors(
     structure: orm.StructureData,
     proj_dir: Path | None,
@@ -585,10 +579,8 @@ def _load_external_projectors(
 
     The returned dict exists only to satisfy upstream's
     ``get_builder_from_protocol``, which demands ``external_projectors``
-    tables: each entry carries the parsed ``l`` plus the
-    :data:`_UNFROZEN_ALPHA` filler, so no entry matches the ``"UPF"``
-    sentinel upstream's frozen-list selection looks for and every
-    projector is Lowdin-orthonormalized. Partial freezing of the
+    tables: each entry carries the parsed ``l`` and ``frozen: False``, so
+    every projector is Lowdin-orthonormalized. Partial freezing of the
     projector set is deliberately unsupported.
 
     The directory is ultimately consumed on the pw2wannier90 code's
@@ -627,7 +619,7 @@ def _load_external_projectors(
         )
     external_projectors = {
         element: [
-            {"l": angular_momentum, "alpha": _UNFROZEN_ALPHA}
+            {"l": angular_momentum, "frozen": False}
             for angular_momentum in _read_projector_angular_momenta(directory / f"{element}.dat")
         ]
         for element in elements

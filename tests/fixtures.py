@@ -277,13 +277,9 @@ def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:
     """Return the tables the dispatcher synthesizes from the fixture's ``Si.dat``.
 
     s + p per atom, so a two-atom cell carries 8 projectors; every entry
-    carries the inert numeric ``alpha`` filler (nothing is frozen).
+    is explicitly unfrozen.
     """
-    from koopmans.aiida.workflows import _UNFROZEN_ALPHA
-
-    return {
-        "Si": [{"l": angular_momentum, "alpha": _UNFROZEN_ALPHA} for angular_momentum in [0, 1]]
-    }
+    return {"Si": [{"l": angular_momentum, "frozen": False} for angular_momentum in [0, 1]]}
 
 
 @pytest.fixture
