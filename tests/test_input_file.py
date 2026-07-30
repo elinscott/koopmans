@@ -135,7 +135,7 @@ def _set_removed_keyword(d: dict[str, object], section: str, keyword: str) -> No
     target = d
     for part in section.split("."):
         target = target.setdefault(part, {})  # type: ignore[assignment]
-    target[keyword] = True  # type: ignore[index]
+    target[keyword] = True
 
 
 class TestRemovedKeywordsRejected:
