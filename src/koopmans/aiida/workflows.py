@@ -303,25 +303,37 @@ def _build_wannierize_workgraph(
     )
 
 
-def _derive_wannierize_blocks(
+def _size_projection_blocks(
     structure: orm.StructureData,
     projection_blocks: list[list[Any]],
     nbnd: int,
+    spin_channel: Any,
+    label_for: Callable[[int, int, int], str],
 ) -> list[Any]:
-    """Turn user projection blocks into wannierization blocks for the split flow.
+    """Size consecutive projection blocks against the nscf band manifold.
 
-    Unlike ``_derive_dscf_blocks`` there are no straddle or occupied-coverage
-    constraints: a block that mixes occupied and empty bands — or spans an
-    internal gap — is exactly what the automated splitting handles. Blocks
-    cover consecutive bands in input order; the last block absorbs the
-    remaining ``nbnd - cursor`` bands as its disentanglement pool.
+    Shared by every route that turns a user's list of projection blocks into
+    wannierization blocks, so the band bookkeeping cannot drift between
+    them. ``label_for(index, start, end)`` names each block from its
+    position and its 1-based band range, and is the hook a route uses to
+    impose its own structural rules (the DSCF route rejects a block
+    straddling the occupied/empty boundary there).
+
+    ``include_bands`` always names exactly the block's own ``num_wann``
+    Wannier bands — never a band the block merely reads. The uppermost block
+    then absorbs the ``nbnd - cursor`` bands above it as its disentanglement
+    pool: ``num_bands`` grows to cover them and the block stops excluding
+    anything above itself, while ``include_bands`` still names only the
+    Wannier manifold. Whether that pool exists at all is decided by the
+    user's ``num_wann`` against ``nbnd``; the ``dis_*`` keywords refine the
+    window wannier90 disentangles over, they never create it.
     """
     from aiida_koopmans.projections import (
         band_range_complement,
         projection_num_wann,
         projection_win_string,
     )
-    from aiida_koopmans.types import ExplicitProjectionBlock, SpinChannel
+    from aiida_koopmans.types import ExplicitProjectionBlock
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
     blocks: list[Any] = []
@@ -329,12 +341,13 @@ def _derive_wannierize_blocks(
     for i, block in enumerate(projection_blocks):
         num_wann = sum(projection_num_wann(structure, p) for p in block)
         start, end = cursor + 1, cursor + num_wann
+        label = label_for(i, start, end)
         if end > nbnd:
             raise ValueError(f"The projection blocks span {end} bands but nbnd = {nbnd}.")
         blocks.append(
             ExplicitProjectionBlock(
-                label=f"block_{i + 1}",
-                spin=SpinChannel.NONE,
+                label=label,
+                spin=spin_channel,
                 num_wann=num_wann,
                 num_bands=num_wann,
                 include_bands=list(range(start, end + 1)),
@@ -348,11 +361,31 @@ def _derive_wannierize_blocks(
     if blocks and cursor < nbnd:
         last = blocks[-1]
         last["num_bands"] = last["num_wann"] + (nbnd - cursor)
-        start = last["include_bands"][0]
-        last["include_bands"] = list(range(start, nbnd + 1))
-        last["exclude_bands"] = list(range(1, start)) or None
+        last["exclude_bands"] = list(range(1, last["include_bands"][0])) or None
 
     return blocks
+
+
+def _derive_wannierize_blocks(
+    structure: orm.StructureData,
+    projection_blocks: list[list[Any]],
+    nbnd: int,
+) -> list[Any]:
+    """Turn user projection blocks into wannierization blocks for the split flow.
+
+    Unlike ``_derive_dscf_blocks`` there are no straddle or occupied-coverage
+    constraints: a block that mixes occupied and empty bands — or spans an
+    internal gap — is exactly what the automated splitting handles.
+    """
+    from aiida_koopmans.types import SpinChannel
+
+    return _size_projection_blocks(
+        structure,
+        projection_blocks,
+        nbnd,
+        SpinChannel.NONE,
+        lambda i, start, end: f"block_{i + 1}",
+    )
 
 
 def _pseudo_is_fully_relativistic(kind: str, upf: orm.UpfData) -> bool:
@@ -890,18 +923,13 @@ def _derive_dscf_blocks(
 
     The DSCF route wannierises every user block separately and merges them
     per (filling, spin) via merge_evc.x, so any number of blocks is allowed.
-    Each block covers ``num_wann`` consecutive bands; a block straddling the
-    occupied/empty boundary is an input error, and the occupied blocks must
-    cover every occupied band (the folded ``evc_occupied`` files seed the
-    complete occupied manifold of the supercell kcp.x run).
+    A block straddling the occupied/empty boundary is an input error, and the
+    occupied blocks must cover every occupied band (the folded
+    ``evc_occupied`` files seed the complete occupied manifold of the
+    supercell kcp.x run). Bands above the uppermost block become its
+    disentanglement pool, which wann2kcp.x folds through the ``.chk``.
     """
-    from aiida_koopmans.projections import (
-        band_range_complement,
-        projection_num_wann,
-        projection_win_string,
-    )
-    from aiida_koopmans.types import ExplicitProjectionBlock, SpinChannel
-    from aiida_wannier90_workflows.common.types import WannierProjectionType
+    from aiida_koopmans.types import SpinChannel
 
     if not projection_blocks:
         raise ValueError(
@@ -910,46 +938,22 @@ def _derive_dscf_blocks(
         )
 
     suffix = f"_{spin_channel.value}" if spin_channel in (SpinChannel.UP, SpinChannel.DOWN) else ""
-    blocks: list[Any] = []
-    cursor = 0
-    n_occ = n_emp = 0
-    for block in projection_blocks:
-        num_wann = sum(projection_num_wann(structure, p) for p in block)
-        start, end = cursor + 1, cursor + num_wann
+    counts = {"occ": 0, "emp": 0}
+
+    def label_for(index: int, start: int, end: int) -> str:
         if end <= nocc:
-            n_occ += 1
-            label = f"occ{suffix}_{n_occ}"
-        elif cursor >= nocc:
-            n_emp += 1
-            label = f"emp{suffix}_{n_emp}"
+            filling = "occ"
+        elif start > nocc:
+            filling = "emp"
         else:
             raise ValueError(
                 f"A projection block (bands {start}-{end}) straddles the occupied/empty "
                 f"boundary at band {nocc}."
             )
-        if end > nbnd:
-            raise ValueError(f"The projection blocks span {end} bands but nbnd = {nbnd}.")
-        blocks.append(
-            ExplicitProjectionBlock(
-                label=label,
-                spin=spin_channel,
-                num_wann=num_wann,
-                num_bands=num_wann,
-                include_bands=list(range(start, end + 1)),
-                exclude_bands=band_range_complement(start, end, nbnd),
-                projection_type=WannierProjectionType.ANALYTIC,
-                projections=[projection_win_string(p) for p in block],
-            )
-        )
-        cursor = end
+        counts[filling] += 1
+        return f"{filling}{suffix}_{counts[filling]}"
 
-    # Every block is sized ``num_bands == num_wann``, excluding the bands
-    # below *and* above its own manifold. The Wannier functions then span
-    # exactly the bands the projections name, U_dis is the identity, and the
-    # folded manifold carries no weight from outside the block. Leftover nscf
-    # bands above the last block would form a disentanglement pool, and the
-    # fold-to-supercell step cannot consume a non-identity U_dis — so
-    # headroom is an input error rather than a silently truncated pool.
+    blocks = _size_projection_blocks(structure, projection_blocks, nbnd, spin_channel, label_for)
 
     covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][0] <= nocc)
     if covered_occ != nocc:
@@ -959,14 +963,6 @@ def _derive_dscf_blocks(
             "band must be covered for the Wannier-seeded kcp.x initialisation."
         )
 
-    if cursor < nbnd:
-        raise ValueError(
-            f"The projection blocks span {cursor} bands but the nscf runs {nbnd}: the "
-            f"{nbnd - cursor} leftover bands would form a disentanglement pool, and "
-            "the fold-to-supercell step cannot consume disentangled Wannier "
-            "functions. Reduce ``calculator_parameters.pw.system.nbnd`` to "
-            f"{cursor}, or add projections spanning the extra bands."
-        )
     return blocks
 
 

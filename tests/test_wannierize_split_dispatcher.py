@@ -112,11 +112,17 @@ class TestBlockDerivation:
         assert blocks[0].get("exclude_bands") is None
 
     def test_last_block_absorbs_extra_bands(self, silicon_structure: Any) -> None:
-        """An nbnd beyond the Wannier count becomes the disentanglement pool."""
+        """An nbnd beyond the Wannier count becomes the disentanglement pool.
+
+        The pool shows up as ``num_bands`` and the absent upper exclusion;
+        ``include_bands`` keeps naming exactly the eight Wannier bands, so
+        the runtime group detection and the band-to-Wannier map stay
+        addressed to the manifold rather than the pool.
+        """
         blocks = _derive_wannierize_blocks(silicon_structure, self._sp3_block(), nbnd=12)
         assert blocks[0]["num_wann"] == 8
         assert blocks[0]["num_bands"] == 12
-        assert blocks[0]["include_bands"] == list(range(1, 13))
+        assert blocks[0]["include_bands"] == list(range(1, 9))
         assert blocks[0].get("exclude_bands") is None
 
     def test_too_few_bands_raises(self, silicon_structure: Any) -> None:

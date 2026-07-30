@@ -136,12 +136,11 @@ class TestDeriveDscfBlocks:
         assert emp["num_bands"] == 4  # sized to its own manifold, no pool
 
     def test_every_block_is_sized_to_its_own_manifold(self, si_structure: Any) -> None:
-        """No block is given a disentanglement pool, not even the uppermost.
+        """With nbnd exactly spanned, no block carries a disentanglement pool.
 
         Each block spans exactly the bands its projections name
         (``num_bands == num_wann``) and excludes everything below *and*
-        above, so U_dis is the identity and the Wannier functions carry no
-        weight from outside the block.
+        above, so U_dis is the identity.
         """
         from aiida_koopmans.types import SpinChannel
 
@@ -157,20 +156,64 @@ class TestDeriveDscfBlocks:
         assert emp["include_bands"] == [5, 6, 7, 8]
         assert emp["exclude_bands"] == [1, 2, 3, 4]
 
-    def test_leftover_nscf_bands_raise(self, si_structure: Any) -> None:
-        """Reject nscf headroom above the blocks instead of silently pooling it.
+    def test_leftover_nscf_bands_become_the_pool(self, si_structure: Any) -> None:
+        """Absorb nscf headroom above the blocks into the uppermost block's pool.
 
-        The leftover bands would demand disentanglement, which the
-        fold-to-supercell step cannot consume; the error tells the user to
-        reduce nbnd to the spanned count.
+        The pool widens only ``num_bands`` and drops the upper exclusion —
+        ``include_bands`` still names the four Wannier bands, since it is the
+        band-to-Wannier-function map every downstream consumer reads.
         """
         from aiida_koopmans.types import SpinChannel
 
         from koopmans.aiida.workflows import _derive_dscf_blocks
 
         sp = [self._FakeProjection("Si", -1)]  # 4
-        with pytest.raises(ValueError, match="Reduce ``calculator_parameters"):
-            _derive_dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
+        occ, emp = _derive_dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
+        assert occ["num_bands"] == 4
+        assert occ["exclude_bands"] == list(range(5, 21))
+        assert emp["num_wann"] == 4
+        assert emp["num_bands"] == 16  # 4 Wannier bands + 12 pool bands
+        assert emp["include_bands"] == [5, 6, 7, 8]
+        assert emp["exclude_bands"] == [1, 2, 3, 4]
+
+    def test_pool_block_preserves_the_wann2kcp_band_identity(self, si_structure: Any) -> None:
+        """Every block satisfies ``len(exclude_bands) + num_bands == nbnd``.
+
+        wann2kcp.x reads the ``.chk`` against the pw.x band count and rejects
+        any block whose excluded and read bands do not add back up to it.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import _derive_dscf_blocks
+
+        sp = [self._FakeProjection("Si", -1)]  # 4
+        for nbnd in (8, 12, 20):
+            for block in _derive_dscf_blocks(si_structure, [sp, sp], 4, nbnd, SpinChannel.NONE):
+                excluded = block["exclude_bands"] or []
+                assert len(excluded) + block["num_bands"] == nbnd
+
+    def test_both_routes_size_blocks_identically(self, si_structure: Any) -> None:
+        """The DSCF and split routes agree band-for-band on the same input.
+
+        Both go through ``_size_projection_blocks``, so a sizing change can
+        no longer land on one route only — which is how the two drifted into
+        disagreeing about what ``include_bands`` means for a pool-carrying
+        block.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import (
+            _derive_dscf_blocks,
+            _derive_wannierize_blocks,
+        )
+
+        sp = [self._FakeProjection("Si", -1)]  # 4
+        sized = ("num_wann", "num_bands", "include_bands", "exclude_bands")
+        dscf = _derive_dscf_blocks(si_structure, [sp, sp], 4, 14, SpinChannel.NONE)
+        split = _derive_wannierize_blocks(si_structure, [sp, sp], 14)
+        assert [{k: b[k] for k in sized} for b in dscf] == [{k: b[k] for k in sized} for b in split]
+        # ... and they agree on the narrow convention, not merely with each other.
+        assert [b["include_bands"] for b in split] == [[1, 2, 3, 4], [5, 6, 7, 8]]
 
     def test_occ_emp_split_and_exclusions(self, si_structure: Any) -> None:
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
@@ -242,6 +285,23 @@ class TestPeriodicMlwfsBuild:
         assert "make_supercell" in names, names
         # The molecular KS-init chain must NOT be present.
         assert "dft_init_nspin1" not in names
+
+    def test_pool_carrying_input_builds_and_validates(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """An nscf with headroom above the Wannier manifold is a buildable input.
+
+        ``nbnd`` sets the kcp.x orbital count and ``pw.system.nbnd`` the nscf
+        band count; the eight bands between them are the uppermost block's
+        disentanglement pool. Building is not enough to call this wired —
+        ``check_before_run`` is what proves every task of the assembled graph
+        has the inputs it declares as required.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["pw"] = {"system": {"nbnd": 16}}
+        wg = _build(d, dscf_codes)
+        assert "wannier_initialization" in wg.get_task_names()
+        wg.check_before_run()
 
     def test_self_hartree_grouping_defaulted(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
