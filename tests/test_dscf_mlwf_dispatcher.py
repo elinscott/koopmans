@@ -251,6 +251,39 @@ class TestDeriveDscfBlocks:
         with pytest.raises(ValueError, match="straddles"):
             _derive_dscf_blocks(si_structure, [sp, sp], 6, 8, SpinChannel.NONE)
 
+    def test_straddle_is_reported_before_the_band_count(self, si_structure: Any) -> None:
+        """A block that both straddles and overruns nbnd reports the straddle.
+
+        Both conditions hold for the second block here (bands 5-8, boundary
+        at 6, nbnd 6). The straddle is the root cause and the actionable one:
+        the band-count message would send the user to raise nbnd, which
+        leaves the projections just as incompatible with the occupied/empty
+        division as before.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import _derive_dscf_blocks
+
+        sp = [self._FakeProjection("Si", -1)]  # 4
+        with pytest.raises(ValueError, match="straddles"):
+            _derive_dscf_blocks(si_structure, [sp, sp], 6, 6, SpinChannel.NONE)
+
+    def test_pool_above_an_occupied_block_raises(self, si_structure: Any) -> None:
+        """Occupied-only projections must not disentangle against empty bands.
+
+        The pool would land on the topmost *occupied* block, whose Wannier
+        functions seed the occupied manifold of the supercell kcp.x run;
+        letting them mix in empty character corrupts that seed with nothing
+        downstream to catch it.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import _derive_dscf_blocks
+
+        sp = [self._FakeProjection("Si", -1)]  # 4 = nocc
+        with pytest.raises(ValueError, match="only the occupied manifold"):
+            _derive_dscf_blocks(si_structure, [sp], 4, 8, SpinChannel.NONE)
+
     def test_uncovered_occupied_bands_raise(self, si_structure: Any) -> None:
         """Occupied blocks must cover every occupied band."""
         from aiida_koopmans.types import SpinChannel

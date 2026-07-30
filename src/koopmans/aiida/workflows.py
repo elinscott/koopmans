@@ -963,6 +963,17 @@ def _derive_dscf_blocks(
             "band must be covered for the Wannier-seeded kcp.x initialisation."
         )
 
+    last = blocks[-1]
+    if last["num_bands"] > last["num_wann"] and last["include_bands"][-1] <= nocc:
+        raise ValueError(
+            f"The projections cover only the occupied manifold but the nscf runs {nbnd} "
+            f"bands, so block '{last['label']}' would disentangle against the "
+            f"{nbnd - nocc} empty bands above it. Its Wannier functions seed the "
+            "occupied manifold of the supercell kcp.x run, which must carry no empty "
+            "character. Add projections for the empty manifold, or lower "
+            f"``calculator_parameters.pw.system.nbnd`` to {nocc}."
+        )
+
     return blocks
 
 
