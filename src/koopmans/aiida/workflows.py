@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import itertools
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -472,57 +473,90 @@ def _int_or_none(word: str) -> int | None:
         return None
 
 
-def _leading_momenta(
-    lines: list[str], nproj: int, malformed: Callable[[str], ValueError]
-) -> list[int]:
-    """Collect ``nproj`` angular momenta from the lines after the header.
+def _expand_repeat_token(token: str) -> list[int] | None:
+    """Parse one list-directed integer token, expanding an ``r*v`` repeat count."""
+    prefix, star, value = token.partition("*")
+    if not star:
+        parsed = _int_or_none(token)
+        return None if parsed is None else [parsed]
+    repeat = _int_or_none(prefix)
+    parsed = _int_or_none(value)
+    if repeat is None or parsed is None or repeat < 1:
+        return None
+    return [parsed] * repeat
 
-    A list-directed read: the values may continue over several lines, and
-    any surplus tokens on the line that completes the count are ignored
-    (they belong to the radial tables that follow).
+
+def _read_list_directed_ints(
+    records: list[str],
+    start: int,
+    count: int,
+    what: str,
+    malformed: Callable[[str], ValueError],
+) -> tuple[list[int], int]:
+    """Read ``count`` integers as one Fortran list-directed READ statement.
+
+    Consume whole records from ``records[start:]``: blank records are
+    skipped, values are separated by blanks and/or commas and may continue
+    over records, and ``r*v`` repeat counts expand to ``r`` copies of
+    ``v``. Return the values plus the index of the record after the last
+    one consumed — the remainder of that record is discarded, because the
+    next READ starts on a fresh record. A ``/`` terminator before the
+    count is met, or a null value (adjacent commas), would leave Fortran
+    values undefined, so both are rejected rather than reproduced.
     """
-    momenta: list[int] = []
-    for line in lines:
-        for word in line.split()[: nproj - len(momenta)]:
-            angular_momentum = _int_or_none(word)
-            if angular_momentum is None:
-                raise malformed(f"the angular momentum {word!r} is not an integer.")
-            momenta.append(angular_momentum)
-        if len(momenta) == nproj:
-            return momenta
-    raise malformed(
-        f"it declares {nproj} projectors but lists only {len(momenta)} angular momenta."
-    )
+    values: list[int] = []
+    for index in range(start, len(records)):
+        record = records[index]
+        if re.search(r",[ \t]*,", record):
+            raise malformed(f"adjacent commas in the {what} leave a value undefined.")
+        for token in record.replace(",", " ").split():
+            before_slash, slash, _ = token.partition("/")
+            if before_slash:
+                expanded = _expand_repeat_token(before_slash)
+                if expanded is None:
+                    raise malformed(f"the {what} value {before_slash!r} is not an integer.")
+                values.extend(expanded)
+            if len(values) >= count:
+                return values[:count], index + 1
+            if slash:
+                raise malformed(
+                    f"a `/` ends the {what} after {len(values)} of {count} values, "
+                    "leaving the rest undefined."
+                )
+    raise malformed(f"it ends before the {what} is complete ({len(values)} of {count} values).")
 
 
 def _read_projector_angular_momenta(projector_file: Path) -> list[int]:
     """Read the per-projector angular momenta of an external projector file.
 
-    Mirror pw2wannier90's reader: leading lines whose first non-blank
-    character is ``#`` are comments, the first data line starts with
-    ``<ngrid> <nproj>``, and the following line(s) list each projector's
-    angular momentum l. The radial tables that follow are pw2wannier90's
-    business.
+    Follow pw2wannier90's reader: leading comment lines (first non-space
+    character ``#``; a tab-indented ``#`` is not a comment there) are
+    skipped, then one list-directed read takes the ``<ngrid> <nproj>``
+    header and a second, starting on a fresh record, takes the ``nproj``
+    angular momenta (:func:`_read_list_directed_ints`). The radial tables
+    that follow are pw2wannier90's business. Deliberately stricter than
+    the Fortran reader in three cases it lets through with undefined or
+    unusable values: a zero projector count, a ``/`` terminating the read
+    early, and negative angular momenta all raise.
     """
 
     def malformed(reason: str) -> ValueError:
         return ValueError(f"The projector file {projector_file} is malformed: {reason}")
 
-    lines = list(
+    records = list(
         itertools.dropwhile(
-            lambda line: line.lstrip().startswith("#"),
+            lambda record: record.lstrip(" ").startswith("#"),
             projector_file.read_text().splitlines(),
         )
     )
-    if not lines:
-        raise malformed("it holds no data lines, only comments.")
-    header = lines[0].split()
-    nproj = _int_or_none(header[1]) if len(header) >= 2 else None
-    if nproj is None:
-        raise malformed("its first data line must start with `<ngrid> <nproj>`.")
+    (_, nproj), momenta_start = _read_list_directed_ints(
+        records, 0, 2, "`<ngrid> <nproj>` header", malformed
+    )
     if nproj < 1:
         raise malformed(f"the projector count is {nproj}; at least one projector is required.")
-    momenta = _leading_momenta(lines[1:], nproj, malformed)
+    momenta, _ = _read_list_directed_ints(
+        records, momenta_start, nproj, "angular-momentum list", malformed
+    )
     negative = [angular_momentum for angular_momentum in momenta if angular_momentum < 0]
     if negative:
         raise malformed(f"it lists negative angular momenta: {negative}.")
@@ -554,8 +588,11 @@ def _load_external_projectors(
     projector is Lowdin-orthonormalized. Partial freezing of the
     projector set is deliberately unsupported.
 
-    The directory is validated on the local filesystem, so it must live on
-    the machine building the workflow; projector directories that exist
+    The directory is ultimately consumed on the pw2wannier90 code's
+    computer (it is staged into each calculation from there), but the
+    files are parsed and validated here on the local filesystem — a check
+    that coincides with the real one only when that computer shares this
+    filesystem, i.e. the localhost setup. Projector directories that exist
     only on a remote computer are not supported yet.
 
     Returns the tables and the resolved directory path.
@@ -569,9 +606,10 @@ def _load_external_projectors(
     if not directory.is_dir():
         raise ValueError(
             f"`pw2wannier90.atom_proj_dir` does not exist on this machine: {directory}. "
-            "The projector directory must be present on the machine building the "
-            "workflow; projector directories that exist only on a remote computer "
-            "are not supported yet."
+            "The directory is read on the computer the pw2wannier90 code runs on, and "
+            "this check assumes that computer shares the local filesystem (the "
+            "localhost setup); projector directories that exist only on a remote "
+            "computer are not supported yet."
         )
     elements = sorted(
         {structure.get_kind(site.kind_name).symbol for site in structure.sites}  # type: ignore[no-untyped-call]

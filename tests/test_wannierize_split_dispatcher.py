@@ -268,7 +268,15 @@ def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, 
 
 
 class TestProjectorFileParsing:
-    """The pw2wannier90-format reader behind the external projector sizing."""
+    """The pw2wannier90-format reader behind the external projector sizing.
+
+    Differentially validated against a transcription of QE's
+    ``read_atomproj`` on a 30-file corpus: the reader agrees with it on
+    every case except three deliberately stricter rejections — a zero
+    projector count, an early ``/`` terminator and negative angular
+    momenta — where the Fortran reader proceeds with undefined or
+    unusable values.
+    """
 
     @staticmethod
     def _read(tmp_path: Any, content: str) -> list[int]:
@@ -278,32 +286,66 @@ class TestProjectorFileParsing:
         projector_file.write_text(content)
         return _read_projector_angular_momenta(projector_file)
 
-    def test_leading_comments_are_skipped(self, tmp_path: Any) -> None:
-        """Lines whose first non-blank character is `#` are skipped, as in QE."""
-        assert self._read(tmp_path, "# a\n  # b\n100 3\n0 1 2\n0.0 0.1\n") == [0, 1, 2]
-
-    def test_momenta_may_continue_over_lines(self, tmp_path: Any) -> None:
-        """The l values are a list-directed read: they may span several lines."""
-        assert self._read(tmp_path, "100 4\n0 1\n1 2\n") == [0, 1, 1, 2]
-
-    def test_surplus_tokens_after_the_momenta_are_ignored(self, tmp_path: Any) -> None:
-        """Radial data following the declared l count is not misread as momenta."""
-        assert self._read(tmp_path, "100 2\n0 1 99 98\n") == [0, 1]
+    @pytest.mark.parametrize(
+        ("content", "momenta"),
+        [
+            # Space-indented comments are skipped, as QE's ADJUSTL check does.
+            ("# a\n  # b\n100 3\n0 1 2\n0.0 0.1\n", [0, 1, 2]),
+            # Blank records are skipped anywhere a list-directed read runs:
+            # after the comment block (the QE example07 shape), before any
+            # data at all, and between the header and the momenta.
+            ("# c\n\n100 2\n0 1\n", [0, 1]),
+            ("\n100 2\n0 1\n", [0, 1]),
+            ("100 2\n\n0 1\n", [0, 1]),
+            # The header itself is a list-directed read: it may span records.
+            ("100\n2\n0 1\n", [0, 1]),
+            # Blanks and/or commas separate values.
+            ("100, 2\n0, 1\n", [0, 1]),
+            ("100,2\n0,1\n", [0, 1]),
+            # r*v repeat counts expand.
+            ("100 4\n4*0\n", [0, 0, 0, 0]),
+            # The momenta may continue over records...
+            ("100 4\n0 1\n1 2\n", [0, 1, 1, 2]),
+            # ...and the read stops mid-record once the count is met, so
+            # surplus tokens (the radial tables) are never inspected.
+            ("100 2\n0 1 99 98\n", [0, 1]),
+            ("100 3\n0 1\n5 0.1 0.2\n", [0, 1, 5]),
+            # Explicit plus signs are plain integers.
+            ("100 2\n+0 +1\n", [0, 1]),
+        ],
+    )
+    def test_list_directed_acceptance(
+        self, tmp_path: Any, content: str, momenta: list[int]
+    ) -> None:
+        """Files QE's reader accepts parse to the same angular momenta."""
+        assert self._read(tmp_path, content) == momenta
 
     @pytest.mark.parametrize(
         ("content", "match"),
         [
-            ("# only comments\n", "only comments"),
-            ("100\n0 1\n", r"must start with `<ngrid> <nproj>`"),
-            ("100 x\n0 1\n", r"must start with `<ngrid> <nproj>`"),
+            # A tab-indented `#` is not a comment to QE (ADJUSTL shifts
+            # spaces only); it becomes the header record and fails there.
+            ("\t# tab comment\n100 2\n0 1\n", "'#' is not an integer"),
+            # Each read starts on a fresh record, so momenta on the header
+            # record are discarded — exactly as QE then fails at EOF.
+            ("100 2 0 1\n", "ends before the angular-momentum list"),
+            ("# only comments\n", r"ends before the `<ngrid> <nproj>` header"),
+            ("", r"ends before the `<ngrid> <nproj>` header"),
+            ("100 x\n0 1\n", "'x' is not an integer"),
+            # A one-token header pulls nproj from the next record: here 0.
+            ("100\n0 1\n", "at least one projector"),
             ("100 0\n\n", "at least one projector"),
-            ("100 3\n0 1\n", "lists only 2 angular momenta"),
+            ("100 -2\n0 1\n", "at least one projector"),
+            ("100 3\n0 1\n", "ends before the angular-momentum list"),
             ("100 2\n0 q\n", "'q' is not an integer"),
+            ("100 2\n0 1.0\n", "'1.0' is not an integer"),
             ("100 2\n0 -1\n", r"negative angular momenta: \[-1\]"),
+            ("100 2\n0 /\n", "leaving the rest undefined"),
+            ("100 2\n0,,1\n", "adjacent commas"),
         ],
     )
-    def test_malformed_files_raise(self, tmp_path: Any, content: str, match: str) -> None:
-        """Every malformation fails naming the file and the reason."""
+    def test_rejected_files_raise(self, tmp_path: Any, content: str, match: str) -> None:
+        """Every rejection fails naming the file and the reason."""
         with pytest.raises(ValueError, match=match):
             self._read(tmp_path, content)
 
