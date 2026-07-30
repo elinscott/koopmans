@@ -283,7 +283,7 @@ def _build_wannierize_workgraph(
     extra_kwargs: dict[str, Any] = {}
     if pw2w_params.atom_proj_ext:
         external_projectors, projector_path = _load_external_projectors(
-            structure, pw2w_params.atom_proj_dir, pw2w_params.atom_proj_frozen
+            structure, pw2w_params.atom_proj_dir
         )
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
         extra_kwargs["external_projectors_path"] = projector_path
@@ -529,69 +529,15 @@ def _read_projector_angular_momenta(projector_file: Path) -> list[int]:
     return momenta
 
 
-#: Filler ``alpha`` for unfrozen synthesized projector-table entries: the only
+#: Filler ``alpha`` for the synthesized projector-table entries: the only
 #: upstream read of ``alpha`` is the ``== "UPF"`` frozen test in
-#: ``get_frozen_list_ext``, so any non-sentinel value is inert.
+#: ``get_frozen_list_ext``, so any numeric value is inert at runtime.
 _UNFROZEN_ALPHA = 1.0
-
-
-def _frozen_orbitals(
-    structure: orm.StructureData,
-    momenta: dict[str, list[int]],
-    frozen_indices: list[int] | None,
-) -> set[tuple[str, int]]:
-    """Map the user's frozen projector indices onto whole element orbitals.
-
-    ``atom_proj_frozen`` uses pw2wannier90's global projector indexing —
-    sites in structure order, each site's orbitals in file order, 2l+1
-    projectors per orbital — while the synthesized tables carry the frozen
-    flag per element orbital. An orbital is frozen only when the indices
-    cover every one of its projectors on every site of its element; a set
-    that splits an orbital's m-components, or freezes it on one site but
-    not another, cannot be represented and is rejected.
-    """
-    if not frozen_indices:
-        return set()
-    index_sets: dict[tuple[str, int], set[int]] = {}
-    n_proj = 0
-    for site in structure.sites:
-        element = structure.get_kind(site.kind_name).symbol  # type: ignore[no-untyped-call]
-        for position, angular_momentum in enumerate(momenta[element]):
-            multiplicity = 2 * angular_momentum + 1
-            index_sets.setdefault((element, position), set()).update(
-                range(n_proj + 1, n_proj + multiplicity + 1)
-            )
-            n_proj += multiplicity
-    requested = set(frozen_indices)
-    out_of_range = sorted(index for index in requested if index < 1 or index > n_proj)
-    if out_of_range:
-        raise ValueError(
-            f"`pw2wannier90.atom_proj_frozen` lists indices outside 1..{n_proj} (the "
-            f"projector count of the external files): {out_of_range}."
-        )
-    frozen: set[tuple[str, int]] = set()
-    for orbital, indices in index_sets.items():
-        overlap = requested & indices
-        if not overlap:
-            continue
-        if overlap == indices:
-            frozen.add(orbital)
-            continue
-        element, position = orbital
-        raise ValueError(
-            f"`pw2wannier90.atom_proj_frozen` covers only part of orbital {position + 1} "
-            f"of {element}: it spans projectors {sorted(indices)} (all 2l+1 components "
-            f"on every {element} site) but only {sorted(overlap)} were given. Freezing "
-            "is applied per element orbital, so list either all of these indices or "
-            "none of them."
-        )
-    return frozen
 
 
 def _load_external_projectors(
     structure: orm.StructureData,
     proj_dir: Path | None,
-    frozen_indices: list[int] | None,
 ) -> tuple[dict[str, Any], str]:
     """Build the per-element projector tables from an external projector directory.
 
@@ -600,14 +546,13 @@ def _load_external_projectors(
     are the whole user-facing contract: each contributes 2l+1 projectors
     per listed angular momentum (:func:`_read_projector_angular_momenta`).
 
-    The returned dict is an adapter to upstream's
+    The returned dict exists only to satisfy upstream's
     ``get_builder_from_protocol``, which demands ``external_projectors``
-    tables: each entry carries the parsed ``l`` plus an ``alpha`` whose
-    only upstream consumer is the ``== "UPF"`` equality selecting the
-    Lowdin-frozen list, so the sentinel encodes the user's
-    ``atom_proj_frozen`` choice (:func:`_frozen_orbitals`) and
-    :data:`_UNFROZEN_ALPHA` carries no meaning. With no frozen indices no
-    entry gets the sentinel, so every projector is Lowdin-orthonormalized.
+    tables: each entry carries the parsed ``l`` plus the
+    :data:`_UNFROZEN_ALPHA` filler, so no entry matches the ``"UPF"``
+    sentinel upstream's frozen-list selection looks for and every
+    projector is Lowdin-orthonormalized. Partial freezing of the
+    projector set is deliberately unsupported.
 
     The directory is validated on the local filesystem, so it must live on
     the machine building the workflow; projector directories that exist
@@ -639,18 +584,10 @@ def _load_external_projectors(
             f"{directory} is missing the projector files {missing_files}; "
             "pw2wannier90 reads one `<element>.dat` per element of the structure."
         )
-    momenta = {
-        element: _read_projector_angular_momenta(directory / f"{element}.dat")
-        for element in elements
-    }
-    frozen = _frozen_orbitals(structure, momenta, frozen_indices)
     external_projectors = {
         element: [
-            {
-                "l": angular_momentum,
-                "alpha": "UPF" if (element, position) in frozen else _UNFROZEN_ALPHA,
-            }
-            for position, angular_momentum in enumerate(momenta[element])
+            {"l": angular_momentum, "alpha": _UNFROZEN_ALPHA}
+            for angular_momentum in _read_projector_angular_momenta(directory / f"{element}.dat")
         ]
         for element in elements
     }
@@ -787,9 +724,7 @@ def _build_wannierize_split_workgraph(
         blocks = _derive_wannierize_blocks(structure, projections, nbnd)
     elif calc_params.pw2wannier90.atom_proj_ext:
         external_projectors, projector_path = _load_external_projectors(
-            structure,
-            calc_params.pw2wannier90.atom_proj_dir,
-            calc_params.pw2wannier90.atom_proj_frozen,
+            structure, calc_params.pw2wannier90.atom_proj_dir
         )
         blocks, nbnd = _derive_external_wannierize_blocks(
             structure, external_projectors, nbnd, num_occ_bands

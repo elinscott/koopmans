@@ -273,25 +273,16 @@ def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
     return _install_fake_family("PseudoDojo/0.4/LDA/SR/standard/upf", {"Zn": 20.0, "O": 6.0})
 
 
-def si_external_projector_tables(
-    frozen_orbitals: frozenset[int] = frozenset(),
-) -> dict[str, list[dict[str, Any]]]:
+def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:
     """Return the tables the dispatcher synthesizes from the fixture's ``Si.dat``.
 
-    s + p per atom, so a two-atom cell carries 8 projectors.
-    ``frozen_orbitals`` lists the 0-based orbital positions carrying the
-    ``"UPF"`` sentinel — the adapter encoding of ``atom_proj_frozen``.
+    s + p per atom, so a two-atom cell carries 8 projectors; every entry
+    carries the inert numeric ``alpha`` filler (nothing is frozen).
     """
     from koopmans.aiida.workflows import _UNFROZEN_ALPHA
 
     return {
-        "Si": [
-            {
-                "l": angular_momentum,
-                "alpha": "UPF" if position in frozen_orbitals else _UNFROZEN_ALPHA,
-            }
-            for position, angular_momentum in enumerate([0, 1])
-        ]
+        "Si": [{"l": angular_momentum, "alpha": _UNFROZEN_ALPHA} for angular_momentum in [0, 1]]
     }
 
 
