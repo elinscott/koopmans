@@ -501,8 +501,10 @@ def _read_list_directed_ints(
     ``v``. Return the values plus the index of the record after the last
     one consumed — the remainder of that record is discarded, because the
     next READ starts on a fresh record. A ``/`` terminator before the
-    count is met, or a null value (adjacent commas), would leave Fortran
-    values undefined, so both are rejected rather than reproduced.
+    count is met, or a null value from adjacent commas within a record,
+    would leave Fortran values undefined, so both are rejected rather
+    than reproduced (nulls formed at the start of a record or across a
+    record boundary are not detected and read as regular separators).
     """
     values: list[int] = []
     for index in range(start, len(records)):
