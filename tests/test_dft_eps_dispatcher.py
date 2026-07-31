@@ -114,6 +114,25 @@ class TestDftEps:
         assert "nbnd" not in system
         assert system["ecutwfc"] == pytest.approx(20.0)
 
+    def test_scf_samples_the_input_mesh(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """The ground state the response is taken about uses the input's grid.
+
+        Left to the protocol the scf would pick its own mesh from a k-point
+        distance, so the dielectric constant would not be the one the input
+        file describes.
+        """
+        inp = KoopmansInput.model_validate(_si_eps_dict())
+        wg = build_workgraph(inp)
+        scf = wg.tasks["scf"]
+        assert list(scf.inputs["kpoints"].value.get_kpoints_mesh()[0]) == [2, 2, 2]
+        assert scf.inputs["kpoints_distance"].value is None
+
     def test_missing_ph_code_raises(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
@@ -154,6 +173,28 @@ class TestDfptAutoEps:
         names = wg.get_task_names()
         assert "dielectric" in names
         assert "dfpt" in names
+
+    def test_both_ground_states_sample_the_input_mesh(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """The dielectric chain samples the input mesh, like the main chain.
+
+        Both ground states here answer to the same input file, so leaving
+        one of them on the protocol would make the graph depend on the cell
+        in a way the input does not record. A dielectric constant converges
+        slowly with k-sampling, so a user who wants a denser mesh for it
+        needs to say so; per-step meshes are koopmans#50.
+        """
+        inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
+        wg = _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+        eps_mesh = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        main_mesh = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
+        assert list(eps_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
+        assert list(main_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
 
     def test_auto_without_ph_code_raises(
         self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any

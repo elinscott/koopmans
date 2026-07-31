@@ -243,6 +243,21 @@ class TestPeriodicMlwfsBuild:
         # The molecular KS-init chain must NOT be present.
         assert "dft_init_nspin1" not in names
 
+    def test_wannier_initialization_gets_the_input_mesh(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The mesh handed over carries the input file's grid.
+
+        This route reaches its scf through the Wannier initialization, which
+        samples exactly this node; nothing downstream can recover a grid the
+        dispatcher does not hand over.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"] = {"grid": [4, 4, 4], "offset": [0, 0, 0]}
+        wg = _build(d, dscf_codes)
+        kpoints = wg.tasks["wannier_initialization"].inputs["kpoints"].value
+        assert list(kpoints.get_kpoints_mesh()[0]) == [4, 4, 4]
+
     def test_self_hartree_grouping_defaulted(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
