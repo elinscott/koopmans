@@ -312,6 +312,13 @@ def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]
 def kpoints_input_to_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData:
     """Convert KpointsInput to AiiDA KpointsData for SCF calculations.
 
+    The two sides count the offset differently. The input file follows
+    Quantum ESPRESSO's ``K_POINTS automatic`` card, whose ``sk1 sk2 sk3`` are
+    flags: 1 shifts the grid by half a step along that axis. ``KpointsData``
+    instead stores the shift itself as a fraction of a grid step, so a flag
+    of 1 becomes 0.5 — the only shifted value aiida-quantumespresso will
+    convert back into a card.
+
     Args:
         kpoints: The kpoints input from KoopmansInput.
 
@@ -319,7 +326,8 @@ def kpoints_input_to_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData:
         AiiDA KpointsData node with k-point mesh.
     """
     kpts = orm.KpointsData()
-    kpts.set_kpoints_mesh(list(kpoints.grid), offset=list(kpoints.offset))  # type: ignore[no-untyped-call]
+    offset = [0.5 * flag for flag in kpoints.offset]
+    kpts.set_kpoints_mesh(list(kpoints.grid), offset=offset)  # type: ignore[no-untyped-call]
     return kpts
 
 

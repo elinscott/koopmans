@@ -215,6 +215,8 @@ def _build_dft_bands_workgraph(
     """
     from aiida_koopmans.workgraphs.pw import RunPwBands
 
+    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+
     structure, _pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "bands"])
 
     return RunPwBands.build(
@@ -222,6 +224,7 @@ def _build_dft_bands_workgraph(
         structure=structure,
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
+        scf_kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
     )
 
 
@@ -246,6 +249,8 @@ def _build_dft_eps_workgraph(
     """
     from aiida_koopmans.workgraphs.ph import DielectricTask
 
+    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf"])
     overrides["scf"]["pw"]["parameters"].get("SYSTEM", {}).pop("nbnd", None)
 
@@ -256,6 +261,7 @@ def _build_dft_eps_workgraph(
         pseudo_family=pseudo_family,
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
+        scf_kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
     )
 
 
@@ -275,6 +281,8 @@ def _build_wannierize_workgraph(
     """
     from aiida_koopmans.workgraphs.wannier90 import Wannierize
     from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
 
     if koopmans_input.workflow.block_wannierization_threshold is not None:
         return _build_wannierize_split_workgraph(koopmans_input, codes)
@@ -299,6 +307,9 @@ def _build_wannierize_workgraph(
         pseudo_family=pseudo_family,
         print_summary=False,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
+        # One mesh drives the whole chain: the scf samples it, the nscf and
+        # wannier90 its explicit expansion.
+        kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
         **extra_kwargs,
     )
 

@@ -381,3 +381,79 @@ def _pw_input(
     if parallelization is not None:
         d["parallelization"] = parallelization
     return d
+
+
+class TestDftBandsScfMesh:
+    """The dft_bands scf samples the input file's grid, not a protocol distance."""
+
+    def test_scf_samples_the_input_mesh(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Left to the protocol the scf would pick its own mesh from a distance.
+
+        The bands step is checked alongside it because it must stay on a
+        path: a mesh reaching it would replace the band structure with a
+        second ground state.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input(pseudo_library="SG15/1.0/PBE/SR"))
+        wg = build_workgraph(inp)
+        scf = wg.tasks["PwBandsWorkChain"].inputs["scf"]
+        assert list(scf["kpoints"].value.get_kpoints_mesh()[0]) == [2, 2, 2]
+        assert scf["kpoints_distance"].value is None
+        assert wg.tasks["PwBandsWorkChain"].inputs["bands"]["kpoints"].value is None
+
+
+class TestKpointsOffsetConversion:
+    """The offset changes convention on the way into ``KpointsData``."""
+
+    def test_a_flag_becomes_half_a_grid_step(self, aiida_profile: Any) -> None:
+        """Per-axis: the input file's 1 means a half-step shift, which is 0.5."""
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = kpoints_input_to_kpoints_mesh(GridKpointsInput(grid=(2, 2, 2), offset=(1, 0, 1)))
+        mesh, offset = kpoints.get_kpoints_mesh()  # type: ignore[no-untyped-call]
+        assert list(mesh) == [2, 2, 2]
+        assert offset == [0.5, 0.0, 0.5]
+
+    def test_quantum_espresso_writes_back_the_flags(
+        self, aiida_profile: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The mesh survives the round trip into a ``K_POINTS automatic`` card.
+
+        Driven through aiida-quantumespresso's own card writer rather than
+        by asserting our numbers back at ourselves: it accepts no shift but
+        0 or 0.5, so a flag handed over unscaled is rejected outright, and
+        anything it does accept it converts back to the flags QE reads.
+        """
+        from aiida import orm
+        from aiida_quantumespresso.calculations.pw import PwCalculation
+
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        structure = orm.StructureData(
+            cell=[[2.7, 2.7, 0.0], [2.7, 0.0, 2.7], [0.0, 2.7, 2.7]], pbc=True
+        )
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(0.0, 0.0, 0.0), symbols="Si", name="Si"
+        )
+
+        parameters = orm.Dict(  # type: ignore[no-untyped-call]
+            {"CONTROL": {"calculation": "scf"}, "SYSTEM": {"ecutwfc": 20.0}}
+        )
+        content, _ = PwCalculation._generate_pwcp_inputdata(
+            parameters=parameters,
+            settings={},
+            pseudos=fake_sg15_pseudo_family.get_pseudos(structure=structure),
+            structure=structure,
+            kpoints=kpoints_input_to_kpoints_mesh(
+                GridKpointsInput(grid=(2, 2, 2), offset=(1, 0, 1))
+            ),
+        )
+        lines = content.splitlines()
+        card = lines[lines.index("K_POINTS automatic") + 1]
+        assert card.split() == ["2", "2", "2", "1", "0", "1"]

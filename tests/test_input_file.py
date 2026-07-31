@@ -287,3 +287,21 @@ class TestParallelizationSchema:
         """Both integer fields reject zero and negative values."""
         with pytest.raises(ValueError):
             KoopmansInput.model_validate(_parallelization_input(parallelization={"pw": {field: 0}}))
+
+
+class TestKpointsOffset:
+    """The offset is a per-axis half-step flag, as in QE's ``K_POINTS`` card."""
+
+    def test_flags_accepted(self) -> None:
+        """Both flag values survive validation unchanged."""
+        from koopmans.input_file import GridKpointsInput
+
+        assert GridKpointsInput(grid=(2, 2, 2), offset=(1, 0, 1)).offset == (1, 0, 1)
+
+    @pytest.mark.parametrize("offset", [(0.5, 0, 0), (2, 0, 0), (-1, 0, 0)])
+    def test_anything_but_a_flag_rejected(self, offset: tuple[float, ...]) -> None:
+        """A fractional shift is not expressible, so it is refused rather than rounded."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError):
+            GridKpointsInput(grid=(2, 2, 2), offset=offset)

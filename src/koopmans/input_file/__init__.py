@@ -110,7 +110,10 @@ class GridKpointsInput(BaseModel):
 
     gamma_only: Literal[False] = False
     grid: tuple[int, int, int]
-    offset: tuple[int, int, int] = (0, 0, 0)
+    offset: tuple[Literal[0, 1], Literal[0, 1], Literal[0, 1]] = (0, 0, 0)
+    """Per-axis flag: 1 shifts the grid by half a step, as in Quantum ESPRESSO's
+    ``K_POINTS automatic`` card. Fractional shifts are not expressible."""
+
     path: str | None = None
     density: float = 10.0
 

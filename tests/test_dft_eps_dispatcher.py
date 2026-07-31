@@ -114,6 +114,25 @@ class TestDftEps:
         assert "nbnd" not in system
         assert system["ecutwfc"] == pytest.approx(20.0)
 
+    def test_scf_samples_the_input_mesh(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """The ground state the response is taken about uses the input's grid.
+
+        Left to the protocol the scf would pick its own mesh from a k-point
+        distance, so the dielectric constant would not be the one the input
+        file describes.
+        """
+        inp = KoopmansInput.model_validate(_si_eps_dict())
+        wg = build_workgraph(inp)
+        scf = wg.tasks["scf"]
+        assert list(scf.inputs["kpoints"].value.get_kpoints_mesh()[0]) == [2, 2, 2]
+        assert scf.inputs["kpoints_distance"].value is None
+
     def test_missing_ph_code_raises(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
@@ -154,6 +173,27 @@ class TestDfptAutoEps:
         names = wg.get_task_names()
         assert "dielectric" in names
         assert "dfpt" in names
+
+    def test_dielectric_ground_state_shares_the_main_chain_mesh(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """Both ground states sample the same grid.
+
+        The dielectric chain is an independent ground state, but only in the
+        respects that make it one (no empty bands, no kcw spin forcing) —
+        sampling a protocol mesh while the main chain samples the input's
+        would make ``eps_inf`` describe a different calculation.
+        """
+        inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
+        wg = _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+        dielectric_mesh = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        main_mesh = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
+        assert list(dielectric_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
+        assert dielectric_mesh.uuid == main_mesh.uuid
 
     def test_auto_without_ph_code_raises(
         self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
