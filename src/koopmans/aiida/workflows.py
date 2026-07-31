@@ -796,7 +796,8 @@ def _build_wannierize_split_workgraph(
     # wannier90 / pw2wannier90 need eigenstates on the full explicit k-list
     # (wannier90 kmesh.pl ordering, no symmetry reduction) and cannot
     # re-derive the Monkhorst-Pack dimensions from it, so expand the mesh
-    # here and carry the grid separately.
+    # here and carry the grid separately. The scf takes the mesh itself and
+    # may reduce it by symmetry.
     kmesh = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
     mp_grid = [int(x) for x in kmesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
 
@@ -806,6 +807,7 @@ def _build_wannierize_split_workgraph(
         blocks=blocks,
         kpoints=get_explicit_kpoints(kmesh),
         mp_grid=mp_grid,
+        scf_kpoints=kmesh,
         bands_kpoints=kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure),
         num_occ_bands=num_occ_bands,
         split_threshold=float(threshold),
