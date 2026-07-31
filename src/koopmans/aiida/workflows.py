@@ -814,7 +814,7 @@ def _build_wannierize_blocks_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
-    """Build the Wannierization workgraph that Wannierises block by block.
+    """Build the Wannierization workgraph that Wannierizes block by block.
 
     One scf + nscf feeds a separate Wannierization per projection block.
     With explicit projections in ``calculator_parameters.w90.projections``
@@ -831,8 +831,8 @@ def _build_wannierize_blocks_workgraph(
     a pw.x bands run along the k-path feeds a runtime band-group detection
     (splitting at every gap wider than the threshold in eV and at the
     occupied/empty boundary), and each block whose bands fall into several
-    groups is Wannierised once, split with Wannier.jl parallel transport,
-    re-Wannierised group by group and its products merged back together. An
+    groups is Wannierized once, split with Wannier.jl parallel transport,
+    re-Wannierized group by group and its products merged back together. An
     automatic-projector block always splits this way, since its band groups
     exist only at runtime.
 
