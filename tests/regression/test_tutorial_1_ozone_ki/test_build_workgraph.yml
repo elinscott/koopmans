@@ -630,6 +630,14 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        calculate_alpha:
+          default: true
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         code:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -799,8 +807,27 @@ raw:
                 path: aiida_koopmans.types.VariationalOrbitalType
             required: true
         initial_alpha:
-          default: 0.6
           dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        initial_alphas:
+          dynamic: false
+          fields:
+            empty:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+            filled:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -1372,6 +1399,12 @@ raw:
                   extras:
                     py_type: aiida.orm.nodes.data.singlefile.SinglefileData
                   required: true
+              wannier90_parameters:
+                dynamic: false
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  required: false
             identifier: <scrubbed:identifier>
             meta:
               child_default_link_limit: 1
@@ -1490,7 +1523,8 @@ raw:
       hash: <scrubbed:hash>
       identifier: <scrubbed:identifier>
       input_socket_meta: {}
-      inputs: {}
+      inputs:
+        is_first_iteration: false
       log: ''
       metadata:
         pk: <scrubbed:pk>
@@ -1823,6 +1857,7 @@ raw:
       input_socket_meta: {}
       inputs:
         alpha_numsteps: 1
+        calculate_alpha: true
         code:
           __aiida_code__: kcp@localhost
         correction: ki
@@ -1865,6 +1900,14 @@ raw:
                 child_default_link_limit: 1
                 required: false
             blocks:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            calculate_alpha:
+              default: true
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2040,8 +2083,27 @@ raw:
                     path: aiida_koopmans.types.VariationalOrbitalType
                 required: true
             initial_alpha:
-              default: 0.6
               dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            initial_alphas:
+              dynamic: false
+              fields:
+                empty:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+                filled:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
@@ -2644,6 +2706,12 @@ raw:
                       extras:
                         py_type: aiida.orm.nodes.data.singlefile.SinglefileData
                       required: true
+                  wannier90_parameters:
+                    dynamic: false
+                    identifier: <scrubbed:identifier>
+                    meta:
+                      child_default_link_limit: 1
+                      required: false
                 identifier: <scrubbed:identifier>
                 meta:
                   child_default_link_limit: 1
