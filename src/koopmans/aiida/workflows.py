@@ -265,27 +265,32 @@ def _build_dft_eps_workgraph(
     )
 
 
-def _explicit_projection_sources(
+def _keywords_setting_projections(
     koopmans_input: KoopmansInput, *, channels_only: bool = False
-) -> str:
-    """Describe the input paths that carry explicit Wannier projection blocks.
+) -> list[str]:
+    """List the keywords the input uses to set explicit Wannier projections.
 
-    Returns a ``in `a`, `b` and `c``` phrase over the two spin-channel
-    projection blocks and, unless ``channels_only``, the top-level one; or
-    an empty string when none of them is set.
+    Covers the two spin-channel projection blocks and, unless
+    ``channels_only``, the top-level one. Empty when the input sets none of
+    them, so callers can both test for explicit projections and name them.
     """
     w90 = koopmans_input.calculator_parameters.wannier90
-    paths = (
+    keywords = (
         ["`calculator_parameters.w90.projections`"] if w90.projections and not channels_only else []
     )
-    paths += [
+    keywords += [
         f"`calculator_parameters.w90.{name}.projections`"
         for name in ("up", "down")
         if getattr(w90, name) is not None and getattr(w90, name).projections
     ]
-    if not paths:
-        return ""
-    return "in " + " and ".join([", ".join(paths[:-1]), paths[-1]] if len(paths) > 1 else paths)
+    return keywords
+
+
+def _and_list(items: list[str]) -> str:
+    """Join items into an ``a``, ``b`` and ``c`` phrase."""
+    if len(items) < 2:
+        return "".join(items)
+    return " and ".join([", ".join(items[:-1]), items[-1]])
 
 
 def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
@@ -302,10 +307,10 @@ def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
     """
     external = koopmans_input.calculator_parameters.pw2wannier90.atom_proj_ext
     automatic = koopmans_input.workflow.auto_projections
-    explicit = _explicit_projection_sources(koopmans_input)
+    explicit = _keywords_setting_projections(koopmans_input)
     if explicit and automatic:
         raise ValueError(
-            f"`workflow.auto_projections` and explicit projections ({explicit}) were "
+            f"`workflow.auto_projections` and explicit projections (in {_and_list(explicit)}) were "
             "both given; the automatic derivation and the explicit blocks each define "
             "the full set of projections. Drop one of the two."
         )
@@ -354,7 +359,7 @@ def _build_wannierize_workgraph(
         return _build_wannierize_blocks_workgraph(koopmans_input, codes)
 
     _validate_projection_sources(koopmans_input)
-    if _explicit_projection_sources(koopmans_input):
+    if _keywords_setting_projections(koopmans_input):
         return _build_wannierize_blocks_workgraph(koopmans_input, codes)
     if not koopmans_input.workflow.auto_projections:
         raise ValueError(
@@ -782,10 +787,10 @@ def _resolve_wannierize_blocks(
     validated by :func:`_validate_projection_sources`.
     """
     calc_params = koopmans_input.calculator_parameters
-    channels = _explicit_projection_sources(koopmans_input, channels_only=True)
+    channels = _keywords_setting_projections(koopmans_input, channels_only=True)
     if channels:
         raise NotImplementedError(
-            f"Explicit projections {channels} are not wired into the block-by-block "
+            f"Explicit projections in {_and_list(channels)} are not wired into the block-by-block "
             "wannierize route, which is single-channel: give them in "
             "`calculator_parameters.w90.projections` instead."
         )
@@ -842,8 +847,6 @@ def _build_wannierize_blocks_workgraph(
     re-Wannierized group by group and its products merged back together. An
     automatic-projector block always splits this way, since its band groups
     exist only at runtime.
-
-    Current scope: ``spin = 'none'``.
     """
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeBlocks
     from aiida_wannier90_workflows.utils.kpoints import get_explicit_kpoints
