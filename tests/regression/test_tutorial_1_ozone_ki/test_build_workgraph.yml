@@ -623,26 +623,6 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
-        alphas:
-          dynamic: false
-          fields:
-            empty:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                required: false
-            filled:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                required: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            required: false
         blocks:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -828,6 +808,26 @@ raw:
             required: true
         initial_alpha:
           dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        initial_alphas:
+          dynamic: false
+          fields:
+            empty:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+            filled:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
@@ -1320,13 +1320,13 @@ raw:
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                required: false
+                required: true
             filled:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                required: false
+                required: true
           identifier: <scrubbed:identifier>
           meta:
             child_default_link_limit: 1
@@ -1899,26 +1899,6 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
-            alphas:
-              dynamic: false
-              fields:
-                empty:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    required: false
-                filled:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    required: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                required: false
             blocks:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2104,6 +2084,26 @@ raw:
                 required: true
             initial_alpha:
               dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            initial_alphas:
+              dynamic: false
+              fields:
+                empty:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+                filled:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
@@ -2627,13 +2627,13 @@ raw:
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    required: false
+                    required: true
                 filled:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    required: false
+                    required: true
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
