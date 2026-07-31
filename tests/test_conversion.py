@@ -407,27 +407,25 @@ class TestDftBandsScfMesh:
 
 
 class TestKpointsOffsetConversion:
-    """The offset changes convention on the way into ``KpointsData``."""
+    """Every offset the schema admits reaches Quantum ESPRESSO as written."""
 
-    def test_a_flag_becomes_half_a_grid_step(self, aiida_profile: Any) -> None:
-        """Per-axis: the input file's 1 means a half-step shift, which is 0.5."""
-        from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
-        from koopmans.input_file import GridKpointsInput
-
-        kpoints = kpoints_input_to_kpoints_mesh(GridKpointsInput(grid=(2, 2, 2), offset=(1, 0, 1)))
-        mesh, offset = kpoints.get_kpoints_mesh()  # type: ignore[no-untyped-call]
-        assert list(mesh) == [2, 2, 2]
-        assert offset == [0.5, 0.0, 0.5]
-
-    def test_quantum_espresso_writes_back_the_flags(
-        self, aiida_profile: Any, fake_sg15_pseudo_family: Any
+    @pytest.mark.parametrize(
+        ("offset", "card"),
+        [((0.0, 0.0, 0.0), "2 2 2 0 0 0"), ((0.5, 0.5, 0.5), "2 2 2 1 1 1")],
+    )
+    def test_quantum_espresso_accepts_the_mesh(
+        self,
+        aiida_profile: Any,
+        fake_sg15_pseudo_family: Any,
+        offset: tuple[float, float, float],
+        card: str,
     ) -> None:
-        """The mesh survives the round trip into a ``K_POINTS automatic`` card.
+        """Both shifts survive the trip into a ``K_POINTS automatic`` card.
 
         Driven through aiida-quantumespresso's own card writer rather than
-        by asserting our numbers back at ourselves: it accepts no shift but
-        0 or 0.5, so a flag handed over unscaled is rejected outright, and
-        anything it does accept it converts back to the flags QE reads.
+        by asserting our numbers back at ourselves: it rejects any shift
+        but 0 or 0.5 outright, and what it accepts it converts into the
+        integer flags Quantum ESPRESSO actually reads.
         """
         from aiida import orm
         from aiida_quantumespresso.calculations.pw import PwCalculation
@@ -450,10 +448,7 @@ class TestKpointsOffsetConversion:
             settings={},
             pseudos=fake_sg15_pseudo_family.get_pseudos(structure=structure),
             structure=structure,
-            kpoints=kpoints_input_to_kpoints_mesh(
-                GridKpointsInput(grid=(2, 2, 2), offset=(1, 0, 1))
-            ),
+            kpoints=kpoints_input_to_kpoints_mesh(GridKpointsInput(grid=(2, 2, 2), offset=offset)),
         )
         lines = content.splitlines()
-        card = lines[lines.index("K_POINTS automatic") + 1]
-        assert card.split() == ["2", "2", "2", "1", "0", "1"]
+        assert lines[lines.index("K_POINTS automatic") + 1].split() == card.split()

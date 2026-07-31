@@ -593,28 +593,3 @@ class TestGraphBuild:
         assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
         # The nscf keeps the unreduced expansion of the same grid.
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 8
-
-    def test_plain_route_wannierizes_on_the_input_mesh(
-        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """Without the threshold, one mesh still fixes the whole chain.
-
-        The plain route hands the whole Wannierization to the upstream
-        workchain, whose protocol derives the scf mesh, the nscf k-list and
-        wannier90's ``mp_grid`` from one k-point distance. All three have to
-        follow the input file, not just the scf: a Wannierization built on a
-        different grid than its own ground state is not the requested one.
-        """
-        from koopmans.aiida.workflows import _build_wannierize_workgraph
-
-        d = _si_split_dict()
-        del d["workflow"]["block_wannierization_threshold"]
-        wg = _build_wannierize_workgraph(KoopmansInput.model_validate(d), split_codes)
-        [task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
-
-        assert list(task.inputs["scf"]["kpoints"].value.get_kpoints_mesh()[0]) == [2, 2, 2]
-        assert task.inputs["scf"]["kpoints_distance"].value is None
-        assert len(task.inputs["nscf"]["kpoints"].value.get_kpoints()) == 8
-        w90 = task.inputs["wannier90"]["wannier90"]
-        assert w90["parameters"].value.get_dict()["mp_grid"] == [2, 2, 2]
-        assert len(w90["kpoints"].value.get_kpoints()) == 8

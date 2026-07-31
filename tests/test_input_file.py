@@ -290,18 +290,40 @@ class TestParallelizationSchema:
 
 
 class TestKpointsOffset:
-    """The offset is a per-axis half-step flag, as in QE's ``K_POINTS`` card."""
+    """The offset is a per-axis fraction of a grid step, as ``KpointsData`` reads it."""
 
-    def test_flags_accepted(self) -> None:
-        """Both flag values survive validation unchanged."""
+    @pytest.mark.parametrize("offset", [(0.0, 0.0, 0.0), (0.5, 0.0, 0.5)])
+    def test_the_two_expressible_shifts_accepted(self, offset: tuple[float, ...]) -> None:
+        """No shift and a half-step shift both survive validation unchanged."""
         from koopmans.input_file import GridKpointsInput
 
-        assert GridKpointsInput(grid=(2, 2, 2), offset=(1, 0, 1)).offset == (1, 0, 1)
+        assert GridKpointsInput(grid=(2, 2, 2), offset=offset).offset == offset
 
-    @pytest.mark.parametrize("offset", [(0.5, 0, 0), (2, 0, 0), (-1, 0, 0)])
-    def test_anything_but_a_flag_rejected(self, offset: tuple[float, ...]) -> None:
-        """A fractional shift is not expressible, so it is refused rather than rounded."""
+    def test_a_whole_grid_step_rejected_with_the_syntax_explained(self) -> None:
+        """A 1 is where a reader carries QE's flag convention over by mistake.
+
+        Arithmetically it is the same as 0, so accepting it would hand back
+        an unshifted mesh to someone who asked for a shifted one. The error
+        has to say that and name the value that does work.
+        """
         from koopmans.input_file import GridKpointsInput
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"whole grid step.*same as 0"):
+            GridKpointsInput(grid=(2, 2, 2), offset=(1, 1, 1))
+        with pytest.raises(ValueError, match=r"0\.5"):
+            GridKpointsInput(grid=(2, 2, 2), offset=(1, 1, 1))
+
+    @pytest.mark.parametrize("offset", [(0.25, 0.0, 0.0), (2.0, 0.0, 0.0), (-0.5, 0.0, 0.0)])
+    def test_any_other_shift_rejected(self, offset: tuple[float, ...]) -> None:
+        """A ``K_POINTS automatic`` card cannot carry any other shift."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match=r"0 \(unshifted\) or 0\.5"):
             GridKpointsInput(grid=(2, 2, 2), offset=offset)
+
+    def test_a_shifted_gamma_point_rejected(self) -> None:
+        """Shifting a gamma-only calculation moves it off the point it samples."""
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        with pytest.raises(ValueError, match="samples Gamma itself"):
+            GammaOnlyKpointsInput(offset=(0.5, 0.0, 0.0))

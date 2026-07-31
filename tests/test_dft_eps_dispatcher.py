@@ -174,26 +174,27 @@ class TestDfptAutoEps:
         assert "dielectric" in names
         assert "dfpt" in names
 
-    def test_dielectric_ground_state_shares_the_main_chain_mesh(
+    def test_the_dielectric_ground_state_keeps_its_own_mesh(
         self,
         aiida_profile: Any,
         dfpt_codes: Any,
         installed_ph_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """Both ground states sample the same grid.
+        """The two ground states here sample different grids, deliberately.
 
-        The dielectric chain is an independent ground state, but only in the
-        respects that make it one (no empty bands, no kcw spin forcing) —
-        sampling a protocol mesh while the main chain samples the input's
-        would make ``eps_inf`` describe a different calculation.
+        The main chain takes the input file's mesh while the dielectric
+        chain keeps the protocol's, because a dielectric constant converges
+        slowly with k-sampling: handing it the (typically coarser) input
+        mesh would tidy the graph at the cost of a worse ``eps_inf``.
+        Whether they should agree is a physics question, so this pins the
+        current answer rather than letting a later cleanup decide it.
         """
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
         wg = _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
-        dielectric_mesh = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        assert wg.tasks["dielectric"].inputs["scf_kpoints"].value is None
         main_mesh = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
-        assert list(dielectric_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
-        assert dielectric_mesh.uuid == main_mesh.uuid
+        assert list(main_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
 
     def test_auto_without_ph_code_raises(
         self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
