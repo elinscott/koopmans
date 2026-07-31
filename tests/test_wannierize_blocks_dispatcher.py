@@ -15,6 +15,7 @@ import pytest
 
 from koopmans.aiida.workflows import (
     _build_wannierize_blocks_workgraph,
+    _build_wannierize_workgraph,
     _derive_wannierize_blocks,
 )
 from koopmans.input_file import KoopmansInput
@@ -81,6 +82,12 @@ def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     return _build_wannierize_blocks_workgraph(inp, codes)
 
 
+def _build_via_route(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+    """Build through the route selection, which is where the guards live."""
+    inp = KoopmansInput.model_validate(d)
+    return _build_wannierize_workgraph(inp, codes)
+
+
 @pytest.fixture
 def silicon_structure(aiida_profile: Any) -> Any:
     """Return a 2-atom periodic silicon ``StructureData``."""
@@ -132,23 +139,22 @@ class TestGuards:
     def test_collinear_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Collinear spin is not wired into the block-by-block flow yet."""
+        """Collinear spin is not wired into any Wannierization route yet."""
         with pytest.raises(NotImplementedError, match="spin='none'"):
-            _build(_si_split_dict(spin="collinear"), split_codes)
+            _build_via_route(_si_split_dict(spin="collinear"), split_codes)
 
     def test_collinear_not_implemented_without_the_threshold(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Dropping the threshold does not make the route read ``workflow.spin``.
+        """Dropping the threshold does not make a route read ``workflow.spin``.
 
-        Every block is still built single-channel off the top-level
-        projections, so a collinear input must fail rather than be
-        Wannierized as if it were unpolarized.
+        No route sets ``nspin``, so a collinear input must fail rather than
+        be Wannierized as if it were unpolarized.
         """
         d = _si_split_dict(spin="collinear")
         del d["workflow"]["block_wannierization_threshold"]
         with pytest.raises(NotImplementedError, match="spin='none'"):
-            _build(d, split_codes)
+            _build_via_route(d, split_codes)
 
     def test_missing_kpath_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any

@@ -343,6 +343,13 @@ def _build_wannierize_workgraph(
     from aiida_koopmans.workgraphs.wannier90 import Wannierize
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
+    if koopmans_input.workflow.spin != SpinType.NONE:
+        raise NotImplementedError(
+            "Wannierization currently supports spin='none' only: no route sets "
+            "`nspin`, and the per-block group detection and split are "
+            "single-channel."
+        )
+
     if koopmans_input.workflow.block_wannierization_threshold is not None:
         return _build_wannierize_blocks_workgraph(koopmans_input, codes)
 
@@ -852,12 +859,6 @@ def _build_wannierize_blocks_workgraph(
     calc_params = koopmans_input.calculator_parameters
 
     threshold = workflow.block_wannierization_threshold
-    if workflow.spin != SpinType.NONE:
-        raise NotImplementedError(
-            "Block-by-block Wannierization currently supports spin='none' only "
-            "(every block is built on the single top-level projection block, and "
-            "the group detection and per-block split are single-channel)."
-        )
     _validate_projection_sources(koopmans_input)
     if threshold is not None and koopmans_input.kpoints.path is None:
         raise ValueError(
