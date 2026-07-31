@@ -1,9 +1,10 @@
-"""Dispatcher tests for the automated block-splitting Wannierize route.
+"""Dispatcher tests for the block-by-block Wannierize route.
 
-Builds real ``WorkGraph`` objects through ``_build_wannierize_split_workgraph``
+Builds real ``WorkGraph`` objects through ``_build_wannierize_blocks_workgraph``
 against a throwaway profile (dummy codes, fake pseudos; nothing runs) and
 checks the routing guards, the lenient block derivation, and the built graph
-topology.
+topology — with ``block_wannierization_threshold`` set (automated splitting)
+and without it (one Wannierization per block).
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any
 import pytest
 
 from koopmans.aiida.workflows import (
-    _build_wannierize_split_workgraph,
+    _build_wannierize_blocks_workgraph,
     _derive_wannierize_blocks,
 )
 from koopmans.input_file import KoopmansInput
@@ -77,7 +78,7 @@ def split_codes(
 
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return _build_wannierize_split_workgraph(inp, codes)
+    return _build_wannierize_blocks_workgraph(inp, codes)
 
 
 @pytest.fixture
@@ -131,9 +132,23 @@ class TestGuards:
     def test_collinear_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Collinear spin is not wired into the split flow yet."""
+        """Collinear spin is not wired into the block-by-block flow yet."""
         with pytest.raises(NotImplementedError, match="spin='none'"):
             _build(_si_split_dict(spin="collinear"), split_codes)
+
+    def test_collinear_not_implemented_without_the_threshold(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Dropping the threshold does not make the route read ``workflow.spin``.
+
+        Every block is still built single-channel off the top-level
+        projections, so a collinear input must fail rather than be
+        Wannierized as if it were unpolarized.
+        """
+        d = _si_split_dict(spin="collinear")
+        del d["workflow"]["block_wannierization_threshold"]
+        with pytest.raises(NotImplementedError, match="spin='none'"):
+            _build(d, split_codes)
 
     def test_missing_kpath_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -143,6 +158,16 @@ class TestGuards:
         d["kpoints"].pop("path")
         with pytest.raises(ValueError, match="k-point path"):
             _build(d, split_codes)
+
+    def test_missing_kpath_is_fine_without_the_threshold(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """No threshold means no bands step, so no k-path is needed."""
+        d = _si_split_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        d["kpoints"].pop("path")
+        wg = _build(d, split_codes)
+        assert "bands" not in [t.name for t in wg.tasks]
 
     @pytest.mark.parametrize("keep_top_level", [False, True])
     def test_spin_channel_projections_not_wired(
@@ -164,7 +189,7 @@ class TestGuards:
             del d["calculator_parameters"]["wannier90"]["projections"]
         d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
         d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
-        with pytest.raises(NotImplementedError, match=r"w90.up.projections.*block-splitting"):
+        with pytest.raises(NotImplementedError, match=r"w90.up.projections.*block-by-block"):
             _build(d, split_codes)
 
 
@@ -582,7 +607,25 @@ def _build_plain(d: dict[str, Any], codes: dict[str, Any]) -> Any:
 
 
 class TestPlainRoute:
-    """Projection gating on the plain (non-split) wannierize route."""
+    """Routing and gating without ``block_wannierization_threshold``."""
+
+    def test_explicit_projections_need_no_wannierjl_code(
+        self,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """Nothing splits, so the julia code the splitting needs is not required.
+
+        ``load_codes_for_task`` only loads it behind the threshold, so a
+        build that demanded it here would fail for every user with
+        explicit projections.
+        """
+        codes = {"pw": installed_pw_code, **installed_wannier_codes}
+        assert "wannierjl" not in codes
+        wg = _build_plain(_si_split_dict(), codes)
+        assert "wannierize_block_1" in [t.name for t in wg.tasks]
 
     def test_flag_builds_the_qe_projector_route(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -609,22 +652,46 @@ class TestPlainRoute:
         with pytest.raises(ValueError, match=r"auto_projections.*were both given"):
             _build_plain(_si_split_dict(auto_projections=True), split_codes)
 
-    def test_explicit_projections_not_wired(
+    def test_explicit_projections_wannierize_block_by_block(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Explicit projections reach nothing here; only the split route consumes them."""
-        with pytest.raises(NotImplementedError, match="plain wannierize route"):
-            _build_plain(_si_split_dict(), split_codes)
+        """Explicit projections route to one Wannierization per block, splitting nothing.
+
+        Two blocks in, two ``wannierize_block_*`` graphs out, off a single
+        shared scf + nscf. None of the split machinery is built: no bands
+        step, no group detection, no ``wannierize_split_*``.
+        """
+        d = _si_split_dict()
+        d["calculator_parameters"]["wannier90"]["projections"] = [
+            [{"site": "Si", "ang_mtm": "s"}],
+            [{"site": "Si", "ang_mtm": "p"}],
+        ]
+        wg = _build_plain(d, split_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("scf_nscf") == 1
+        assert sorted(n for n in names if n.startswith("wannierize_")) == [
+            "wannierize_block_1",
+            "wannierize_block_2",
+        ]
+        assert "bands" not in names
+        assert "detect_band_groups" not in names
+
+        # Blocks cover consecutive bands in input order: 2 s-type Wannier
+        # functions then 6 p-type ones over the 8-band manifold.
+        blocks = [wg.tasks[f"wannierize_block_{i}"].inputs["block"].value for i in (1, 2)]
+        assert [b["num_wann"] for b in blocks] == [2, 6]
+        assert blocks[0]["include_bands"] == [1, 2]
+        assert blocks[1]["include_bands"] == list(range(3, 9))
 
     def test_spin_channel_projections_not_wired(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Projections given only per spin channel are just as unwired here."""
+        """Per-channel projections stay unwired: the route reads the top-level block."""
         d = _si_split_dict()
         projections = d["calculator_parameters"]["wannier90"].pop("projections")
         d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
         d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
-        with pytest.raises(NotImplementedError, match=r"w90.up.projections.*plain wannierize"):
+        with pytest.raises(NotImplementedError, match=r"w90.up.projections.*block-by-block"):
             _build_plain(d, split_codes)
 
     def test_external_projectors_require_the_flag(

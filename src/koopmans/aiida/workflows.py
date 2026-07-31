@@ -335,30 +335,26 @@ def _build_wannierize_workgraph(
         codes: Dictionary of loaded codes.
 
     Returns:
-        A WorkGraph for Wannier90WorkChain, or the automated block-splitting
-        flow when ``block_wannierization_threshold`` is set.
+        A WorkGraph wrapping a single ``Wannier90WorkChain`` over the whole
+        manifold, or :func:`_build_wannierize_blocks_workgraph` when explicit
+        projections or ``block_wannierization_threshold`` ask for one
+        Wannierization per block.
     """
     from aiida_koopmans.workgraphs.wannier90 import Wannierize
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
     if koopmans_input.workflow.block_wannierization_threshold is not None:
-        return _build_wannierize_split_workgraph(koopmans_input, codes)
+        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
 
     _validate_projection_sources(koopmans_input)
-    explicit = _explicit_projection_sources(koopmans_input)
-    if explicit:
-        raise NotImplementedError(
-            f"Explicit projections ({explicit}) are not wired into the plain "
-            "wannierize route; set `workflow.block_wannierization_threshold` (whose "
-            "route consumes them) or drop them and set `workflow.auto_projections`."
-        )
+    if _explicit_projection_sources(koopmans_input):
+        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
     if not koopmans_input.workflow.auto_projections:
         raise ValueError(
             "Nothing defines the Wannier projections: set `workflow.auto_projections` "
             "to derive them from the pseudopotentials — or, alongside it, point "
             "`pw2wannier90.atom_proj_ext` at external projector files — or provide "
-            "explicit projections in `calculator_parameters.w90.projections` together "
-            "with `workflow.block_wannierization_threshold`."
+            "explicit projections in `calculator_parameters.w90.projections`."
         )
 
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
@@ -392,7 +388,7 @@ def _derive_wannierize_blocks(
     projection_blocks: list[list[Any]],
     nbnd: int,
 ) -> list[Any]:
-    """Turn user projection blocks into wannierization blocks for the split flow.
+    """Turn user projection blocks into wannierization blocks.
 
     Unlike ``_derive_dscf_blocks`` there are no straddle or occupied-coverage
     constraints: a block that mixes occupied and empty bands — or spans an
@@ -485,8 +481,8 @@ def _derive_automatic_wannierize_blocks(
     if fully_relativistic:
         raise NotImplementedError(
             f"The pseudopotentials for {', '.join(fully_relativistic)} are fully relativistic; "
-            "automatic projections support scalar-relativistic pseudopotentials only (the "
-            "split route runs spin='none'). Provide explicit projections in "
+            "automatic projections support scalar-relativistic pseudopotentials only (this "
+            "route runs spin='none'). Provide explicit projections in "
             "`calculator_parameters.w90.projections` or use a scalar-relativistic family."
         )
     # Scalar-relativistic guaranteed by the guard above, so the projector count
@@ -782,7 +778,7 @@ def _resolve_wannierize_blocks(
     channels = _explicit_projection_sources(koopmans_input, channels_only=True)
     if channels:
         raise NotImplementedError(
-            f"Explicit projections {channels} are not wired into the block-splitting "
+            f"Explicit projections {channels} are not wired into the block-by-block "
             "wannierize route, which is single-channel: give them in "
             "`calculator_parameters.w90.projections` instead."
         )
@@ -814,28 +810,31 @@ def _resolve_wannierize_blocks(
     )
 
 
-def _build_wannierize_split_workgraph(
+def _build_wannierize_blocks_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
-    """Build the Wannierization workgraph with automated block splitting.
+    """Build the Wannierization workgraph that Wannierises block by block.
 
-    A pw.x bands run along the k-path feeds a runtime band-group detection
-    (splitting at every gap wider than ``block_wannierization_threshold`` eV
-    and at the occupied/empty boundary), and each projection block whose
-    bands fall into several groups is Wannierised once, split with Wannier.jl
-    parallel transport, re-Wannierised group by group and its products merged
-    back together.
-
+    One scf + nscf feeds a separate Wannierization per projection block.
     With explicit projections in ``calculator_parameters.w90.projections``
     each user block becomes a wannierization block. With
     ``workflow.auto_projections`` instead, a single atomic-projector block
-    spans the whole manifold and the runtime detection decides how it
-    splits; its projectors come from the external projector directory
-    ``pw2wannier90.atom_proj_dir`` when ``pw2wannier90.atom_proj_ext`` is
-    set (:func:`_derive_external_wannierize_blocks`) and from the
+    spans the whole manifold; its projectors come from the external
+    projector directory ``pw2wannier90.atom_proj_dir`` when
+    ``pw2wannier90.atom_proj_ext`` is set
+    (:func:`_derive_external_wannierize_blocks`) and from the
     pseudopotentials otherwise
     (:func:`_derive_automatic_wannierize_blocks`).
+
+    Setting ``block_wannierization_threshold`` adds the automated splitting:
+    a pw.x bands run along the k-path feeds a runtime band-group detection
+    (splitting at every gap wider than the threshold in eV and at the
+    occupied/empty boundary), and each block whose bands fall into several
+    groups is Wannierised once, split with Wannier.jl parallel transport,
+    re-Wannierised group by group and its products merged back together. An
+    automatic-projector block always splits this way, since its band groups
+    exist only at runtime.
 
     Current scope: ``spin = 'none'``.
     """
@@ -853,18 +852,14 @@ def _build_wannierize_split_workgraph(
     calc_params = koopmans_input.calculator_parameters
 
     threshold = workflow.block_wannierization_threshold
-    if threshold is None:
-        raise ValueError(
-            "The block-splitting Wannierize builder requires "
-            "`block_wannierization_threshold` to be set."
-        )
     if workflow.spin != SpinType.NONE:
         raise NotImplementedError(
-            "block_wannierization_threshold currently supports spin='none' only "
-            "(the group detection and per-block split are single-channel)."
+            "Block-by-block Wannierization currently supports spin='none' only "
+            "(every block is built on the single top-level projection block, and "
+            "the group detection and per-block split are single-channel)."
         )
     _validate_projection_sources(koopmans_input)
-    if koopmans_input.kpoints.path is None:
+    if threshold is not None and koopmans_input.kpoints.path is None:
         raise ValueError(
             "block_wannierization_threshold needs a k-point path: the band-group "
             "detection reads the eigenvalues of a bands run along it."
@@ -876,10 +871,12 @@ def _build_wannierize_split_workgraph(
 
     pseudos = get_pseudos_from_family(pseudo_family, structure)
     nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
-    if nelec % 2:
+    # Only the splitting and the automatically derived blocks read
+    # num_occ_bands; explicit blocks state their own band ranges.
+    if nelec % 2 and (threshold is not None or workflow.auto_projections):
         raise NotImplementedError(
             f"Odd electron count ({nelec}) requires spin='collinear', which the "
-            "block-splitting flow does not support yet."
+            "occupied/empty boundary the blocks are built around does not support yet."
         )
     num_occ_bands = nelec // 2
 
@@ -918,15 +915,23 @@ def _build_wannierize_split_workgraph(
     kmesh = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
     mp_grid = [int(x) for x in kmesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
 
+    # Without a threshold the graph splits nothing, and WannierizeBlocks
+    # rejects the split-only inputs rather than ignore them.
+    split_kwargs: dict[str, Any] = {}
+    if threshold is not None:
+        split_kwargs = {
+            "bands_kpoints": kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure),
+            "num_occ_bands": num_occ_bands,
+            "split_threshold": float(threshold),
+        }
+
     return WannierizeBlocks.build(
         codes=codes,
         structure=structure,
         blocks=blocks,
         kpoints=get_explicit_kpoints(kmesh),
         mp_grid=mp_grid,
-        bands_kpoints=kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure),
-        num_occ_bands=num_occ_bands,
-        split_threshold=float(threshold),
+        **split_kwargs,
         pseudo_family=pseudo_family,
         overrides=wannier_overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
