@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from json import load
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic import AfterValidator, Field, ValidationError, field_validator, model_validator
 from pydantic_core import ErrorDetails
 from wannier90_input.models.parameters import Projection
 from yaml import safe_load
@@ -95,28 +95,47 @@ class AtomsInput(BaseModel):
         return self
 
 
-def _validate_kpoint_offset(offset: tuple[float, ...]) -> tuple[float, ...]:
-    """Check every axis carries a shift a k-point mesh can express.
+def _expressible_shift(value: float) -> float:
+    """Check one axis carries a shift a k-point mesh can express.
 
     The offset is a fraction of a grid step, so only 0 and 0.5 mean
     anything: Quantum ESPRESSO's ``K_POINTS automatic`` card has no way to
-    write any other shift. A whole step of 1 is called out separately —
-    it is arithmetically the same as no shift, so anyone writing it means
-    the opposite of what they would get.
+    write any other shift. A whole step of 1 is called out separately — it
+    is arithmetically the same as no shift, so anyone writing it means the
+    opposite of what they would get.
     """
-    for value in offset:
-        if value == 1:
-            raise ValueError(
-                "`offset` is a fraction of a grid step, not a flag: 1 is a whole "
-                "grid step, which lands back on the unshifted mesh and so means "
-                "exactly the same as 0. Write 0.5 for a half-shifted mesh."
-            )
-        if value not in (0, 0.5):
-            raise ValueError(
-                "each component of `offset` must be 0 (unshifted) or 0.5 (shifted "
-                f"by half a grid step); got {value}"
-            )
-    return offset
+    if value == 1:
+        raise ValueError(
+            "`offset` is a fraction of a grid step, not a flag: 1 is a whole "
+            "grid step, which lands back on the unshifted mesh and so means "
+            "exactly the same as 0. Write 0.5 for a half-shifted mesh."
+        )
+    if value not in (0, 0.5):
+        raise ValueError(
+            "each component of `offset` must be 0 (unshifted) or 0.5 (shifted "
+            f"by half a grid step); got {value}"
+        )
+    return value
+
+
+#: One axis of a k-point mesh offset: 0 leaves it Gamma-centred, 0.5
+#: half-shifts it, and nothing else is expressible.
+KpointOffset = Annotated[float, AfterValidator(_expressible_shift)]
+
+
+def _no_shift(value: float) -> float:
+    """Reject any shift: a shifted mesh no longer samples Gamma."""
+    if value != 0:
+        raise ValueError(
+            "a gamma_only calculation samples Gamma itself, so `offset` must be "
+            "(0, 0, 0); use a grid to sample anywhere else"
+        )
+    return value
+
+
+#: One axis of a gamma-only offset. ``Literal[0.0]`` cannot express this:
+#: PEP 586 admits int, str, bytes, bool, Enum and None, but not float.
+NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
 class GammaOnlyKpointsInput(BaseModel):
@@ -124,25 +143,11 @@ class GammaOnlyKpointsInput(BaseModel):
 
     gamma_only: Literal[True] = True
     grid: tuple[Literal[1], Literal[1], Literal[1]] = (1, 1, 1)
-    offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    """Fraction of a grid step to shift by. A gamma-only calculation samples
-    Gamma itself, so the only shift available is none."""
+    offset: tuple[NoOffset, NoOffset, NoOffset] = (0.0, 0.0, 0.0)
+    """A gamma-only calculation samples Gamma itself, so it cannot be shifted."""
 
     path: Literal["G"] = "G"
     density: float = 10.0
-
-    @field_validator("offset")
-    @classmethod
-    def _reject_a_shifted_gamma_point(
-        cls, offset: tuple[float, float, float]
-    ) -> tuple[float, float, float]:
-        """Reject any shift: a shifted mesh no longer samples Gamma."""
-        if any(value != 0 for value in offset):
-            raise ValueError(
-                "a gamma_only calculation samples Gamma itself, so `offset` must "
-                "be (0, 0, 0); use a grid to sample anywhere else"
-            )
-        return offset
 
 
 class GridKpointsInput(BaseModel):
@@ -150,18 +155,11 @@ class GridKpointsInput(BaseModel):
 
     gamma_only: Literal[False] = False
     grid: tuple[int, int, int]
-    offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    """Per-axis fraction of a grid step to shift the mesh by: 0 leaves it
-    Gamma-centred and 0.5 half-shifts it. Nothing else is expressible."""
+    offset: tuple[KpointOffset, KpointOffset, KpointOffset] = (0.0, 0.0, 0.0)
+    """Per-axis fraction of a grid step to shift the mesh by."""
 
     path: str | None = None
     density: float = 10.0
-
-    @field_validator("offset")
-    @classmethod
-    def _check_offset(cls, offset: tuple[float, float, float]) -> tuple[float, float, float]:
-        """Check each axis is shifted by nothing or by half a grid step."""
-        return _validate_kpoint_offset(offset)  # type: ignore[return-value]
 
 
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput
