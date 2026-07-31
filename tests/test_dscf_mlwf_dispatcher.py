@@ -1,8 +1,9 @@
 """Dispatcher tests for the Wannier-initialised (periodic mlwfs) DSCF route.
 
-Exercises ``_derive_dscf_blocks`` (pure bookkeeping) and builds real
-``WorkGraph`` objects through ``_build_singlepoint_workgraph`` for a periodic
-silicon input (throwaway profile, dummy codes; nothing runs).
+Exercises the block derivation together with the checks this route adds to
+it (pure bookkeeping), and builds real ``WorkGraph`` objects through
+``_build_singlepoint_workgraph`` for a periodic silicon input (throwaway
+profile, dummy codes; nothing runs).
 """
 
 from __future__ import annotations
@@ -58,9 +59,46 @@ def _si_dscf_dict(**workflow_updates: Any) -> dict[str, Any]:
     return d
 
 
+def _si_collinear_dscf_dict() -> dict[str, Any]:
+    """Return the same input with both spin channels projected separately.
+
+    Silicon is unmagnetized, so both channels carry four occupied bands
+    and the same sp projections: an occupied block over bands 1-4 and an
+    empty one over 5-8.
+    """
+    sp = [{"site": "Si", "ang_mtm": "sp"}]
+    d = _si_dscf_dict(spin="collinear")
+    d["calculator_parameters"]["tot_magnetization"] = 0
+    d["calculator_parameters"]["wannier90"] = {
+        "up": {"projections": [sp, sp]},
+        "down": {"projections": [sp, sp]},
+    }
+    return d
+
+
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
     return _build_singlepoint_workgraph(inp, codes=codes)
+
+
+def _dscf_blocks(
+    structure: Any,
+    projection_blocks: list[Any],
+    nocc: int,
+    nbnd: int,
+    spin_channel: Any,
+) -> list[Any]:
+    """Derive and check blocks the way the Wannier-initialised route does.
+
+    The route derives blocks with the same helper the split route uses and
+    then applies the checks its supercell fold needs, so the two steps only
+    mean anything together.
+    """
+    from koopmans.aiida.workflows import _explicit_blocks, _validate_dscf_blocks
+
+    blocks = _explicit_blocks(structure, projection_blocks, nbnd, nocc, spin_channel)
+    _validate_dscf_blocks(blocks, nocc, nbnd)
+    return blocks
 
 
 @pytest.fixture
@@ -79,7 +117,7 @@ def dscf_codes(
     return {"pw": installed_pw_code, "kcp": installed_kcp_code}
 
 
-class TestDeriveDscfBlocks:
+class TestDscfBlocks:
     """Unit tests for the projection-block bookkeeping."""
 
     @pytest.fixture
@@ -115,7 +153,7 @@ class TestDeriveDscfBlocks:
             self.site = site
             self.fractional_site = fractional_site
             self.cartesian_site = None
-            self.ang_mtm = TestDeriveDscfBlocks._FakeQuantumNumbers(l_value)
+            self.ang_mtm = TestDscfBlocks._FakeQuantumNumbers(l_value)
 
     def test_fractional_site_projections(self, si_structure: Any) -> None:
         """Point-hosted (bond-centred) projections derive and format.
@@ -125,10 +163,8 @@ class TestDeriveDscfBlocks:
         """
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp3 = [self._FakeProjection(None, -3, fractional_site=[0.25, 0.25, 0.25])]
-        blocks = _derive_dscf_blocks(si_structure, [sp3, sp3], 4, 8, SpinChannel.NONE)
+        blocks = _dscf_blocks(si_structure, [sp3, sp3], 4, 8, SpinChannel.NONE)
         occ, emp = blocks
         assert occ["num_wann"] == 4
         assert occ["projections"] == ["f=0.25,0.25,0.25:l=-3"]
@@ -144,10 +180,8 @@ class TestDeriveDscfBlocks:
         """
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
-        blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
+        blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         occ, emp = blocks
         assert occ["num_bands"] == 4
         assert occ["exclude_bands"] == [5, 6, 7, 8]
@@ -165,10 +199,8 @@ class TestDeriveDscfBlocks:
         """
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp = [self._FakeProjection("Si", -1)]  # 4
-        occ, emp = _derive_dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
+        occ, emp = _dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
         assert occ["num_bands"] == 4
         assert occ["exclude_bands"] == list(range(5, 21))
         assert emp["num_wann"] == 4
@@ -184,45 +216,18 @@ class TestDeriveDscfBlocks:
         """
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp = [self._FakeProjection("Si", -1)]  # 4
         for nbnd in (8, 12, 20):
-            for block in _derive_dscf_blocks(si_structure, [sp, sp], 4, nbnd, SpinChannel.NONE):
+            for block in _dscf_blocks(si_structure, [sp, sp], 4, nbnd, SpinChannel.NONE):
                 excluded = block["exclude_bands"] or []
                 assert len(excluded) + block["num_bands"] == nbnd
-
-    def test_both_routes_size_blocks_identically(self, si_structure: Any) -> None:
-        """The DSCF and split routes agree band-for-band on the same input.
-
-        Both go through ``_size_projection_blocks``, so a sizing change can
-        no longer land on one route only — which is how the two drifted into
-        disagreeing about what ``include_bands`` means for a pool-carrying
-        block.
-        """
-        from aiida_koopmans.types import SpinChannel
-
-        from koopmans.aiida.workflows import (
-            _derive_dscf_blocks,
-            _derive_wannierize_blocks,
-        )
-
-        sp = [self._FakeProjection("Si", -1)]  # 4
-        sized = ("num_wann", "num_bands", "include_bands", "exclude_bands")
-        dscf = _derive_dscf_blocks(si_structure, [sp, sp], 4, 14, SpinChannel.NONE)
-        split = _derive_wannierize_blocks(si_structure, [sp, sp], 14)
-        assert [{k: b[k] for k in sized} for b in dscf] == [{k: b[k] for k in sized} for b in split]
-        # ... and they agree on the narrow convention, not merely with each other.
-        assert [b["include_bands"] for b in split] == [[1, 2, 3, 4], [5, 6, 7, 8]]
 
     def test_occ_emp_split_and_exclusions(self, si_structure: Any) -> None:
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
-        blocks = _derive_dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
+        blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "emp_1"]
         assert blocks[0]["include_bands"] == [1, 2, 3, 4]
         assert blocks[0]["exclude_bands"] == [5, 6, 7, 8]
@@ -233,11 +238,9 @@ class TestDeriveDscfBlocks:
         """A block sandwiched between others excludes bands on both sides."""
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         s = [self._FakeProjection("Si", 0)]  # 1 x 2 sites = 2
         sp = [self._FakeProjection("Si", -1)]  # 4
-        blocks = _derive_dscf_blocks(si_structure, [s, s, sp], 4, 8, SpinChannel.NONE)
+        blocks = _dscf_blocks(si_structure, [s, s, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "occ_2", "emp_1"]
         assert blocks[1]["exclude_bands"] == [1, 2, 5, 6, 7, 8]
 
@@ -245,28 +248,24 @@ class TestDeriveDscfBlocks:
         """A block crossing the occupied/empty boundary is an input error."""
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp = [self._FakeProjection("Si", -1)]  # 4
         with pytest.raises(ValueError, match="straddles"):
-            _derive_dscf_blocks(si_structure, [sp, sp], 6, 8, SpinChannel.NONE)
+            _dscf_blocks(si_structure, [sp, sp], 6, 8, SpinChannel.NONE)
 
-    def test_straddle_is_reported_before_the_band_count(self, si_structure: Any) -> None:
-        """A block that both straddles and overruns nbnd reports the straddle.
+    def test_band_count_is_reported_before_the_straddle(self, si_structure: Any) -> None:
+        """A block that both overruns nbnd and straddles reports the band count.
 
         Both conditions hold for the second block here (bands 5-8, boundary
-        at 6, nbnd 6). The straddle is the root cause and the actionable one:
-        the band-count message would send the user to raise nbnd, which
-        leaves the projections just as incompatible with the occupied/empty
-        division as before.
+        at 6, nbnd 6). The band count is the error every route agrees on —
+        eight Wannier functions cannot come out of six bands — so the shared
+        derivation raises it and the straddle, which only the Wannier-seeded
+        route objects to, is never reached.
         """
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp = [self._FakeProjection("Si", -1)]  # 4
-        with pytest.raises(ValueError, match="straddles"):
-            _derive_dscf_blocks(si_structure, [sp, sp], 6, 6, SpinChannel.NONE)
+        with pytest.raises(ValueError, match="span 8 bands but nbnd = 6"):
+            _dscf_blocks(si_structure, [sp, sp], 6, 6, SpinChannel.NONE)
 
     def test_pool_above_an_occupied_block_raises(self, si_structure: Any) -> None:
         """Occupied-only projections must not disentangle against empty bands.
@@ -278,31 +277,39 @@ class TestDeriveDscfBlocks:
         """
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp = [self._FakeProjection("Si", -1)]  # 4 = nocc
         with pytest.raises(ValueError, match="only the occupied manifold"):
-            _derive_dscf_blocks(si_structure, [sp], 4, 8, SpinChannel.NONE)
+            _dscf_blocks(si_structure, [sp], 4, 8, SpinChannel.NONE)
 
     def test_uncovered_occupied_bands_raise(self, si_structure: Any) -> None:
         """Occupied blocks must cover every occupied band."""
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         s = [self._FakeProjection("Si", 0)]  # 2 wann < nocc 4
         with pytest.raises(ValueError, match="every occupied band"):
-            _derive_dscf_blocks(si_structure, [s], 4, 8, SpinChannel.NONE)
+            _dscf_blocks(si_structure, [s], 4, 8, SpinChannel.NONE)
 
     def test_blocks_beyond_nbnd_raise(self, si_structure: Any) -> None:
         """Blocks spanning more bands than nbnd are an input error."""
         from aiida_koopmans.types import SpinChannel
 
-        from koopmans.aiida.workflows import _derive_dscf_blocks
-
         sp = [self._FakeProjection("Si", -1)]
         with pytest.raises(ValueError, match="nbnd"):
-            _derive_dscf_blocks(si_structure, [sp, sp], 4, 6, SpinChannel.NONE)
+            _dscf_blocks(si_structure, [sp, sp], 4, 6, SpinChannel.NONE)
+
+    def test_blocks_carry_their_occupancy(self, si_structure: Any) -> None:
+        """Each block states which manifold it belongs to.
+
+        Downstream the merge places a block by this stamp, so a derivation
+        that only named the block ``occ_1`` would leave the occupancy to be
+        re-read off the band indices — which is exactly what the plugin
+        stopped doing.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        sp = [self._FakeProjection("Si", -1)]  # 4
+        blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
+        assert [b["filled"] for b in blocks] == [True, False]
 
 
 class TestPeriodicMlwfsBuild:
@@ -402,6 +409,63 @@ class TestPeriodicMlwfsBuild:
         # Projections are consumed by the block derivation, never leaked into
         # the flat keyword override.
         assert "projections" not in extra["wannier_overrides"]["wannier90"]
+
+    def test_route_stamps_the_occupancies_it_hands_over(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The blocks reaching the workgraph say which manifold they are in.
+
+        The merge grouping is a deferred graph body, so a route that handed
+        over unstamped blocks would build cleanly and fail on the daemon;
+        this reads the stamps at the hand-over point instead.
+        """
+        from koopmans.aiida.conversion import atoms_input_to_structure
+
+        inp = KoopmansInput.model_validate(_si_dscf_dict())
+        structure = atoms_input_to_structure(inp.atoms)
+        nbnd = inp.calculator_parameters.nbnd
+        assert nbnd is not None
+        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
+            ("occ_1", True),
+            ("emp_1", False),
+        ]
+
+    def test_collinear_route_stamps_both_channels(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Each spin channel's blocks are stamped against its own band count.
+
+        The two channels are derived separately, so a stamp reaching only the
+        first would leave the down channel to fail on the daemon alone.
+        """
+        from koopmans.aiida.conversion import atoms_input_to_structure
+
+        inp = KoopmansInput.model_validate(_si_collinear_dscf_dict())
+        structure = atoms_input_to_structure(inp.atoms)
+        nbnd = inp.calculator_parameters.nbnd
+        assert nbnd is not None
+        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
+            ("occ_up_1", True),
+            ("emp_up_1", False),
+            ("occ_down_1", True),
+            ("emp_down_1", False),
+        ]
+
+    def test_collinear_route_builds(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Two spin channels of blocks assemble into a runnable graph.
+
+        The occupancies the route now states are consumed at build time by
+        the Wannierization, which orders the orbitals by channel and then by
+        filling; ``check_before_run`` is what proves the assembled graph has
+        every input it declares as required.
+        """
+        wg = _build(_si_collinear_dscf_dict(), dscf_codes)
+        assert "wannier_initialization" in wg.get_task_names()
+        wg.check_before_run()
 
     def test_no_w90_keywords_leaves_overrides_flat(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any

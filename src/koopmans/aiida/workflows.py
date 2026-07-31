@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from aiida import orm
-from aiida_koopmans.types import MLDescriptor, MLMode
+from aiida_koopmans.types import MLDescriptor, MLMode, SpinChannel
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
 
@@ -312,12 +312,9 @@ def _size_projection_blocks(
 ) -> list[Any]:
     """Size consecutive projection blocks against the nscf band manifold.
 
-    Shared by every route that turns a user's list of projection blocks into
-    wannierization blocks, so the band bookkeeping cannot drift between
-    them. ``label_for(index, start, end)`` names each block from its
-    position and its 1-based band range, and is the hook a route uses to
-    impose its own structural rules (the DSCF route rejects a block
-    straddling the occupied/empty boundary there).
+    The band arithmetic under :func:`_explicit_blocks`, kept separate so
+    the bookkeeping reads on its own. ``label_for(index, start, end)``
+    names each block from its position and its 1-based band range.
 
     ``include_bands`` always names exactly the block's own ``num_wann``
     Wannier bands — never a band the block merely reads. The uppermost block
@@ -366,26 +363,60 @@ def _size_projection_blocks(
     return blocks
 
 
-def _derive_wannierize_blocks(
+def _explicit_blocks(
     structure: orm.StructureData,
     projection_blocks: list[list[Any]],
     nbnd: int,
+    num_occ_bands: int,
+    spin_channel: Any,
 ) -> list[Any]:
-    """Turn user projection blocks into wannierization blocks for the split flow.
+    """Turn a user's explicit projections into wannierization blocks.
 
-    Unlike ``_derive_dscf_blocks`` there are no straddle or occupied-coverage
-    constraints: a block that mixes occupied and empty bands — or spans an
-    internal gap — is exactly what the automated splitting handles.
+    Every wannierization block a Koopmans calculation consumes lies wholly
+    inside the occupied or the empty manifold. A block whose read window —
+    its own bands together with any disentanglement pool — stays on one
+    side of ``num_occ_bands`` therefore has its occupancy settled here: it
+    is stamped ``filled`` and named after its manifold. A block spanning
+    the boundary is provisional instead, left unstamped and named by
+    position; only a route that cuts blocks at the boundary at runtime can
+    finalize it, and a route that cannot must reject it
+    (:func:`_validate_dscf_blocks`).
+
+    The pool belongs to the read window, not to the slots, so an occupied
+    block that disentangles against empty bands is provisional too: its
+    Wannier functions are optimized out of those bands and are not the
+    occupied manifold's.
+
+    One provisional block makes the whole set provisional, so the stamps
+    go on all together or not at all: what a set of occupancies buys
+    downstream is a partition of the orbitals, and a partition missing a
+    block accounts for nobody.
     """
-    from aiida_koopmans.types import SpinChannel
+    suffix = f"_{spin_channel.value}" if spin_channel in (SpinChannel.UP, SpinChannel.DOWN) else ""
+    counts = {"occ": 0, "emp": 0}
+    occupancy: dict[int, bool] = {}
+    uppermost = len(projection_blocks) - 1
 
-    return _size_projection_blocks(
-        structure,
-        projection_blocks,
-        nbnd,
-        SpinChannel.NONE,
-        lambda i, start, end: f"block_{i + 1}",
-    )
+    def label_for(index: int, start: int, end: int) -> str:
+        """Name a block after its manifold, or by position when it spans both."""
+        # Only the uppermost block can carry a pool, and that pool always
+        # reaches nbnd, so its read window is known before it is sized.
+        window_end = nbnd if index == uppermost else end
+        if window_end <= num_occ_bands:
+            filling = "occ"
+        elif start > num_occ_bands:
+            filling = "emp"
+        else:
+            return f"block_{index + 1}"
+        occupancy[index] = filling == "occ"
+        counts[filling] += 1
+        return f"{filling}{suffix}_{counts[filling]}"
+
+    blocks = _size_projection_blocks(structure, projection_blocks, nbnd, spin_channel, label_for)
+    if len(occupancy) == len(blocks):
+        for index, block in enumerate(blocks):
+            block["filled"] = occupancy[index]
+    return blocks
 
 
 def _pseudo_is_fully_relativistic(kind: str, upf: orm.UpfData) -> bool:
@@ -408,66 +439,67 @@ def _pseudo_is_fully_relativistic(kind: str, upf: orm.UpfData) -> bool:
         ) from exc
 
 
-def _derive_automatic_wannierize_blocks(
+def _automatic_blocks(
     structure: orm.StructureData,
     pseudos: dict[str, orm.UpfData],
+    external_projectors: dict[str, Any] | None,
     nbnd: int | None,
     num_occ_bands: int,
 ) -> tuple[list[AutomaticProjectionBlock], int]:
-    """Derive the wannierization blocks when no explicit projections are given.
+    """Derive the whole-manifold block taken when no projections are given.
 
-    The whole manifold becomes a single automatic block seeded from the
-    pseudopotentials' atomic projectors (pw2wannier90 ``atom_proj``); the
-    runtime band-group detection decides how it splits. ``num_wann`` is
-    fixed by the projector count of the pseudos — the width of the amn
-    matrix pw2wannier90 writes — and the block carries no disentanglement
-    pool: the detected groups cover only the Wannierised manifold, so a
-    block with bands above it cannot be split. Returns the single-block
-    list and the band count the nscf must cover.
-    """
-    from aiida_wannier90_workflows.common.types import WannierProjectionType
-    from aiida_wannier90_workflows.utils.pseudo import get_number_of_projections
+    The manifold becomes a single automatic block whose ``num_wann`` is a
+    projector count — the width of the amn matrix pw2wannier90 writes — and
+    the runtime band-group detection decides how it splits. The projectors
+    come from the external ``.dat`` tables when ``external_projectors`` is
+    given (pw2wannier90 ``atom_proj_ext``), one band per 2l+1 multiplet
+    member, and from the pseudopotentials otherwise (``atom_proj``).
+    Returns the single-block list and the band count the nscf must cover.
 
-    fully_relativistic = sorted(
-        kind for kind, upf in pseudos.items() if _pseudo_is_fully_relativistic(kind, upf)
-    )
-    if fully_relativistic:
-        raise NotImplementedError(
-            f"The pseudopotentials for {', '.join(fully_relativistic)} are fully relativistic; "
-            "automatic projections support scalar-relativistic pseudopotentials only (the "
-            "split route runs spin='none'). Provide explicit projections in "
-            "`calculator_parameters.w90.projections` or use a scalar-relativistic family."
-        )
-    # Scalar-relativistic guaranteed by the guard above, so the projector count
-    # is exact with the SOC flag pinned off.
-    num_wann = get_number_of_projections(
-        structure=structure, pseudos=pseudos, spin_non_collinear=False, spin_orbit_coupling=False
-    )
-    return _validated_single_automatic_block(
-        num_wann,
-        nbnd,
-        num_occ_bands,
-        WannierProjectionType.ATOMIC_PROJECTORS_QE,
-        "the pseudopotentials",
-    )
-
-
-def _validated_single_automatic_block(
-    num_wann: int,
-    nbnd: int | None,
-    num_occ_bands: int,
-    projection_type: Any,
-    source: str,
-) -> tuple[list[AutomaticProjectionBlock], int]:
-    """Build the single whole-manifold automatic block, validating its size.
-
-    Shared by the projector sources that span the manifold with one
-    automatic block (pseudopotential projectors, external projector files);
-    ``source`` names the projector origin in the error messages. The block
-    carries no disentanglement pool: the detected groups cover only the
-    Wannierised manifold, so a block with bands above it cannot be split.
+    The block carries no disentanglement pool: the detected groups cover
+    only the Wannierized manifold, so a block with bands above it cannot be
+    split. It carries no ``filled`` stamp either — it is the provisional
+    block par excellence, existing only to be cut into the groups the
+    runtime detection finds.
     """
     from aiida_koopmans.types import AutomaticProjectionBlock, SpinChannel
+    from aiida_wannier90_workflows.common.types import WannierProjectionType
+    from aiida_wannier90_workflows.utils.pseudo import (
+        get_number_of_projections,
+        get_number_of_projections_ext,
+    )
+
+    if external_projectors is not None:
+        source = "the external projector files"
+        projection_type = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
+        num_wann = get_number_of_projections_ext(
+            structure=structure,
+            external_projectors=external_projectors,
+            spin_non_collinear=False,
+            spin_orbit_coupling=False,
+        )
+    else:
+        source = "the pseudopotentials"
+        projection_type = WannierProjectionType.ATOMIC_PROJECTORS_QE
+        fully_relativistic = sorted(
+            kind for kind, upf in pseudos.items() if _pseudo_is_fully_relativistic(kind, upf)
+        )
+        if fully_relativistic:
+            raise NotImplementedError(
+                f"The pseudopotentials for {', '.join(fully_relativistic)} are fully "
+                "relativistic; automatic projections support scalar-relativistic "
+                "pseudopotentials only (the split route runs spin='none'). Provide explicit "
+                "projections in `calculator_parameters.w90.projections` or use a "
+                "scalar-relativistic family."
+            )
+        # Scalar-relativistic guaranteed by the guard above, so the projector
+        # count is exact with the SOC flag pinned off.
+        num_wann = get_number_of_projections(
+            structure=structure,
+            pseudos=pseudos,
+            spin_non_collinear=False,
+            spin_orbit_coupling=False,
+        )
 
     if num_wann < num_occ_bands:
         raise ValueError(
@@ -662,38 +694,6 @@ def _load_external_projectors(
     return external_projectors, str(directory)
 
 
-def _derive_external_wannierize_blocks(
-    structure: orm.StructureData,
-    external_projectors: dict[str, Any],
-    nbnd: int | None,
-    num_occ_bands: int,
-) -> tuple[list[AutomaticProjectionBlock], int]:
-    """Derive the wannierization blocks from external projector tables.
-
-    The external-projector analogue of
-    :func:`_derive_automatic_wannierize_blocks`: the whole manifold becomes
-    a single automatic block (pw2wannier90 ``atom_proj_ext``) whose
-    ``num_wann`` is the projector count of the synthesized tables — one
-    band per 2l+1 multiplet member — under the same no-pool constraints.
-    """
-    from aiida_wannier90_workflows.common.types import WannierProjectionType
-    from aiida_wannier90_workflows.utils.pseudo import get_number_of_projections_ext
-
-    num_wann = get_number_of_projections_ext(
-        structure=structure,
-        external_projectors=external_projectors,
-        spin_non_collinear=False,
-        spin_orbit_coupling=False,
-    )
-    return _validated_single_automatic_block(
-        num_wann,
-        nbnd,
-        num_occ_bands,
-        WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL,
-        "the external projector files",
-    )
-
-
 def _reject_unwired_external_projectors(koopmans_input: KoopmansInput, route: str) -> None:
     """Reject ``atom_proj_ext`` on a route that does not consume it.
 
@@ -725,10 +725,9 @@ def _build_wannierize_split_workgraph(
     each user block becomes a wannierization block. Without any, a single
     atomic-projector block spans the whole manifold and the runtime
     detection decides how it splits; the projectors come from the
-    pseudopotentials (:func:`_derive_automatic_wannierize_blocks`) or, with
-    ``pw2wannier90.atom_proj_ext``, from the external projector directory
-    ``pw2wannier90.atom_proj_dir``
-    (:func:`_derive_external_wannierize_blocks`).
+    pseudopotentials or, with ``pw2wannier90.atom_proj_ext``, from the
+    external projector directory ``pw2wannier90.atom_proj_dir``
+    (:func:`_automatic_blocks`).
 
     Current scope: ``spin = 'none'``.
     """
@@ -789,20 +788,20 @@ def _build_wannierize_split_workgraph(
             )
         if nbnd is None:
             nbnd = _num_wann_total(structure, projections)
-        blocks = _derive_wannierize_blocks(structure, projections, nbnd)
-    elif calc_params.pw2wannier90.atom_proj_ext:
-        external_projectors, projector_path = _load_external_projectors(
-            structure, calc_params.pw2wannier90.atom_proj_dir
-        )
-        blocks, nbnd = _derive_external_wannierize_blocks(
-            structure, external_projectors, nbnd, num_occ_bands
-        )
-        external_kwargs = {
-            "external_projectors_path": projector_path,
-            "external_projectors": external_projectors,
-        }
+        blocks = _explicit_blocks(structure, projections, nbnd, num_occ_bands, SpinChannel.NONE)
     else:
-        blocks, nbnd = _derive_automatic_wannierize_blocks(structure, pseudos, nbnd, num_occ_bands)
+        external_projectors = None
+        if calc_params.pw2wannier90.atom_proj_ext:
+            external_projectors, projector_path = _load_external_projectors(
+                structure, calc_params.pw2wannier90.atom_proj_dir
+            )
+            external_kwargs = {
+                "external_projectors_path": projector_path,
+                "external_projectors": external_projectors,
+            }
+        blocks, nbnd = _automatic_blocks(
+            structure, pseudos, external_projectors, nbnd, num_occ_bands
+        )
 
     # The scf needs only the occupied bands, so nbnd is dropped from its
     # override; the nscf — and the bands run seeded from its overrides —
@@ -912,51 +911,38 @@ def _build_singlepoint_workgraph(
     )
 
 
-def _derive_dscf_blocks(
-    structure: orm.StructureData,
-    projection_blocks: list[list[Any]],
-    nocc: int,
-    nbnd: int,
-    spin_channel: Any,
-) -> list[Any]:
-    """Turn user projection blocks into DSCF wannierization blocks.
+def _validate_dscf_blocks(blocks: list[Any], nocc: int, nbnd: int) -> None:
+    """Reject blocks the Wannier-seeded kcp.x initialisation cannot fold.
 
-    The DSCF route wannierises every user block separately and merges them
-    per (filling, spin) via merge_evc.x, so any number of blocks is allowed.
-    A block straddling the occupied/empty boundary is an input error, and the
-    occupied blocks must cover every occupied band (the folded
-    ``evc_occupied`` files seed the complete occupied manifold of the
-    supercell kcp.x run). Bands above the uppermost block become its
-    disentanglement pool, which wann2kcp.x folds through the ``.chk``.
+    The fold reads what the supercell run needs, so its demands are
+    stronger than a Wannierization's. Every block must be final — a
+    provisional one has no manifold to be folded into, since each block's
+    Wannier functions are concatenated into either ``evc_occupied`` or
+    ``evc0_empty`` — and the occupied blocks must span every occupied band,
+    because the merged ``evc_occupied`` file seeds the complete occupied
+    manifold of the supercell run.
+
+    The two ways a block ends up provisional get their own message: its
+    bands straddle the boundary, or its disentanglement pool crosses it.
     """
-    from aiida_koopmans.types import SpinChannel
-
-    if not projection_blocks:
+    if not blocks:
         raise ValueError(
             "Wannier-function initialisation requires explicit projections in "
             "``calculator_parameters.w90.projections``."
         )
 
-    suffix = f"_{spin_channel.value}" if spin_channel in (SpinChannel.UP, SpinChannel.DOWN) else ""
-    counts = {"occ": 0, "emp": 0}
-
-    def label_for(index: int, start: int, end: int) -> str:
-        """Name a block after the manifold it sits in, rejecting one that straddles."""
-        if end <= nocc:
-            filling = "occ"
-        elif start > nocc:
-            filling = "emp"
-        else:
+    for block in blocks:
+        start, end = block["include_bands"][0], block["include_bands"][-1]
+        if start <= nocc < end:
             raise ValueError(
                 f"A projection block (bands {start}-{end}) straddles the occupied/empty "
                 f"boundary at band {nocc}."
             )
-        counts[filling] += 1
-        return f"{filling}{suffix}_{counts[filling]}"
 
-    blocks = _size_projection_blocks(structure, projection_blocks, nbnd, spin_channel, label_for)
-
-    covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][0] <= nocc)
+    # No block straddles, so a block's own bands place it in one manifold
+    # even where its pool does not; counting the Wannier functions sitting
+    # in occupied band slots answers the coverage question on its own.
+    covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][-1] <= nocc)
     if covered_occ != nocc:
         raise ValueError(
             f"The occupied projection blocks span {covered_occ} Wannier functions but "
@@ -964,18 +950,19 @@ def _derive_dscf_blocks(
             "band must be covered for the Wannier-seeded kcp.x initialisation."
         )
 
-    last = blocks[-1]
-    if last["num_bands"] > last["num_wann"] and last["include_bands"][-1] <= nocc:
+    # Stamps go on the whole set or none of it (:func:`_explicit_blocks`),
+    # and the only pool there is lands on the uppermost block, so that block
+    # answers for the set.
+    uppermost = blocks[-1]
+    if "filled" not in uppermost:
         raise ValueError(
             f"The projections cover only the occupied manifold but the nscf runs {nbnd} "
-            f"bands, so block '{last['label']}' would disentangle against the "
+            f"bands, so block '{uppermost['label']}' would disentangle against the "
             f"{nbnd - nocc} empty bands above it. Its Wannier functions seed the "
             "occupied manifold of the supercell kcp.x run, which must carry no empty "
             "character. Add projections for the empty manifold, or lower "
             f"``calculator_parameters.pw.system.nbnd`` to {nocc}."
         )
-
-    return blocks
 
 
 def _dscf_wannier_init_inputs(
@@ -991,8 +978,6 @@ def _dscf_wannier_init_inputs(
     per spin channel when ``spin='collinear'``), the k-mesh, and the
     Makov-Payne knobs. The molecular/kohn-sham route needs none of this.
     """
-    from aiida_koopmans.types import SpinChannel
-
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
         kpoints_input_to_kpoints_mesh,
@@ -1046,32 +1031,28 @@ def _dscf_wannier_init_inputs(
                 f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "
                 "integer per-channel occupations."
             )
-        blocks = _derive_dscf_blocks(
-            structure,
-            w90.up.projections,
-            (nelec + magnetization) // 2,
-            nscf_nbnd,
-            SpinChannel.UP,
-        ) + _derive_dscf_blocks(
-            structure,
-            w90.down.projections,
-            (nelec - magnetization) // 2,
-            nscf_nbnd,
-            SpinChannel.DOWN,
+        nocc_up = (nelec + magnetization) // 2
+        nocc_down = (nelec - magnetization) // 2
+        up_blocks = _explicit_blocks(
+            structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
         )
+        _validate_dscf_blocks(up_blocks, nocc_up, nscf_nbnd)
+        down_blocks = _explicit_blocks(
+            structure, w90.down.projections, nscf_nbnd, nocc_down, SpinChannel.DOWN
+        )
+        _validate_dscf_blocks(down_blocks, nocc_down, nscf_nbnd)
+        blocks = up_blocks + down_blocks
     else:
         if nelec % 2:
             raise ValueError(
                 f"Odd electron count ({nelec}) requires spin='collinear' for the "
                 "Wannier-initialised DSCF route."
             )
-        blocks = _derive_dscf_blocks(
-            structure,
-            calc_params.wannier90.projections,
-            nelec // 2,
-            nscf_nbnd,
-            SpinChannel.NONE,
+        nocc = nelec // 2
+        blocks = _explicit_blocks(
+            structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
         )
+        _validate_dscf_blocks(blocks, nocc, nscf_nbnd)
 
     wannier_overrides: WannierizeOverrides = {
         "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
