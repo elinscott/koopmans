@@ -941,6 +941,7 @@ def _derive_dscf_blocks(
     counts = {"occ": 0, "emp": 0}
 
     def label_for(index: int, start: int, end: int) -> str:
+        """Name a block after the manifold it sits in, rejecting one that straddles."""
         if end <= nocc:
             filling = "occ"
         elif start > nocc:
