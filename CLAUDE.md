@@ -88,19 +88,64 @@ Invoked via `/<name>`:
 
 ## Code standards
 
-1. **No "legacy" in production code.** Comments and docstrings state constraints and behaviour, never provenance ("ported from", "legacy parity"). Commit messages and PR bodies may reference legacy freely.
-2. **Thread parsed outputs; never re-parse files.** If an upstream parser emits the value (e.g. wannier90 `output_parameters`), expose/thread that socket — even when it means widening an interface. Raw-file access is reserved for data no parser provides (e.g. the u/hr/centres merge inputs).
-3. **No duplication.** Before writing any helper, search `variational_orbitals.py`, `projections.py`, `occupations.py`, `wannier_merge.py`, `ml_helpers.py`, `types.py` (ak2) and `conversion.py` (k2); extend in place. New modules only for genuinely new orchestration. Same rule for tests: shared fixtures and builders live in `tests/fixtures.py` (re-exported via `conftest.py`) — never define a fixture module-locally that a sibling module already has or could share.
-4. **Structural authority over conventions.** Band order, manifold membership, block identity travel as explicit lists/fields from the caller — never derived from label prefixes or key-name conventions.
-5. **Consistent naming families.** New symbols join their module's family (`KcwScreenStep` → `GroupedKcwScreening`, not `GroupedDFPTScreening`). Short user-facing keywords (`spin`, not `spin_treatment`). Docstrings in the imperative mood (mechanically enforced: ruff D401 under the pep257 convention).
-6. **Docs decouple orthogonal choices.** Never present a default pairing (e.g. grouping criterion ↔ screening method) as an equivalence; say once that defaults reflect what is wired up, and let the dispatcher reject the rest explicitly.
-7. **Explicit failure over silent ignore.** An input that cannot take effect raises `NotImplementedError`/`ValueError` naming the gap — no keyword is silently dropped.
-8. **Adversarial pass before merge.** Every PR gets a reviewer-agent pass; load-bearing claims (mechanisms, parity, orderings) get skeptic verification or are graded honestly (reproduced / code-read / theory) in the PR body. Claims graded below reproduced are phrased as such.
-9. **Public text (PR bodies, commit messages, issues) explains; the diff shows.** PR bodies use `## Problem / ## Changes / ## Testing`. Problem states the failure as an outsider-readable scenario ("when Wannierizing the empty states of a water molecule in a periodic box, ..."), never session codenames, database PKs, or scratch paths. Changes list *conceptual* decisions, not mechanical enumerations; where it helps, show a before/after example of what the user sees. Testing says what each check establishes and why it discriminates — never bare pass counts. Claims follow the grading discipline of standard 8. No Claude session URLs anywhere; the Co-Authored-By trailer stays.
-10. **Squash-merge messages in 50/72** (subject ≤50 chars including the `(#N)`, body wrapped at 72). The body opens with one sentence pairing the symptom with the fix ("X was silently doing Y; now Z."), then bullet-point details — never a bare symptom paragraph floating above unrelated-looking bullets. Symptom not mechanism; enumerations as bullet lists.
-11. **US spelling in prose** (Wannierize, initialize, normalize, behavior). Exempt: upstream keyword and file names keep their canonical form (`guiding_centres`, `*_centres.xyz` are wannier90's own spelling).
-12. **Graph-layout changes need a cross-repo CI pairing.** k2's CI clones the same-named aiida-koopmans branch; an ak2-only PR that changes task names, sockets, or graph shapes must push a same-named k2 branch (even if empty of changes) so the pairing actually runs — otherwise k2 main goes silently red at the ak2 merge.
-13. **Per-rank thread pinning is a computer-level default.** The GNU builds link threaded OpenBLAS; under mpirun each rank spawns its own BLAS threads and oversubscribes the hq allocation. The localhost computer's `prepend_text` carries `THREAD_PIN_PREPEND` (`OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`MKL_NUM_THREADS` = 1), set in `aiida/setup/computer.py` on both create and migrate (computers are mutable; code nodes are not). A per-code `omp` in the `parallelization` block raises the count for a given calculation via `metadata.options.prepend_text`, which aiida-core assembles after the computer prepend and so overrides it.
+1. **Thread parsed outputs; never re-parse files.** If an upstream parser emits the value (e.g. wannier90 `output_parameters`), expose/thread that socket — even when it means widening an interface. Raw-file access is reserved for data no parser provides (e.g. the u/hr/centres merge inputs).
+2. **No duplication.** Before writing any helper, search `variational_orbitals.py`, `projections.py`, `occupations.py`, `wannier_merge.py`, `ml_helpers.py`, `types.py` (ak2) and `conversion.py` (k2); extend in place. New modules only for genuinely new orchestration. Same rule for tests: shared fixtures and builders live in `tests/fixtures.py` (re-exported via `conftest.py`) — never define a fixture module-locally that a sibling module already has or could share.
+3. **Structural authority over conventions.** Band order, manifold membership, block identity travel as explicit lists/fields from the caller — never derived from label prefixes or key-name conventions.
+4. **Consistent naming families.** New symbols join their module's family (`KcwScreenStep` → `GroupedKcwScreening`, not `GroupedDFPTScreening`). Short user-facing keywords (`spin`, not `spin_treatment`).
+5. **Explicit failure over silent ignore.** An input that cannot take effect raises `NotImplementedError`/`ValueError` naming the gap — no keyword is silently dropped.
+6. **Adversarial pass before merge.** Every PR gets a reviewer-agent pass; load-bearing claims (mechanisms, parity, orderings) get skeptic verification or are graded honestly in the PR body (see Writing).
+7. **Graph-layout changes need a cross-repo CI pairing.** k2's CI clones the same-named aiida-koopmans branch; an ak2-only PR that changes task names, sockets, or graph shapes must push a same-named k2 branch (even if empty of changes) so the pairing actually runs — otherwise k2 main goes silently red at the ak2 merge.
+8. **Per-rank thread pinning is a computer-level default.** The GNU builds link threaded OpenBLAS; under mpirun each rank spawns its own BLAS threads and oversubscribes the hq allocation. The localhost computer's `prepend_text` carries `THREAD_PIN_PREPEND` (`OMP_NUM_THREADS`/`OPENBLAS_NUM_THREADS`/`MKL_NUM_THREADS` = 1), set in `aiida/setup/computer.py` on both create and migrate (computers are mutable; code nodes are not). A per-code `omp` in the `parallelization` block raises the count for a given calculation via `metadata.options.prepend_text`, which aiida-core assembles after the computer prepend and so overrides it.
+9. **A workaround for a dependency is a candidate bug report**, most often for aiida-workgraph or node-graph, which are young enough that our use finds their edges first. An annotation shaped for the framework rather than the contract, a value coerced to survive a serializer, a socket restructured to get past a validator: say what the defect is, which package it lives in, and what the workaround costs — then stop. Patching upstream is the maintainer's call; when taken, it is a branch off their main, cherry-picked onto our fork's `patched` (which CI clones), plus an upstream pull request. A workaround that stays says what it works around.
+
+## Writing
+
+One standard for everything we write: docstrings, comments, error messages,
+PR bodies, commit messages, issues. Orwell's rules — short word, cut what
+can be cut, active voice, no stale figure of speech — with one carve-out:
+domain terms that carry a precise meaning (Wannier function,
+disentanglement, socket) and upstream keyword names stay. What is forbidden
+is *coined* jargon: "a pool-carrying block enters the split chain" makes
+the reader learn two terms before they learn the fact. US spelling in prose
+(Wannierize, behavior); upstream names keep their own (`guiding_centres`).
+
+**Docstrings, comments, error messages.** A docstring says what the thing
+does and what must hold for it to work.
+
+- State the rule, not a picture of it: `dis_froz_max < min_k E(num_wann +
+  1, k)`, not "the window is kept inside the block's own manifold".
+- Say what the function does, not where its result is used.
+- Document this object's contract. Another module's behaviour, and how it
+  came to be this way, both go stale silently.
+- No design justification and no restating the signature: both belong in
+  the pull request.
+- No redundant emphasis ("it is important to note", "and they must not be
+  conflated").
+- Imperative summary line, one line, full stop (ruff D401).
+- Error messages add one rule: tell the reader what to change, in their
+  vocabulary.
+
+**PR bodies, commit messages, issues.** Public text explains; the diff
+shows.
+
+- `### Problem / ### Changes / ### Testing`. Problem is a scenario an
+  outsider can picture, never session codenames, database PKs or scratch
+  paths. Changes are conceptual decisions, not enumerated helpers. Testing
+  says what each check discriminates, never bare pass counts.
+- Rename or add a heading when the change calls for it; three is the
+  default, not a form to fill in.
+- Roughly four bullets a section, none over three lines. Cut test
+  methodology, and anything Problem already said.
+- Grade claims (reproduced / code-read / theory) and assert only the
+  reproduced ones.
+- Worked examples stand alone: write the snippet a stranger could paste.
+- Check for staleness before publishing.
+- Squash messages in 50/72: subject ≤50 including `(#N)`, body wrapped at
+  72, opening with one sentence pairing symptom and fix, then bullets.
+- No Claude session URLs; the Co-Authored-By trailer stays.
+
+**Documentation** decouples orthogonal choices: never present a default
+pairing (grouping criterion ↔ screening method) as an equivalence.
 
 ## Current status (update as work progresses)
 

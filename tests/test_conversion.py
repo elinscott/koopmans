@@ -381,3 +381,74 @@ def _pw_input(
     if parallelization is not None:
         d["parallelization"] = parallelization
     return d
+
+
+class TestDftBandsScfMesh:
+    """The dft_bands scf samples the input file's grid, not a protocol distance."""
+
+    def test_scf_samples_the_input_mesh(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Left to the protocol the scf would pick its own mesh from a distance.
+
+        The bands step is checked alongside it because it must stay on a
+        path: a mesh reaching it would replace the band structure with a
+        second ground state.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input(pseudo_library="SG15/1.0/PBE/SR"))
+        wg = build_workgraph(inp)
+        scf = wg.tasks["PwBandsWorkChain"].inputs["scf"]
+        assert list(scf["kpoints"].value.get_kpoints_mesh()[0]) == [2, 2, 2]
+        assert scf["kpoints_distance"].value is None
+        assert wg.tasks["PwBandsWorkChain"].inputs["bands"]["kpoints"].value is None
+
+
+class TestKpointsOffsetConversion:
+    """Every offset the schema admits reaches Quantum ESPRESSO as written."""
+
+    @pytest.mark.parametrize(
+        ("offset", "card"),
+        [((0.0, 0.0, 0.0), "2 2 2 0 0 0"), ((0.5, 0.5, 0.5), "2 2 2 1 1 1")],
+    )
+    def test_quantum_espresso_accepts_the_mesh(
+        self,
+        aiida_profile: Any,
+        fake_sg15_pseudo_family: Any,
+        offset: tuple[float, float, float],
+        card: str,
+    ) -> None:
+        """Both shifts survive the trip into a ``K_POINTS automatic`` card.
+
+        Driven through aiida-quantumespresso's own card writer rather than
+        by asserting our numbers back at ourselves: it rejects any shift
+        but 0 or 0.5 outright, and what it accepts it converts into the
+        integer flags Quantum ESPRESSO actually reads.
+        """
+        from aiida import orm
+        from aiida_quantumespresso.calculations.pw import PwCalculation
+
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        structure = orm.StructureData(
+            cell=[[2.7, 2.7, 0.0], [2.7, 0.0, 2.7], [0.0, 2.7, 2.7]], pbc=True
+        )
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(0.0, 0.0, 0.0), symbols="Si", name="Si"
+        )
+
+        parameters = orm.Dict(  # type: ignore[no-untyped-call]
+            {"CONTROL": {"calculation": "scf"}, "SYSTEM": {"ecutwfc": 20.0}}
+        )
+        content, _ = PwCalculation._generate_pwcp_inputdata(
+            parameters=parameters,
+            settings={},
+            pseudos=fake_sg15_pseudo_family.get_pseudos(structure=structure),
+            structure=structure,
+            kpoints=kpoints_input_to_kpoints_mesh(GridKpointsInput(grid=(2, 2, 2), offset=offset)),
+        )
+        lines = content.splitlines()
+        assert lines[lines.index("K_POINTS automatic") + 1].split() == card.split()
