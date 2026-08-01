@@ -221,6 +221,8 @@ def _build_dft_bands_workgraph(
     """
     from aiida_koopmans.workgraphs.pw import RunPwBands
 
+    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+
     structure, _pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "bands"])
 
     return RunPwBands.build(
@@ -228,6 +230,7 @@ def _build_dft_bands_workgraph(
         structure=structure,
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
+        scf_kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
     )
 
 
@@ -252,6 +255,8 @@ def _build_dft_eps_workgraph(
     """
     from aiida_koopmans.workgraphs.ph import DielectricTask
 
+    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf"])
     overrides["scf"]["pw"]["parameters"].get("SYSTEM", {}).pop("nbnd", None)
 
@@ -262,6 +267,7 @@ def _build_dft_eps_workgraph(
         pseudo_family=pseudo_family,
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
+        scf_kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
     )
 
 
@@ -915,7 +921,8 @@ def _build_wannierize_blocks_workgraph(
     # wannier90 / pw2wannier90 need eigenstates on the full explicit k-list
     # (wannier90 kmesh.pl ordering, no symmetry reduction) and cannot
     # re-derive the Monkhorst-Pack dimensions from it, so expand the mesh
-    # here and carry the grid separately.
+    # here and carry the grid separately. The scf takes the mesh itself and
+    # may reduce it by symmetry.
     kmesh = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
     mp_grid = [int(x) for x in kmesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
 
@@ -935,6 +942,7 @@ def _build_wannierize_blocks_workgraph(
         blocks=blocks,
         kpoints=get_explicit_kpoints(kmesh),
         mp_grid=mp_grid,
+        scf_kpoints=kmesh,
         **split_kwargs,
         pseudo_family=pseudo_family,
         overrides=wannier_overrides,

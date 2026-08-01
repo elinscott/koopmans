@@ -799,3 +799,18 @@ class TestGraphBuild:
         assert wg.tasks["scf_nscf"].inputs["parallelization"].value == {
             "pw": {"ntasks": 3, "npool": 2}
         }
+
+    def test_scf_samples_the_input_mesh(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The input file's grid reaches the scf, not just the nscf.
+
+        Left to the protocol the scf would pick its own mesh from a
+        k-point distance, so the calculation would not be the one the
+        input file describes.
+        """
+        wg = _build(_si_split_dict(), split_codes)
+        scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
+        assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
+        # The nscf keeps the unreduced expansion of the same grid.
+        assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 8
