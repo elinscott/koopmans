@@ -10,7 +10,7 @@ import copy
 import itertools
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
 from aiida import orm
 from aiida_koopmans.types import MLDescriptor, MLMode, SpinChannel, block_occupancy
@@ -314,64 +314,53 @@ def _build_wannierize_workgraph(
     )
 
 
+class _BandRange(NamedTuple):
+    """Where one projection block sits in the nscf band manifold.
+
+    ``start`` and ``end`` are 1-based and inclusive, and span the block's
+    own ``num_wann`` Wannier bands. ``num_bands`` counts the bands
+    wannier90 reads, exceeding ``num_wann`` only for a block carrying a
+    disentanglement pool.
+    """
+
+    start: int
+    end: int
+    num_wann: int
+    num_bands: int
+
+
 def _assign_band_ranges(
     structure: orm.StructureData,
     projection_blocks: list[list[Projection]],
     nbnd: int,
-    spin_channel: SpinChannel,
-    label_for: Callable[[int, int, int], str],
-) -> list[ExplicitProjectionBlock]:
-    """Size consecutive projection blocks against the nscf band manifold.
+) -> list[_BandRange]:
+    """Lay consecutive projection blocks out over the nscf band manifold.
 
-    The band arithmetic under :func:`_create_explicit_blocks`, kept separate
-    so the bookkeeping reads on its own. ``label_for(index, start, end)``
-    names each block from its position and its 1-based band range.
-
-    ``include_bands`` always names exactly the block's own ``num_wann``
-    Wannier bands — never a band the block merely reads. The uppermost block
-    then absorbs the ``nbnd - cursor`` bands above it as its disentanglement
-    pool: ``num_bands`` grows to cover them and the block stops excluding
-    anything above itself, while ``include_bands`` still names only the
-    Wannier manifold. Whether that pool exists at all is decided by the
-    user's ``num_wann`` against ``nbnd``; the ``dis_*`` keywords refine the
-    window wannier90 disentangles over, they never create it.
+    Each block takes the ``num_wann`` bands above the one before it, so the
+    blocks tile the manifold from band 1 upwards in the order given. The
+    bands left above the last block become its disentanglement pool:
+    ``num_bands`` grows to cover them while the range still spans only the
+    block's own Wannier bands. Whether that pool exists at all is decided
+    by the user's ``num_wann`` against ``nbnd``; the ``dis_*`` keywords
+    refine the window wannier90 disentangles over, they never create it.
     """
-    from aiida_koopmans.projections import (
-        band_range_complement,
-        projection_num_wann,
-        projection_win_string,
-    )
-    from aiida_koopmans.types import ExplicitProjectionBlock
-    from aiida_wannier90_workflows.common.types import WannierProjectionType
+    from aiida_koopmans.projections import projection_num_wann
 
-    blocks: list[ExplicitProjectionBlock] = []
+    ranges: list[_BandRange] = []
     cursor = 0
-    for i, block in enumerate(projection_blocks):
+    for block in projection_blocks:
         num_wann = sum(projection_num_wann(structure, p) for p in block)
         start, end = cursor + 1, cursor + num_wann
-        label = label_for(i, start, end)
         if end > nbnd:
             raise ValueError(f"The projection blocks span {end} bands but nbnd = {nbnd}.")
-        blocks.append(
-            ExplicitProjectionBlock(
-                label=label,
-                spin=spin_channel,
-                num_wann=num_wann,
-                num_bands=num_wann,
-                include_bands=list(range(start, end + 1)),
-                exclude_bands=band_range_complement(start, end, nbnd),
-                projection_type=WannierProjectionType.ANALYTIC,
-                projections=[projection_win_string(p) for p in block],
-            )
-        )
+        ranges.append(_BandRange(start=start, end=end, num_wann=num_wann, num_bands=num_wann))
         cursor = end
 
-    if blocks and cursor < nbnd:
-        last = blocks[-1]
-        last["num_bands"] = last["num_wann"] + (nbnd - cursor)
-        last["exclude_bands"] = list(range(1, last["include_bands"][0])) or None
+    if ranges and cursor < nbnd:
+        last = ranges[-1]
+        ranges[-1] = last._replace(num_bands=last.num_wann + (nbnd - cursor))
 
-    return blocks
+    return ranges
 
 
 def _create_explicit_blocks(
@@ -402,31 +391,61 @@ def _create_explicit_blocks(
     go on all together or not at all: what a set of occupancies buys
     downstream is a partition of the orbitals, and a partition missing a
     block accounts for nobody.
+
+    ``include_bands`` names exactly the block's own ``num_wann`` Wannier
+    bands, never a band the block merely reads; a block carrying a pool
+    stops excluding the bands above it, which it does read.
     """
+    from aiida_koopmans.projections import band_range_complement, projection_win_string
+    from aiida_koopmans.types import ExplicitProjectionBlock
+    from aiida_wannier90_workflows.common.types import WannierProjectionType
+
+    ranges = _assign_band_ranges(structure, projection_blocks, nbnd)
     suffix = f"_{spin_channel.value}" if spin_channel in (SpinChannel.UP, SpinChannel.DOWN) else ""
     counts = {"occ": 0, "emp": 0}
     occupancy: dict[int, bool] = {}
-    uppermost = len(projection_blocks) - 1
+    blocks: list[ExplicitProjectionBlock] = []
 
-    def label_for(index: int, start: int, end: int) -> str:
-        """Name a block after its manifold, or by position when it spans both."""
-        # Only the uppermost block can carry a pool, and that pool always
-        # reaches nbnd, so its read window is known before it is sized.
-        window_end = nbnd if index == uppermost else end
+    for index, (band_range, block) in enumerate(zip(ranges, projection_blocks, strict=True)):
+        pooled = band_range.num_bands > band_range.num_wann
+        # The pool always reaches nbnd, so it is where the block's read
+        # window ends; without one the window ends at the block's own bands.
+        window_end = nbnd if pooled else band_range.end
         if window_end <= num_occ_bands:
             filling = "occ"
-        elif start > num_occ_bands:
+        elif band_range.start > num_occ_bands:
             filling = "emp"
         else:
-            return f"block_{index + 1}"
-        occupancy[index] = filling == "occ"
-        counts[filling] += 1
-        return f"{filling}{suffix}_{counts[filling]}"
+            filling = None
 
-    blocks = _assign_band_ranges(structure, projection_blocks, nbnd, spin_channel, label_for)
+        if filling is None:
+            label = f"block_{index + 1}"
+        else:
+            occupancy[index] = filling == "occ"
+            counts[filling] += 1
+            label = f"{filling}{suffix}_{counts[filling]}"
+
+        exclude = (
+            list(range(1, band_range.start)) or None
+            if pooled
+            else band_range_complement(band_range.start, band_range.end, nbnd)
+        )
+        blocks.append(
+            ExplicitProjectionBlock(
+                label=label,
+                spin=spin_channel,
+                num_wann=band_range.num_wann,
+                num_bands=band_range.num_bands,
+                include_bands=list(range(band_range.start, band_range.end + 1)),
+                exclude_bands=exclude,
+                projection_type=WannierProjectionType.ANALYTIC,
+                projections=[projection_win_string(p) for p in block],
+            )
+        )
+
     if len(occupancy) == len(blocks):
-        for index, block in enumerate(blocks):
-            block["filled"] = occupancy[index]
+        for index, block_dict in enumerate(blocks):
+            block_dict["filled"] = occupancy[index]
     return blocks
 
 
