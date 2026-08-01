@@ -8,7 +8,7 @@ profile, dummy codes; nothing runs).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -17,6 +17,9 @@ from koopmans.aiida.workflows import (
     _dscf_wannier_init_inputs,
 )
 from koopmans.input_file import KoopmansInput
+
+if TYPE_CHECKING:
+    from wannier90_input.models.parameters import Projection
 
 
 def _si_dscf_dict(**workflow_updates: Any) -> dict[str, Any]:
@@ -303,7 +306,9 @@ class TestDscfBlocks:
             _validate_blocks_separate_occ_and_emp,
         )
 
-        sp = [self._FakeProjection("Si", -1)]  # 4 = nocc
+        # The stand-in projections duck-type the pydantic model the
+        # derivation reads (``.site`` / ``.ang_mtm``), which is all it touches.
+        sp = cast("list[Projection]", [self._FakeProjection("Si", -1)])  # 4 = nocc
         blocks = _create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
         assert blocks[0]["include_bands"] == [1, 2, 3, 4]  # entirely occupied slots
         with pytest.raises(ValueError, match="disentanglement pool"):
