@@ -14,7 +14,7 @@ import pytest
 
 from koopmans.aiida.workflows import (
     _build_wannierize_split_workgraph,
-    _explicit_blocks,
+    _create_explicit_blocks,
 )
 from koopmans.input_file import KoopmansInput
 
@@ -119,7 +119,7 @@ class TestBlockDerivation:
     def _blocks(structure: Any, projections: list[Any], nbnd: int) -> list[Any]:
         from aiida_koopmans.types import SpinChannel
 
-        return _explicit_blocks(structure, projections, nbnd, 4, SpinChannel.NONE)
+        return _create_explicit_blocks(structure, projections, nbnd, 4, SpinChannel.NONE)
 
     def test_straddling_block_is_provisional(self, silicon_structure: Any) -> None:
         """A block spanning occupied and empty bands is unstamped, not an error.
@@ -266,10 +266,10 @@ class TestAutomaticProjections:
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows import _automatic_blocks
+        from koopmans.aiida.workflows import _create_automatic_blocks
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
-        blocks, nbnd = _automatic_blocks(silicon_structure, pseudos, None, None, 4)
+        blocks, nbnd = _create_automatic_blocks(silicon_structure, pseudos, None, None, 4)
         [block] = blocks
         assert block["num_wann"] == 8
         assert block["num_bands"] == 8
@@ -284,11 +284,11 @@ class TestAutomaticProjections:
     ) -> None:
         """Projectors that cannot span the occupied manifold are rejected."""
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows import _automatic_blocks
+        from koopmans.aiida.workflows import _create_automatic_blocks
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
         with pytest.raises(ValueError, match="cannot span the occupied manifold"):
-            _automatic_blocks(silicon_structure, pseudos, None, None, 10)
+            _create_automatic_blocks(silicon_structure, pseudos, None, None, 10)
 
     def test_nbnd_above_projector_count_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -463,11 +463,11 @@ class TestExternalProjectors:
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows import _automatic_blocks
+        from koopmans.aiida.workflows import _create_automatic_blocks
         from tests.fixtures import si_external_projector_tables
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
-        blocks, nbnd = _automatic_blocks(
+        blocks, nbnd = _create_automatic_blocks(
             silicon_structure, pseudos, si_external_projector_tables(), None, 4
         )
         [block] = blocks

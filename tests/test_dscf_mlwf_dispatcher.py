@@ -94,10 +94,15 @@ def _dscf_blocks(
     then applies the checks its supercell fold needs, so the two steps only
     mean anything together.
     """
-    from koopmans.aiida.workflows import _explicit_blocks, _validate_dscf_blocks
+    from koopmans.aiida.workflows import (
+        _create_explicit_blocks,
+        _validate_blocks_seed_the_occupied_manifold,
+        _validate_blocks_separate_occ_and_emp,
+    )
 
-    blocks = _explicit_blocks(structure, projection_blocks, nbnd, nocc, spin_channel)
-    _validate_dscf_blocks(blocks, nocc, nbnd)
+    blocks = _create_explicit_blocks(structure, projection_blocks, nbnd, nocc, spin_channel)
+    _validate_blocks_separate_occ_and_emp(blocks, nocc)
+    _validate_blocks_seed_the_occupied_manifold(blocks, nocc, nbnd)
     return blocks
 
 
