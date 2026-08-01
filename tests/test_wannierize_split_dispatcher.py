@@ -14,7 +14,7 @@ import pytest
 
 from koopmans.aiida.workflows import (
     _build_wannierize_split_workgraph,
-    _derive_wannierize_blocks,
+    _create_explicit_blocks,
 )
 from koopmans.input_file import KoopmansInput
 
@@ -93,7 +93,13 @@ def silicon_structure(aiida_profile: Any) -> Any:
 
 
 class TestBlockDerivation:
-    """Unit tests for the lenient block derivation."""
+    """Unit tests for the block derivation as the split route uses it.
+
+    Silicon has four occupied bands here, so a block reaching band 5 or
+    above spans the occupied/empty boundary. The split route accepts such
+    a block — cutting it at the boundary is its whole job — and the
+    derivation marks it as provisional by leaving ``filled`` unset.
+    """
 
     @staticmethod
     def _sp3_block() -> list[Any]:
@@ -102,27 +108,84 @@ class TestBlockDerivation:
         inp = KoopmansInput.model_validate(_si_split_dict())
         return inp.calculator_parameters.wannier90.projections
 
-    def test_straddling_block_is_allowed(self, silicon_structure: Any) -> None:
-        """A block spanning occupied and empty bands is not an error here."""
-        blocks = _derive_wannierize_blocks(silicon_structure, self._sp3_block(), nbnd=8)
+    @staticmethod
+    def _s_block() -> list[Any]:
+        """Return a single block of s projections: one per Si site, 2 Wannier functions."""
+        d = _si_split_dict()
+        d["calculator_parameters"]["wannier90"]["projections"] = [[{"site": "Si", "ang_mtm": "s"}]]
+        return KoopmansInput.model_validate(d).calculator_parameters.wannier90.projections
+
+    @staticmethod
+    def _blocks(structure: Any, projections: list[Any], nbnd: int) -> list[Any]:
+        from aiida_koopmans.types import SpinChannel
+
+        return _create_explicit_blocks(structure, projections, nbnd, 4, SpinChannel.NONE)
+
+    def test_straddling_block_is_provisional(self, silicon_structure: Any) -> None:
+        """A block spanning occupied and empty bands is unstamped, not an error.
+
+        It is the split that will decide where this block's Wannier
+        functions fall, so stating an occupancy now would be a guess.
+        """
+        blocks = self._blocks(silicon_structure, self._sp3_block(), nbnd=8)
         assert len(blocks) == 1
         assert blocks[0]["num_wann"] == 8
         assert blocks[0]["num_bands"] == 8
         assert blocks[0]["include_bands"] == list(range(1, 9))
         assert blocks[0].get("exclude_bands") is None
+        assert "filled" not in blocks[0]
+
+    def test_blocks_within_one_manifold_are_stamped(self, silicon_structure: Any) -> None:
+        """Blocks that fall on one side of the boundary state their occupancy.
+
+        Nothing about the split route makes such a block provisional: it
+        already lies where a Koopmans calculation needs it, and the runtime
+        split can only cut it into pieces of the same occupancy.
+        """
+        blocks = self._blocks(silicon_structure, self._s_block() * 4, nbnd=8)
+        assert [b["label"] for b in blocks] == ["occ_1", "occ_2", "emp_1", "emp_2"]
+        assert [b["filled"] for b in blocks] == [True, True, False, False]
+
+    def test_one_provisional_block_unstamps_the_set(self, silicon_structure: Any) -> None:
+        """A provisional block leaves its stampable siblings unstamped too.
+
+        Occupancies are consumed as a partition of every Wannier function,
+        so a set covering only the blocks that happen to be final is worse
+        than none at all.
+        """
+        blocks = self._blocks(silicon_structure, self._s_block() + self._sp3_block(), nbnd=10)
+        assert [b["label"] for b in blocks] == ["occ_1", "block_2"]
+        assert all("filled" not in block for block in blocks)
+
+    def test_a_pool_crossing_the_boundary_is_provisional(self, silicon_structure: Any) -> None:
+        """An occupied block that disentangles against empty bands is unstamped.
+
+        Its two band slots are occupied, but wannier90 optimizes its Wannier
+        functions out of all ten bands it reads, so they are not the
+        occupied manifold's and the slots cannot say otherwise.
+        """
+        blocks = self._blocks(silicon_structure, self._s_block() * 2, nbnd=12)
+        assert blocks[-1]["num_bands"] > blocks[-1]["num_wann"]
+        assert all("filled" not in block for block in blocks)
 
     def test_last_block_absorbs_extra_bands(self, silicon_structure: Any) -> None:
-        """An nbnd beyond the Wannier count becomes the disentanglement pool."""
-        blocks = _derive_wannierize_blocks(silicon_structure, self._sp3_block(), nbnd=12)
+        """An nbnd beyond the Wannier count becomes the disentanglement pool.
+
+        The pool shows up as ``num_bands`` and the absent upper exclusion;
+        ``include_bands`` keeps naming exactly the eight Wannier bands, so
+        the runtime group detection and the band-to-Wannier map stay
+        addressed to the manifold rather than the pool.
+        """
+        blocks = self._blocks(silicon_structure, self._sp3_block(), nbnd=12)
         assert blocks[0]["num_wann"] == 8
         assert blocks[0]["num_bands"] == 12
-        assert blocks[0]["include_bands"] == list(range(1, 13))
+        assert blocks[0]["include_bands"] == list(range(1, 9))
         assert blocks[0].get("exclude_bands") is None
 
     def test_too_few_bands_raises(self, silicon_structure: Any) -> None:
         """Projections needing more bands than nbnd are an input error."""
         with pytest.raises(ValueError, match="span 8 bands but nbnd = 6"):
-            _derive_wannierize_blocks(silicon_structure, self._sp3_block(), nbnd=6)
+            self._blocks(silicon_structure, self._sp3_block(), nbnd=6)
 
 
 class TestGuards:
@@ -197,21 +260,23 @@ class TestAutomaticProjections:
         ``include_bands`` must run over exactly ``1..num_wann`` — a shorter
         list would silently drop Wannier functions from the runtime split —
         and ``num_bands == num_wann`` is the no-pool invariant behind the
-        nbnd guards.
+        nbnd guards. The block states no occupancy: it spans the whole
+        manifold and exists only to be cut up by the runtime detection.
         """
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows import _derive_automatic_wannierize_blocks
+        from koopmans.aiida.workflows import _create_automatic_blocks
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
-        blocks, nbnd = _derive_automatic_wannierize_blocks(silicon_structure, pseudos, None, 4)
+        blocks, nbnd = _create_automatic_blocks(silicon_structure, pseudos, None, None, 4)
         [block] = blocks
         assert block["num_wann"] == 8
         assert block["num_bands"] == 8
         assert block["include_bands"] == list(range(1, 9))
         assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_QE
         assert block.get("exclude_bands") is None
+        assert "filled" not in block
         assert nbnd == 8
 
     def test_projectors_short_of_occupied_manifold_raise(
@@ -219,11 +284,11 @@ class TestAutomaticProjections:
     ) -> None:
         """Projectors that cannot span the occupied manifold are rejected."""
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows import _derive_automatic_wannierize_blocks
+        from koopmans.aiida.workflows import _create_automatic_blocks
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
         with pytest.raises(ValueError, match="cannot span the occupied manifold"):
-            _derive_automatic_wannierize_blocks(silicon_structure, pseudos, None, 10)
+            _create_automatic_blocks(silicon_structure, pseudos, None, None, 10)
 
     def test_nbnd_above_projector_count_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -394,14 +459,16 @@ class TestExternalProjectors:
         fake_sg15_cutoffs_family: Any,
         silicon_structure: Any,
     ) -> None:
-        """The derived block carries the external type and the no-pool shape."""
+        """The derived block carries the external type, the no-pool shape and no occupancy."""
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
-        from koopmans.aiida.workflows import _derive_external_wannierize_blocks
+        from koopmans.aiida.conversion import get_pseudos_from_family
+        from koopmans.aiida.workflows import _create_automatic_blocks
         from tests.fixtures import si_external_projector_tables
 
-        blocks, nbnd = _derive_external_wannierize_blocks(
-            silicon_structure, si_external_projector_tables(), None, 4
+        pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
+        blocks, nbnd = _create_automatic_blocks(
+            silicon_structure, pseudos, si_external_projector_tables(), None, 4
         )
         [block] = blocks
         assert block["num_wann"] == 8
@@ -409,6 +476,7 @@ class TestExternalProjectors:
         assert block["include_bands"] == list(range(1, 9))
         assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
         assert block.get("exclude_bands") is None
+        assert "filled" not in block
         assert nbnd == 8
 
     def test_explicit_projections_and_external_projectors_conflict(
