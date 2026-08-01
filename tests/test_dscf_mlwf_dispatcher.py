@@ -96,13 +96,13 @@ def _dscf_blocks(
     """
     from koopmans.aiida.workflows import (
         _create_explicit_blocks,
-        _validate_blocks_seed_the_occupied_manifold,
+        _validate_blocks_cover_all_occ_bands,
         _validate_blocks_separate_occ_and_emp,
     )
 
     blocks = _create_explicit_blocks(structure, projection_blocks, nbnd, nocc, spin_channel)
     _validate_blocks_separate_occ_and_emp(blocks, nocc)
-    _validate_blocks_seed_the_occupied_manifold(blocks, nocc, nbnd)
+    _validate_blocks_cover_all_occ_bands(blocks, nocc)
     return blocks
 
 
@@ -283,16 +283,44 @@ class TestDscfBlocks:
         from aiida_koopmans.types import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 4 = nocc
-        with pytest.raises(ValueError, match="only the occupied manifold"):
+        with pytest.raises(ValueError, match="disentanglement pool"):
             _dscf_blocks(si_structure, [sp], 4, 8, SpinChannel.NONE)
 
+    def test_boundary_check_alone_rejects_a_pool_that_crosses(self, si_structure: Any) -> None:
+        """The boundary check rejects a pool crossing it, reading no band slots.
+
+        This block's own bands are the four occupied ones — a check that
+        compares band slots against the boundary sees nothing wrong with it,
+        and only its disentanglement pool reaches into the empty manifold.
+        Asking the plugin whether the block is occupied is what catches it,
+        so run that check on its own: paired with the coverage check it
+        would pass for the wrong reason.
+        """
+        from aiida_koopmans.types import SpinChannel
+
+        from koopmans.aiida.workflows import (
+            _create_explicit_blocks,
+            _validate_blocks_separate_occ_and_emp,
+        )
+
+        sp = [self._FakeProjection("Si", -1)]  # 4 = nocc
+        blocks = _create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
+        assert blocks[0]["include_bands"] == [1, 2, 3, 4]  # entirely occupied slots
+        with pytest.raises(ValueError, match="disentanglement pool"):
+            _validate_blocks_separate_occ_and_emp(blocks, 4)
+
     def test_uncovered_occupied_bands_raise(self, si_structure: Any) -> None:
-        """Occupied blocks must cover every occupied band."""
+        """Occupied blocks must cover every occupied band.
+
+        The nscf stops at the occupied manifold, so the single block is
+        occupied outright and the boundary check has nothing to say; what is
+        wrong is that two Wannier functions cannot seed four occupied bands.
+        """
         from aiida_koopmans.types import SpinChannel
 
         s = [self._FakeProjection("Si", 0)]  # 2 wann < nocc 4
         with pytest.raises(ValueError, match="every occupied band"):
-            _dscf_blocks(si_structure, [s], 4, 8, SpinChannel.NONE)
+            _dscf_blocks(si_structure, [s], 4, 4, SpinChannel.NONE)
 
     def test_blocks_beyond_nbnd_raise(self, si_structure: Any) -> None:
         """Blocks spanning more bands than nbnd are an input error."""

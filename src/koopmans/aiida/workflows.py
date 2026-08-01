@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from aiida import orm
-from aiida_koopmans.types import MLDescriptor, MLMode, SpinChannel
+from aiida_koopmans.types import MLDescriptor, MLMode, SpinChannel, block_occupancy
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
 
@@ -927,14 +927,17 @@ def _build_singlepoint_workgraph(
 
 
 def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], nocc: int) -> None:
-    """Reject a block whose bands span both sides of the occupied/empty boundary.
+    """Reject a block that spans both sides of the occupied/empty boundary.
 
     Every Koopmans calculation downstream wants Wannier functions that
-    belong to one manifold: a block holding both occupied and empty bands
-    has no occupancy to state, and the orbitals it produces answer to
-    neither manifold. The plugin enforces the same rule on what it
-    receives, through each block's ``filled`` stamp; this is the
-    build-time check.
+    belong to one manifold: a block spanning both has no occupancy to
+    state, and the orbitals it produces answer to neither. What counts as
+    spanning is the plugin's rule and is asked of the plugin
+    (``block_occupancy``): a block reads both manifolds either through its
+    own bands or through a disentanglement pool that reaches across the
+    boundary, and neither is visible in the band slots alone. The plugin
+    asks the same question again when it receives the blocks; this is the
+    build-time answer, so the user hears it before anything is submitted.
 
     A route that derives its blocks from user projections alone has no
     block to check when there are none, so the absence of projections is
@@ -947,51 +950,41 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
         )
 
     for block in blocks:
-        start, end = block["include_bands"][0], block["include_bands"][-1]
-        if start <= nocc < end:
+        try:
+            block_occupancy(block)
+        except ValueError as exc:
+            start, end = block["include_bands"][0], block["include_bands"][-1]
             raise ValueError(
-                f"A projection block (bands {start}-{end}) straddles the occupied/empty "
-                f"boundary at band {nocc}."
-            )
+                f"The projection block '{block['label']}' (bands {start}-{end}) straddles "
+                f"the occupied/empty boundary at band {nocc}: its own bands cross it, or "
+                "the disentanglement pool it reads does. Its Wannier functions seed either "
+                "the occupied or the empty manifold of the supercell kcp.x run, so they "
+                "must come from one of them. Split "
+                "``calculator_parameters.w90.projections`` at the boundary, add "
+                "projections for the empty manifold, or lower "
+                f"``calculator_parameters.pw.system.nbnd`` to {nocc}."
+            ) from exc
 
 
-def _validate_blocks_seed_the_occupied_manifold(
-    blocks: Sequence[ProjectionBlock], nocc: int, nbnd: int
-) -> None:
-    """Reject occupied blocks that cannot seed the supercell's occupied manifold.
+def _validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc: int) -> None:
+    """Reject occupied blocks that leave part of the occupied manifold unseeded.
 
     The merged ``evc_occupied`` file seeds the complete occupied manifold
     of the supercell kcp.x run, so the occupied blocks must span every
-    occupied band and hold nothing else: a disentanglement pool reaching
-    above ``nocc`` optimizes their Wannier functions out of empty bands
-    too, which puts empty character into the seed.
+    occupied band.
 
     Runs after :func:`_validate_blocks_separate_occ_and_emp`, whose rule
-    both checks assume: with no block straddling the boundary, a block's
-    own bands place it in one manifold even where its pool does not.
+    this one assumes: with every block on one side of the boundary, a
+    block's own bands place it in a manifold, so counting the Wannier
+    functions sitting in occupied band slots answers the coverage
+    question.
     """
-    # Counting the Wannier functions sitting in occupied band slots answers
-    # the coverage question on its own.
     covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][-1] <= nocc)
     if covered_occ != nocc:
         raise ValueError(
             f"The occupied projection blocks span {covered_occ} Wannier functions but "
             f"the system has {nocc} occupied bands per primitive cell; every occupied "
             "band must be covered for the Wannier-seeded kcp.x initialisation."
-        )
-
-    # Stamps go on the whole set or none of it (:func:`_create_explicit_blocks`),
-    # and the only pool there is lands on the uppermost block, so that block
-    # answers for the set.
-    uppermost = blocks[-1]
-    if "filled" not in uppermost:
-        raise ValueError(
-            f"The projections cover only the occupied manifold but the nscf runs {nbnd} "
-            f"bands, so block '{uppermost['label']}' would disentangle against the "
-            f"{nbnd - nocc} empty bands above it. Its Wannier functions seed the "
-            "occupied manifold of the supercell kcp.x run, which must carry no empty "
-            "character. Add projections for the empty manifold, or lower "
-            f"``calculator_parameters.pw.system.nbnd`` to {nocc}."
         )
 
 
@@ -1067,12 +1060,12 @@ def _dscf_wannier_init_inputs(
             structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
         )
         _validate_blocks_separate_occ_and_emp(up_blocks, nocc_up)
-        _validate_blocks_seed_the_occupied_manifold(up_blocks, nocc_up, nscf_nbnd)
+        _validate_blocks_cover_all_occ_bands(up_blocks, nocc_up)
         down_blocks = _create_explicit_blocks(
             structure, w90.down.projections, nscf_nbnd, nocc_down, SpinChannel.DOWN
         )
         _validate_blocks_separate_occ_and_emp(down_blocks, nocc_down)
-        _validate_blocks_seed_the_occupied_manifold(down_blocks, nocc_down, nscf_nbnd)
+        _validate_blocks_cover_all_occ_bands(down_blocks, nocc_down)
         blocks = up_blocks + down_blocks
     else:
         if nelec % 2:
@@ -1085,7 +1078,7 @@ def _dscf_wannier_init_inputs(
             structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
         )
         _validate_blocks_separate_occ_and_emp(blocks, nocc)
-        _validate_blocks_seed_the_occupied_manifold(blocks, nocc, nscf_nbnd)
+        _validate_blocks_cover_all_occ_bands(blocks, nocc)
 
     wannier_overrides: WannierizeOverrides = {
         "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
