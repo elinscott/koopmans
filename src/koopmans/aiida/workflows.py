@@ -407,10 +407,10 @@ def _create_explicit_blocks(
     blocks: list[ExplicitProjectionBlock] = []
 
     for index, (band_range, block) in enumerate(zip(ranges, projection_blocks, strict=True)):
-        pooled = band_range.num_bands > band_range.num_wann
+        disentangle = band_range.num_bands > band_range.num_wann
         # The pool always reaches nbnd, so it is where the block's read
         # window ends; without one the window ends at the block's own bands.
-        window_end = nbnd if pooled else band_range.end
+        window_end = nbnd if disentangle else band_range.end
         if window_end <= num_occ_bands:
             filling = "occ"
         elif band_range.start > num_occ_bands:
@@ -427,7 +427,7 @@ def _create_explicit_blocks(
 
         exclude = (
             list(range(1, band_range.start)) or None
-            if pooled
+            if disentangle
             else band_range_complement(band_range.start, band_range.end, nbnd)
         )
         blocks.append(
