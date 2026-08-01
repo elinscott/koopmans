@@ -48,6 +48,18 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
+#: Raised wherever a Wannierization is asked for and nothing says what to
+#: Wannierize. Both routes that need projections reach this state, so both
+#: say the same thing.
+_NO_PROJECTIONS_PROVIDED_MESSAGE = (
+    "Nothing defines the Wannier projections. Either (a) set "
+    "`workflow.auto_projections` to `True` to derive them from the "
+    "pseudopotentials, or from external projector files by also pointing "
+    "`pw2wannier90.atom_proj_ext` at them; or (b) provide explicit projections "
+    "in `calculator_parameters.w90.projections`."
+)
+
+
 def _load_code(name: str, executable: str) -> orm.AbstractCode:
     """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
     try:
@@ -183,6 +195,12 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """
     task = koopmans_input.workflow.task
 
+    if koopmans_input.workflow.auto_projections and task != Task.WANNIERIZE:
+        raise NotImplementedError(
+            f"`workflow.auto_projections` is not wired into the {task.value} route; "
+            "automatic projections are currently supported by the `wannierize` task only."
+        )
+
     # Load required codes
     codes = load_codes_for_task(koopmans_input.workflow)
 
@@ -270,6 +288,70 @@ def _build_dft_eps_workgraph(
     )
 
 
+def _keywords_setting_projections(
+    koopmans_input: KoopmansInput, *, channels_only: bool = False
+) -> list[str]:
+    """List the keywords the input uses to set explicit Wannier projections.
+
+    Covers the two spin-channel projection blocks and, unless
+    ``channels_only``, the top-level one. Empty when the input sets none of
+    them, so callers can both test for explicit projections and name them.
+    """
+    w90 = koopmans_input.calculator_parameters.wannier90
+    keywords = (
+        ["`calculator_parameters.w90.projections`"] if w90.projections and not channels_only else []
+    )
+    keywords += [
+        f"`calculator_parameters.w90.{name}.projections`"
+        for name in ("up", "down")
+        if getattr(w90, name) is not None and getattr(w90, name).projections
+    ]
+    return keywords
+
+
+def _and_list(items: list[str]) -> str:
+    """Join items into an ``a``, ``b`` and ``c`` phrase."""
+    if len(items) < 2:
+        return "".join(items)
+    return " and ".join([", ".join(items[:-1]), items[-1]])
+
+
+def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
+    """Validate how the input asks for the Wannier projections to be defined.
+
+    Three inputs can speak for the projections: explicit blocks in
+    ``calculator_parameters.w90(.up/.down).projections``, the automatic
+    derivation requested by ``workflow.auto_projections``, and the external
+    projector files of ``pw2wannier90.atom_proj_ext``. Explicit blocks
+    define the full set themselves, so they combine with neither of the
+    others; the external files only choose where the projector functions
+    come from, not whether the projections are derived at all, so they
+    require the flag.
+    """
+    external = koopmans_input.calculator_parameters.pw2wannier90.atom_proj_ext
+    automatic = koopmans_input.workflow.auto_projections
+    explicit = _keywords_setting_projections(koopmans_input)
+    if explicit and automatic:
+        raise ValueError(
+            f"`workflow.auto_projections` and explicit projections (in {_and_list(explicit)}) were "
+            "both given; the automatic derivation and the explicit blocks each define "
+            "the full set of projections. Drop one of the two."
+        )
+    if explicit and external:
+        raise ValueError(
+            f"Explicit projections ({explicit}) and `pw2wannier90.atom_proj_ext` were "
+            "both given; the explicit projections define every block, so the external "
+            "projectors would be silently ignored. Drop one of the two."
+        )
+    if external and not automatic:
+        raise ValueError(
+            "`pw2wannier90.atom_proj_ext` was given without `workflow.auto_projections`; "
+            "external projector files choose where the projector functions come from, "
+            "but they do not by themselves ask for the projections to be derived "
+            "automatically. Set `workflow.auto_projections` as well."
+        )
+
+
 def _build_wannierize_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
@@ -281,18 +363,35 @@ def _build_wannierize_workgraph(
         codes: Dictionary of loaded codes.
 
     Returns:
-        A WorkGraph for Wannier90WorkChain, or the automated block-splitting
-        flow when ``block_wannierization_threshold`` is set.
+        A WorkGraph wrapping a single ``Wannier90WorkChain`` over the whole
+        manifold, or :func:`_build_wannierize_blocks_workgraph` when explicit
+        projections or ``block_wannierization_threshold`` ask for one
+        Wannierization per block.
     """
     from aiida_koopmans.workgraphs.wannier90 import Wannierize
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
+    if koopmans_input.workflow.spin != SpinType.NONE:
+        raise NotImplementedError(
+            "Wannierization currently supports spin='none' only: no route sets "
+            "`nspin`, and the per-block group detection and split are "
+            "single-channel."
+        )
+
     if koopmans_input.workflow.block_wannierization_threshold is not None:
-        return _build_wannierize_split_workgraph(koopmans_input, codes)
+        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
+
+    _validate_projection_sources(koopmans_input)
+    if _keywords_setting_projections(koopmans_input):
+        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
+    if not koopmans_input.workflow.auto_projections:
+        raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
-    # Check if external projectors are requested
+    # The automatically derived projections are the pseudopotentials' atomic
+    # orbitals (upstream's ATOMIC_PROJECTORS_QE mechanism) unless external
+    # projector files supply the projector functions instead.
     pw2w_params = koopmans_input.calculator_parameters.pw2wannier90
     extra_kwargs: dict[str, Any] = {}
     if pw2w_params.atom_proj_ext:
@@ -518,7 +617,7 @@ def _create_automatic_blocks(
             raise NotImplementedError(
                 f"The pseudopotentials for {', '.join(fully_relativistic)} are fully "
                 "relativistic; automatic projections support scalar-relativistic "
-                "pseudopotentials only (the split route runs spin='none'). Provide explicit "
+                "pseudopotentials only (this route runs spin='none'). Provide explicit "
                 "projections in `calculator_parameters.w90.projections` or use a "
                 "scalar-relativistic family."
             )
@@ -738,26 +837,29 @@ def _reject_unwired_external_projectors(koopmans_input: KoopmansInput, route: st
         )
 
 
-def _build_wannierize_split_workgraph(
+def _build_wannierize_blocks_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
-    """Build the Wannierization workgraph with automated block splitting.
+    """Build the Wannierization workgraph that Wannierizes block by block.
 
-    A pw.x bands run along the k-path feeds a runtime band-group detection
-    (splitting at every gap wider than ``block_wannierization_threshold`` eV
-    and at the occupied/empty boundary), and each projection block whose
-    bands fall into several groups is Wannierised once, split with Wannier.jl
-    parallel transport, re-Wannierised group by group and its products merged
-    back together.
-
+    One scf + nscf feeds a separate Wannierization per projection block.
     With explicit projections in ``calculator_parameters.w90.projections``
-    each user block becomes a wannierization block. Without any, a single
-    atomic-projector block spans the whole manifold and the runtime
-    detection decides how it splits; the projectors come from the
-    pseudopotentials or, with ``pw2wannier90.atom_proj_ext``, from the
-    external projector directory ``pw2wannier90.atom_proj_dir``
-    (:func:`_create_automatic_blocks`).
+    each user block becomes a wannierization block. With
+    ``workflow.auto_projections`` instead, a single atomic-projector block
+    spans the whole manifold; its projectors come from the external
+    projector directory ``pw2wannier90.atom_proj_dir`` when
+    ``pw2wannier90.atom_proj_ext`` is set and from the pseudopotentials
+    otherwise (:func:`_create_automatic_blocks`).
+
+    Setting ``block_wannierization_threshold`` adds the automated splitting:
+    a pw.x bands run along the k-path feeds a runtime band-group detection
+    (splitting at every gap wider than the threshold in eV and at the
+    occupied/empty boundary), and each block whose bands fall into several
+    groups is Wannierized once, split with Wannier.jl parallel transport,
+    re-Wannierized group by group and its products merged back together. An
+    automatic-projector block always splits this way, since its band groups
+    exist only at runtime.
 
     Current scope: ``spin = 'none'``.
     """
@@ -775,18 +877,16 @@ def _build_wannierize_split_workgraph(
     calc_params = koopmans_input.calculator_parameters
 
     threshold = workflow.block_wannierization_threshold
-    if threshold is None:
-        raise ValueError(
-            "The block-splitting Wannierize builder requires "
-            "`block_wannierization_threshold` to be set."
-        )
-    if workflow.spin != SpinType.NONE:
+    _validate_projection_sources(koopmans_input)
+    channels = _keywords_setting_projections(koopmans_input, channels_only=True)
+    if channels:
         raise NotImplementedError(
-            "block_wannierization_threshold currently supports spin='none' only "
-            "(the group detection and per-block split are single-channel)."
+            f"Explicit projections in {_and_list(channels)} are not wired into the block-by-block "
+            "wannierize route, which is single-channel: give them in "
+            "`calculator_parameters.w90.projections` instead."
         )
     projections = calc_params.wannier90.projections
-    if koopmans_input.kpoints.path is None:
+    if threshold is not None and koopmans_input.kpoints.path is None:
         raise ValueError(
             "block_wannierization_threshold needs a k-point path: the band-group "
             "detection reads the eigenvalues of a bands run along it."
@@ -801,7 +901,7 @@ def _build_wannierize_split_workgraph(
     if nelec % 2:
         raise NotImplementedError(
             f"Odd electron count ({nelec}) requires spin='collinear', which the "
-            "block-splitting flow does not support yet."
+            "occupied/empty boundary the blocks are built around does not support yet."
         )
     num_occ_bands = nelec // 2
 
@@ -809,19 +909,12 @@ def _build_wannierize_split_workgraph(
     nbnd = int(nbnd) if nbnd is not None else None
     external_kwargs: dict[str, Any] = {}
     if projections:
-        if calc_params.pw2wannier90.atom_proj_ext:
-            raise ValueError(
-                "Explicit projections in `calculator_parameters.w90.projections` and "
-                "`pw2wannier90.atom_proj_ext` were both given; the explicit projections "
-                "define every block, so the external projectors would be silently "
-                "ignored. Drop one of the two."
-            )
         if nbnd is None:
             nbnd = _num_wann_total(structure, projections)
         blocks = _create_explicit_blocks(
             structure, projections, nbnd, num_occ_bands, SpinChannel.NONE
         )
-    else:
+    elif workflow.auto_projections:
         external_projectors = None
         if calc_params.pw2wannier90.atom_proj_ext:
             external_projectors, projector_path = _load_external_projectors(
@@ -834,6 +927,8 @@ def _build_wannierize_split_workgraph(
         blocks, nbnd = _create_automatic_blocks(
             structure, pseudos, external_projectors, nbnd, num_occ_bands
         )
+    else:
+        raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
     # The scf needs only the occupied bands, so nbnd is dropped from its
     # override; the nscf — and the bands run seeded from its overrides —
@@ -865,6 +960,16 @@ def _build_wannierize_split_workgraph(
     kmesh = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
     mp_grid = [int(x) for x in kmesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
 
+    # Without a threshold the graph splits nothing, and WannierizeBlocks
+    # rejects the split-only inputs rather than ignore them.
+    split_kwargs: dict[str, Any] = {}
+    if threshold is not None:
+        split_kwargs = {
+            "bands_kpoints": kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure),
+            "num_occ_bands": num_occ_bands,
+            "split_threshold": float(threshold),
+        }
+
     return WannierizeBlocks.build(
         codes=codes,
         structure=structure,
@@ -872,9 +977,7 @@ def _build_wannierize_split_workgraph(
         kpoints=get_explicit_kpoints(kmesh),
         mp_grid=mp_grid,
         scf_kpoints=kmesh,
-        bands_kpoints=kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure),
-        num_occ_bands=num_occ_bands,
-        split_threshold=float(threshold),
+        **split_kwargs,
         pseudo_family=pseudo_family,
         overrides=wannier_overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,

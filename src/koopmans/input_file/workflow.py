@@ -140,6 +140,13 @@ class WorkflowConfig(BaseModel):
         default=None,
         description="blocks of bands separated by this threshold will be Wannierized separately",
     )
+    auto_projections: bool = Field(
+        default=False,
+        description="if True, derive the Wannier projections automatically from the "
+        "pseudopotentials' atomic orbitals (or, if `pw2wannier90.atom_proj_ext` is set, "
+        "from external projector files) instead of requiring explicit projections in "
+        "`calculator_parameters.w90.projections`",
+    )
     max_time: int | float | None = Field(
         default=None,
         description="maximum time in seconds to wait for the workflow to complete; if None, no timeout is applied",
@@ -147,9 +154,6 @@ class WorkflowConfig(BaseModel):
     wait_time: int | float = Field(
         default=5,
         description="time in seconds to wait between checking the status of in-progress calculations",
-    )
-    automated_wannierization: bool = Field(
-        default=False, description="if True, perform automated Wannierization"
     )
 
     @field_validator(

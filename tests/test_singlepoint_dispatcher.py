@@ -207,6 +207,26 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         with pytest.raises(NotImplementedError, match="not wired into the singlepoint route"):
             _build_singlepoint_workgraph(inp, codes={})
 
+    @pytest.mark.parametrize("task", ["singlepoint", "dft_bands", "trajectory", "dft_eps"])
+    def test_auto_projections_rejected_outside_wannierize(
+        self, ozone_input: KoopmansInput, task: str
+    ) -> None:
+        """``workflow.auto_projections`` is rejected before dispatch on every other task.
+
+        The internal Wannierizations of these routes require explicit
+        projections, so accepting the flag would silently drop it. The
+        guard runs before any codes are loaded.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        d = ozone_input.model_dump()
+        d["workflow"]["task"] = task
+        d["workflow"]["auto_projections"] = True
+        inp = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match=f"not wired into the {task} route"):
+            build_workgraph(inp)
+
 
 class TestExplicitOrbitalGroupsRejected:
     """An explicit ``orbital_groups`` list is not wired into the screening fan-out.

@@ -22,7 +22,10 @@ External pseudoatomic projectors
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Setting ``pw2wannier90.atom_proj_ext`` Wannierizes from external projectors instead of the
-pseudopotentials' own pseudoatomic orbitals. ``pw2wannier90.atom_proj_dir`` must point at a
+pseudopotentials' own pseudoatomic orbitals. It selects where the projector functions come from,
+not how the Wannierization is organized into blocks, so it must be accompanied by
+``workflow.auto_projections`` (which is what asks for the blocks to be derived automatically);
+setting it on its own is an input error. ``pw2wannier90.atom_proj_dir`` must point at a
 directory holding one ``<element>.dat`` file per element in pw2wannier90's radial-projector format:
 optional leading ``#`` comment lines, a ``<ngrid> <nproj>`` header, then the projectors' angular
 momenta as Fortran list-directed input (values separated by blanks or commas, possibly spanning
