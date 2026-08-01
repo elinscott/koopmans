@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
 from aiida import orm
-from aiida_koopmans.types import MLDescriptor, MLMode, SpinChannel, block_occupancy
+from aiida_koopmans.types import (
+    MLDescriptor,
+    MLMode,
+    SpinChannel,
+    block_include_bands,
+    block_occupancy,
+)
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
 
@@ -491,9 +497,8 @@ def _create_explicit_blocks(
     downstream is a partition of the orbitals, and a partition missing a
     block accounts for nobody.
 
-    ``include_bands`` names exactly the block's own ``num_wann`` Wannier
-    bands, never a band the block merely reads; a block carrying a pool
-    stops excluding the bands above it, which it does read.
+    A block carrying a pool stops excluding the bands above it, which it
+    does read; its own Wannier bands stay the lowest ``num_wann`` of them.
     """
     from aiida_koopmans.projections import band_range_complement, projection_win_string
     from aiida_koopmans.types import ExplicitProjectionBlock
@@ -535,7 +540,6 @@ def _create_explicit_blocks(
                 spin=spin_channel,
                 num_wann=band_range.num_wann,
                 num_bands=band_range.num_bands,
-                include_bands=list(range(band_range.start, band_range.end + 1)),
                 exclude_bands=exclude,
                 projection_type=WannierProjectionType.ANALYTIC,
                 projections=[projection_win_string(p) for p in block],
@@ -654,7 +658,6 @@ def _create_automatic_blocks(
         spin=SpinChannel.NONE,
         num_wann=num_wann,
         num_bands=num_wann,
-        include_bands=list(range(1, num_wann + 1)),
         exclude_bands=None,
         projection_type=projection_type,
     )
@@ -1075,7 +1078,8 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
         try:
             block_occupancy(block)
         except ValueError as exc:
-            start, end = block["include_bands"][0], block["include_bands"][-1]
+            include_bands = block_include_bands(block)
+            start, end = include_bands[0], include_bands[-1]
             raise ValueError(
                 f"The projection block '{block['label']}' (bands {start}-{end}) straddles "
                 f"the occupied/empty boundary at band {nocc}: its own bands cross it, or "
@@ -1101,7 +1105,7 @@ def _validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc
     functions sitting in occupied band slots answers the coverage
     question.
     """
-    covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][-1] <= nocc)
+    covered_occ = sum(b["num_wann"] for b in blocks if block_include_bands(b)[-1] <= nocc)
     if covered_occ != nocc:
         raise ValueError(
             f"The occupied projection blocks span {covered_occ} Wannier functions but "
