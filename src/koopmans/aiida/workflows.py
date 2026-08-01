@@ -48,6 +48,18 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
+#: Raised wherever a Wannierization is asked for and nothing says what to
+#: Wannierize. Both routes that need projections reach this state, so both
+#: say the same thing.
+_NO_PROJECTIONS_PROVIDED_MESSAGE = (
+    "Nothing defines the Wannier projections. Either (a) set "
+    "`workflow.auto_projections` to `True` to derive them from the "
+    "pseudopotentials, or from external projector files by also pointing "
+    "`pw2wannier90.atom_proj_ext` at them; or (b) provide explicit projections "
+    "in `calculator_parameters.w90.projections`."
+)
+
+
 def _load_code(name: str, executable: str) -> orm.AbstractCode:
     """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
     try:
@@ -373,12 +385,7 @@ def _build_wannierize_workgraph(
     if _keywords_setting_projections(koopmans_input):
         return _build_wannierize_blocks_workgraph(koopmans_input, codes)
     if not koopmans_input.workflow.auto_projections:
-        raise ValueError(
-            "Nothing defines the Wannier projections: set `workflow.auto_projections` "
-            "to derive them from the pseudopotentials — or, alongside it, point "
-            "`pw2wannier90.atom_proj_ext` at external projector files — or provide "
-            "explicit projections in `calculator_parameters.w90.projections`."
-        )
+        raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
     structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
@@ -921,12 +928,7 @@ def _build_wannierize_blocks_workgraph(
             structure, pseudos, external_projectors, nbnd, num_occ_bands
         )
     else:
-        raise ValueError(
-            "Nothing defines the Wannier projections: provide explicit projections in "
-            "`calculator_parameters.w90.projections`, or set `workflow.auto_projections` "
-            "to derive them from the pseudopotentials — or, alongside it, point "
-            "`pw2wannier90.atom_proj_ext` at external projector files."
-        )
+        raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
     # The scf needs only the occupied bands, so nbnd is dropped from its
     # override; the nscf — and the bands run seeded from its overrides —
