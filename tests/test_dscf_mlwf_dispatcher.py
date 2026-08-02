@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from aiida_koopmans.types import get_included_bands
+from aiida_koopmans.types import get_wannier_indices
 
 from koopmans.aiida.workflows import (
     _build_singlepoint_workgraph,
@@ -196,16 +196,15 @@ class TestDscfBlocks:
         assert occ["exclude_bands"] == [5, 6, 7, 8]
         assert emp["num_wann"] == 4
         assert emp["num_bands"] == 4
-        assert get_included_bands(emp) == [5, 6, 7, 8]
+        assert get_wannier_indices(emp) == [5, 6, 7, 8]
         assert emp["exclude_bands"] == [1, 2, 3, 4]
 
     def test_leftover_nscf_bands_become_the_pool(self, si_structure: Any) -> None:
         """Absorb nscf headroom above the blocks into the uppermost block's pool.
 
         The pool widens only ``num_bands`` and drops the upper exclusion —
-        the derived included bands still name the four Wannier bands, since
-        they are the band-to-Wannier-function map every downstream
-        consumer reads.
+        the derived Wannier positions still name the block's four
+        functions, since they are the map every downstream consumer reads.
         """
         from aiida_koopmans.types import SpinChannel
 
@@ -215,7 +214,7 @@ class TestDscfBlocks:
         assert occ["exclude_bands"] == list(range(5, 21))
         assert emp["num_wann"] == 4
         assert emp["num_bands"] == 16  # 4 Wannier bands + 12 pool bands
-        assert get_included_bands(emp) == [5, 6, 7, 8]
+        assert get_wannier_indices(emp) == [5, 6, 7, 8]
         assert emp["exclude_bands"] == [1, 2, 3, 4]
 
     def test_pool_block_preserves_the_wann2kcp_band_identity(self, si_structure: Any) -> None:
@@ -239,9 +238,9 @@ class TestDscfBlocks:
         sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
         blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "emp_1"]
-        assert get_included_bands(blocks[0]) == [1, 2, 3, 4]
+        assert get_wannier_indices(blocks[0]) == [1, 2, 3, 4]
         assert blocks[0]["exclude_bands"] == [5, 6, 7, 8]
-        assert get_included_bands(blocks[1]) == [5, 6, 7, 8]
+        assert get_wannier_indices(blocks[1]) == [5, 6, 7, 8]
         assert blocks[1]["exclude_bands"] == [1, 2, 3, 4]
 
     def test_middle_block_gets_two_sided_exclusion(self, si_structure: Any) -> None:
@@ -292,10 +291,11 @@ class TestDscfBlocks:
             _dscf_blocks(si_structure, [sp], 4, 8, SpinChannel.NONE)
 
     def test_boundary_check_alone_rejects_a_pool_that_crosses(self, si_structure: Any) -> None:
-        """The boundary check rejects a pool crossing it, reading no included bands.
+        """The boundary check rejects a pool crossing it, reading no positions.
 
         This block's own bands are the four occupied ones — a check that
-        compares those against the boundary sees nothing wrong with it,
+        compares its Wannier positions against the boundary sees nothing
+        wrong with it,
         and only its disentanglement pool reaches into the empty manifold.
         Asking the plugin whether the block is occupied is what catches it,
         so run that check on its own: paired with the coverage check it
@@ -312,7 +312,7 @@ class TestDscfBlocks:
         # derivation reads (``.site`` / ``.ang_mtm``), which is all it touches.
         sp = cast("list[Projection]", [self._FakeProjection("Si", -1)])  # 4 = nocc
         blocks = _create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
-        assert get_included_bands(blocks[0]) == [1, 2, 3, 4]  # entirely occupied bands
+        assert get_wannier_indices(blocks[0]) == [1, 2, 3, 4]  # entirely occupied
         with pytest.raises(ValueError, match="disentanglement pool"):
             _validate_blocks_separate_occ_and_emp(blocks, 4)
 

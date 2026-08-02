@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from aiida_koopmans.types import get_included_bands
+from aiida_koopmans.types import get_wannier_indices
 
 from koopmans.aiida.workflows import (
     _build_wannierize_blocks_workgraph,
@@ -140,7 +140,7 @@ class TestBlockDerivation:
         assert len(blocks) == 1
         assert blocks[0]["num_wann"] == 8
         assert blocks[0]["num_bands"] == 8
-        assert get_included_bands(blocks[0]) == list(range(1, 9))
+        assert get_wannier_indices(blocks[0]) == list(range(1, 9))
         assert blocks[0].get("exclude_bands") is None
         assert "filled" not in blocks[0]
 
@@ -169,10 +169,10 @@ class TestBlockDerivation:
     def test_a_pool_crossing_the_boundary_is_provisional(self, silicon_structure: Any) -> None:
         """An occupied block that disentangles against empty bands is unstamped.
 
-        The two bands it occupies are occupied bands, but wannier90
-        optimizes its Wannier functions out of all ten bands it reads, so
-        they are not the occupied manifold's and the two bands cannot say
-        otherwise.
+        The two Wannier positions it takes are occupied ones, but
+        wannier90 optimizes its Wannier functions out of all ten bands it
+        reads, so they are not the occupied manifold's and the positions
+        cannot say otherwise.
         """
         blocks = self._blocks(silicon_structure, self._s_block() * 2, nbnd=12)
         assert blocks[-1]["num_bands"] > blocks[-1]["num_wann"]
@@ -182,15 +182,15 @@ class TestBlockDerivation:
         """An nbnd beyond the Wannier count becomes the disentanglement pool.
 
         The pool shows up as ``num_bands`` and the absent upper exclusion,
-        and the bands derived from those two keep naming exactly the
-        eight Wannier bands, so the runtime group detection and the
+        and the positions derived from those two keep naming exactly the
+        eight Wannier functions, so the runtime group detection and the
         band-to-Wannier map stay addressed to the manifold rather than the
         pool.
         """
         blocks = self._blocks(silicon_structure, self._sp3_block(), nbnd=12)
         assert blocks[0]["num_wann"] == 8
         assert blocks[0]["num_bands"] == 12
-        assert get_included_bands(blocks[0]) == list(range(1, 9))
+        assert get_wannier_indices(blocks[0]) == list(range(1, 9))
         assert blocks[0].get("exclude_bands") is None
 
     def test_too_few_bands_raises(self, silicon_structure: Any) -> None:
@@ -332,7 +332,7 @@ class TestAutomaticProjections:
     ) -> None:
         """The single derived block is pool-free and covers every projector band.
 
-        The bands it occupies must run over exactly ``1..num_wann`` — a
+        Its Wannier positions must run over exactly ``1..num_wann`` — a
         shorter list would silently drop Wannier functions from the runtime
         split — and ``num_bands == num_wann`` is the no-pool invariant
         behind the nbnd guards. The block states no occupancy: it spans the
@@ -349,7 +349,7 @@ class TestAutomaticProjections:
         [block] = blocks
         assert block["num_wann"] == 8
         assert block["num_bands"] == 8
-        assert get_included_bands(block) == list(range(1, 9))
+        assert get_wannier_indices(block) == list(range(1, 9))
         assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_QE
         assert block.get("exclude_bands") is None
         assert "filled" not in block
@@ -551,7 +551,7 @@ class TestExternalProjectors:
         [block] = blocks
         assert block["num_wann"] == 8
         assert block["num_bands"] == 8
-        assert get_included_bands(block) == list(range(1, 9))
+        assert get_wannier_indices(block) == list(range(1, 9))
         assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
         assert block.get("exclude_bands") is None
         assert "filled" not in block
@@ -761,8 +761,8 @@ class TestPlainRoute:
             for name in ("wannierize_occ_1", "wannierize_block_2")
         ]
         assert [b["num_wann"] for b in blocks] == [2, 6]
-        assert get_included_bands(blocks[0]) == [1, 2]
-        assert get_included_bands(blocks[1]) == list(range(3, 9))
+        assert get_wannier_indices(blocks[0]) == [1, 2]
+        assert get_wannier_indices(blocks[1]) == list(range(3, 9))
 
     def test_spin_channel_projections_not_wired(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
