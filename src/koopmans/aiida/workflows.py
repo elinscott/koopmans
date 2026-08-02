@@ -17,8 +17,8 @@ from aiida_koopmans.types import (
     MLDescriptor,
     MLMode,
     SpinChannel,
-    block_include_bands,
     block_occupancy,
+    get_included_bands,
 )
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
@@ -487,10 +487,10 @@ def _create_explicit_blocks(
     finalize it, and a route that cannot must reject it
     (:func:`_validate_blocks_separate_occ_and_emp`).
 
-    The pool belongs to the read window, not to the slots, so an occupied
-    block that disentangles against empty bands is provisional too: its
-    Wannier functions are optimized out of those bands and are not the
-    occupied manifold's.
+    The pool belongs to the read window, not to the bands the block's
+    Wannier functions occupy, so an occupied block that disentangles
+    against empty bands is provisional too: its Wannier functions are
+    optimized out of those bands and are not the occupied manifold's.
 
     One provisional block makes the whole set provisional, so the stamps
     go on all together or not at all: what a set of occupancies buys
@@ -1060,9 +1060,10 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
     spanning is the plugin's rule and is asked of the plugin
     (``block_occupancy``): a block reads both manifolds either through its
     own bands or through a disentanglement pool that reaches across the
-    boundary, and neither is visible in the band slots alone. The plugin
-    asks the same question again when it receives the blocks; this is the
-    build-time answer, so the user hears it before anything is submitted.
+    boundary, and neither is visible in the bands it occupies alone. The
+    plugin asks the same question again when it receives the blocks; this
+    is the build-time answer, so the user hears it before anything is
+    submitted.
 
     A route that derives its blocks from user projections alone has no
     block to check when there are none, so the absence of projections is
@@ -1078,7 +1079,7 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
         try:
             block_occupancy(block)
         except ValueError as exc:
-            include_bands = block_include_bands(block)
+            include_bands = get_included_bands(block)
             start, end = include_bands[0], include_bands[-1]
             raise ValueError(
                 f"The projection block '{block['label']}' (bands {start}-{end}) straddles "
@@ -1102,10 +1103,9 @@ def _validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc
     Runs after :func:`_validate_blocks_separate_occ_and_emp`, whose rule
     this one assumes: with every block on one side of the boundary, a
     block's own bands place it in a manifold, so counting the Wannier
-    functions sitting in occupied band slots answers the coverage
-    question.
+    functions sitting in occupied bands answers the coverage question.
     """
-    covered_occ = sum(b["num_wann"] for b in blocks if block_include_bands(b)[-1] <= nocc)
+    covered_occ = sum(b["num_wann"] for b in blocks if get_included_bands(b)[-1] <= nocc)
     if covered_occ != nocc:
         raise ValueError(
             f"The occupied projection blocks span {covered_occ} Wannier functions but "
