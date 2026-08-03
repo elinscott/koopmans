@@ -16,9 +16,11 @@ can be read in any order.
 
     water
     ozone
+    magnetic_molecules
     silicon_supercell
     silicon_dfpt
     zno
+    magnetic_solids
     machine_learning
     spin_orbit
     dielectric

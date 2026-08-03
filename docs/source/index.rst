@@ -35,6 +35,9 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
       - :doc:`Ozone <tutorials/ozone>` — ionization potential and electron affinity
       - :doc:`Silicon from a supercell <tutorials/silicon_supercell>`, :doc:`silicon
         from linear response <tutorials/silicon_dfpt>`, :doc:`ZnO <tutorials/zno>`
+    - - Magnetic systems
+      - :doc:`The oxygen molecule <tutorials/magnetic_molecules>`
+      - :doc:`A ferromagnetic solid <tutorials/magnetic_solids>`
     - - Spin-orbit coupled band structures
       - —
       - :doc:`Silicon with spin-orbit coupling <tutorials/spin_orbit>`
