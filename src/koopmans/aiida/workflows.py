@@ -208,6 +208,13 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "automatic projections are currently supported by the `wannierize` task only."
         )
 
+    ml_config = koopmans_input.ml
+    if (ml_config.train or ml_config.test or ml_config.predict) and task != Task.TRAJECTORY:
+        raise NotImplementedError(
+            f"`ml` is wired into the trajectory task only, not {task.value!r}; legacy "
+            "permitted singlepoint prediction — not yet ported."
+        )
+
     # Load required codes
     codes = load_codes_for_task(koopmans_input.workflow)
 

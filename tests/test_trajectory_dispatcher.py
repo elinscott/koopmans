@@ -447,6 +447,8 @@ class TestPredictMode:
                 "labels": ["orb_1", "orb_2", "orb_3"],
             },
             "linear_regression",
+            correction="ki",
+            init_orbitals="kohn-sham",
         )
         path = tmp_path / "model.json"
         path.write_text(json.dumps(model))
@@ -541,3 +543,23 @@ class TestPredictMode:
 
         with pytest.raises(ValueError, match="alpha_numsteps cannot take effect"):
             _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+
+    def test_non_trajectory_task_rejects_ml_block(
+        self,
+        tmp_path: Path,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """A singlepoint carrying an ``ml`` block fails at dispatch.
+
+        Without the guard the full ab-initio graph is built and the model
+        silently never consulted (legacy permitted singlepoint
+        prediction; that route is not ported).
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _trajectory_input_dict(str(xyz), task="singlepoint")
+        d["ml"] = {"predict": True, "model_file": "model.json", "descriptor": "self_hartree"}
+
+        with pytest.raises(NotImplementedError, match="trajectory task only"):
+            build_workgraph(KoopmansInput.model_validate(d))
