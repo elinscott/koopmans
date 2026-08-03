@@ -13,7 +13,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
 from aiida import orm
-from aiida_koopmans.types import MLDescriptor, MLMode, SpinChannel, block_occupancy
+from aiida_koopmans.types import (
+    MLDescriptor,
+    MLMode,
+    SpinChannel,
+    block_occupancy,
+    get_wannier_indices,
+    validate_projection_block_sequence,
+)
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
 
@@ -418,8 +425,8 @@ class _BandRange(NamedTuple):
 
     ``start`` and ``end`` are 1-based and inclusive, and span the block's
     own ``num_wann`` Wannier bands. ``num_bands`` counts the bands
-    wannier90 reads, exceeding ``num_wann`` only for a block carrying a
-    disentanglement pool.
+    wannier90 reads, exceeding ``num_wann`` only for a block that requires
+    disentanglement.
     """
 
     start: int
@@ -437,11 +444,12 @@ def _assign_band_ranges(
 
     Each block takes the ``num_wann`` bands above the one before it, so the
     blocks tile the manifold from band 1 upwards in the order given. The
-    bands left above the last block become its disentanglement pool:
-    ``num_bands`` grows to cover them while the range still spans only the
-    block's own Wannier bands. Whether that pool exists at all is decided
-    by the user's ``num_wann`` against ``nbnd``; the ``dis_*`` keywords
-    refine the window wannier90 disentangles over, they never create it.
+    bands left above the last block become its extra disentanglement
+    bands: ``num_bands`` grows to cover them while the range still spans
+    only the block's own Wannier bands. Whether those extras exist at all
+    is decided by the user's ``num_wann`` against ``nbnd``; the ``dis_*``
+    keywords refine the window wannier90 disentangles over, they never
+    create it.
     """
     from aiida_koopmans.projections import projection_num_wann
 
@@ -473,27 +481,28 @@ def _create_explicit_blocks(
 
     Every wannierization block a Koopmans calculation consumes lies wholly
     inside the occupied or the empty manifold. A block whose read window —
-    its own bands together with any disentanglement pool — stays on one
+    its own bands together with any extra disentanglement bands — stays on one
     side of ``num_occ_bands`` therefore has its occupancy settled here: it
     is stamped ``filled`` and named after its manifold. A block spanning
     the boundary is provisional instead, left unstamped and named by
-    position; only a route that cuts blocks at the boundary at runtime can
+    list position; only a route that cuts blocks at the boundary at runtime can
     finalize it, and a route that cannot must reject it
     (:func:`_validate_blocks_separate_occ_and_emp`).
 
-    The pool belongs to the read window, not to the slots, so an occupied
-    block that disentangles against empty bands is provisional too: its
-    Wannier functions are optimized out of those bands and are not the
-    occupied manifold's.
+    The extra disentanglement bands belong to the read window, not to the
+    Wannier-function indices the block takes, so an occupied block that
+    disentangles against empty bands is provisional too: its Wannier
+    functions are optimized out of those bands and are not the occupied
+    manifold's.
 
     One provisional block makes the whole set provisional, so the stamps
     go on all together or not at all: what a set of occupancies buys
     downstream is a partition of the orbitals, and a partition missing a
     block accounts for nobody.
 
-    ``include_bands`` names exactly the block's own ``num_wann`` Wannier
-    bands, never a band the block merely reads; a block carrying a pool
-    stops excluding the bands above it, which it does read.
+    A block that requires disentanglement stops excluding the bands above
+    it, which it does read; its own Wannier bands stay the lowest
+    ``num_wann`` of them.
     """
     from aiida_koopmans.projections import band_range_complement, projection_win_string
     from aiida_koopmans.types import ExplicitProjectionBlock
@@ -507,8 +516,9 @@ def _create_explicit_blocks(
 
     for index, (band_range, block) in enumerate(zip(ranges, projection_blocks, strict=True)):
         disentangle = band_range.num_bands > band_range.num_wann
-        # The pool always reaches nbnd, so it is where the block's read
-        # window ends; without one the window ends at the block's own bands.
+        # The extra disentanglement bands always reach nbnd, so they are
+        # where the block's read window ends; without them the window ends
+        # at the block's own bands.
         window_end = nbnd if disentangle else band_range.end
         if window_end <= num_occ_bands:
             filling = "occ"
@@ -535,7 +545,6 @@ def _create_explicit_blocks(
                 spin=spin_channel,
                 num_wann=band_range.num_wann,
                 num_bands=band_range.num_bands,
-                include_bands=list(range(band_range.start, band_range.end + 1)),
                 exclude_bands=exclude,
                 projection_type=WannierProjectionType.ANALYTIC,
                 projections=[projection_win_string(p) for p in block],
@@ -585,7 +594,7 @@ def _create_automatic_blocks(
     member, and from the pseudopotentials otherwise (``atom_proj``).
     Returns the single-block list and the band count the nscf must cover.
 
-    The block carries no disentanglement pool: the detected groups cover
+    The block requires no disentanglement: the detected groups cover
     only the Wannierized manifold, so a block with bands above it cannot be
     split. It carries no ``filled`` stamp either — it is the provisional
     block par excellence, existing only to be cut into the groups the
@@ -654,7 +663,6 @@ def _create_automatic_blocks(
         spin=SpinChannel.NONE,
         num_wann=num_wann,
         num_bands=num_wann,
-        include_bands=list(range(1, num_wann + 1)),
         exclude_bands=None,
         projection_type=projection_type,
     )
@@ -1056,10 +1064,11 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
     state, and the orbitals it produces answer to neither. What counts as
     spanning is the plugin's rule and is asked of the plugin
     (``block_occupancy``): a block reads both manifolds either through its
-    own bands or through a disentanglement pool that reaches across the
-    boundary, and neither is visible in the band slots alone. The plugin
-    asks the same question again when it receives the blocks; this is the
-    build-time answer, so the user hears it before anything is submitted.
+    own bands or through extra disentanglement bands that reach across the
+    boundary, and neither is visible in its Wannier-function indices alone. The
+    plugin asks the same question again when it receives the blocks; this
+    is the build-time answer, so the user hears it before anything is
+    submitted.
 
     A route that derives its blocks from user projections alone has no
     block to check when there are none, so the absence of projections is
@@ -1075,11 +1084,12 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
         try:
             block_occupancy(block)
         except ValueError as exc:
-            start, end = block["include_bands"][0], block["include_bands"][-1]
+            wannier_indices = get_wannier_indices(block)
+            start, end = wannier_indices[0], wannier_indices[-1]
             raise ValueError(
                 f"The projection block '{block['label']}' (bands {start}-{end}) straddles "
                 f"the occupied/empty boundary at band {nocc}: its own bands cross it, or "
-                "the disentanglement pool it reads does. Its Wannier functions seed either "
+                "the extra bands it reads for disentanglement do. Its Wannier functions seed "
                 "the occupied or the empty manifold of the supercell kcp.x run, so they "
                 "must come from one of them. Split "
                 "``calculator_parameters.w90.projections`` at the boundary, add "
@@ -1095,13 +1105,14 @@ def _validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc
     of the supercell kcp.x run, so the occupied blocks must span every
     occupied band.
 
-    Runs after :func:`_validate_blocks_separate_occ_and_emp`, whose rule
-    this one assumes: with every block on one side of the boundary, a
-    block's own bands place it in a manifold, so counting the Wannier
-    functions sitting in occupied band slots answers the coverage
-    question.
+    Runs after ``validate_projection_block_sequence`` and
+    :func:`_validate_blocks_separate_occ_and_emp`, whose rules this one
+    assumes: the sequence rules make a block's Wannier indices band
+    indices, and with every block on one side of the boundary a block's
+    own bands place it in a manifold, so counting the Wannier functions
+    sitting in occupied bands ensures every occupied band is covered.
     """
-    covered_occ = sum(b["num_wann"] for b in blocks if b["include_bands"][-1] <= nocc)
+    covered_occ = sum(b["num_wann"] for b in blocks if get_wannier_indices(b)[-1] <= nocc)
     if covered_occ != nocc:
         raise ValueError(
             f"The occupied projection blocks span {covered_occ} Wannier functions but "
@@ -1181,11 +1192,13 @@ def _dscf_wannier_init_inputs(
         up_blocks = _create_explicit_blocks(
             structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
         )
+        validate_projection_block_sequence(up_blocks)
         _validate_blocks_separate_occ_and_emp(up_blocks, nocc_up)
         _validate_blocks_cover_all_occ_bands(up_blocks, nocc_up)
         down_blocks = _create_explicit_blocks(
             structure, w90.down.projections, nscf_nbnd, nocc_down, SpinChannel.DOWN
         )
+        validate_projection_block_sequence(down_blocks)
         _validate_blocks_separate_occ_and_emp(down_blocks, nocc_down)
         _validate_blocks_cover_all_occ_bands(down_blocks, nocc_down)
         blocks = up_blocks + down_blocks
@@ -1199,6 +1212,7 @@ def _dscf_wannier_init_inputs(
         blocks = _create_explicit_blocks(
             structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
         )
+        validate_projection_block_sequence(blocks)
         _validate_blocks_separate_occ_and_emp(blocks, nocc)
         _validate_blocks_cover_all_occ_bands(blocks, nocc)
 
