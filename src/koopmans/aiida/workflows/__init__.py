@@ -201,12 +201,19 @@ def _model_mismatch_advice(exc: ModelMismatchError) -> str:
 
 
 def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str]], ...]:
-    """Return the advice table for the plugin's typed errors, most specific first.
+    """Return the advice table for the plugin's typed errors.
 
     One advice per class — the plugin defines each class for exactly one
     piece of advice — and the class's structured attribute (block label,
     code name, model stamp) sharpens the sentence when the raise site
     filled it in.
+
+    Advice attaches where ``build_workgraph`` catches: the build boundary.
+    ``FrozenWindowError`` and ``ModelMismatchError`` currently raise
+    daemon-side only (their validators need runtime data — nscf
+    eigenvalues, trial-KI descriptors), so their entries provision for
+    validators that reach the build path rather than translate anything
+    today.
 
     The classes are imported here, not at module level: importing
     ``aiida_koopmans.workgraphs.block_wannierize`` loads the AiiDA

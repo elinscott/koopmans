@@ -143,8 +143,10 @@ class TestDispatchTranslation:
         """A frozen-window rejection points at the `dis_froz_*` keywords.
 
         The window check reads nscf eigenvalues, which exist only at
-        runtime; the plugin's validator is invoked at the route's plugin
-        entry with synthetic bands so its real raise site fires at build.
+        runtime — in production it raises daemon-side, past the build
+        boundary, so this entry translates nothing today. The validator is
+        invoked at the route's plugin entry with synthetic bands so its
+        real raise site fires at build, pinning the entry it provisions.
         """
         import aiida_koopmans.workgraphs.block_wannierize as bw_module
         from aiida.orm import BandsData
@@ -182,9 +184,11 @@ class TestDispatchTranslation:
         """A model-stamp rejection points at `ml.model_file`.
 
         The stamp check runs inside the prediction task, which needs the
-        trial KI's descriptors; its raw callable is invoked at the route's
-        plugin entry with a mismatched model so its real raise site fires
-        at build.
+        trial KI's descriptors — in production it raises daemon-side, past
+        the build boundary, so this entry translates nothing today. Its raw
+        callable is invoked at the route's plugin entry with a mismatched
+        model so its real raise site fires at build, pinning the entry it
+        provisions.
         """
         import aiida_koopmans.workgraphs.ml as ml_module
         from aiida_koopmans.ml import ModelMismatchError
