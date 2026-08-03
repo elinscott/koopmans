@@ -20,7 +20,7 @@ eV — and can write the same per-step directory layout as ``koopmans run``:
 
 .. code:: python
 
-   from koopmans import Results, read_input_file, run
+   from koopmans import read_input_file, run
 
    results = run(read_input_file("ozone.json"))
 

@@ -21,6 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def test_imports_without_aiida_configuration(tmp_path: Path) -> None:
     """Run the probe in a subprocess whose ``AIIDA_PATH`` is an empty directory.
 

@@ -118,6 +118,7 @@ def _finished_dscf_node(
     *,
     exit_status: int = 0,
     with_outputs: bool = True,
+    with_calcjob: bool = False,
     sealed: bool = True,
 ) -> Any:
     """Build a node shaped like a finished ``KoopmansDSCFWorkflow`` one.
@@ -159,6 +160,14 @@ def _finished_dscf_node(
         for label, data in outputs.items():
             data.store()
             data.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=label)
+    if with_calcjob:
+        calc = orm.CalcJobNode()
+        calc.set_process_state(ProcessState.FINISHED)
+        calc.set_exit_status(0)
+        calc.base.repository.put_object_from_bytes(b"output data\n", "aiida.cpo")
+        calc.base.links.add_incoming(node, link_type=LinkType.CALL_CALC, link_label="ki_final")
+        calc.store()
+        calc.seal()
     if sealed:
         node.seal()
     return node
@@ -181,6 +190,14 @@ class TestResults:
             "filled": {"none": [0.66, 0.73]},
             "empty": {"none": [0.72]},
         }
+
+    def test_dump_writes_the_per_step_layout(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """``dump`` writes one folder per calculation step and returns the path."""
+        results = Results(_finished_dscf_node(with_calcjob=True))
+        out = results.dump(tmp_path / "ozone")
+        assert out == tmp_path / "ozone"
+        step_dirs = [p.name for p in out.rglob("*") if p.is_dir()]
+        assert any("ki_final" in name for name in step_dirs), step_dirs
 
     def test_from_pk_reconnects(self, aiida_profile: Any) -> None:
         """The integer id round-trips to a working accessor."""
@@ -219,3 +236,25 @@ class TestInputConstructibleInPython:
         with open(tutorials_dir / "ozone.json") as handle:
             raw = load(handle)
         assert KoopmansInput.model_validate(raw) == read_input_file(tutorials_dir / "ozone.json")
+
+
+def test_launch_verbs_only_in_the_funnel() -> None:
+    """No source module outside the funnel calls the workgraph launch verbs.
+
+    A naming-convention tripwire (workgraph variables are ``wg`` /
+    ``workgraph`` throughout the package): it is what catches a stray
+    ``wg.submit()`` reappearing outside ``_launch``, where the upstream
+    launch-inversion migration would then miss it.
+    """
+    import re
+
+    import koopmans
+
+    root = Path(koopmans.__file__).parent
+    offenders = [
+        str(path)
+        for path in root.rglob("*.py")
+        if path.name != "api.py"
+        and re.search(r"\b(?:wg|workgraph)\.(?:submit|run)\(", path.read_text())
+    ]
+    assert not offenders, offenders
