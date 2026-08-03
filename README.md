@@ -29,11 +29,10 @@ Koopmans spectral functional calculations with
 
 Koopmans functionals give you orbital energies that can be compared against a
 photoemission spectrum — ionization potentials, electron affinities and band
-structures — at a cost close to that of density-functional theory. Obtaining
-them takes a chain of calculations: a ground state, a set of localized
-variational orbitals, a screening parameter for each of them, and a final band
-structure. `koopmans` takes an input file describing your system and runs that
-chain for you.
+structures. Obtaining them takes a chain of calculations: a ground state, a set
+of localized variational orbitals, a screening parameter for each of them, and a
+final band structure. `koopmans` takes an input file describing your system and
+runs that chain for you.
 
 This package is the successor to the original,
 [ASE](https://wiki.fysik.dtu.dk/ase/)-based
@@ -43,7 +42,7 @@ that the calculations are run and recorded by [AiiDA](https://www.aiida.net/),
 so a workflow that stops halfway can be picked up where it left off, and every
 number keeps a record of the calculation that produced it.
 
-## Thirty seconds
+## Quick start
 
 Write an input file describing the system and what to do with it. This one asks
 for the KI ionization potential and electron affinity of an ozone molecule:
