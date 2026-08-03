@@ -13,14 +13,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
 from aiida import orm
-from aiida_koopmans.types import (
-    MLDescriptor,
-    MLMode,
-    SpinChannel,
+from aiida_koopmans.ml_helpers import MLDescriptor, MLMode
+from aiida_koopmans.projections import (
     block_occupancy,
     get_wannier_indices,
     validate_projection_block_sequence,
 )
+from aiida_koopmans.spin import SpinChannel
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
 
@@ -41,7 +40,7 @@ from koopmans.input_file.workflow import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from aiida_koopmans.types import (
+    from aiida_koopmans.projections import (
         AutomaticProjectionBlock,
         ExplicitProjectionBlock,
         ProjectionBlock,
@@ -511,8 +510,11 @@ def _create_explicit_blocks(
     it, which it does read; its own Wannier bands stay the lowest
     ``num_wann`` of them.
     """
-    from aiida_koopmans.projections import band_range_complement, projection_win_string
-    from aiida_koopmans.types import ExplicitProjectionBlock
+    from aiida_koopmans.projections import (
+        ExplicitProjectionBlock,
+        band_range_complement,
+        projection_win_string,
+    )
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
     ranges = _assign_band_ranges(structure, projection_blocks, nbnd)
@@ -607,7 +609,8 @@ def _create_automatic_blocks(
     block par excellence, existing only to be cut into the groups the
     runtime detection finds.
     """
-    from aiida_koopmans.types import AutomaticProjectionBlock, SpinChannel
+    from aiida_koopmans.projections import AutomaticProjectionBlock
+    from aiida_koopmans.spin import SpinChannel
     from aiida_wannier90_workflows.common.types import WannierProjectionType
     from aiida_wannier90_workflows.utils.pseudo import (
         get_number_of_projections,
@@ -1445,12 +1448,9 @@ def _single_channel_dfpt_manifolds(
     differs only in the manifold derivation (all bands singly occupied,
     ``num_wann`` doubled).
     """
-    from aiida_koopmans.types import ProjectionBlock, SpinChannel
-    from aiida_koopmans.workgraphs.dfpt import (
-        ManifoldBlocks,
-        derive_dfpt_manifolds,
-        normalize_alpha_guess,
-    )
+    from aiida_koopmans.projections import ProjectionBlock, derive_dfpt_manifolds
+    from aiida_koopmans.spin import SpinChannel
+    from aiida_koopmans.workgraphs.dfpt import ManifoldBlocks, normalize_alpha_guess
 
     workflow = koopmans_input.workflow
     spin_channel = SpinChannel.NONE if spin == SpinType.NONE else SpinChannel.SPINOR
@@ -1488,12 +1488,9 @@ def _collinear_dfpt_manifolds(
     place): the PW runs must see the physical magnetization —
     ``SinglepointDFPTWorkflow`` only forces ``nspin=2`` in this regime.
     """
-    from aiida_koopmans.types import ProjectionBlock, SpinChannel
-    from aiida_koopmans.workgraphs.dfpt import (
-        ManifoldBlocks,
-        derive_dfpt_manifolds,
-        normalize_alpha_guess,
-    )
+    from aiida_koopmans.projections import ProjectionBlock, derive_dfpt_manifolds
+    from aiida_koopmans.spin import SpinChannel
+    from aiida_koopmans.workgraphs.dfpt import ManifoldBlocks, normalize_alpha_guess
 
     workflow = koopmans_input.workflow
     w90 = koopmans_input.calculator_parameters.wannier90

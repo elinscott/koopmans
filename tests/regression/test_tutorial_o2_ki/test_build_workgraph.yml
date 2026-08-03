@@ -623,10 +623,10 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             extras:
-              py_type: aiida_koopmans.types.Correction
+              py_type: aiida_koopmans.functionals.Correction
               structured_type:
                 kind: enum
-                path: aiida_koopmans.types.Correction
+                path: aiida_koopmans.functionals.Correction
             required: true
         ecutrho:
           dynamic: false
@@ -673,10 +673,10 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             extras:
-              py_type: aiida_koopmans.types.VariationalOrbitalType
+              py_type: aiida_koopmans.workgraphs.variational_orbitals.VariationalOrbitalType
               structured_type:
                 kind: enum
-                path: aiida_koopmans.types.VariationalOrbitalType
+                path: aiida_koopmans.workgraphs.variational_orbitals.VariationalOrbitalType
             required: true
         initial_alpha:
           dynamic: false
@@ -1761,10 +1761,10 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 extras:
-                  py_type: aiida_koopmans.types.Correction
+                  py_type: aiida_koopmans.functionals.Correction
                   structured_type:
                     kind: enum
-                    path: aiida_koopmans.types.Correction
+                    path: aiida_koopmans.functionals.Correction
                 required: true
             ecutrho:
               dynamic: false
@@ -1811,10 +1811,10 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 extras:
-                  py_type: aiida_koopmans.types.VariationalOrbitalType
+                  py_type: aiida_koopmans.workgraphs.variational_orbitals.VariationalOrbitalType
                   structured_type:
                     kind: enum
-                    path: aiida_koopmans.types.VariationalOrbitalType
+                    path: aiida_koopmans.workgraphs.variational_orbitals.VariationalOrbitalType
                 required: true
             initial_alpha:
               dynamic: false

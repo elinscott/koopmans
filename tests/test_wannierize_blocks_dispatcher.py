@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from aiida_koopmans.types import get_wannier_indices
+from aiida_koopmans.projections import get_wannier_indices
 
 from koopmans.aiida.workflows import (
     _build_wannierize_blocks_workgraph,
@@ -126,7 +126,7 @@ class TestBlockDerivation:
 
     @staticmethod
     def _blocks(structure: Any, projections: list[Any], nbnd: int) -> list[Any]:
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         return _create_explicit_blocks(structure, projections, nbnd, 4, SpinChannel.NONE)
 
