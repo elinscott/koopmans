@@ -7,15 +7,23 @@ from pathlib import Path
 from typing import Any
 
 
+def _workflows_source() -> str:
+    """Concatenate the workflows package's module sources for call-site scans."""
+    import koopmans.aiida.workflows as workflows
+
+    return "".join(
+        path.read_text() for path in sorted(Path(workflows.__file__).parent.glob("*.py"))
+    )
+
+
 class TestExecutableCoverage:
     """Every code the dispatcher can load must be registrable."""
 
     def test_dispatched_codes_have_executable_entries(self) -> None:
         """Each ``_load_code`` executable is a key in ``QE_EXECUTABLES``."""
-        import koopmans.aiida.workflows as workflows
         from koopmans.aiida.setup.codes import QE_EXECUTABLES
 
-        source = Path(workflows.__file__).read_text()
+        source = _workflows_source()
         executables = set(re.findall(r'_load_code\(\s*"[^"]+"\s*,\s*"([^"]+)"', source))
 
         assert executables, "regex matched no _load_code call sites"
@@ -28,10 +36,9 @@ class TestExecutableCoverage:
 
     def test_dispatched_labels_are_registered(self) -> None:
         """Each ``_load_code`` label is a label the installer registers."""
-        import koopmans.aiida.workflows as workflows
         from koopmans.aiida.setup.codes import code_specs
 
-        source = Path(workflows.__file__).read_text()
+        source = _workflows_source()
         labels = set(re.findall(r'_load_code\(\s*"([^"]+)"\s*,\s*"[^"]+"', source))
 
         assert labels, "regex matched no _load_code call sites"
@@ -45,9 +52,7 @@ class TestExecutableCoverage:
         The coverage test above only sees literal arguments; a call built
         from variables would escape it and could load an unregistered code.
         """
-        import koopmans.aiida.workflows as workflows
-
-        source = Path(workflows.__file__).read_text()
+        source = _workflows_source()
         all_calls = len(re.findall(r"_load_code\((?!\s*self)", source))
         literal_calls = len(re.findall(r'_load_code\(\s*"[^"]+"\s*,\s*"[^"]+"', source))
         definitions = len(re.findall(r"def _load_code\(", source))
@@ -64,10 +69,9 @@ class TestExecutableCoverage:
         names a different executable for a label would pass the coverage
         test yet load a code built from the wrong binary.
         """
-        import koopmans.aiida.workflows as workflows
         from koopmans.aiida.setup.codes import code_specs
 
-        source = Path(workflows.__file__).read_text()
+        source = _workflows_source()
         pairs = re.findall(r'_load_code\(\s*"([^"]+)"\s*,\s*"([^"]+)"', source)
         specs = code_specs()
 
