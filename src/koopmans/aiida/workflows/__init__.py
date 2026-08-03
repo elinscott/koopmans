@@ -183,6 +183,8 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     # Build the workgraph based on task
     if task == Task.DFT_BANDS:
+        from koopmans.aiida.workflows.dft import _build_dft_bands_workgraph
+
         return _build_dft_bands_workgraph(koopmans_input, codes)
     elif task == Task.WANNIERIZE:
         from koopmans.aiida.workflows.wannierize import _build_wannierize_workgraph
@@ -204,34 +206,6 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
             f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
         )
-
-
-def _build_dft_bands_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
-    """Build a workgraph for DFT bands calculation.
-
-    Args:
-        koopmans_input: The parsed koopmans input.
-        codes: Dictionary of loaded codes.
-
-    Returns:
-        A WorkGraph for PwBandsWorkChain.
-    """
-    from aiida_koopmans.workgraphs.pw import RunPwBands
-
-    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
-
-    structure, _pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "bands"])
-
-    return RunPwBands.build(
-        code=codes["pw"],
-        structure=structure,
-        overrides=overrides,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        scf_kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
-    )
 
 
 def _build_dft_eps_workgraph(

@@ -316,8 +316,8 @@ class TestDispatcherThreadsParallelization:
         """A configured block is passed as the graph's ``parallelization`` kwarg."""
         import aiida_koopmans.workgraphs.pw as pw_module
 
-        from koopmans.aiida import workflows as workflows_module
-        from koopmans.aiida.workflows import _build_dft_bands_workgraph
+        from koopmans.aiida.workflows import dft as dft_module
+        from koopmans.aiida.workflows.dft import _build_dft_bands_workgraph
         from koopmans.input_file import KoopmansInput
 
         captured: dict[str, Any] = {}
@@ -330,7 +330,7 @@ class TestDispatcherThreadsParallelization:
         # Stub the profile-dependent structure/pseudo setup and the graph build
         # so the test isolates the dispatcher's threading logic.
         monkeypatch.setattr(
-            workflows_module, "_prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+            dft_module, "_prepare_common_inputs", lambda inp, keys: (None, "fam", {})
         )
         monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
 
@@ -344,13 +344,13 @@ class TestDispatcherThreadsParallelization:
         """With nothing configured the builder receives ``parallelization=None``."""
         import aiida_koopmans.workgraphs.pw as pw_module
 
-        from koopmans.aiida import workflows as workflows_module
-        from koopmans.aiida.workflows import _build_dft_bands_workgraph
+        from koopmans.aiida.workflows import dft as dft_module
+        from koopmans.aiida.workflows.dft import _build_dft_bands_workgraph
         from koopmans.input_file import KoopmansInput
 
         captured: dict[str, Any] = {}
         monkeypatch.setattr(
-            workflows_module, "_prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+            dft_module, "_prepare_common_inputs", lambda inp, keys: (None, "fam", {})
         )
         monkeypatch.setattr(
             pw_module.RunPwBands, "build", staticmethod(lambda **kw: captured.update(kw))
