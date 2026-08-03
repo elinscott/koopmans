@@ -429,3 +429,115 @@ class TestOrbitalDensityDescriptor:
             "decompose_r_min": 1.0,
             "decompose_r_max": 4.5,
         }
+
+
+class TestPredictMode:
+    """``ml:predict`` loads the model file and hands the model to every DSCF."""
+
+    @staticmethod
+    def _write_model(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
+        """Fit a small self-Hartree model and write it as a model-file JSON."""
+        from aiida_koopmans import ml_helpers
+
+        model = ml_helpers.fit_screening_model(
+            {
+                "descriptors": [[-1.0], [-2.0], [-3.0]],
+                "alpha_targets": [0.5, 0.6, 0.7],
+                "filled": [True, True, False],
+                "labels": ["orb_1", "orb_2", "orb_3"],
+            },
+            "linear_regression",
+        )
+        path = tmp_path / "model.json"
+        path.write_text(json.dumps(model))
+        return path, model
+
+    def test_twin_builds_differ_only_in_the_model_injection(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """Same snapshot twice: ab-initio computes alphas, predict injects the model.
+
+        Build-level twin of the live twin-KI run. The predict build must
+        carry the loaded model into the snapshot's DSCF (whose interior
+        then swaps the Delta-SCF refinement for the prediction sub-graph —
+        that routing is asserted in aiida-koopmans' kcp workgraph tests)
+        and must not grow a dataset / fit / score layer.
+        """
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        model_path, model = self._write_model(tmp_path)
+
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"] = {}
+        ab_initio = _build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"] = {"predict": True, "model_file": str(model_path), "descriptor": "self_hartree"}
+        predict = _build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+
+        def _dscf(workgraph: Any) -> Any:
+            names = set(workgraph.get_task_names())
+            assert "dscf_snapshot_1" in names, names
+            return next(t for t in workgraph.tasks if t.name == "dscf_snapshot_1")
+
+        assert _dscf(ab_initio).inputs.ml_model.value is None
+        assert _dscf(predict).inputs.ml_model.value == model
+
+        names = set(predict.get_task_names())
+        for forbidden in (
+            "extract_snapshot_dataset",
+            "train_screening_model",
+            "evaluate_screening_model",
+        ):
+            assert not any(forbidden in name for name in names), (forbidden, names)
+
+    def test_predict_without_model_file_raises(
+        self,
+        tmp_path: Path,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """``ml:predict`` without a model file fails at build."""
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"] = {"predict": True, "descriptor": "self_hartree"}
+
+        with pytest.raises(ValueError, match="ml:predict requires ml:model_file"):
+            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+
+    def test_predict_rejects_power_spectrum(
+        self,
+        tmp_path: Path,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """``ml:predict`` with the power-spectrum descriptor is an explicit gap."""
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"] = {"predict": True, "descriptor": "power_spectrum"}
+
+        with pytest.raises(NotImplementedError, match="self_hartree"):
+            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+
+    def test_predict_rejects_alpha_numsteps(
+        self,
+        tmp_path: Path,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """``alpha_numsteps > 1`` cannot take effect under ``ml:predict``."""
+        from koopmans.aiida.workflows import _build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _trajectory_input_dict(str(xyz), alpha_numsteps=2)
+        d["ml"] = {"predict": True, "descriptor": "self_hartree"}
+
+        with pytest.raises(ValueError, match="alpha_numsteps cannot take effect"):
+            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
