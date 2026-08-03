@@ -2,47 +2,53 @@
 
 from pathlib import Path
 
+import pytest
+
 from koopmans.aiida.dumping import _simplify_folder_names
 
 
-def _mkdirs(root: Path, names: list[str]) -> None:
-    for name in names:
-        (root / name).mkdir(parents=True)
+@pytest.mark.parametrize(
+    ("dumped", "simplified"),
+    [
+        # pyfunction: the process label equals the link label, so the dump
+        # never appends it — only the pk goes
+        ("01-resolve_pseudo_family_task-4711", "01-resolve_pseudo_family_task"),
+        # sub-workgraph: the WorkGraph<...> process label always repeats the
+        # link label, so it goes along with the pk
+        ("03-dft_init_nspin1-WorkGraph<dft_init_nspin1>-4712", "03-dft_init_nspin1"),
+        # CalcJob: the class name says which code ran, so it stays
+        ("01-dft_init-KcpCalculation-4713", "01-dft_init-KcpCalculation"),
+    ],
+    ids=["pyfunction", "sub-workgraph", "calcjob"],
+)
+def test_simplify_folder_names(tmp_path: Path, dumped: str, simplified: str) -> None:
+    """Strip the pk and the WorkGraph process label; keep other suffixes."""
+    (tmp_path / dumped).mkdir()
+
+    _simplify_folder_names(tmp_path)
+
+    assert [d.name for d in tmp_path.iterdir()] == [simplified]
 
 
-def test_simplify_folder_names(tmp_path: Path) -> None:
-    """Strip the pk and the WorkGraph process label; keep other suffixes.
-
-    The names mirror what AiiDA's dump produces for a workgraph: every
-    folder ends with the pk, sub-workgraph folders additionally carry
-    the ``WorkGraph<graph_name>`` process label, CalcJob folders carry
-    their class name, and pyfunction folders carry no label at all.
-    """
-    _mkdirs(
-        tmp_path,
-        [
-            "01-resolve_pseudo_family_task-4711",
-            "03-dft_init_nspin1-WorkGraph<dft_init_nspin1>-4712/01-dft_init-KcpCalculation-4713",
-            "04-compute_orbital_screening_parameters-WorkGraph<compute_orbital_screening_parameters>-4714"
-            "/01-compute_alpha_orb_1-WorkGraph<compute_alpha_orb_1>-4715",
-        ],
-    )
+def test_simplify_folder_names_renames_nested_folders(tmp_path: Path) -> None:
+    """Both a sub-workgraph folder and the folders inside it are renamed."""
+    parent = "04-compute_alpha_orb_1-WorkGraph<compute_alpha_orb_1>-4714"
+    child = "01-dft_n_minus_1-KcpCalculation-4715"
+    (tmp_path / parent / child).mkdir(parents=True)
 
     _simplify_folder_names(tmp_path)
 
     all_dirs = sorted(str(d.relative_to(tmp_path)) for d in tmp_path.rglob("*") if d.is_dir())
     assert all_dirs == [
-        "01-resolve_pseudo_family_task",
-        "03-dft_init_nspin1",
-        "03-dft_init_nspin1/01-dft_init-KcpCalculation",
-        "04-compute_orbital_screening_parameters",
-        "04-compute_orbital_screening_parameters/01-compute_alpha_orb_1",
+        "04-compute_alpha_orb_1",
+        "04-compute_alpha_orb_1/01-dft_n_minus_1-KcpCalculation",
     ]
 
 
 def test_simplify_folder_names_keeps_taken_names(tmp_path: Path) -> None:
     """A folder is left untouched if its simplified name already exists."""
-    _mkdirs(tmp_path, ["02-scf", "02-scf-WorkGraph<scf>-99"])
+    (tmp_path / "02-scf").mkdir()
+    (tmp_path / "02-scf-WorkGraph<scf>-99").mkdir()
 
     _simplify_folder_names(tmp_path)
 
