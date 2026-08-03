@@ -609,8 +609,9 @@ class TestPluginErrorTranslation:
         """Through ``build_workgraph`` a plugin rejection carries both sentences.
 
         Reuses the reversed-blocks derivation: the plugin's sequence
-        validator is the only check that rejects it, so the raised message
-        must pair the plugin's own sentence with the input-file advice.
+        validator is the only check that rejects it, so the exception must
+        pair the plugin's own message with the input-file advice, attached
+        as a PEP 678 note so the exception itself is untouched.
         """
         import koopmans.aiida.workflows.dscf as dscf_module
         from koopmans.aiida.workflows import build_workgraph
@@ -624,4 +625,4 @@ class TestPluginErrorTranslation:
         inp = KoopmansInput.model_validate(_si_dscf_dict())
         with pytest.raises(ValueError, match="ascending band order") as excinfo:
             build_workgraph(inp)
-        assert "Adjust the projections" in str(excinfo.value)
+        assert any("Adjust the projections" in note for note in excinfo.value.__notes__)

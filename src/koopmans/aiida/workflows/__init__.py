@@ -154,7 +154,9 @@ def prepare_common_inputs(
 #: Input-file advice keyed by the plugin module that raised. The plugin
 #: raises builtin ValueError/NotImplementedError everywhere, so the raise
 #: site is the only structural key available until it grows typed
-#: exceptions to dispatch on.
+#: exceptions to dispatch on. The key is module-wide: any error escaping a
+#: keyed module carries that module's advice, and an error raised in a
+#: helper module that a keyed module calls carries none.
 _PLUGIN_ADVICE = {
     "aiida_koopmans.projections": (
         "The blocks named above are derived from the input file's projections "
@@ -171,8 +173,9 @@ def advice_for(exc: BaseException) -> str | None:
     """Return input-file advice for an exception the plugin raised, if any.
 
     Keyed on the module of the raise site (the innermost traceback frame).
-    An exception the dispatcher already re-raised in input-file vocabulary
-    carries a koopmans raise site, so it gets no second translation.
+    An exception the dispatcher replaced via ``raise ... from exc`` carries
+    a koopmans raise site and gets no translation; a bare ``raise`` in a
+    koopmans ``except`` block keeps the plugin raise site and still does.
     """
     module = None
     tb = exc.__traceback__
@@ -214,7 +217,7 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     # Build the workgraph based on task. An error raised inside the plugin
     # speaks its vocabulary (derived blocks, `num_bands`), which the user
-    # never wrote; append the input-file advice at this boundary.
+    # never wrote; attach the input-file advice at this boundary.
     try:
         if task == Task.DFT_BANDS:
             from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
@@ -242,8 +245,11 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
                 f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
                 f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
             )
-    except (NotImplementedError, ValueError) as exc:
+    except Exception as exc:
         advice = advice_for(exc)
-        if advice is None:
-            raise
-        raise type(exc)(f"{exc}\n{advice}") from exc
+        if advice is not None:
+            # A PEP 678 note survives exception types whose constructors do
+            # not take a single message, and keeps type, args and chaining
+            # intact; it renders under the message in the traceback.
+            exc.add_note(advice)
+        raise
