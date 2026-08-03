@@ -425,7 +425,7 @@ class TestProjectorFileParsing:
 
     @staticmethod
     def _read(tmp_path: Any, content: str) -> list[int]:
-        from koopmans.aiida.workflows import _read_projector_angular_momenta
+        from koopmans.aiida.workflows.projectors import _read_projector_angular_momenta
 
         projector_file = tmp_path / "X.dat"
         projector_file.write_text(content)
