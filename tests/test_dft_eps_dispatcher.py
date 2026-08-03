@@ -12,7 +12,8 @@ from typing import Any
 
 import pytest
 
-from koopmans.aiida.workflows import _build_singlepoint_dfpt_workgraph, build_workgraph
+from koopmans.aiida.workflows import build_workgraph
+from koopmans.aiida.workflows.dfpt import _build_singlepoint_dfpt_workgraph
 from koopmans.input_file import KoopmansInput
 
 
