@@ -7,6 +7,8 @@ from pydantic import Field, field_validator
 
 from koopmans.base import BaseModel
 
+__all__ = ["UnfoldAndInterpolateConfig"]
+
 
 class UnfoldAndInterpolateConfig(BaseModel):
     """Input parameters for unfold-and-interpolate post-processing."""

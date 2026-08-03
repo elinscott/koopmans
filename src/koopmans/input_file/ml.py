@@ -8,6 +8,8 @@ from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
 
+__all__ = ["MLConfig"]
+
 
 class MLConfig(BaseModel):
     """Configuration for machine learning models used to predict screening parameters."""

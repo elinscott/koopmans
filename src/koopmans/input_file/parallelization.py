@@ -36,6 +36,9 @@ POOL_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wa
 PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
 
 
+__all__ = ["CodeParallelization", "ParallelizationInput"]
+
+
 # NOTE: keep this Pydantic model (and the per-code fields it validates) in
 # sync with the ``CodeParallelization`` TypedDict in ``aiida_koopmans.parallelization``
 # — the TypedDict is the runtime shape the graphs consume; this model is the
