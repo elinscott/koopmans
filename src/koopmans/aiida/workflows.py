@@ -208,6 +208,13 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "automatic projections are currently supported by the `wannierize` task only."
         )
 
+    ml_config = koopmans_input.ml
+    if ml_config.mode != MLMode.NONE and task != Task.TRAJECTORY:
+        raise NotImplementedError(
+            f"`ml` is wired into the trajectory task only, not {task.value!r}; legacy "
+            "permitted singlepoint prediction — not yet ported."
+        )
+
     # Load required codes
     codes = load_codes_for_task(koopmans_input.workflow)
 
@@ -1535,32 +1542,32 @@ def _build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
-    """Build a workgraph for a trajectory (machine-learning train/test) task.
+    """Build a workgraph for a trajectory (machine-learning) task.
 
     Fans the snapshots out over per-snapshot ``KoopmansDSCFWorkflow`` runs via
     ``aiida_koopmans.workgraphs.ml.TrajectoryWorkflow`` and, depending on the
     ``ml`` configuration, trains a screening-parameter model on the computed
-    alphas (``ml:train``) or scores an existing model against them
-    (``ml:test``).
+    alphas (``ml: {mode: train}``), scores an existing model against them
+    (``mode: test``), or applies an existing model in place of the Delta-SCF
+    refinement (``mode: predict`` — each snapshot runs one trial KI at the
+    guess alphas, the model predicts every screening parameter from the
+    trial's self-Hartrees, and the final KI applies the predictions).
 
     ``self_hartree`` needs nothing beyond the kcp.x runs themselves.
     ``power_spectrum`` builds its power spectra from a pw2wannier90.x
     ``wan_mode='decompose'`` pass over each snapshot's per-block Wannier
     functions, so it requires the Wannier-initialised route
     (``init_orbitals`` in ``mlwfs`` / ``projwfs``); the ``ml``
-    radial-basis settings become that pass's namelist keys.
-
-    ``ml:predict`` still raises: injecting per-orbital predicted alphas
-    needs an extension of the ``KoopmansDSCFWorkflow`` interface, which
-    accepts only a scalar ``initial_alpha``.
+    radial-basis settings become that pass's namelist keys. ``mode: predict``
+    supports ``self_hartree`` only: the decompose pass that builds the
+    power-spectrum descriptors is not wired into the DSCF's screening
+    stage, where the prediction runs.
 
     Each frame of the ``atoms.snapshots`` xyz becomes one ``snapshot_N``
     structure fed to the dynamic snapshots namespace. All frames share one
     cell, composition and projection set, so the Wannier-route inputs are
     derived once from the first frame.
     """
-    from json import load as json_load
-
     from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
@@ -1584,24 +1591,7 @@ def _build_trajectory_workgraph(
         )
 
     ml_config = koopmans_input.ml
-
-    if ml_config.predict:
-        raise NotImplementedError(
-            "ml:predict is not yet supported: injecting per-orbital predicted alphas "
-            "(and skipping the Delta-SCF refinement) requires an extension of the "
-            "KoopmansDSCFWorkflow interface, which currently accepts only a scalar "
-            "initial_alpha."
-        )
-    ml_mode = MLMode.TRAIN if ml_config.train else MLMode.TEST if ml_config.test else MLMode.NONE
-
-    ml_model = None
-    if ml_mode == MLMode.TEST:
-        if ml_config.model_file is None:
-            raise ValueError(
-                "ml:test requires ml:model_file (the JSON model produced by an ml:train run)."
-            )
-        with open(ml_config.model_file) as handle:
-            ml_model = json_load(handle)
+    ml_mode, ml_model = _resolve_trajectory_ml(ml_config, workflow)
 
     snapshots = atoms_input_to_structures(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
@@ -1633,6 +1623,48 @@ def _build_trajectory_workgraph(
         descriptor=ml_config.descriptor,
         occ_and_emp_together=ml_config.occ_and_emp_together,
     )
+
+
+def _resolve_trajectory_ml(
+    ml_config: MLConfig, workflow: WorkflowConfig
+) -> tuple[MLMode, dict[str, Any] | None]:
+    """Map the ``ml`` block onto a trajectory mode and its loaded model.
+
+    ``test`` and ``predict`` modes load the JSON model from
+    ``ml:model_file``. Predict-mode inputs that cannot take effect raise
+    here: the ``power_spectrum`` descriptor (its decompose pass is not
+    wired into the DSCF's screening stage, where the prediction runs)
+    and ``alpha_numsteps != 1``.
+    """
+    from json import load as json_load
+
+    ml_mode = ml_config.mode
+
+    if ml_mode == MLMode.PREDICT:
+        if ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
+            raise NotImplementedError(
+                "ml:mode='predict' supports only descriptor='self_hartree': the "
+                "decompose pass that builds the power-spectrum descriptors is not wired "
+                "into the DSCF's screening stage, where the prediction runs. Use "
+                "descriptor='self_hartree'."
+            )
+        if workflow.alpha_numsteps != 1:
+            raise ValueError(
+                "ml:mode='predict' replaces the Delta-SCF refinement with a single "
+                "trial-KI prediction, so workflow:alpha_numsteps cannot take effect; "
+                "set it to 1."
+            )
+
+    ml_model = None
+    if ml_mode in (MLMode.TEST, MLMode.PREDICT):
+        if ml_config.model_file is None:
+            raise ValueError(
+                f"ml:mode='{ml_mode.value}' requires ml:model_file (the JSON model "
+                "produced by a mode='train' run)."
+            )
+        with open(ml_config.model_file) as handle:
+            ml_model = json_load(handle)
+    return ml_mode, ml_model
 
 
 def _decompose_parameters(ml_config: MLConfig) -> dict[str, float | int]:

@@ -3,7 +3,7 @@
 from typing import Self
 from warnings import warn
 
-from aiida_koopmans.types import MLDescriptor
+from aiida_koopmans.types import MLDescriptor, MLMode
 from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
@@ -12,14 +12,11 @@ from koopmans.base import BaseModel
 class MLConfig(BaseModel):
     """Configuration for machine learning models used to predict screening parameters."""
 
-    train: bool = Field(
-        default=False,
-        description="train a machine learning model to predict the screening parameters",
-    )
-    test: bool = Field(default=False, description="test the machine learning model")
-    predict: bool = Field(
-        default=False,
-        description="use a machine learning model to predict the screening parameters",
+    mode: MLMode = Field(
+        default=MLMode.NONE,
+        description="'train' fits a screening model on the computed alphas, 'test' scores "
+        "an existing model against them, 'predict' applies an existing model in place of "
+        "the alpha calculation",
     )
     model_file: str | None = Field(
         default=None,
@@ -48,16 +45,6 @@ class MLConfig(BaseModel):
         default=MLDescriptor.POWER_SPECTRUM,
         description="What to use as the descriptor for the ML model",
     )
-
-    @model_validator(mode="after")
-    def mutually_exclusive_modes(self) -> Self:
-        """Validate that ``train``, ``test``, and ``predict`` are mutually exclusive."""
-        if [self.predict, self.train, self.test].count(True) > 1:
-            raise ValueError(
-                "Training, testing, and using the ML model are mutually exclusive; change `ml:predict` "
-                "/`ml:train`/`ml:test` so that at most one is `True`"
-            )
-        return self
 
     @field_validator("r_min", mode="after")
     @classmethod
