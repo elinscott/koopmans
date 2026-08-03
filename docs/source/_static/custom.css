@@ -1,3 +1,30 @@
 .wy-nav-content {
     max-width: none;
 }
+
+/* The capability tables on the landing page. Rendered as a grid of linked
+   cells rather than a data table: no row banding, generous padding, and
+   greyed-out entries for capabilities that do not exist yet. */
+.capability-matrix {
+    width: 100%;
+}
+
+.capability-matrix td,
+.capability-matrix th {
+    padding: 1em 1.2em;
+    vertical-align: top;
+    white-space: normal;
+}
+
+.capability-matrix tbody tr td {
+    background-color: transparent;
+}
+
+.capability-matrix tbody tr td:first-child {
+    font-weight: bold;
+}
+
+.capability-matrix em {
+    color: #999;
+    font-style: italic;
+}
