@@ -28,6 +28,7 @@ from koopmans.aiida.workflows.blocks import (
     _validate_blocks_cover_all_occ_bands,
     _validate_blocks_separate_occ_and_emp,
 )
+from koopmans.aiida.workflows.grouping import _dfpt_grouping_tol, _grouping_tol
 from koopmans.aiida.workflows.projectors import (
     _load_external_projectors,
     _reject_unwired_external_projectors,
@@ -35,7 +36,6 @@ from koopmans.aiida.workflows.projectors import (
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
-    GroupOrbitalsBy,
     Task,
     VariationalOrbitalType,
 )
@@ -891,42 +891,6 @@ def _build_singlepoint_dfpt_workgraph(
     )
 
 
-def _reject_explicit_orbital_groups(workflow: WorkflowConfig) -> None:
-    """Reject an explicit ``orbital_groups`` list until the fan-out threads it.
-
-    The field parses and validates but is never carried into the per-orbital
-    screening fan-out, so an explicit grouping would be honoured nowhere and
-    orbitals would silently fall back to the criterion-based grouping. Fail
-    loudly instead and point at the criterion that is wired up.
-    """
-    if workflow.orbital_groups is not None:
-        raise NotImplementedError(
-            "explicit orbital_groups are not yet threaded into the screening "
-            "fan-out; use group_orbitals_by / group_orbitals_tol to group "
-            "orbitals by self-Hartree energy (DSCF) or wannier90 spread (DFPT)."
-        )
-
-
-def _dfpt_grouping_tol(workflow: WorkflowConfig) -> float | None:
-    """Resolve the workflow-level orbital-grouping tolerance for the DFPT route.
-
-    Returns the tolerance for ``'spread'`` (grouping on), ``None`` for
-    ``'none'`` / unset (no workflow-level grouping), and raises for
-    ``'self_hartree'``, which the DFPT route has no metric for.
-    """
-    _reject_explicit_orbital_groups(workflow)
-    criterion = workflow.group_orbitals_by
-    if criterion is None or criterion == GroupOrbitalsBy.NONE:
-        return None
-    if criterion == GroupOrbitalsBy.SPREAD:
-        return workflow.group_orbitals_tol
-    raise NotImplementedError(
-        f"group_orbitals_by={criterion.value!r} is not implemented for DFPT "
-        "screening: the DFPT route clusters orbitals by their wannier90 spread. "
-        "Use group_orbitals_by = 'spread' (or 'none')."
-    )
-
-
 def _validated_eps_inf(eps_inf: float | str | None) -> float | str | None:
     """Check that ``eps_inf`` is a numeric value, ``'auto'``, or unset."""
     if isinstance(eps_inf, str) and eps_inf != "auto":
@@ -1275,24 +1239,6 @@ def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         initial_alpha=_initial_alpha_from_guess(workflow.alpha_guess),
         spin_polarized=workflow.spin == SpinType.COLLINEAR,
         orbital_groups_self_hartree_tol=_grouping_tol(workflow),
-    )
-
-
-def _grouping_tol(workflow: WorkflowConfig) -> float | None:
-    """Translate the orbital-grouping fields into the plugin's self-Hartree tolerance.
-
-    The schema resolves ``group_orbitals_by`` / ``group_orbitals_tol``
-    (including their route-dependent defaults) at parse time; here only the
-    implemented criterion passes through.
-    """
-    _reject_explicit_orbital_groups(workflow)
-    if workflow.group_orbitals_by == GroupOrbitalsBy.NONE:
-        return None
-    if workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE:
-        return workflow.group_orbitals_tol
-    criterion = workflow.group_orbitals_by.value if workflow.group_orbitals_by else None
-    raise NotImplementedError(
-        f"group_orbitals_by={criterion!r} is not implemented; supported: 'self_hartree', 'none'."
     )
 
 
