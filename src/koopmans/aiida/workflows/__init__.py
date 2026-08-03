@@ -7,11 +7,10 @@ based on the task specified in a KoopmansInput.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
 
 from aiida import orm
 from aiida_koopmans.ml import MLDescriptor, MLMode
-from aiida_koopmans.projections import validate_projection_block_sequence
 from aiida_koopmans.spin import SpinChannel
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
@@ -25,10 +24,7 @@ from koopmans.aiida.conversion import (
 from koopmans.aiida.workflows.blocks import (
     _create_automatic_blocks,
     _create_explicit_blocks,
-    _validate_blocks_cover_all_occ_bands,
-    _validate_blocks_separate_occ_and_emp,
 )
-from koopmans.aiida.workflows.grouping import _grouping_tol
 from koopmans.aiida.workflows.projectors import (
     _load_external_projectors,
     _reject_unwired_external_projectors,
@@ -219,6 +215,8 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     elif task == Task.WANNIERIZE:
         return _build_wannierize_workgraph(koopmans_input, codes)
     elif task == Task.SINGLEPOINT:
+        from koopmans.aiida.workflows.dscf import _build_singlepoint_workgraph
+
         return _build_singlepoint_workgraph(koopmans_input, codes)
     elif task == Task.TRAJECTORY:
         return _build_trajectory_workgraph(koopmans_input, codes)
@@ -577,192 +575,6 @@ def _num_wann_total(structure: orm.StructureData, projection_blocks: list[list[P
     return sum(projection_num_wann(structure, p) for block in projection_blocks for p in block)
 
 
-def _build_singlepoint_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
-    """Build a workgraph for a singlepoint Koopmans calculation.
-
-    Dispatches on ``workflow.screening_method`` first (DSCF vs DFPT), then on
-    ``workflow.correction``:
-
-    - DSCF + ``KI``/``KIPZ`` → ``KoopmansDSCFWorkflow`` (kcp.x)
-    - DFPT + ``KI`` → ``_build_singlepoint_dfpt_workgraph`` (kcw.x; KI only)
-    - anything else → ``NotImplementedError``
-    """
-    from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
-
-    from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
-
-    workflow = koopmans_input.workflow
-
-    _reject_unwired_external_projectors(koopmans_input, "singlepoint")
-
-    # DFPT routes on the screening method alone: calculate_alpha = False is
-    # the alpha_guess path inside the DFPT builder (screen step skipped),
-    # not a reason to fall through to the kcp.x/DSCF branch.
-    if workflow.screening_method == CalculateScreeningMethod.DFPT:
-        from koopmans.aiida.workflows.dfpt import _build_singlepoint_dfpt_workgraph
-
-        return _build_singlepoint_dfpt_workgraph(koopmans_input, codes)
-
-    _require_supported_correction(workflow.correction)
-
-    if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
-        raise NotImplementedError(
-            f"spin={workflow.spin.value!r} is not supported by the DSCF (kcp.x) stream: "
-            "kcp.x has no noncollinear mode. Use screening_method='dfpt'."
-        )
-
-    structure = atoms_input_to_structure(koopmans_input.atoms)
-    ensure_pseudo_family_installed(workflow.pseudo_library)
-
-    inputs = _kcp_dscf_inputs(koopmans_input)
-
-    extra_kwargs: dict[str, Any] = {}
-    if workflow.init_orbitals in (
-        VariationalOrbitalType.MLWFS,
-        VariationalOrbitalType.PROJWFS,
-    ):
-        extra_kwargs = _dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
-
-    return KoopmansDSCFWorkflow.build(
-        code=codes["kcp"],
-        structure=structure,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        **inputs,
-        **extra_kwargs,
-    )
-
-
-def _dscf_wannier_init_inputs(
-    koopmans_input: KoopmansInput,
-    structure: orm.StructureData,
-    codes: dict[str, orm.AbstractCode],
-    nbnd: int,
-) -> dict[str, Any]:
-    """Assemble the extra ``KoopmansDSCFWorkflow`` inputs for the Wannier route.
-
-    Covers the periodic mlwfs/projwfs initialisation: the wannierize +
-    fold-to-supercell codes, the projection blocks (primitive band indices;
-    per spin channel when ``spin='collinear'``), the k-mesh, and the
-    Makov-Payne knobs. The molecular/kohn-sham route needs none of this.
-    """
-    from koopmans.aiida.conversion import (
-        get_pseudos_from_family,
-        kpoints_input_to_kpoints_mesh,
-    )
-
-    workflow = koopmans_input.workflow
-    calc_params = koopmans_input.calculator_parameters
-    kpoints_input = koopmans_input.kpoints
-
-    if isinstance(workflow.eps_inf, str):
-        raise NotImplementedError(
-            "eps_inf='auto' is not wired for the DSCF stream yet (the DielectricTask "
-            "exists — hook it up like the DFPT dispatcher); provide a numeric value."
-        )
-
-    pseudo_family = workflow.pseudo_library
-    pseudos = get_pseudos_from_family(pseudo_family, structure)
-    nelec = round(sum(pseudos[site.kind_name].z_valence for site in structure.sites))
-
-    parameters = input_to_pw_parameters(koopmans_input)
-    # A block's band window indexes the *nscf* bands: ``num_bands`` counts what
-    # wannier90 reads out of the mmn, and ``exclude_bands`` must name every
-    # nscf band the block does not use. Sizing them by the kcp.x orbital count
-    # instead leaves the bands above it neither included nor excluded, and
-    # wannier90 rejects the mmn it is then handed.
-    nscf_nbnd = int(parameters.get("SYSTEM", {}).get("nbnd") or nbnd)
-    if nscf_nbnd < nbnd:
-        raise ValueError(
-            f"The nscf runs {nscf_nbnd} bands but the kcp.x steps need {nbnd} "
-            "variational orbitals, which the Wannier functions cannot span. Raise "
-            "``calculator_parameters.pw.system.nbnd`` to at least "
-            f"{nbnd}."
-        )
-
-    if workflow.spin == SpinType.COLLINEAR:
-        w90 = calc_params.wannier90
-        if w90.up is None or w90.down is None:
-            raise ValueError(
-                "spin='collinear' Wannier initialisation needs per-spin projections: set "
-                "``calculator_parameters.w90.up.projections`` and "
-                "``calculator_parameters.w90.down.projections``."
-            )
-        magnetization = _coerce_optional_int(calc_params.tot_magnetization)
-        if magnetization is None:
-            raise ValueError(
-                "spin='collinear' Wannier initialisation needs "
-                "``calculator_parameters.tot_magnetization``."
-            )
-        if (nelec + magnetization) % 2:
-            raise ValueError(
-                f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "
-                "integer per-channel occupations."
-            )
-        nocc_up = (nelec + magnetization) // 2
-        nocc_down = (nelec - magnetization) // 2
-        up_blocks = _create_explicit_blocks(
-            structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
-        )
-        validate_projection_block_sequence(up_blocks)
-        _validate_blocks_separate_occ_and_emp(up_blocks, nocc_up)
-        _validate_blocks_cover_all_occ_bands(up_blocks, nocc_up)
-        down_blocks = _create_explicit_blocks(
-            structure, w90.down.projections, nscf_nbnd, nocc_down, SpinChannel.DOWN
-        )
-        validate_projection_block_sequence(down_blocks)
-        _validate_blocks_separate_occ_and_emp(down_blocks, nocc_down)
-        _validate_blocks_cover_all_occ_bands(down_blocks, nocc_down)
-        blocks = up_blocks + down_blocks
-    else:
-        if nelec % 2:
-            raise ValueError(
-                f"Odd electron count ({nelec}) requires spin='collinear' for the "
-                "Wannier-initialised DSCF route."
-            )
-        nocc = nelec // 2
-        blocks = _create_explicit_blocks(
-            structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
-        )
-        validate_projection_block_sequence(blocks)
-        _validate_blocks_separate_occ_and_emp(blocks, nocc)
-        _validate_blocks_cover_all_occ_bands(blocks, nocc)
-
-    wannier_overrides: WannierizeOverrides = {
-        "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
-        "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
-    }
-
-    # User wannier90 keywords (disentanglement windows, iteration counts, ...)
-    # feed every per-block wannierisation. Flat by design (see
-    # ``WannierizeOverrides``): the upstream namespace-nested override shape
-    # is produced only inside the block wannierization builder.
-    w90_user = calc_params.wannier90.model_dump(
-        exclude_unset=True, exclude={"projections", "up", "down"}
-    )
-    if w90_user:
-        wannier_overrides["wannier90"] = w90_user
-
-    wannier_codes = dict(codes)
-    wannier_codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
-    wannier_codes.setdefault("pw2wannier90", _load_code("pw2wannier90", "pw2wannier90.x"))
-    wannier_codes.setdefault("wann2kcp", _load_code("wann2kcp", "wann2kcp.x"))
-    wannier_codes.setdefault("merge_evc", _load_code("merge_evc", "merge_evc.x"))
-
-    return {
-        "codes": wannier_codes,
-        "blocks": blocks,
-        "kgrid": list(kpoints_input.grid),
-        "kpoints": kpoints_input_to_kpoints_mesh(kpoints_input),
-        "gamma_only": bool(getattr(kpoints_input, "gamma_only", False)),
-        "wannier_overrides": wannier_overrides,
-        "mp_correction": workflow.mp_correction,
-        "eps_inf": workflow.eps_inf,
-    }
-
-
 def _build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
@@ -796,6 +608,11 @@ def _build_trajectory_workgraph(
     from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
+    from koopmans.aiida.workflows.dscf import (
+        _dscf_wannier_init_inputs,
+        _kcp_dscf_inputs,
+        _require_supported_correction,
+    )
 
     workflow = koopmans_input.workflow
 
@@ -906,104 +723,3 @@ def _decompose_parameters(ml_config: MLConfig) -> dict[str, float | int]:
         "decompose_r_min": ml_config.r_min,
         "decompose_r_max": ml_config.r_max,
     }
-
-
-def _require_supported_correction(correction: Correction) -> None:
-    """Raise for corrections the kcp.x (DSCF) route does not support yet."""
-    supported = {Correction.KI, Correction.KIPZ}
-    if correction not in supported:
-        raise NotImplementedError(
-            f"correction={correction.value!r} is not yet supported. "
-            f"Supported: {sorted(c.value for c in supported)}. "
-            "PKIPZ requires a perturbative post-processing step; "
-            "NONE / ALL are workflow-control flags."
-        )
-
-
-class _KcpDscfInputs(TypedDict):
-    """Scalar inputs shared by the kcp.x DSCF builders (singlepoint and trajectory)."""
-
-    pseudo_family: str
-    ecutwfc: float
-    ecutrho: float
-    nbnd: int
-    nspin: int
-    tot_magnetization: int | None
-    correction: Correction
-    init_orbitals: VariationalOrbitalType
-    alpha_numsteps: int
-    fix_spin_contamination: bool
-    initial_alpha: float
-    spin_polarized: bool
-    orbital_groups_self_hartree_tol: float | None
-
-
-def _initial_alpha_from_guess(alpha_guess: float | list[float]) -> float:
-    """Collapse the user ``alpha_guess`` to the scalar the kcp.x DSCF route accepts.
-
-    ``KoopmansDSCFWorkflow`` seeds every orbital with the same starting alpha,
-    so a list is only accepted when all its entries agree.
-
-    Raises:
-        NotImplementedError: If ``alpha_guess`` lists distinct per-orbital values.
-    """
-    if isinstance(alpha_guess, float):
-        return alpha_guess
-    if len(set(alpha_guess)) > 1:
-        raise NotImplementedError(
-            "Distinct per-orbital alpha_guess values are not yet supported on the "
-            "DSCF route; provide a single starting alpha."
-        )
-    return float(alpha_guess[0])
-
-
-def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
-    """Assemble the scalar kwargs shared by the kcp.x DSCF builders.
-
-    ``ecutwfc``/``nbnd`` prefer the top-level ``calculator_parameters``
-    convenience fields and fall back to the ``kcp.system`` Pydantic block;
-    ``ecutrho`` has no top-level field — read from ``kcp.system`` and default
-    to ``4 * ecutwfc`` when unset.
-    """
-    workflow = koopmans_input.workflow
-    calc_params = koopmans_input.calculator_parameters
-    kcp_system = calc_params.kcp.system
-
-    ecutwfc = calc_params.ecutwfc if calc_params.ecutwfc is not None else kcp_system.ecutwfc
-    if not ecutwfc:
-        raise ValueError(
-            "ecutwfc is required for a Koopmans singlepoint calculation. Set it in "
-            "``calculator_parameters.ecutwfc`` or ``calculator_parameters.kcp.system.ecutwfc``."
-        )
-
-    ecutrho = kcp_system.ecutrho if kcp_system.ecutrho else 4.0 * ecutwfc
-
-    nbnd_raw = calc_params.nbnd if calc_params.nbnd is not None else kcp_system.nbnd
-    if nbnd_raw is None:
-        raise ValueError(
-            "nbnd is required for a Koopmans singlepoint calculation. Set it in "
-            "``calculator_parameters.nbnd`` or ``calculator_parameters.kcp.system.nbnd``."
-        )
-
-    return _KcpDscfInputs(
-        pseudo_family=workflow.pseudo_library,
-        ecutwfc=float(ecutwfc),
-        ecutrho=float(ecutrho),
-        nbnd=int(nbnd_raw),
-        # KI requires nspin=2 for per-spin orbital-dependent screening, regardless
-        # of what ``spin`` says — closed-shell molecules still need two channels.
-        nspin=2,
-        tot_magnetization=_coerce_optional_int(calc_params.tot_magnetization),
-        correction=workflow.correction,
-        init_orbitals=workflow.init_orbitals,
-        alpha_numsteps=workflow.alpha_numsteps,
-        fix_spin_contamination=workflow.fix_spin_contamination,
-        initial_alpha=_initial_alpha_from_guess(workflow.alpha_guess),
-        spin_polarized=workflow.spin == SpinType.COLLINEAR,
-        orbital_groups_self_hartree_tol=_grouping_tol(workflow),
-    )
-
-
-def _coerce_optional_int(value: float | None) -> int | None:
-    """Return ``int(value)`` when value is given, else ``None``."""
-    return int(value) if value is not None else None

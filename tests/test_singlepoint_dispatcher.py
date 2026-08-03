@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from koopmans.aiida.workflows import (
+from koopmans.aiida.workflows.dscf import (
     _build_singlepoint_workgraph,
     _kcp_dscf_inputs,
     _KcpDscfInputs,
@@ -274,14 +274,14 @@ class TestInitialAlphaFromGuess:
 
     def test_scalar_and_uniform_list_pass_through(self) -> None:
         """A scalar or an all-equal list collapses to that value."""
-        from koopmans.aiida.workflows import _initial_alpha_from_guess
+        from koopmans.aiida.workflows.dscf import _initial_alpha_from_guess
 
         assert _initial_alpha_from_guess(0.3) == 0.3
         assert _initial_alpha_from_guess([0.3, 0.3, 0.3]) == 0.3
 
     def test_distinct_per_orbital_values_raise(self) -> None:
         """Distinct per-orbital guesses must not be silently collapsed to the first."""
-        from koopmans.aiida.workflows import _initial_alpha_from_guess
+        from koopmans.aiida.workflows.dscf import _initial_alpha_from_guess
 
         with pytest.raises(NotImplementedError, match="per-orbital alpha_guess"):
             _initial_alpha_from_guess([0.3, 0.5, 0.7])

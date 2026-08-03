@@ -291,7 +291,7 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A singlepoint task fed a snapshots block fails with a clear ValueError."""
-        from koopmans.aiida.workflows import _build_singlepoint_workgraph
+        from koopmans.aiida.workflows.dscf import _build_singlepoint_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz), task="singlepoint")

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from aiida_koopmans.projections import get_wannier_indices
 
-from koopmans.aiida.workflows import (
+from koopmans.aiida.workflows.dscf import (
     _build_singlepoint_workgraph,
     _dscf_wannier_init_inputs,
 )
@@ -403,15 +403,15 @@ class TestPeriodicMlwfsBuild:
         runs it. The coverage check alone passes a reversed set — it counts
         occupied Wannier functions wherever the blocks sit in the list.
         """
-        import koopmans.aiida.workflows as workflows_module
+        import koopmans.aiida.workflows.dscf as dscf_module
 
-        derive = workflows_module._create_explicit_blocks
+        derive = dscf_module._create_explicit_blocks
 
         def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
             """Derive the real blocks, reversed — the layout only the validator rejects."""
             return list(reversed(derive(*args, **kwargs)))
 
-        monkeypatch.setattr(workflows_module, "_create_explicit_blocks", reversed_blocks)
+        monkeypatch.setattr(dscf_module, "_create_explicit_blocks", reversed_blocks)
         with pytest.raises(ValueError, match="ascending band order"):
             _build(_si_dscf_dict(), dscf_codes)
 
