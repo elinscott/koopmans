@@ -21,7 +21,7 @@ Read a file from the legacy `koopmans` package and produce a mapping report: for
    - Calculator wrapper → either wrap upstream (scout first) or new CalcJob in `aiida-koopmans2/src/aiida_koopmans/calculations/`.
    - Settings / parameter schema → Pydantic model in `koopmans2/src/koopmans/input_file/`.
    - Domain data (Band, ProjectionBlock, etc.) → `orm.Data` subclass in `aiida-koopmans2/src/aiida_koopmans/data/`.
-   - Input parsing / dispatch → `koopmans2/src/koopmans/input_file/` and `koopmans2/src/koopmans/aiida/workflows.py`.
+   - Input parsing / dispatch → `koopmans2/src/koopmans/input_file/` and `koopmans2/src/koopmans/aiida/workflows/`.
    - ASE↔AiiDA conversion → `koopmans2/src/koopmans/aiida/conversion.py` (via `ase-bridge`).
    - **Drop** (infrastructure replaced by AiiDA): dill pickling, `HasDirectory`, engine, subprocess handling, file symlinking, `Status` enum.
 3. **Check what's already ported.** Grep `koopmans2/` and `aiida-koopmans2/` for the legacy symbol names. Flag duplicates.

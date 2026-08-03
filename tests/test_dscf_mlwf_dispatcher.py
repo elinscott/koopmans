@@ -2,7 +2,7 @@
 
 Exercises the block derivation together with the checks this route adds to
 it (pure bookkeeping), and builds real ``WorkGraph`` objects through
-``_build_singlepoint_workgraph`` for a periodic silicon input (throwaway
+``build_singlepoint_workgraph`` for a periodic silicon input (throwaway
 profile, dummy codes; nothing runs).
 """
 
@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from aiida_koopmans.projections import get_wannier_indices
 
-from koopmans.aiida.workflows import (
-    _build_singlepoint_workgraph,
-    _dscf_wannier_init_inputs,
+from koopmans.aiida.workflows.dscf import (
+    build_singlepoint_workgraph,
+    dscf_wannier_init_inputs,
 )
 from koopmans.input_file import KoopmansInput
 
@@ -82,7 +82,7 @@ def _si_collinear_dscf_dict() -> dict[str, Any]:
 
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return _build_singlepoint_workgraph(inp, codes=codes)
+    return build_singlepoint_workgraph(inp, codes=codes)
 
 
 def _dscf_blocks(
@@ -98,15 +98,15 @@ def _dscf_blocks(
     then applies the checks its supercell fold needs, so the two steps only
     mean anything together.
     """
-    from koopmans.aiida.workflows import (
-        _create_explicit_blocks,
-        _validate_blocks_cover_all_occ_bands,
-        _validate_blocks_separate_occ_and_emp,
+    from koopmans.aiida.workflows.blocks import (
+        create_explicit_blocks,
+        validate_blocks_cover_all_occ_bands,
+        validate_blocks_separate_occ_and_emp,
     )
 
-    blocks = _create_explicit_blocks(structure, projection_blocks, nbnd, nocc, spin_channel)
-    _validate_blocks_separate_occ_and_emp(blocks, nocc)
-    _validate_blocks_cover_all_occ_bands(blocks, nocc)
+    blocks = create_explicit_blocks(structure, projection_blocks, nbnd, nocc, spin_channel)
+    validate_blocks_separate_occ_and_emp(blocks, nocc)
+    validate_blocks_cover_all_occ_bands(blocks, nocc)
     return blocks
 
 
@@ -308,18 +308,18 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        from koopmans.aiida.workflows import (
-            _create_explicit_blocks,
-            _validate_blocks_separate_occ_and_emp,
+        from koopmans.aiida.workflows.blocks import (
+            create_explicit_blocks,
+            validate_blocks_separate_occ_and_emp,
         )
 
         # The stand-in projections duck-type the pydantic model the
         # derivation reads (``.site`` / ``.ang_mtm``), which is all it touches.
         sp = cast("list[Projection]", [self._FakeProjection("Si", -1)])  # 4 = nocc
-        blocks = _create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
+        blocks = create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
         assert get_wannier_indices(blocks[0]) == [1, 2, 3, 4]  # entirely occupied
         with pytest.raises(ValueError, match="for disentanglement"):
-            _validate_blocks_separate_occ_and_emp(blocks, 4)
+            validate_blocks_separate_occ_and_emp(blocks, 4)
 
     def test_uncovered_occupied_bands_raise(self, si_structure: Any) -> None:
         """Occupied blocks must cover every occupied band.
@@ -403,15 +403,14 @@ class TestPeriodicMlwfsBuild:
         runs it. The coverage check alone passes a reversed set — it counts
         occupied Wannier functions wherever the blocks sit in the list.
         """
-        import koopmans.aiida.workflows as workflows_module
-
-        derive = workflows_module._create_explicit_blocks
+        import koopmans.aiida.workflows.dscf as dscf_module
+        from koopmans.aiida.workflows.blocks import create_explicit_blocks as derive
 
         def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
             """Derive the real blocks, reversed — the layout only the validator rejects."""
             return list(reversed(derive(*args, **kwargs)))
 
-        monkeypatch.setattr(workflows_module, "_create_explicit_blocks", reversed_blocks)
+        monkeypatch.setattr(dscf_module, "create_explicit_blocks", reversed_blocks)
         with pytest.raises(ValueError, match="ascending band order"):
             _build(_si_dscf_dict(), dscf_codes)
 
@@ -491,7 +490,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert extra["wannier_overrides"]["wannier90"] == {"num_iter": 17}
         # Projections are consumed by the block derivation, never leaked into
         # the flat keyword override.
@@ -512,7 +511,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_1", True),
             ("emp_1", False),
@@ -532,7 +531,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_up_1", True),
             ("emp_up_1", False),
@@ -564,5 +563,66 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
+
+
+class TestPluginErrorTranslation:
+    """Plugin exceptions gain input-file advice at the dispatch boundary."""
+
+    def test_advice_keys_on_the_raise_site(self, aiida_profile: Any) -> None:
+        """A projections-module raise earns advice; a dispatcher raise earns none.
+
+        The same exception type carries advice or not depending only on
+        where it was raised, which is the key the translation uses while
+        the plugin has no typed exceptions.
+        """
+        from aiida_koopmans.projections import validate_projection_block_sequence
+        from aiida_koopmans.spin import SpinChannel
+
+        from koopmans.aiida.conversion import atoms_input_to_structure
+        from koopmans.aiida.workflows import advice_for
+        from koopmans.aiida.workflows.blocks import create_explicit_blocks
+
+        inp = KoopmansInput.model_validate(_si_dscf_dict())
+        structure = atoms_input_to_structure(inp.atoms)
+        blocks = create_explicit_blocks(
+            structure, inp.calculator_parameters.wannier90.projections, 8, 4, SpinChannel.NONE
+        )
+        with pytest.raises(ValueError, match="ascending band order") as excinfo:
+            validate_projection_block_sequence(list(reversed(blocks)))
+        advice = advice_for(excinfo.value)
+        assert advice is not None
+        assert "calculator_parameters.w90.projections" in advice
+
+        with pytest.raises(ValueError, match="not the plugin") as local_excinfo:
+            raise ValueError("raised by the dispatcher, not the plugin")
+        assert advice_for(local_excinfo.value) is None
+
+    def test_dispatch_appends_advice_to_plugin_errors(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Through ``build_workgraph`` a plugin rejection carries both sentences.
+
+        Reuses the reversed-blocks derivation: the plugin's sequence
+        validator is the only check that rejects it, so the exception must
+        pair the plugin's own message with the input-file advice, attached
+        as a PEP 678 note so the exception itself is untouched.
+        """
+        import koopmans.aiida.workflows.dscf as dscf_module
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.aiida.workflows.blocks import create_explicit_blocks as derive
+
+        def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
+            """Derive the real blocks, reversed."""
+            return list(reversed(derive(*args, **kwargs)))
+
+        monkeypatch.setattr(dscf_module, "create_explicit_blocks", reversed_blocks)
+        inp = KoopmansInput.model_validate(_si_dscf_dict())
+        with pytest.raises(ValueError, match="ascending band order") as excinfo:
+            build_workgraph(inp)
+        assert any("Adjust the projections" in note for note in excinfo.value.__notes__)

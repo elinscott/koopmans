@@ -11,7 +11,7 @@ Dependency direction: koopmans2 → aiida-koopmans (never reverse).
 ## Source map (src/koopmans/)
 - `cli.py`, `__main__.py` — CLI entry (`koopmans` script).
 - `input_file/` — Pydantic input schema (~95% ported). Parsing in `__init__.py`; `Task` enum in `workflow.py`.
-- `aiida/workflows.py` — dispatcher: `Task` enum → WorkGraph assembly. MUST stay thin; real logic lives in aiida-koopmans2 workgraphs.
+- `aiida/workflows/` — dispatcher package: `Task` enum → WorkGraph assembly, one route module per task. MUST stay thin; real logic lives in aiida-koopmans2 workgraphs.
 - `aiida/conversion.py` — ONLY place Pydantic models touch AiiDA ORM (`atoms_input_to_structure`, `input_to_pw_parameters`, …).
 - `aiida/setup.py` — profile/code/pseudo-family setup (`ensure_pseudo_family_installed`).
 

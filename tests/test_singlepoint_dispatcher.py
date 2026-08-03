@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from koopmans.aiida.workflows import (
-    _build_singlepoint_workgraph,
-    _kcp_dscf_inputs,
+from koopmans.aiida.workflows.dscf import (
     _KcpDscfInputs,
+    build_singlepoint_workgraph,
+    kcp_dscf_inputs,
 )
 from koopmans.input_file import KoopmansInput, read_input_file
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
@@ -98,16 +98,16 @@ def _scalars(inputs: _KcpDscfInputs) -> tuple[float, float, int, int]:
 
 
 class TestKcpDscfInputs:
-    """Unit tests for ``_kcp_dscf_inputs``."""
+    """Unit tests for ``kcp_dscf_inputs``."""
 
     def test_ozone_default(self, ozone_input: KoopmansInput) -> None:
         """Ozone input should yield (65.0, 260.0, 10, 2)."""
-        assert _scalars(_kcp_dscf_inputs(ozone_input)) == (65.0, 260.0, 10, 2)
+        assert _scalars(kcp_dscf_inputs(ozone_input)) == (65.0, 260.0, 10, 2)
 
     def test_ecutrho_defaults_to_four_times_ecutwfc(self, ozone_input: KoopmansInput) -> None:
         """With ecutrho unset, it should default to 4 * ecutwfc (4 * 65 = 260)."""
         inp = _copy_with_calc_overrides(ozone_input, **{"kcp.system.ecutrho": 0.0})
-        assert _scalars(_kcp_dscf_inputs(inp)) == (65.0, 260.0, 10, 2)
+        assert _scalars(kcp_dscf_inputs(inp)) == (65.0, 260.0, 10, 2)
 
     def test_ecutrho_default_with_custom_ecutwfc(self, ozone_input: KoopmansInput) -> None:
         """With ecutwfc=30 and no ecutrho, ecutrho should fall back to 120.0."""
@@ -116,7 +116,7 @@ class TestKcpDscfInputs:
             ecutwfc=30.0,
             **{"kcp.system.ecutrho": 0.0},
         )
-        assert _scalars(_kcp_dscf_inputs(inp)) == (30.0, 120.0, 10, 2)
+        assert _scalars(kcp_dscf_inputs(inp)) == (30.0, 120.0, 10, 2)
 
     def test_missing_ecutwfc_raises_valueerror(self, ozone_input: KoopmansInput) -> None:
         """Missing ecutwfc (both top-level and kcp.system) should raise ValueError."""
@@ -126,7 +126,7 @@ class TestKcpDscfInputs:
             **{"kcp.system.ecutwfc": 0.0},
         )
         with pytest.raises(ValueError, match="ecutwfc is required"):
-            _kcp_dscf_inputs(inp)
+            kcp_dscf_inputs(inp)
 
     def test_missing_nbnd_raises_valueerror(self, ozone_input: KoopmansInput) -> None:
         """Missing nbnd (both top-level and kcp.system) should raise ValueError."""
@@ -136,11 +136,11 @@ class TestKcpDscfInputs:
             **{"kcp.system.nbnd": None},
         )
         with pytest.raises(ValueError, match="nbnd is required"):
-            _kcp_dscf_inputs(inp)
+            kcp_dscf_inputs(inp)
 
     def test_workflow_fields_forwarded(self, ozone_input: KoopmansInput) -> None:
         """The workflow-level fields should land in the bundle unchanged."""
-        inputs = _kcp_dscf_inputs(ozone_input)
+        inputs = kcp_dscf_inputs(ozone_input)
         workflow = ozone_input.workflow
         assert inputs["pseudo_family"] == workflow.pseudo_library
         assert inputs["correction"] == workflow.correction
@@ -150,7 +150,7 @@ class TestKcpDscfInputs:
 
 
 class TestBuildSinglepointWorkgraphScopeGuards:
-    """Scope-guard tests for ``_build_singlepoint_workgraph``.
+    """Scope-guard tests for ``build_singlepoint_workgraph``.
 
     These fire BEFORE ``ensure_pseudo_family_installed``, so they are testable
     without an AiiDA profile or database.
@@ -169,7 +169,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="correction="):
-            _build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp, codes={})
 
     @pytest.mark.parametrize("correction_value", ["kipz", "pkipz", "none", "all"])
     def test_dfpt_rejects_non_ki_corrections(
@@ -187,7 +187,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="only implements the KI correction"):
-            _build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp, codes={})
 
     @pytest.mark.parametrize("screening_method", ["dscf", "dfpt"])
     def test_external_projectors_rejected(
@@ -205,7 +205,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="not wired into the singlepoint route"):
-            _build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp, codes={})
 
     @pytest.mark.parametrize("task", ["singlepoint", "dft_bands", "trajectory", "dft_eps"])
     def test_auto_projections_rejected_outside_wannierize(
@@ -243,12 +243,12 @@ class TestExplicitOrbitalGroupsRejected:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="orbital_groups are not yet threaded"):
-            _kcp_dscf_inputs(inp)
+            kcp_dscf_inputs(inp)
 
     def test_dscf_without_orbital_groups_does_not_raise(self, ozone_input: KoopmansInput) -> None:
         """Negative control: the guard fires only when ``orbital_groups`` is set."""
         assert ozone_input.workflow.orbital_groups is None
-        _kcp_dscf_inputs(ozone_input)  # must not raise
+        kcp_dscf_inputs(ozone_input)  # must not raise
 
     def test_dfpt_dispatcher_rejects_orbital_groups(self, ozone_input: KoopmansInput) -> None:
         """A tutorial-2-shaped DFPT input with ``orbital_groups`` must raise loudly.
@@ -266,7 +266,7 @@ class TestExplicitOrbitalGroupsRejected:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="orbital_groups are not yet threaded"):
-            _build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp, codes={})
 
 
 class TestInitialAlphaFromGuess:
@@ -274,14 +274,14 @@ class TestInitialAlphaFromGuess:
 
     def test_scalar_and_uniform_list_pass_through(self) -> None:
         """A scalar or an all-equal list collapses to that value."""
-        from koopmans.aiida.workflows import _initial_alpha_from_guess
+        from koopmans.aiida.workflows.dscf import _initial_alpha_from_guess
 
         assert _initial_alpha_from_guess(0.3) == 0.3
         assert _initial_alpha_from_guess([0.3, 0.3, 0.3]) == 0.3
 
     def test_distinct_per_orbital_values_raise(self) -> None:
         """Distinct per-orbital guesses must not be silently collapsed to the first."""
-        from koopmans.aiida.workflows import _initial_alpha_from_guess
+        from koopmans.aiida.workflows.dscf import _initial_alpha_from_guess
 
         with pytest.raises(NotImplementedError, match="per-orbital alpha_guess"):
             _initial_alpha_from_guess([0.3, 0.5, 0.7])

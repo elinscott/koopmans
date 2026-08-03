@@ -27,7 +27,7 @@ All from `/home/linsco_e/code/koopmans2`, profile `koopmans`. Tail aggressively 
   - `aiida-koopmans2/src/aiida_koopmans/calculations/kcp.py` — input rendering, retrieve list.
   - `aiida-koopmans2/src/aiida_koopmans/parsers/kcp.py` — output parsing.
   - `aiida-koopmans2/src/aiida_koopmans/workgraphs/kcp.py` — task graphs + parameter builders.
-  - `koopmans2/src/koopmans/aiida/workflows.py` — top-level dispatcher.
+  - `koopmans2/src/koopmans/aiida/workflows/` — top-level dispatcher package (one route module per task).
 
 **Do not consult `aiida_quantumespresso/calculations/cp.py` — `kcp.x` and `cp.x` share a name only; their inputs/outputs/algorithms differ.** If you need a reference, use the legacy run tree.
 
