@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
 from aiida import orm
-from aiida_koopmans.ml_helpers import MLDescriptor, MLMode
+from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_koopmans.projections import (
     block_occupancy,
     get_wannier_indices,

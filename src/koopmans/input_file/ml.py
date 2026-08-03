@@ -3,7 +3,7 @@
 from typing import Self
 from warnings import warn
 
-from aiida_koopmans.ml_helpers import MLDescriptor, MLMode
+from aiida_koopmans.ml import MLDescriptor, MLMode
 from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel

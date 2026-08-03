@@ -437,7 +437,7 @@ class TestPredictMode:
     @staticmethod
     def _write_model(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
         """Fit a small self-Hartree model and write it as a model-file JSON."""
-        from aiida_koopmans import ml_helpers
+        from aiida_koopmans.workgraphs.ml import helpers as ml_helpers
 
         model = ml_helpers.fit_screening_model(
             {
