@@ -1642,16 +1642,16 @@ raw:
           graph_data: null
           metadata: null
           mode: module
-          module_path: aiida_koopmans.utils
+          module_path: aiida_koopmans.utils.electrons
           pickled_callable: null
           source_code: ''
         identifier: <scrubbed:identifier>
         metadata:
           deserializers:
-            aiida.orm.nodes.data.array.kpoints.KpointsData: aiida_koopmans.utils.passthrough_node
-            aiida.orm.nodes.data.singlefile.SinglefileData: aiida_koopmans.utils.passthrough_node
-            aiida.orm.nodes.data.structure.StructureData: aiida_koopmans.utils.passthrough_node
-            aiida_pseudo.data.pseudo.upf.UpfData: aiida_koopmans.utils.passthrough_node
+            aiida.orm.nodes.data.array.kpoints.KpointsData: aiida_koopmans.utils.deserializers.passthrough_node
+            aiida.orm.nodes.data.singlefile.SinglefileData: aiida_koopmans.utils.deserializers.passthrough_node
+            aiida.orm.nodes.data.structure.StructureData: aiida_koopmans.utils.deserializers.passthrough_node
+            aiida_pseudo.data.pseudo.upf.UpfData: aiida_koopmans.utils.deserializers.passthrough_node
           non_function_inputs:
           - function_data
           - function_inputs
@@ -2818,7 +2818,7 @@ raw:
           graph_data: null
           metadata: null
           mode: module
-          module_path: aiida_koopmans.utils
+          module_path: aiida_koopmans.utils.pseudos
           pickled_callable: null
           source_code: ''
         identifier: <scrubbed:identifier>
