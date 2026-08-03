@@ -87,6 +87,27 @@ def _simplify_calcjob_dump(output_path: Path) -> None:
             filepath.unlink()
 
 
+def _dump_model_json(process: orm.ProcessNode, output_path: Path) -> None:
+    """Write a trained screening model as a ``model.json`` convenience copy.
+
+    The stored ``model`` ``orm.Dict`` output stays the canonical artifact
+    (a later run references it via ``ml: {model: <pk-or-uuid>}``); the JSON
+    copy feeds ``ml: {model_file: ...}`` outside the training profile.
+    Processes without a non-empty ``model`` Dict output are left alone.
+    """
+    import json
+
+    from aiida import orm
+
+    model_node = getattr(process.outputs, "model", None)
+    if not isinstance(model_node, orm.Dict):
+        return
+    model = model_node.get_dict()  # type: ignore[no-untyped-call]
+    if not model:
+        return
+    (output_path / "model.json").write_text(json.dumps(model, indent=2) + "\n")
+
+
 def dump_workgraph(
     process: orm.ProcessNode,
     output_path: Path,
@@ -137,5 +158,7 @@ def dump_workgraph(
     ]:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
+
+    _dump_model_json(process, output_path)
 
     return output_path

@@ -431,25 +431,30 @@ class TestOrbitalDensityDescriptor:
         }
 
 
+def _fitted_model() -> dict[str, Any]:
+    """Fit a small, stamped self-Hartree screening model."""
+    from aiida_koopmans.workgraphs.ml import helpers as ml_helpers
+
+    return ml_helpers.fit_screening_model(  # type: ignore[no-any-return]
+        {
+            "descriptors": [[-1.0], [-2.0], [-3.0]],
+            "alpha_targets": [0.5, 0.6, 0.7],
+            "filled": [True, True, False],
+            "labels": ["orb_1", "orb_2", "orb_3"],
+        },
+        "linear_regression",
+        correction="ki",
+        init_orbitals="kohn-sham",
+    )
+
+
 class TestPredictMode:
     """``ml: {mode: predict}`` loads the model file and hands the model to every DSCF."""
 
     @staticmethod
     def _write_model(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
-        """Fit a small self-Hartree model and write it as a model-file JSON."""
-        from aiida_koopmans.workgraphs.ml import helpers as ml_helpers
-
-        model = ml_helpers.fit_screening_model(
-            {
-                "descriptors": [[-1.0], [-2.0], [-3.0]],
-                "alpha_targets": [0.5, 0.6, 0.7],
-                "filled": [True, True, False],
-                "labels": ["orb_1", "orb_2", "orb_3"],
-            },
-            "linear_regression",
-            correction="ki",
-            init_orbitals="kohn-sham",
-        )
+        """Write the fitted model as a model-file JSON."""
+        model = _fitted_model()
         path = tmp_path / "model.json"
         path.write_text(json.dumps(model))
         return path, model
@@ -504,14 +509,14 @@ class TestPredictMode:
         tmp_path: Path,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """``mode: predict`` without a model file fails at build."""
+        """``mode: predict`` without a model source fails at build."""
         from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
-        with pytest.raises(ValueError, match="requires ml:model_file"):
+        with pytest.raises(ValueError, match="requires a trained model"):
             build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
     def test_predict_rejects_power_spectrum(
@@ -563,3 +568,127 @@ class TestPredictMode:
 
         with pytest.raises(NotImplementedError, match="trajectory task only"):
             build_workgraph(KoopmansInput.model_validate(d))
+
+
+class TestModelNodeRoute:
+    """``ml: {model: <pk-or-uuid>}`` threads the stored Dict node to the graph."""
+
+    @staticmethod
+    def _stored_model() -> Any:
+        from aiida import orm
+
+        return orm.Dict(dict=_fitted_model()).store()  # type: ignore[no-untyped-call]
+
+    def _build_with_ml(
+        self,
+        ml_block: dict[str, Any],
+        *,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> Any:
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"] = ml_block
+        return build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+
+    @staticmethod
+    def _dscf_model_value(workgraph: Any) -> Any:
+        return next(t for t in workgraph.tasks if t.name == "dscf_snapshot_1").inputs.ml_model.value
+
+    @pytest.mark.parametrize("identify", ["pk", "uuid"])
+    def test_node_route_threads_the_stored_dict(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+        identify: str,
+    ) -> None:
+        """The named node itself reaches the DSCF's ml_model input.
+
+        Node identity (not just payload equality) at the graph input is
+        the provenance claim: the prediction run consumes the training
+        run's stored artifact.
+        """
+        from aiida import orm
+
+        node = self._stored_model()
+        workgraph = self._build_with_ml(
+            {
+                "mode": "predict",
+                "model": node.pk if identify == "pk" else node.uuid,
+                "descriptor": "self_hartree",
+            },
+            tmp_path=tmp_path,
+            trajectory_codes=trajectory_codes,
+            write_multiframe_xyz=write_multiframe_xyz,
+        )
+        # The stored node sits on the trajectory graph's own input (a
+        # TaggedValue proxy forwards isinstance and attribute access), so
+        # the run's provenance links the training artifact; the DSCF
+        # sub-graph receives the payload.
+        value = workgraph.inputs.ml_model.value
+        assert isinstance(value, orm.Dict), type(value)
+        assert value.uuid == node.uuid
+        assert self._dscf_model_value(workgraph) == node.get_dict()
+
+    def test_routes_deliver_the_same_payload(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """Node and file routes hand the plugin's stamp guards the same model.
+
+        The guards (``ModelMismatchError``) live plugin-side and read the
+        payload; equal payloads across routes is what makes their behavior
+        route-independent.
+        """
+        node = self._stored_model()
+        by_node = self._build_with_ml(
+            {"mode": "predict", "model": node.pk, "descriptor": "self_hartree"},
+            tmp_path=tmp_path,
+            trajectory_codes=trajectory_codes,
+            write_multiframe_xyz=write_multiframe_xyz,
+        )
+        model_path = tmp_path / "model.json"
+        model_path.write_text(json.dumps(node.get_dict()))
+        by_file = self._build_with_ml(
+            {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"},
+            tmp_path=tmp_path,
+            trajectory_codes=trajectory_codes,
+            write_multiframe_xyz=write_multiframe_xyz,
+        )
+        assert self._dscf_model_value(by_node) == self._dscf_model_value(by_file)
+
+    def test_non_dict_node_rejected(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """A node of the wrong type fails naming what ml:model must point at."""
+        from aiida import orm
+
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        wrong = orm.Int(7).store()  # type: ignore[no-untyped-call]
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"] = {"mode": "predict", "model": wrong.pk, "descriptor": "self_hartree"}
+
+        with pytest.raises(ValueError, match="must name the stored trained-model Dict"):
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+
+    def test_model_and_model_file_are_exclusive(self) -> None:
+        """Naming both model sources fails at schema validation."""
+        from koopmans.input_file.ml import MLConfig
+
+        with pytest.raises(ValueError, match="supply exactly one"):
+            MLConfig.model_validate({"mode": "predict", "model": 42, "model_file": "model.json"})

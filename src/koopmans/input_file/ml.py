@@ -20,6 +20,11 @@ class MLConfig(BaseModel):
         "an existing model against them, 'predict' applies an existing model in place of "
         "the alpha calculation",
     )
+    model: int | str | None = Field(
+        default=None,
+        description="PK or UUID of the stored trained-model node (the `model` output "
+        "of a mode='train' run in this profile)",
+    )
     model_file: str | None = Field(
         default=None,
         description="JSON file containing the ML model information",
@@ -47,6 +52,16 @@ class MLConfig(BaseModel):
         default=MLDescriptor.POWER_SPECTRUM,
         description="What to use as the descriptor for the ML model",
     )
+
+    @model_validator(mode="after")
+    def model_sources_are_exclusive(self) -> Self:
+        """Validate that ``model`` and ``model_file`` are not both given."""
+        if self.model is not None and self.model_file is not None:
+            raise ValueError(
+                "`ml:model` (a stored model node) and `ml:model_file` (a JSON copy) "
+                "are two sources for the same model; supply exactly one."
+            )
+        return self
 
     @field_validator("r_min", mode="after")
     @classmethod
