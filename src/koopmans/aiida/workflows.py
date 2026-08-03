@@ -1110,7 +1110,7 @@ def _validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc
     assumes: the sequence rules make a block's Wannier indices band
     indices, and with every block on one side of the boundary a block's
     own bands place it in a manifold, so counting the Wannier functions
-    sitting in occupied bands answers the coverage question.
+    sitting in occupied bands ensures every occupied band is covered.
     """
     covered_occ = sum(b["num_wann"] for b in blocks if get_wannier_indices(b)[-1] <= nocc)
     if covered_occ != nocc:
