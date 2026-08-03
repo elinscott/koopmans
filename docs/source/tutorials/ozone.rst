@@ -34,8 +34,10 @@ The ``workflow`` block chooses what kind of calculation to run:
   :math:`N`, :math:`N-1`, or :math:`N+1` electrons and compares the resulting energy
   differences against the orbital energies (see :doc:`the theory page <../theory>`).
 - ``"init_orbitals": "kohn-sham"`` uses the Kohn-Sham orbitals of the base functional as
-  the variational orbitals that the correction acts on. This is common practice for
-  molecules; periodic systems use Wannier functions instead.
+  the variational orbitals that the correction acts on — and for KI they also *remain*
+  the variational orbitals, since KI leaves the orbitals of its base functional
+  unchanged. This is common practice for molecules; periodic systems use Wannier
+  functions instead.
 - ``"alpha_numsteps": 1`` performs a single pass of the screening-parameter loop:
   compute the screening parameters once, starting from a guess, and use them. More steps
   refine them self-consistently.
@@ -47,9 +49,14 @@ The ``atoms`` block describes the cell and the atoms in it, much like a Quantum 
 input file (albeit in JSON):
 
 - ``cell_parameters`` gives the three cell vectors; ``"periodic": false`` declares the
-  system to be an isolated molecule, so the cell is just a large box that keeps the
-  molecule's periodic images apart.
-- ``atomic_positions`` lists each atom and its Cartesian position in the chosen units.
+  system to be an isolated molecule, so the cell is just a large box of vacuum that
+  keeps the molecule's periodic images apart. The box is especially generous because the
+  screening calculations later on give the molecule a net charge, and charged images
+  interact through the long-range Coulomb tail; on top of the vacuum, the code applies a
+  counter-charge correction that compensates the residual interaction between images.
+- ``atomic_positions`` lists each atom and its Cartesian position in the chosen units —
+  here the bent ozone geometry, with a bond length of roughly 1.27 Å and a bond angle of
+  117°.
 
 The ``calculator_parameters`` block holds the plane-wave settings:
 
@@ -106,15 +113,20 @@ it reads
 Reading it top to bottom:
 
 **Initialization.** The first three steps initialize the electron density and the
-variational orbitals with PBE. Why three calculations and not one? The screening
-calculations later on add and remove single electrons, which requires a spin-resolved
-description — but ozone is a closed-shell molecule, and a plain spin-resolved PBE
-calculation risks falling into a spin-contaminated local minimum where
-:math:`n^\uparrow(\mathbf{r}) \neq n^\downarrow(\mathbf{r})`. So the workflow first
-converges the density with the two spin channels constrained to be identical, and only
-then lifts the restriction: a spin-unpolarized calculation, a dummy spin-resolved
-calculation that lays out the restart files, and a final spin-resolved calculation that
-restarts from the spin-symmetric density.
+variational orbitals with PBE. The screening calculations later on add and remove single
+electrons, which requires a spin-resolved description, so the workflow ends up at a
+spin-resolved calculation — but it gets there via a detour: a spin-unpolarized
+calculation, a dummy spin-resolved calculation that lays out the restart files, and a
+final spin-resolved calculation that restarts from the spin-unpolarized density
+duplicated into both spin channels. The detour has two virtues. In harder systems than
+ozone, a spin-resolved calculation started from scratch can collapse into a spurious
+broken-symmetry solution with :math:`n^\uparrow(\mathbf{r}) \neq
+n^\downarrow(\mathbf{r})`; handing it an already-converged symmetric density avoids
+that. And it is cheaper: most of the self-consistency cycles happen in the
+spin-unpolarized problem, which has half the wavefunctions.
+
+From this point on the density never changes: KI, by construction, returns the same
+density as its base functional. (This is not true of KIPZ.)
 
 **Compute screening parameters.** This is the bulk of the calculation, and the part that
 makes a Koopmans calculation more than a DFT calculation. Each orbital :math:`i` has a
@@ -123,8 +135,8 @@ relaxes when that orbital's occupancy changes. With the ΔSCF method they come f
 total-energy differences:
 
 - the *KI trial* step evaluates the KI functional with a starting guess for every
-  screening parameter (:math:`\alpha_i = 0.6`), yielding :math:`E(N)` and the orbital
-  energies;
+  screening parameter (:math:`\alpha_i = 0.6`), yielding :math:`E(N)` and each orbital's
+  energy both at the guessed screening and at zero screening;
 - then, for each of the nine filled orbitals, an :math:`N-1`-electron constrained PBE
   calculation empties that orbital while the rest of the density relaxes, yielding
   :math:`E_i(N-1)`;
@@ -234,14 +246,27 @@ initialization output
 reads −7.9550 eV, an IP underestimated by more than 4.5 eV. Likewise the KI electron
 affinity is 1.82 eV (experiment: ~2.1 eV), where PBE would have given 6.17 eV.
 
-.. figure:: ../_static/tutorials/ozone_levels.svg
-    :width: 450
+The comparison need not stop at the frontier orbitals: KI predicts a binding energy —
+minus the orbital energy — for *every* occupied orbital, and gas-phase photoemission
+measures them. The fair comparison is against the three outermost occupied orbitals,
+whose experimental binding energies are cleanly resolved — 12.73, 13.00 and 13.54 eV
+(`Mocellin et al., Chem. Phys. Lett. 375, 76 (2003)
+<https://doi.org/10.1016/S0009-2614(03)00818-2>`_); the assignments of the deeper
+orbitals are less certain, so they are left out. The three KI values sit at the end of
+the ``Eigenvalues`` line quoted above, and the PBE ones in the corresponding line of the
+initialization output. Plotting one against the other:
+
+.. figure:: ../_static/tutorials/ozone_spectrum.svg
+    :width: 420
     :align: center
 
-    The orbital energies of ozone from this run, with PBE and with KI. Solid lines are
-    filled orbitals, dashed lines empty ones; the experiment column marks −IP and −EA.
-    This figure was generated from the ``ozone/`` output directory with
-    :download:`plot_ozone_levels.py <plot_ozone_levels.py>`.
+    Calculated against experimental binding energies for the three outermost occupied
+    orbitals of ozone, from this run; a point on the dashed line agrees perfectly with
+    experiment. Generated from the ``ozone/`` output directory with
+    :download:`plot_ozone_spectrum.py <plot_ozone_spectrum.py>`.
+
+KI lands within a quarter of an electronvolt of experiment for all three orbitals; PBE
+misses by more than four.
 
 The screening parameters behind this result are recorded in the final calculation's
 input: ``inputs/file_alpharef.txt`` lists one :math:`\alpha_i` per orbital, here ranging
@@ -276,3 +301,8 @@ from 0.66 to 0.78 — each one computed, not fitted.
   screening procedure in full and benchmarks it against experiment.
 - The :doc:`next tutorial <magnetic_molecules>` treats molecules whose ground state is
   spin-polarized.
+- A ΔSCF screening loop runs one constrained calculation per orbital, so its cost grows
+  with system size — and in a crystal each of those calculations additionally needs a
+  supercell large enough to host the localized :math:`N \pm 1` density. The
+  :doc:`silicon tutorial <silicon_dfpt>` sidesteps this by computing the screening
+  parameters from linear response instead.
