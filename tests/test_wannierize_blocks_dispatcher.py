@@ -17,8 +17,8 @@ from aiida_koopmans.projections import get_wannier_indices
 from koopmans.aiida.workflows import (
     _build_wannierize_blocks_workgraph,
     _build_wannierize_workgraph,
-    _create_explicit_blocks,
 )
+from koopmans.aiida.workflows.blocks import _create_explicit_blocks
 from koopmans.input_file import KoopmansInput
 
 
@@ -344,7 +344,7 @@ class TestAutomaticProjections:
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows import _create_automatic_blocks
+        from koopmans.aiida.workflows.blocks import _create_automatic_blocks
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
         blocks, nbnd = _create_automatic_blocks(silicon_structure, pseudos, None, None, 4)
@@ -362,7 +362,7 @@ class TestAutomaticProjections:
     ) -> None:
         """Projectors that cannot span the occupied manifold are rejected."""
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows import _create_automatic_blocks
+        from koopmans.aiida.workflows.blocks import _create_automatic_blocks
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
         with pytest.raises(ValueError, match="cannot span the occupied manifold"):
@@ -543,7 +543,7 @@ class TestExternalProjectors:
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows import _create_automatic_blocks
+        from koopmans.aiida.workflows.blocks import _create_automatic_blocks
         from tests.fixtures import si_external_projector_tables
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
@@ -813,14 +813,14 @@ class TestPseudoSocSniffing:
 
     def test_flag_values_are_read(self, aiida_profile: Any) -> None:
         """``has_so="F"`` reads scalar-relativistic; ``has_so="T"`` fully relativistic."""
-        from koopmans.aiida.workflows import _pseudo_is_fully_relativistic
+        from koopmans.aiida.workflows.blocks import _pseudo_is_fully_relativistic
 
         assert _pseudo_is_fully_relativistic("Si", self._upf(False)) is False
         assert _pseudo_is_fully_relativistic("Si", self._upf(True)) is True
 
     def test_missing_flag_raises_a_named_error(self, aiida_profile: Any) -> None:
         """A header without ``has_so`` fails naming the pseudo, not with a bare TypeError."""
-        from koopmans.aiida.workflows import _pseudo_is_fully_relativistic
+        from koopmans.aiida.workflows.blocks import _pseudo_is_fully_relativistic
 
         with pytest.raises(ValueError, match=r"Si does not declare `has_so`"):
             _pseudo_is_fully_relativistic("Si", self._upf(None))

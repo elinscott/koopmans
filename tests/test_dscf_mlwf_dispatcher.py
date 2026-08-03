@@ -98,7 +98,7 @@ def _dscf_blocks(
     then applies the checks its supercell fold needs, so the two steps only
     mean anything together.
     """
-    from koopmans.aiida.workflows import (
+    from koopmans.aiida.workflows.blocks import (
         _create_explicit_blocks,
         _validate_blocks_cover_all_occ_bands,
         _validate_blocks_separate_occ_and_emp,
@@ -308,7 +308,7 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        from koopmans.aiida.workflows import (
+        from koopmans.aiida.workflows.blocks import (
             _create_explicit_blocks,
             _validate_blocks_separate_occ_and_emp,
         )
