@@ -2,6 +2,28 @@
     max-width: none;
 }
 
+/* Site-wide notice at the top of the content column, stuck there while the page
+   scrolls. Negative side margins bleed it across the column's own padding. */
+.site-banner {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin: -1.618em -3.236em 1.618em;
+    padding: 0.7em 1em;
+    text-align: center;
+    font-size: 90%;
+    color: #7a5b23;
+    background-color: #fdf3e0;
+    border-bottom: 1px solid #ecd9b4;
+}
+
+@media screen and (max-width: 768px) {
+    .site-banner {
+        margin-left: -1.618em;
+        margin-right: -1.618em;
+    }
+}
+
 /* The landing page leads with the wordmark, so the page title it duplicates is
    hidden. Browsers without :has() simply show both. */
 .landing-logo {

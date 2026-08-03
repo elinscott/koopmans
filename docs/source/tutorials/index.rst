@@ -20,6 +20,7 @@ can be read in any order.
     silicon_supercell
     silicon_dfpt
     zno
+    external_projectors
     magnetic_solids
     machine_learning
     spin_orbit

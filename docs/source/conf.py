@@ -145,9 +145,9 @@ html_css_files = ["custom.css"]
 # html_sidebars = {}
 
 # The name of an image file (relative to this directory) to place at the top
-# of the sidebar. The sidebar is dark, hence the white wordmark; the landing
-# page uses the grey one against the white page body.
-html_logo = "_static/logo_white.svg"
+# of the sidebar. The sidebar is dark, hence the white icon; the landing page
+# uses the grey wordmark against the white page body.
+html_logo = "_static/logo_icon.png"
 
 # -- Options for HTMLHelp output ---------------------------------------------
 
