@@ -1552,9 +1552,9 @@ def _build_trajectory_workgraph(
     functions, so it requires the Wannier-initialised route
     (``init_orbitals`` in ``mlwfs`` / ``projwfs``); the ``ml``
     radial-basis settings become that pass's namelist keys. ``ml:predict``
-    supports ``self_hartree`` only: the power-spectrum descriptors are
-    computed after a snapshot's DSCF finishes, too late to feed a
-    prediction that must land between its trial and final KI.
+    supports ``self_hartree`` only: the decompose pass that builds the
+    power-spectrum descriptors is not wired into the DSCF's screening
+    stage, where the prediction runs.
 
     Each frame of the ``atoms.snapshots`` xyz becomes one ``snapshot_N``
     structure fed to the dynamic snapshots namespace. All frames share one
@@ -1625,9 +1625,9 @@ def _resolve_trajectory_ml(
 
     ``test`` and ``predict`` load the JSON model from ``ml:model_file``.
     Predict-mode inputs that cannot take effect raise here: the
-    ``power_spectrum`` descriptor (its dataset is computed after a
-    snapshot's DSCF finishes, too late to feed a prediction that replaces
-    the snapshot's Delta-SCF refinement) and ``alpha_numsteps != 1``.
+    ``power_spectrum`` descriptor (its decompose pass is not wired into
+    the DSCF's screening stage, where the prediction runs) and
+    ``alpha_numsteps != 1``.
     """
     from json import load as json_load
 
@@ -1643,9 +1643,10 @@ def _resolve_trajectory_ml(
     if ml_mode == MLMode.PREDICT:
         if ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
             raise NotImplementedError(
-                "ml:predict supports only descriptor='self_hartree': the power-spectrum "
-                "descriptors are computed after a snapshot's DSCF finishes, too late to "
-                "feed a prediction that replaces its Delta-SCF refinement."
+                "ml:predict supports only descriptor='self_hartree': the decompose pass "
+                "that builds the power-spectrum descriptors is not wired into the DSCF's "
+                "screening stage, where the prediction runs. Use "
+                "descriptor='self_hartree'."
             )
         if workflow.alpha_numsteps != 1:
             raise ValueError(
