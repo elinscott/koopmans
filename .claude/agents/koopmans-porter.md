@@ -24,11 +24,11 @@ Prefer Serena's symbolic tools: `get_symbols_overview`/`find_symbol` for reading
 
 1. **Locate the legacy code** and read it fully. Understand inputs, outputs, side effects, and any sub-workflows it spawns.
 2. **Map it to the right destination:**
-   - A `Workflow` subclass → a `@task.graph` in `aiida-koopmans2/workgraphs/<name>.py` plus a dispatcher branch in `koopmans2/src/koopmans/aiida/workflows.py`.
+   - A `Workflow` subclass → a `@task.graph` in `aiida-koopmans2/workgraphs/<name>.py` plus a dispatcher branch in `koopmans2/src/koopmans/aiida/workflows/`.
    - A `CalculatorExt` subclass → first scout for an upstream WorkChain (delegate to the `qe-plugin-scout` agent). If one exists, wrap it as `task(UpstreamWorkChain)`. Only write a new CalcJob if no upstream exists.
    - A domain data class (`Band`, `ProjectionBlock`, …) → `orm.Data` subclass in `aiida-koopmans2/src/aiida_koopmans/data/`, registered via `pyproject.toml` entry points.
    - A settings dict → already-Pydantic model in `koopmans2/src/koopmans/input_file/`. Extend, don't duplicate.
-3. **Check what's already done.** Read `koopmans2/src/koopmans/aiida/workflows.py` and `aiida-koopmans2/src/aiida_koopmans/workgraphs/*.py` before writing. Don't re-create what exists.
+3. **Check what's already done.** Read `koopmans2/src/koopmans/aiida/workflows/` and `aiida-koopmans2/src/aiida_koopmans/workgraphs/*.py` before writing. Don't re-create what exists.
 4. **Follow the canonical workgraph pattern** (see `aiida-koopmans2/src/aiida_koopmans/workgraphs/pw.py` for the reference):
    - `TypedDict` outputs.
    - `task(UpstreamWorkChain)` at module scope.
@@ -36,7 +36,7 @@ Prefer Serena's symbolic tools: `get_symbols_overview`/`find_symbol` for reading
    - Chain dependencies by dict access: `outputs["remote_folder"]`, not attribute access.
    - Pop `clean_workdir` before chaining.
 5. **Drop anything that's a pure infrastructure concern of the legacy engine**: dill pickling, `HasDirectory`, file-symlink juggling, the `Status` enum, engine subprocess handling. AiiDA replaces these.
-6. **Update the dispatcher.** New tasks need a `Task` enum value (`koopmans2/src/koopmans/input_file/workflow.py`), code loading in `load_codes_for_task`, and a `_build_<task>_workgraph` branch in `build_workgraph`.
+6. **Update the dispatcher.** New tasks need a `Task` enum value (`koopmans2/src/koopmans/input_file/workflow.py`), code loading in `load_codes_for_task`, and a `build_<task>_workgraph` route module under `aiida/workflows/` wired into `build_workgraph`.
 7. **Add a regression test.** Pick the smallest relevant tutorial JSON in `koopmans/tutorials/` and wire it into `koopmans2/tests/regression/`.
 
 ## Hard rules
