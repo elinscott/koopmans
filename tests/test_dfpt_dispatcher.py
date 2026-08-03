@@ -1,6 +1,6 @@
 """Dispatcher tests for the DFPT (kcw.x) singlepoint stream.
 
-Builds real ``WorkGraph`` objects through ``_build_singlepoint_dfpt_workgraph``
+Builds real ``WorkGraph`` objects through ``build_singlepoint_dfpt_workgraph``
 against a throwaway profile (dummy codes, fake pseudos; nothing runs) and
 checks the spin routing: unpolarized, collinear (per-channel fan-out), and
 spinor (noncollinear / spin-orbit).
@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from koopmans.aiida.workflows.dfpt import _build_singlepoint_dfpt_workgraph
+from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
 from koopmans.input_file import KoopmansInput
 
 
@@ -55,7 +55,7 @@ def _si_dfpt_dict(**workflow_updates: Any) -> dict[str, Any]:
 
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return _build_singlepoint_dfpt_workgraph(inp, codes=codes)
+    return build_singlepoint_dfpt_workgraph(inp, codes=codes)
 
 
 @pytest.fixture

@@ -261,7 +261,7 @@ def trajectory_codes(installed_pw_code: Any, installed_kcp_code: Any) -> dict[st
 
 
 class TestTrajectoryDispatcher:
-    """``_build_trajectory_workgraph`` fans one DSCF task out per snapshot."""
+    """``build_trajectory_workgraph`` fans one DSCF task out per snapshot."""
 
     def test_builds_one_dscf_task_per_snapshot(
         self,
@@ -272,12 +272,12 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A 3-frame xyz produces ``dscf_snapshot_1 .. dscf_snapshot_3``."""
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 3)
         koopmans_input = KoopmansInput.model_validate(_trajectory_input_dict(str(xyz)))
 
-        workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
 
         names = set(workgraph.get_task_names())
         assert {f"dscf_snapshot_{i}" for i in range(1, 4)} <= names
@@ -291,7 +291,7 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A singlepoint task fed a snapshots block fails with a clear ValueError."""
-        from koopmans.aiida.workflows.dscf import _build_singlepoint_workgraph
+        from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz), task="singlepoint")
@@ -299,7 +299,7 @@ class TestTrajectoryDispatcher:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="trajectory"):
-            _build_singlepoint_workgraph(koopmans_input, trajectory_codes)
+            build_singlepoint_workgraph(koopmans_input, trajectory_codes)
 
     def test_external_projectors_rejected(
         self,
@@ -307,7 +307,7 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``atom_proj_ext`` is rejected: the trajectory route never consults it."""
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz))
@@ -315,7 +315,7 @@ class TestTrajectoryDispatcher:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="not wired into the trajectory route"):
-            _build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={})
 
 
 def _wannier_trajectory_input_dict(snapshots: str) -> dict[str, Any]:
@@ -357,14 +357,14 @@ class TestOrbitalDensityDescriptor:
         The discriminator against a dispatcher that accepts the keyword but
         silently keeps building the self-Hartree dataset.
         """
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _wannier_trajectory_input_dict(str(xyz))
         d["ml"]["descriptor"] = "power_spectrum"
         koopmans_input = KoopmansInput.model_validate(d)
 
-        workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
 
         names = set(workgraph.get_task_names())
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
@@ -381,12 +381,12 @@ class TestOrbitalDensityDescriptor:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """The same Wannier-route input on ``self_hartree`` builds no decompose pass."""
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
 
-        workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
 
         names = set(workgraph.get_task_names())
         assert not any(name.startswith("descriptors_") for name in names), names
@@ -402,7 +402,7 @@ class TestOrbitalDensityDescriptor:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A Kohn-Sham-initialised trajectory cannot feed the decompose pass."""
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz))
@@ -410,7 +410,7 @@ class TestOrbitalDensityDescriptor:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="init_orbitals"):
-            _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+            build_trajectory_workgraph(koopmans_input, trajectory_codes)
 
     def test_basis_settings_reach_the_namelist(self) -> None:
         """The ``ml`` radial-basis settings become decompose namelist keys.
@@ -470,18 +470,18 @@ class TestPredictMode:
         that routing is asserted in aiida-koopmans' kcp workgraph tests)
         and must not grow a dataset / fit / score layer.
         """
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         model_path, model = self._write_model(tmp_path)
 
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {}
-        ab_initio = _build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        ab_initio = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
 
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"}
-        predict = _build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        predict = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
 
         def _dscf(workgraph: Any) -> Any:
             names = set(workgraph.get_task_names())
@@ -505,14 +505,14 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``mode: predict`` without a model file fails at build."""
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="requires ml:model_file"):
-            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
     def test_predict_rejects_power_spectrum(
         self,
@@ -520,14 +520,14 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``mode: predict`` with the power-spectrum descriptor is an explicit gap."""
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "descriptor": "power_spectrum"}
 
         with pytest.raises(NotImplementedError, match="self_hartree"):
-            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
     def test_predict_rejects_alpha_numsteps(
         self,
@@ -535,14 +535,14 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``alpha_numsteps > 1`` cannot take effect under ``mode: predict``."""
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz), alpha_numsteps=2)
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="alpha_numsteps cannot take effect"):
-            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
     def test_non_trajectory_task_rejects_ml_block(
         self,

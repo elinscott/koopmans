@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.workflows import _load_code, _prepare_common_inputs
-from koopmans.aiida.workflows.grouping import _dfpt_grouping_tol
+from koopmans.aiida.workflows import load_code, prepare_common_inputs
+from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
 
 if TYPE_CHECKING:
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def _build_singlepoint_dfpt_workgraph(
+def build_singlepoint_dfpt_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
@@ -49,7 +49,7 @@ def _build_singlepoint_dfpt_workgraph(
 
     workflow = koopmans_input.workflow
 
-    group_orbitals_tol = _dfpt_grouping_tol(workflow)
+    group_orbitals_tol = dfpt_grouping_tol(workflow)
     if workflow.correction != Correction.KI:
         raise NotImplementedError(
             "The DFPT route (kcw.x) only implements the KI correction; "
@@ -88,7 +88,7 @@ def _build_singlepoint_dfpt_workgraph(
                 "occupations."
             )
 
-    structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
+    structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
     # feed every per-block wannierisation. Flat by design (see
@@ -124,10 +124,10 @@ def _build_singlepoint_dfpt_workgraph(
     # The wannierization steps need codes that load_codes_for_task only wires
     # for the WANNIERIZE task; load them here until it grows a DFPT branch.
     codes = dict(codes)
-    codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
-    codes.setdefault("pw2wannier90", _load_code("pw2wannier90", "pw2wannier90.x"))
+    codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
+    codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
     if eps_inf == "auto":
-        codes.setdefault("ph", _load_code("ph", "ph.x"))
+        codes.setdefault("ph", load_code("ph", "ph.x"))
 
     return SinglepointDFPTWorkflow.build(
         codes=codes,
@@ -220,7 +220,7 @@ def _collinear_dfpt_manifolds(
     w90 = koopmans_input.calculator_parameters.wannier90
     tot_magnetization = koopmans_input.calculator_parameters.tot_magnetization
     if w90.up is None or w90.down is None or tot_magnetization is None:
-        # Already validated by _build_singlepoint_dfpt_workgraph; re-checked
+        # Already validated by build_singlepoint_dfpt_workgraph; re-checked
         # here so the collinear helper narrows its own inputs.
         raise ValueError(
             "spin='collinear' DFPT screening needs per-spin projections "

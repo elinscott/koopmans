@@ -14,10 +14,10 @@ from typing import Any
 import pytest
 from aiida_koopmans.projections import get_wannier_indices
 
-from koopmans.aiida.workflows.blocks import _create_explicit_blocks
+from koopmans.aiida.workflows.blocks import create_explicit_blocks
 from koopmans.aiida.workflows.wannierize import (
     _build_wannierize_blocks_workgraph,
-    _build_wannierize_workgraph,
+    build_wannierize_workgraph,
 )
 from koopmans.input_file import KoopmansInput
 
@@ -86,7 +86,7 @@ def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
 def _build_via_route(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     """Build through the route selection, which is where the guards live."""
     inp = KoopmansInput.model_validate(d)
-    return _build_wannierize_workgraph(inp, codes)
+    return build_wannierize_workgraph(inp, codes)
 
 
 @pytest.fixture
@@ -128,7 +128,7 @@ class TestBlockDerivation:
     def _blocks(structure: Any, projections: list[Any], nbnd: int) -> list[Any]:
         from aiida_koopmans.spin import SpinChannel
 
-        return _create_explicit_blocks(structure, projections, nbnd, 4, SpinChannel.NONE)
+        return create_explicit_blocks(structure, projections, nbnd, 4, SpinChannel.NONE)
 
     def test_straddling_block_is_provisional(self, silicon_structure: Any) -> None:
         """A block spanning occupied and empty bands is unstamped, not an error.
@@ -344,10 +344,10 @@ class TestAutomaticProjections:
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows.blocks import _create_automatic_blocks
+        from koopmans.aiida.workflows.blocks import create_automatic_blocks
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
-        blocks, nbnd = _create_automatic_blocks(silicon_structure, pseudos, None, None, 4)
+        blocks, nbnd = create_automatic_blocks(silicon_structure, pseudos, None, None, 4)
         [block] = blocks
         assert block["num_wann"] == 8
         assert block["num_bands"] == 8
@@ -362,11 +362,11 @@ class TestAutomaticProjections:
     ) -> None:
         """Projectors that cannot span the occupied manifold are rejected."""
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows.blocks import _create_automatic_blocks
+        from koopmans.aiida.workflows.blocks import create_automatic_blocks
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
         with pytest.raises(ValueError, match="cannot span the occupied manifold"):
-            _create_automatic_blocks(silicon_structure, pseudos, None, None, 10)
+            create_automatic_blocks(silicon_structure, pseudos, None, None, 10)
 
     def test_nbnd_above_projector_count_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -543,11 +543,11 @@ class TestExternalProjectors:
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.conversion import get_pseudos_from_family
-        from koopmans.aiida.workflows.blocks import _create_automatic_blocks
+        from koopmans.aiida.workflows.blocks import create_automatic_blocks
         from tests.fixtures import si_external_projector_tables
 
         pseudos = get_pseudos_from_family(fake_sg15_cutoffs_family.label, silicon_structure)
-        blocks, nbnd = _create_automatic_blocks(
+        blocks, nbnd = create_automatic_blocks(
             silicon_structure, pseudos, si_external_projector_tables(), None, 4
         )
         [block] = blocks
@@ -657,13 +657,13 @@ class TestExternalProjectors:
         pw2wannier90 step's staged inputs. No frozen list is ever emitted:
         every external projector is Lowdin-orthonormalized.
         """
-        from koopmans.aiida.workflows.wannierize import _build_wannierize_workgraph
+        from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
         from koopmans.input_file import KoopmansInput
 
         d = _si_external_dict(si_external_projector_dir)
         del d["workflow"]["block_wannierization_threshold"]
         inp = KoopmansInput.model_validate(d)
-        wg = _build_wannierize_workgraph(inp, split_codes)
+        wg = build_wannierize_workgraph(inp, split_codes)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         p2w = w90_task.inputs["pw2wannier90"]["pw2wannier90"]
         inputpp = p2w["parameters"].value.get_dict()["INPUTPP"]
@@ -681,7 +681,7 @@ def _build_plain(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     """Build through the route selection with the threshold dropped."""
     del d["workflow"]["block_wannierization_threshold"]
     inp = KoopmansInput.model_validate(d)
-    return _build_wannierize_workgraph(inp, codes)
+    return build_wannierize_workgraph(inp, codes)
 
 
 class TestPlainRoute:

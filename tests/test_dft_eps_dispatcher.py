@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from koopmans.aiida.workflows import build_workgraph
-from koopmans.aiida.workflows.dfpt import _build_singlepoint_dfpt_workgraph
+from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
 from koopmans.input_file import KoopmansInput
 
 
@@ -170,7 +170,7 @@ class TestDfptAutoEps:
     ) -> None:
         """A 'dielectric' task appears alongside the kcw chain."""
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        wg = _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+        wg = build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
         names = wg.get_task_names()
         assert "dielectric" in names
         assert "dfpt" in names
@@ -191,7 +191,7 @@ class TestDfptAutoEps:
         needs to say so; per-step meshes are koopmans#50.
         """
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        wg = _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+        wg = build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
         eps_mesh = wg.tasks["dielectric"].inputs["scf_kpoints"].value
         main_mesh = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
         assert list(eps_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
@@ -207,7 +207,7 @@ class TestDfptAutoEps:
         """
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
         with pytest.raises(ValueError, match=r"ph\.x"):
-            _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+            build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
 
     def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
         """A non-'auto' string eps_inf is rejected up front."""
@@ -215,4 +215,4 @@ class TestDfptAutoEps:
         d["workflow"]["eps_inf"] = "automatic"
         inp = KoopmansInput.model_validate(d)
         with pytest.raises(ValueError, match="not understood"):
-            _build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+            build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)

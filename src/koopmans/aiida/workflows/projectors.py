@@ -121,7 +121,7 @@ def _read_projector_angular_momenta(projector_file: Path) -> list[int]:
     return momenta
 
 
-def _load_external_projectors(
+def load_external_projectors(
     structure: orm.StructureData,
     proj_dir: Path | None,
 ) -> tuple[dict[str, Any], str]:
@@ -182,7 +182,7 @@ def _load_external_projectors(
     return external_projectors, str(directory)
 
 
-def _reject_unwired_external_projectors(koopmans_input: KoopmansInput, route: str) -> None:
+def reject_unwired_external_projectors(koopmans_input: KoopmansInput, route: str) -> None:
     """Reject ``atom_proj_ext`` on a route that does not consume it.
 
     The singlepoint and trajectory routes build their Wannierizations

@@ -8,13 +8,13 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import _load_code
+from koopmans.aiida.workflows import load_code
 from koopmans.aiida.workflows.dscf import (
-    _dscf_wannier_init_inputs,
-    _kcp_dscf_inputs,
-    _require_supported_correction,
+    dscf_wannier_init_inputs,
+    kcp_dscf_inputs,
+    require_supported_correction,
 )
-from koopmans.aiida.workflows.projectors import _reject_unwired_external_projectors
+from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
 from koopmans.input_file.workflow import CalculateScreeningMethod, VariationalOrbitalType
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
-def _build_trajectory_workgraph(
+def build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
@@ -62,7 +62,7 @@ def _build_trajectory_workgraph(
 
     workflow = koopmans_input.workflow
 
-    _reject_unwired_external_projectors(koopmans_input, "trajectory")
+    reject_unwired_external_projectors(koopmans_input, "trajectory")
 
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(
@@ -70,7 +70,7 @@ def _build_trajectory_workgraph(
             "is not yet implemented for trajectories."
         )
 
-    _require_supported_correction(workflow.correction)
+    require_supported_correction(workflow.correction)
 
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
         raise NotImplementedError(
@@ -84,19 +84,19 @@ def _build_trajectory_workgraph(
     snapshots = atoms_input_to_structures(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
 
-    inputs = _kcp_dscf_inputs(koopmans_input)
+    inputs = kcp_dscf_inputs(koopmans_input)
 
     extra_kwargs: dict[str, Any] = {}
     if workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
     ):
-        extra_kwargs = _dscf_wannier_init_inputs(
+        extra_kwargs = dscf_wannier_init_inputs(
             koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
         )
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
-        extra_kwargs["pw2wannier90_code"] = _load_code("pw2wannier90", "pw2wannier90.x")
+        extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
     return TrajectoryWorkflow.build(

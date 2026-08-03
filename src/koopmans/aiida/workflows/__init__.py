@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
-def _load_code(name: str, executable: str) -> orm.AbstractCode:
+def load_code(name: str, executable: str) -> orm.AbstractCode:
     """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
     try:
         return orm.load_code(f"{name}@localhost")
@@ -62,7 +62,7 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     codes: Codes = {}
 
     # All tasks need pw.x
-    codes["pw"] = _load_code("pw", "pw.x")
+    codes["pw"] = load_code("pw", "pw.x")
 
     # A corrected singlepoint — or a trajectory, which runs one DSCF
     # singlepoint per snapshot — needs a screening-method-specific code
@@ -71,25 +71,25 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     # the screening step itself is skipped.
     if task in (Task.SINGLEPOINT, Task.TRAJECTORY) and workflow.correction != Correction.NONE:
         if workflow.screening_method == CalculateScreeningMethod.DSCF:
-            codes["kcp"] = _load_code("kcp", "kcp.x")
+            codes["kcp"] = load_code("kcp", "kcp.x")
         elif workflow.screening_method == CalculateScreeningMethod.DFPT:
             # kcw.x runs all three DFPT steps (wann2kc, screen, ham) selected
             # via its ``control.calculation`` flag, so a single code suffices.
-            codes["kcw"] = _load_code("kcw", "kcw.x")
+            codes["kcw"] = load_code("kcw", "kcw.x")
 
     # The dielectric-constant task runs ph.x on top of the scf
     if task == Task.DFT_EPS:
-        codes["ph"] = _load_code("ph", "ph.x")
+        codes["ph"] = load_code("ph", "ph.x")
 
     # Wannierize task needs additional codes
     if task == Task.WANNIERIZE:
-        codes["pw2wannier90"] = _load_code("pw2wannier90", "pw2wannier90.x")
-        codes["wannier90"] = _load_code("wannier90", "wannier90.x")
+        codes["pw2wannier90"] = load_code("pw2wannier90", "pw2wannier90.x")
+        codes["wannier90"] = load_code("wannier90", "wannier90.x")
 
         # Automated block splitting runs the Wannier.jl CalcJobs (the julia
         # binary registered via aiida_wannierjl.helpers.get_wannierjl_code).
         if workflow.block_wannierization_threshold is not None:
-            codes["wannierjl"] = _load_code("wannierjl", "julia (Wannier.jl)")
+            codes["wannierjl"] = load_code("wannierjl", "julia (Wannier.jl)")
 
         # projwfc is only needed when the Wannierize flow computes a projected
         # DOS / bandstructure, so treat it as optional rather than required.
@@ -101,7 +101,7 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     return codes
 
 
-def _prepare_common_inputs(
+def prepare_common_inputs(
     koopmans_input: KoopmansInput,
     override_keys: list[str],
 ) -> tuple[orm.StructureData, str, dict[str, Any]]:
@@ -183,25 +183,25 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     # Build the workgraph based on task
     if task == Task.DFT_BANDS:
-        from koopmans.aiida.workflows.dft import _build_dft_bands_workgraph
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
 
-        return _build_dft_bands_workgraph(koopmans_input, codes)
+        return build_dft_bands_workgraph(koopmans_input, codes)
     elif task == Task.WANNIERIZE:
-        from koopmans.aiida.workflows.wannierize import _build_wannierize_workgraph
+        from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
 
-        return _build_wannierize_workgraph(koopmans_input, codes)
+        return build_wannierize_workgraph(koopmans_input, codes)
     elif task == Task.SINGLEPOINT:
-        from koopmans.aiida.workflows.dscf import _build_singlepoint_workgraph
+        from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
 
-        return _build_singlepoint_workgraph(koopmans_input, codes)
+        return build_singlepoint_workgraph(koopmans_input, codes)
     elif task == Task.TRAJECTORY:
-        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
-        return _build_trajectory_workgraph(koopmans_input, codes)
+        return build_trajectory_workgraph(koopmans_input, codes)
     elif task == Task.DFT_EPS:
-        from koopmans.aiida.workflows.eps import _build_dft_eps_workgraph
+        from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
 
-        return _build_dft_eps_workgraph(koopmans_input, codes)
+        return build_dft_eps_workgraph(koopmans_input, codes)
     else:
         raise ValueError(
             f"Task '{task.value}' is not yet implemented. "

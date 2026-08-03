@@ -69,7 +69,7 @@ def _assign_band_ranges(
     return ranges
 
 
-def _create_explicit_blocks(
+def create_explicit_blocks(
     structure: orm.StructureData,
     projection_blocks: list[list[Projection]],
     nbnd: int,
@@ -86,7 +86,7 @@ def _create_explicit_blocks(
     the boundary is provisional instead, left unstamped and named by
     list position; only a route that cuts blocks at the boundary at runtime can
     finalize it, and a route that cannot must reject it
-    (:func:`_validate_blocks_separate_occ_and_emp`).
+    (:func:`validate_blocks_separate_occ_and_emp`).
 
     The extra disentanglement bands belong to the read window, not to the
     Wannier-function indices the block takes, so an occupied block that
@@ -179,7 +179,7 @@ def _pseudo_is_fully_relativistic(kind: str, upf: orm.UpfData) -> bool:
         ) from exc
 
 
-def _create_automatic_blocks(
+def create_automatic_blocks(
     structure: orm.StructureData,
     pseudos: dict[str, orm.UpfData],
     external_projectors: dict[str, Any] | None,
@@ -272,7 +272,7 @@ def _create_automatic_blocks(
     return [block], num_wann
 
 
-def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], nocc: int) -> None:
+def validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], nocc: int) -> None:
     """Reject a block that spans both sides of the occupied/empty boundary.
 
     Every Koopmans calculation downstream wants Wannier functions that
@@ -314,7 +314,7 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
             ) from exc
 
 
-def _validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc: int) -> None:
+def validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc: int) -> None:
     """Reject occupied blocks that leave part of the occupied manifold unseeded.
 
     The merged ``evc_occupied`` file seeds the complete occupied manifold
@@ -322,7 +322,7 @@ def _validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc
     occupied band.
 
     Runs after ``validate_projection_block_sequence`` and
-    :func:`_validate_blocks_separate_occ_and_emp`, whose rules this one
+    :func:`validate_blocks_separate_occ_and_emp`, whose rules this one
     assumes: the sequence rules make a block's Wannier indices band
     indices, and with every block on one side of the boundary a block's
     own bands place it in a manifold, so counting the Wannier functions

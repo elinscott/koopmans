@@ -2,7 +2,7 @@
 
 Exercises the block derivation together with the checks this route adds to
 it (pure bookkeeping), and builds real ``WorkGraph`` objects through
-``_build_singlepoint_workgraph`` for a periodic silicon input (throwaway
+``build_singlepoint_workgraph`` for a periodic silicon input (throwaway
 profile, dummy codes; nothing runs).
 """
 
@@ -14,8 +14,8 @@ import pytest
 from aiida_koopmans.projections import get_wannier_indices
 
 from koopmans.aiida.workflows.dscf import (
-    _build_singlepoint_workgraph,
-    _dscf_wannier_init_inputs,
+    build_singlepoint_workgraph,
+    dscf_wannier_init_inputs,
 )
 from koopmans.input_file import KoopmansInput
 
@@ -82,7 +82,7 @@ def _si_collinear_dscf_dict() -> dict[str, Any]:
 
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return _build_singlepoint_workgraph(inp, codes=codes)
+    return build_singlepoint_workgraph(inp, codes=codes)
 
 
 def _dscf_blocks(
@@ -99,14 +99,14 @@ def _dscf_blocks(
     mean anything together.
     """
     from koopmans.aiida.workflows.blocks import (
-        _create_explicit_blocks,
-        _validate_blocks_cover_all_occ_bands,
-        _validate_blocks_separate_occ_and_emp,
+        create_explicit_blocks,
+        validate_blocks_cover_all_occ_bands,
+        validate_blocks_separate_occ_and_emp,
     )
 
-    blocks = _create_explicit_blocks(structure, projection_blocks, nbnd, nocc, spin_channel)
-    _validate_blocks_separate_occ_and_emp(blocks, nocc)
-    _validate_blocks_cover_all_occ_bands(blocks, nocc)
+    blocks = create_explicit_blocks(structure, projection_blocks, nbnd, nocc, spin_channel)
+    validate_blocks_separate_occ_and_emp(blocks, nocc)
+    validate_blocks_cover_all_occ_bands(blocks, nocc)
     return blocks
 
 
@@ -309,17 +309,17 @@ class TestDscfBlocks:
         from aiida_koopmans.spin import SpinChannel
 
         from koopmans.aiida.workflows.blocks import (
-            _create_explicit_blocks,
-            _validate_blocks_separate_occ_and_emp,
+            create_explicit_blocks,
+            validate_blocks_separate_occ_and_emp,
         )
 
         # The stand-in projections duck-type the pydantic model the
         # derivation reads (``.site`` / ``.ang_mtm``), which is all it touches.
         sp = cast("list[Projection]", [self._FakeProjection("Si", -1)])  # 4 = nocc
-        blocks = _create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
+        blocks = create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
         assert get_wannier_indices(blocks[0]) == [1, 2, 3, 4]  # entirely occupied
         with pytest.raises(ValueError, match="for disentanglement"):
-            _validate_blocks_separate_occ_and_emp(blocks, 4)
+            validate_blocks_separate_occ_and_emp(blocks, 4)
 
     def test_uncovered_occupied_bands_raise(self, si_structure: Any) -> None:
         """Occupied blocks must cover every occupied band.
@@ -405,13 +405,13 @@ class TestPeriodicMlwfsBuild:
         """
         import koopmans.aiida.workflows.dscf as dscf_module
 
-        derive = dscf_module._create_explicit_blocks
+        derive = dscf_module.create_explicit_blocks
 
         def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
             """Derive the real blocks, reversed — the layout only the validator rejects."""
             return list(reversed(derive(*args, **kwargs)))
 
-        monkeypatch.setattr(dscf_module, "_create_explicit_blocks", reversed_blocks)
+        monkeypatch.setattr(dscf_module, "create_explicit_blocks", reversed_blocks)
         with pytest.raises(ValueError, match="ascending band order"):
             _build(_si_dscf_dict(), dscf_codes)
 
@@ -491,7 +491,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert extra["wannier_overrides"]["wannier90"] == {"num_iter": 17}
         # Projections are consumed by the block derivation, never leaked into
         # the flat keyword override.
@@ -512,7 +512,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_1", True),
             ("emp_1", False),
@@ -532,7 +532,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_up_1", True),
             ("emp_up_1", False),
@@ -564,5 +564,5 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = _dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}

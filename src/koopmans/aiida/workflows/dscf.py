@@ -9,15 +9,15 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import _load_code
+from koopmans.aiida.workflows import load_code
 from koopmans.aiida.workflows.blocks import (
-    _create_explicit_blocks,
-    _validate_blocks_cover_all_occ_bands,
-    _validate_blocks_separate_occ_and_emp,
+    create_explicit_blocks,
+    validate_blocks_cover_all_occ_bands,
+    validate_blocks_separate_occ_and_emp,
 )
-from koopmans.aiida.workflows.dfpt import _build_singlepoint_dfpt_workgraph
-from koopmans.aiida.workflows.grouping import _grouping_tol
-from koopmans.aiida.workflows.projectors import _reject_unwired_external_projectors
+from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
+from koopmans.aiida.workflows.grouping import grouping_tol
+from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def _build_singlepoint_workgraph(
+def build_singlepoint_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
@@ -43,7 +43,7 @@ def _build_singlepoint_workgraph(
     ``workflow.correction``:
 
     - DSCF + ``KI``/``KIPZ`` → ``KoopmansDSCFWorkflow`` (kcp.x)
-    - DFPT + ``KI`` → ``_build_singlepoint_dfpt_workgraph`` (kcw.x; KI only)
+    - DFPT + ``KI`` → ``build_singlepoint_dfpt_workgraph`` (kcw.x; KI only)
     - anything else → ``NotImplementedError``
     """
     from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
@@ -52,15 +52,15 @@ def _build_singlepoint_workgraph(
 
     workflow = koopmans_input.workflow
 
-    _reject_unwired_external_projectors(koopmans_input, "singlepoint")
+    reject_unwired_external_projectors(koopmans_input, "singlepoint")
 
     # DFPT routes on the screening method alone: calculate_alpha = False is
     # the alpha_guess path inside the DFPT builder (screen step skipped),
     # not a reason to fall through to the kcp.x/DSCF branch.
     if workflow.screening_method == CalculateScreeningMethod.DFPT:
-        return _build_singlepoint_dfpt_workgraph(koopmans_input, codes)
+        return build_singlepoint_dfpt_workgraph(koopmans_input, codes)
 
-    _require_supported_correction(workflow.correction)
+    require_supported_correction(workflow.correction)
 
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
         raise NotImplementedError(
@@ -71,14 +71,14 @@ def _build_singlepoint_workgraph(
     structure = atoms_input_to_structure(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
 
-    inputs = _kcp_dscf_inputs(koopmans_input)
+    inputs = kcp_dscf_inputs(koopmans_input)
 
     extra_kwargs: dict[str, Any] = {}
     if workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
     ):
-        extra_kwargs = _dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
+        extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
 
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
@@ -89,7 +89,7 @@ def _build_singlepoint_workgraph(
     )
 
 
-def _dscf_wannier_init_inputs(
+def dscf_wannier_init_inputs(
     koopmans_input: KoopmansInput,
     structure: orm.StructureData,
     codes: dict[str, orm.AbstractCode],
@@ -157,18 +157,18 @@ def _dscf_wannier_init_inputs(
             )
         nocc_up = (nelec + magnetization) // 2
         nocc_down = (nelec - magnetization) // 2
-        up_blocks = _create_explicit_blocks(
+        up_blocks = create_explicit_blocks(
             structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
         )
         validate_projection_block_sequence(up_blocks)
-        _validate_blocks_separate_occ_and_emp(up_blocks, nocc_up)
-        _validate_blocks_cover_all_occ_bands(up_blocks, nocc_up)
-        down_blocks = _create_explicit_blocks(
+        validate_blocks_separate_occ_and_emp(up_blocks, nocc_up)
+        validate_blocks_cover_all_occ_bands(up_blocks, nocc_up)
+        down_blocks = create_explicit_blocks(
             structure, w90.down.projections, nscf_nbnd, nocc_down, SpinChannel.DOWN
         )
         validate_projection_block_sequence(down_blocks)
-        _validate_blocks_separate_occ_and_emp(down_blocks, nocc_down)
-        _validate_blocks_cover_all_occ_bands(down_blocks, nocc_down)
+        validate_blocks_separate_occ_and_emp(down_blocks, nocc_down)
+        validate_blocks_cover_all_occ_bands(down_blocks, nocc_down)
         blocks = up_blocks + down_blocks
     else:
         if nelec % 2:
@@ -177,12 +177,12 @@ def _dscf_wannier_init_inputs(
                 "Wannier-initialised DSCF route."
             )
         nocc = nelec // 2
-        blocks = _create_explicit_blocks(
+        blocks = create_explicit_blocks(
             structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
         )
         validate_projection_block_sequence(blocks)
-        _validate_blocks_separate_occ_and_emp(blocks, nocc)
-        _validate_blocks_cover_all_occ_bands(blocks, nocc)
+        validate_blocks_separate_occ_and_emp(blocks, nocc)
+        validate_blocks_cover_all_occ_bands(blocks, nocc)
 
     wannier_overrides: WannierizeOverrides = {
         "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
@@ -200,10 +200,10 @@ def _dscf_wannier_init_inputs(
         wannier_overrides["wannier90"] = w90_user
 
     wannier_codes = dict(codes)
-    wannier_codes.setdefault("wannier90", _load_code("wannier90", "wannier90.x"))
-    wannier_codes.setdefault("pw2wannier90", _load_code("pw2wannier90", "pw2wannier90.x"))
-    wannier_codes.setdefault("wann2kcp", _load_code("wann2kcp", "wann2kcp.x"))
-    wannier_codes.setdefault("merge_evc", _load_code("merge_evc", "merge_evc.x"))
+    wannier_codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
+    wannier_codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
+    wannier_codes.setdefault("wann2kcp", load_code("wann2kcp", "wann2kcp.x"))
+    wannier_codes.setdefault("merge_evc", load_code("merge_evc", "merge_evc.x"))
 
     return {
         "codes": wannier_codes,
@@ -217,7 +217,7 @@ def _dscf_wannier_init_inputs(
     }
 
 
-def _require_supported_correction(correction: Correction) -> None:
+def require_supported_correction(correction: Correction) -> None:
     """Raise for corrections the kcp.x (DSCF) route does not support yet."""
     supported = {Correction.KI, Correction.KIPZ}
     if correction not in supported:
@@ -266,7 +266,7 @@ def _initial_alpha_from_guess(alpha_guess: float | list[float]) -> float:
     return float(alpha_guess[0])
 
 
-def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
+def kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
     """Assemble the scalar kwargs shared by the kcp.x DSCF builders.
 
     ``ecutwfc``/``nbnd`` prefer the top-level ``calculator_parameters``
@@ -309,7 +309,7 @@ def _kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         fix_spin_contamination=workflow.fix_spin_contamination,
         initial_alpha=_initial_alpha_from_guess(workflow.alpha_guess),
         spin_polarized=workflow.spin == SpinType.COLLINEAR,
-        orbital_groups_self_hartree_tol=_grouping_tol(workflow),
+        orbital_groups_self_hartree_tol=grouping_tol(workflow),
     )
 
 

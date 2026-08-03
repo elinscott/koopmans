@@ -9,12 +9,12 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import _prepare_common_inputs
+from koopmans.aiida.workflows import prepare_common_inputs
 from koopmans.aiida.workflows.blocks import (
-    _create_automatic_blocks,
-    _create_explicit_blocks,
+    create_automatic_blocks,
+    create_explicit_blocks,
 )
-from koopmans.aiida.workflows.projectors import _load_external_projectors
+from koopmans.aiida.workflows.projectors import load_external_projectors
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -102,7 +102,7 @@ def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
         )
 
 
-def _build_wannierize_workgraph(
+def build_wannierize_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
@@ -137,7 +137,7 @@ def _build_wannierize_workgraph(
     if not koopmans_input.workflow.auto_projections:
         raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
-    structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "nscf"])
+    structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
     # The automatically derived projections are the pseudopotentials' atomic
     # orbitals (upstream's ATOMIC_PROJECTORS_QE mechanism) unless external
@@ -145,7 +145,7 @@ def _build_wannierize_workgraph(
     pw2w_params = koopmans_input.calculator_parameters.pw2wannier90
     extra_kwargs: dict[str, Any] = {}
     if pw2w_params.atom_proj_ext:
-        external_projectors, projector_path = _load_external_projectors(
+        external_projectors, projector_path = load_external_projectors(
             structure, pw2w_params.atom_proj_dir
         )
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
@@ -176,7 +176,7 @@ def _build_wannierize_blocks_workgraph(
     spans the whole manifold; its projectors come from the external
     projector directory ``pw2wannier90.atom_proj_dir`` when
     ``pw2wannier90.atom_proj_ext`` is set and from the pseudopotentials
-    otherwise (:func:`_create_automatic_blocks`).
+    otherwise (:func:`create_automatic_blocks`).
 
     Setting ``block_wannierization_threshold`` adds the automated splitting:
     a pw.x bands run along the k-path feeds a runtime band-group detection
@@ -237,20 +237,20 @@ def _build_wannierize_blocks_workgraph(
     if projections:
         if nbnd is None:
             nbnd = _num_wann_total(structure, projections)
-        blocks = _create_explicit_blocks(
+        blocks = create_explicit_blocks(
             structure, projections, nbnd, num_occ_bands, SpinChannel.NONE
         )
     elif workflow.auto_projections:
         external_projectors = None
         if calc_params.pw2wannier90.atom_proj_ext:
-            external_projectors, projector_path = _load_external_projectors(
+            external_projectors, projector_path = load_external_projectors(
                 structure, calc_params.pw2wannier90.atom_proj_dir
             )
             external_kwargs = {
                 "external_projectors_path": projector_path,
                 "external_projectors": external_projectors,
             }
-        blocks, nbnd = _create_automatic_blocks(
+        blocks, nbnd = create_automatic_blocks(
             structure, pseudos, external_projectors, nbnd, num_occ_bands
         )
     else:

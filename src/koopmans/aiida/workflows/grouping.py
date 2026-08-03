@@ -26,7 +26,7 @@ def _reject_explicit_orbital_groups(workflow: WorkflowConfig) -> None:
         )
 
 
-def _grouping_tol(workflow: WorkflowConfig) -> float | None:
+def grouping_tol(workflow: WorkflowConfig) -> float | None:
     """Translate the orbital-grouping fields into the plugin's self-Hartree tolerance.
 
     The schema resolves ``group_orbitals_by`` / ``group_orbitals_tol``
@@ -44,7 +44,7 @@ def _grouping_tol(workflow: WorkflowConfig) -> float | None:
     )
 
 
-def _dfpt_grouping_tol(workflow: WorkflowConfig) -> float | None:
+def dfpt_grouping_tol(workflow: WorkflowConfig) -> float | None:
     """Resolve the workflow-level orbital-grouping tolerance for the DFPT route.
 
     Returns the tolerance for ``'spread'`` (grouping on), ``None`` for

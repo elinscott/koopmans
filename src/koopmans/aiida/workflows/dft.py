@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from koopmans.aiida.workflows import _prepare_common_inputs
+from koopmans.aiida.workflows import prepare_common_inputs
 
 if TYPE_CHECKING:
     from aiida_koopmans.workgraphs import Codes
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def _build_dft_bands_workgraph(
+def build_dft_bands_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
@@ -30,7 +30,7 @@ def _build_dft_bands_workgraph(
 
     from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
 
-    structure, _pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf", "bands"])
+    structure, _pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "bands"])
 
     return RunPwBands.build(
         code=codes["pw"],

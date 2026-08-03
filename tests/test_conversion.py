@@ -248,31 +248,31 @@ class TestParallelizationWiring:
 
     def test_npool_lands_in_pw_settings(self, aiida_profile: Any) -> None:
         """With pw.npool set, every override key carries settings.cmdline."""
-        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.aiida.workflows import prepare_common_inputs
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"npool": 4}}))
-        _, _, overrides = _prepare_common_inputs(inp, ["scf", "bands"])
+        _, _, overrides = prepare_common_inputs(inp, ["scf", "bands"])
         for key in ("scf", "bands"):
             assert overrides[key]["pw"]["settings"]["cmdline"] == ["-npool", "4"]
 
     def test_ntasks_lands_in_pw_metadata_options(self, aiida_profile: Any) -> None:
         """An explicit pw.ntasks entry rides metadata.options.resources."""
-        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.aiida.workflows import prepare_common_inputs
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"ntasks": 8}}))
-        _, _, overrides = _prepare_common_inputs(inp, ["scf"])
+        _, _, overrides = prepare_common_inputs(inp, ["scf"])
         resources = overrides["scf"]["pw"]["metadata"]["options"]["resources"]
         assert resources == {"num_machines": 1, "num_mpiprocs_per_machine": 8}
 
     def test_no_parallelization_leaves_pw_clean(self, aiida_profile: Any) -> None:
         """With nothing configured, neither settings nor metadata is injected."""
-        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.aiida.workflows import prepare_common_inputs
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_pw_input())
-        _, _, overrides = _prepare_common_inputs(inp, ["scf"])
+        _, _, overrides = prepare_common_inputs(inp, ["scf"])
         assert "settings" not in overrides["scf"]["pw"]
         assert "metadata" not in overrides["scf"]["pw"]
 
@@ -290,7 +290,7 @@ class TestParallelizationWiring:
         """
         from aiida_quantumespresso.workflows.pw.bands import PwBandsWorkChain
 
-        from koopmans.aiida.workflows import _prepare_common_inputs
+        from koopmans.aiida.workflows import prepare_common_inputs
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(
@@ -299,7 +299,7 @@ class TestParallelizationWiring:
                 parallelization={"pw": {"ntasks": 8, "npool": 4}},
             )
         )
-        structure, _, overrides = _prepare_common_inputs(inp, ["scf", "bands"])
+        structure, _, overrides = prepare_common_inputs(inp, ["scf", "bands"])
         builder = PwBandsWorkChain.get_builder_from_protocol(
             code=installed_pw_code, structure=structure, overrides=overrides
         )
@@ -317,7 +317,7 @@ class TestDispatcherThreadsParallelization:
         import aiida_koopmans.workgraphs.pw as pw_module
 
         from koopmans.aiida.workflows import dft as dft_module
-        from koopmans.aiida.workflows.dft import _build_dft_bands_workgraph
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
         from koopmans.input_file import KoopmansInput
 
         captured: dict[str, Any] = {}
@@ -330,14 +330,14 @@ class TestDispatcherThreadsParallelization:
         # Stub the profile-dependent structure/pseudo setup and the graph build
         # so the test isolates the dispatcher's threading logic.
         monkeypatch.setattr(
-            dft_module, "_prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+            dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
         )
         monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
 
         inp = KoopmansInput.model_validate(
             _pw_input(parallelization={"pw": {"npool": 4}, "kcw": {"ntasks": 8}})
         )
-        _build_dft_bands_workgraph(inp, {"pw": object()})
+        build_dft_bands_workgraph(inp, {"pw": object()})
         assert captured["parallelization"] == {"pw": {"npool": 4}, "kcw": {"ntasks": 8}}
 
     def test_no_config_passes_none(self, aiida_profile: Any, monkeypatch: Any) -> None:
@@ -345,18 +345,18 @@ class TestDispatcherThreadsParallelization:
         import aiida_koopmans.workgraphs.pw as pw_module
 
         from koopmans.aiida.workflows import dft as dft_module
-        from koopmans.aiida.workflows.dft import _build_dft_bands_workgraph
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
         from koopmans.input_file import KoopmansInput
 
         captured: dict[str, Any] = {}
         monkeypatch.setattr(
-            dft_module, "_prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+            dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
         )
         monkeypatch.setattr(
             pw_module.RunPwBands, "build", staticmethod(lambda **kw: captured.update(kw))
         )
 
-        _build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()), {"pw": object()})
+        build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()), {"pw": object()})
         assert captured["parallelization"] is None
 
 

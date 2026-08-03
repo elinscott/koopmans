@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from koopmans.aiida.workflows import _prepare_common_inputs
+from koopmans.aiida.workflows import prepare_common_inputs
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def _build_dft_eps_workgraph(
+def build_dft_eps_workgraph(
     koopmans_input: KoopmansInput,
     codes: dict[str, orm.AbstractCode],
 ) -> WorkGraph:
@@ -36,7 +36,7 @@ def _build_dft_eps_workgraph(
 
     from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
 
-    structure, pseudo_family, overrides = _prepare_common_inputs(koopmans_input, ["scf"])
+    structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf"])
     overrides["scf"]["pw"]["parameters"].get("SYSTEM", {}).pop("nbnd", None)
 
     return DielectricTask.build(
