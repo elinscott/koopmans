@@ -209,7 +209,7 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         )
 
     ml_config = koopmans_input.ml
-    if (ml_config.train or ml_config.test or ml_config.predict) and task != Task.TRAJECTORY:
+    if ml_config.mode != MLMode.NONE and task != Task.TRAJECTORY:
         raise NotImplementedError(
             f"`ml` is wired into the trajectory task only, not {task.value!r}; legacy "
             "permitted singlepoint prediction — not yet ported."
@@ -1547,9 +1547,9 @@ def _build_trajectory_workgraph(
     Fans the snapshots out over per-snapshot ``KoopmansDSCFWorkflow`` runs via
     ``aiida_koopmans.workgraphs.ml.TrajectoryWorkflow`` and, depending on the
     ``ml`` configuration, trains a screening-parameter model on the computed
-    alphas (``ml:train``), scores an existing model against them
-    (``ml:test``), or applies an existing model in place of the Delta-SCF
-    refinement (``ml:predict`` — each snapshot runs one trial KI at the
+    alphas (``ml: {mode: train}``), scores an existing model against them
+    (``mode: test``), or applies an existing model in place of the Delta-SCF
+    refinement (``mode: predict`` — each snapshot runs one trial KI at the
     guess alphas, the model predicts every screening parameter from the
     trial's self-Hartrees, and the final KI applies the predictions).
 
@@ -1558,7 +1558,7 @@ def _build_trajectory_workgraph(
     ``wan_mode='decompose'`` pass over each snapshot's per-block Wannier
     functions, so it requires the Wannier-initialised route
     (``init_orbitals`` in ``mlwfs`` / ``projwfs``); the ``ml``
-    radial-basis settings become that pass's namelist keys. ``ml:predict``
+    radial-basis settings become that pass's namelist keys. ``mode: predict``
     supports ``self_hartree`` only: the decompose pass that builds the
     power-spectrum descriptors is not wired into the DSCF's screening
     stage, where the prediction runs.
@@ -1630,43 +1630,37 @@ def _resolve_trajectory_ml(
 ) -> tuple[MLMode, dict[str, Any] | None]:
     """Map the ``ml`` block onto a trajectory mode and its loaded model.
 
-    ``test`` and ``predict`` load the JSON model from ``ml:model_file``.
-    Predict-mode inputs that cannot take effect raise here: the
-    ``power_spectrum`` descriptor (its decompose pass is not wired into
-    the DSCF's screening stage, where the prediction runs) and
-    ``alpha_numsteps != 1``.
+    ``test`` and ``predict`` modes load the JSON model from
+    ``ml:model_file``. Predict-mode inputs that cannot take effect raise
+    here: the ``power_spectrum`` descriptor (its decompose pass is not
+    wired into the DSCF's screening stage, where the prediction runs)
+    and ``alpha_numsteps != 1``.
     """
     from json import load as json_load
 
-    if ml_config.train:
-        ml_mode = MLMode.TRAIN
-    elif ml_config.test:
-        ml_mode = MLMode.TEST
-    elif ml_config.predict:
-        ml_mode = MLMode.PREDICT
-    else:
-        ml_mode = MLMode.NONE
+    ml_mode = ml_config.mode
 
     if ml_mode == MLMode.PREDICT:
         if ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
             raise NotImplementedError(
-                "ml:predict supports only descriptor='self_hartree': the decompose pass "
-                "that builds the power-spectrum descriptors is not wired into the DSCF's "
-                "screening stage, where the prediction runs. Use "
+                "ml:mode='predict' supports only descriptor='self_hartree': the "
+                "decompose pass that builds the power-spectrum descriptors is not wired "
+                "into the DSCF's screening stage, where the prediction runs. Use "
                 "descriptor='self_hartree'."
             )
         if workflow.alpha_numsteps != 1:
             raise ValueError(
-                "ml:predict replaces the Delta-SCF refinement with a single trial-KI "
-                "prediction, so workflow:alpha_numsteps cannot take effect; set it to 1."
+                "ml:mode='predict' replaces the Delta-SCF refinement with a single "
+                "trial-KI prediction, so workflow:alpha_numsteps cannot take effect; "
+                "set it to 1."
             )
 
     ml_model = None
     if ml_mode in (MLMode.TEST, MLMode.PREDICT):
         if ml_config.model_file is None:
             raise ValueError(
-                f"ml:{ml_mode.value} requires ml:model_file (the JSON model produced by "
-                "an ml:train run)."
+                f"ml:mode='{ml_mode.value}' requires ml:model_file (the JSON model "
+                "produced by a mode='train' run)."
             )
         with open(ml_config.model_file) as handle:
             ml_model = json_load(handle)

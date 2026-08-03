@@ -34,7 +34,7 @@ def _snapshots_atoms_dict(snapshots: str, *, box: float = 6.0) -> dict[str, Any]
 
 
 def _trajectory_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str, Any]:
-    """Return a minimal molecular-water DSCF trajectory (ml:train) input dict."""
+    """Return a minimal molecular-water DSCF trajectory (ml mode=train) input dict."""
     d: dict[str, Any] = {
         "workflow": {
             "task": "trajectory",
@@ -51,7 +51,7 @@ def _trajectory_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str,
             "kcp": {"system": {"ecutrho": 260.0}},
         },
         "ml": {
-            "train": True,
+            "mode": "train",
             "descriptor": "self_hartree",
             "estimator": "ridge_regression",
         },
@@ -126,7 +126,7 @@ class TestPathResolution:
         d = _trajectory_input_dict(snapshots)
         d["workflow"]["task"] = "trajectory"
         d["ml"] = {
-            "test": True,
+            "mode": "test",
             "model_file": model_file,
             "descriptor": "self_hartree",
             "estimator": "ridge_regression",
@@ -432,7 +432,7 @@ class TestOrbitalDensityDescriptor:
 
 
 class TestPredictMode:
-    """``ml:predict`` loads the model file and hands the model to every DSCF."""
+    """``ml: {mode: predict}`` loads the model file and hands the model to every DSCF."""
 
     @staticmethod
     def _write_model(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
@@ -480,7 +480,7 @@ class TestPredictMode:
         ab_initio = _build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
 
         d = _trajectory_input_dict(str(xyz))
-        d["ml"] = {"predict": True, "model_file": str(model_path), "descriptor": "self_hartree"}
+        d["ml"] = {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"}
         predict = _build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
 
         def _dscf(workgraph: Any) -> Any:
@@ -504,14 +504,14 @@ class TestPredictMode:
         tmp_path: Path,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """``ml:predict`` without a model file fails at build."""
+        """``mode: predict`` without a model file fails at build."""
         from koopmans.aiida.workflows import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
-        d["ml"] = {"predict": True, "descriptor": "self_hartree"}
+        d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
-        with pytest.raises(ValueError, match="ml:predict requires ml:model_file"):
+        with pytest.raises(ValueError, match="requires ml:model_file"):
             _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
     def test_predict_rejects_power_spectrum(
@@ -519,12 +519,12 @@ class TestPredictMode:
         tmp_path: Path,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """``ml:predict`` with the power-spectrum descriptor is an explicit gap."""
+        """``mode: predict`` with the power-spectrum descriptor is an explicit gap."""
         from koopmans.aiida.workflows import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
-        d["ml"] = {"predict": True, "descriptor": "power_spectrum"}
+        d["ml"] = {"mode": "predict", "descriptor": "power_spectrum"}
 
         with pytest.raises(NotImplementedError, match="self_hartree"):
             _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
@@ -534,12 +534,12 @@ class TestPredictMode:
         tmp_path: Path,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """``alpha_numsteps > 1`` cannot take effect under ``ml:predict``."""
+        """``alpha_numsteps > 1`` cannot take effect under ``mode: predict``."""
         from koopmans.aiida.workflows import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz), alpha_numsteps=2)
-        d["ml"] = {"predict": True, "descriptor": "self_hartree"}
+        d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="alpha_numsteps cannot take effect"):
             _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
@@ -559,7 +559,7 @@ class TestPredictMode:
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz), task="singlepoint")
-        d["ml"] = {"predict": True, "model_file": "model.json", "descriptor": "self_hartree"}
+        d["ml"] = {"mode": "predict", "model_file": "model.json", "descriptor": "self_hartree"}
 
         with pytest.raises(NotImplementedError, match="trajectory task only"):
             build_workgraph(KoopmansInput.model_validate(d))
