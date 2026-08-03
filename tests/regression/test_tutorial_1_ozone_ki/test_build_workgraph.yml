@@ -801,10 +801,10 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             extras:
-              py_type: aiida_koopmans.workgraphs.variational_orbitals.VariationalOrbitalType
+              py_type: aiida_koopmans.variational_orbitals.VariationalOrbitalType
               structured_type:
                 kind: enum
-                path: aiida_koopmans.workgraphs.variational_orbitals.VariationalOrbitalType
+                path: aiida_koopmans.variational_orbitals.VariationalOrbitalType
             required: true
         initial_alpha:
           dynamic: false
@@ -2084,10 +2084,10 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 extras:
-                  py_type: aiida_koopmans.workgraphs.variational_orbitals.VariationalOrbitalType
+                  py_type: aiida_koopmans.variational_orbitals.VariationalOrbitalType
                   structured_type:
                     kind: enum
-                    path: aiida_koopmans.workgraphs.variational_orbitals.VariationalOrbitalType
+                    path: aiida_koopmans.variational_orbitals.VariationalOrbitalType
                 required: true
             initial_alpha:
               dynamic: false
