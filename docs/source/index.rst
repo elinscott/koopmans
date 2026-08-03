@@ -8,15 +8,12 @@
         :width: 400
         :alt: koopmans
 
-**Spectral properties of molecules and materials, from Koopmans functionals.**
-
 Koopmans functionals give you orbital energies that can be compared against a
-photoemission spectrum — ionization potentials, electron affinities and band structures
-— at a cost close to that of density-functional theory. Obtaining them takes a chain of
-calculations: a ground state, a set of localized variational orbitals, a screening
-parameter for each of them, and a final band structure. ``koopmans`` takes an input file
-describing your system and runs that chain for you, using `Quantum ESPRESSO
-<https://www.quantum-espresso.org/>`_.
+photoemission spectrum — ionization potentials, electron affinities and band structures —
+much more cheaply than GW or a hybrid, and just as accurately. These calculations require
+a chain of calculations (SCF, Wannierization, linear response, *etc.*), but ``koopmans``
+takes care of this: all it needs is an input file describing your system and it will run
+everything for you.
 
 .. code-block:: console
 

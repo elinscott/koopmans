@@ -9,12 +9,15 @@
     top: 0;
     z-index: 20;
     margin: -1.618em -3.236em 1.618em;
-    padding: 0.7em 1em;
+    padding: 0.8em 1em;
     text-align: center;
-    font-size: 90%;
-    color: #7a5b23;
-    background-color: #fdf3e0;
-    border-bottom: 1px solid #ecd9b4;
+    font-size: 95%;
+    font-weight: bold;
+    letter-spacing: 0.01em;
+    color: #3d2c07;
+    background-color: #f5c451;
+    border-bottom: 3px solid #d99a2b;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
 }
 
 @media screen and (max-width: 768px) {
