@@ -8,6 +8,10 @@
         :width: 400
         :alt: koopmans
 
+.. container:: landing-subtitle
+
+    **Spectral properties of molecules and materials, from Koopmans functionals.**
+
 Koopmans functionals give you orbital energies that can be compared against a
 photoemission spectrum — ionization potentials, electron affinities and band structures —
 much more cheaply than GW or a hybrid, and just as accurately. These calculations require
@@ -53,8 +57,7 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
             :alt: Predicted against calculated orbital energies, and their error
                 distribution
 
-        Orbital energies from screening parameters :doc:`predicted by a trained model
-        <tutorials/machine_learning>`, not calculated
+        Screening parameters via :doc:`machine learning <tutorials/machine_learning>`
 
     .. container:: capability-cell
 

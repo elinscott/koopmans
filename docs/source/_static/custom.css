@@ -31,7 +31,17 @@
    hidden. Browsers without :has() simply show both. */
 .landing-logo {
     text-align: center;
-    margin: 0 0 1.5em;
+    margin: 0 0 1.2em;
+}
+
+.landing-subtitle {
+    text-align: center;
+    margin-bottom: 1.5em;
+}
+
+.landing-subtitle p {
+    margin-bottom: 0;
+    font-size: 115%;
 }
 
 section:has(> .landing-logo) > h1 {
