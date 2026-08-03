@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from aiida_koopmans.types import get_wannier_indices
+from aiida_koopmans.projections import get_wannier_indices
 
 from koopmans.aiida.workflows import (
     _build_singlepoint_workgraph,
@@ -170,7 +170,7 @@ class TestDscfBlocks:
         One fractional site hosts exactly one orbital set (sp3 -> 4 WFs) and
         renders as wannier90's ``f=x,y,z:<ang_mtm>`` form.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp3 = [self._FakeProjection(None, -3, fractional_site=[0.25, 0.25, 0.25])]
         blocks = _dscf_blocks(si_structure, [sp3, sp3], 4, 8, SpinChannel.NONE)
@@ -187,7 +187,7 @@ class TestDscfBlocks:
         (``num_bands == num_wann``) and excludes everything below *and*
         above, so U_dis is the identity.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
         blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
@@ -207,7 +207,7 @@ class TestDscfBlocks:
         name the block's four functions, since they are the map every
         downstream consumer reads.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 4
         occ, emp = _dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
@@ -226,7 +226,7 @@ class TestDscfBlocks:
         wann2kcp.x reads the ``.chk`` against the pw.x band count and rejects
         any block whose excluded and read bands do not add back up to it.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 4
         for nbnd in (8, 12, 20):
@@ -236,7 +236,7 @@ class TestDscfBlocks:
 
     def test_occ_emp_split_and_exclusions(self, si_structure: Any) -> None:
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
         blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
@@ -248,7 +248,7 @@ class TestDscfBlocks:
 
     def test_middle_block_gets_two_sided_exclusion(self, si_structure: Any) -> None:
         """A block sandwiched between others excludes bands on both sides."""
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         s = [self._FakeProjection("Si", 0)]  # 1 x 2 sites = 2
         sp = [self._FakeProjection("Si", -1)]  # 4
@@ -258,7 +258,7 @@ class TestDscfBlocks:
 
     def test_straddling_block_raises(self, si_structure: Any) -> None:
         """A block crossing the occupied/empty boundary is an input error."""
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 4
         with pytest.raises(ValueError, match="straddles"):
@@ -273,7 +273,7 @@ class TestDscfBlocks:
         derivation raises it and the straddle, which only the Wannier-seeded
         route objects to, is never reached.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 4
         with pytest.raises(ValueError, match="span 8 bands but nbnd = 6"):
@@ -287,7 +287,7 @@ class TestDscfBlocks:
         run; letting them mix in empty character corrupts that seed with
         nothing downstream to catch it.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 4 = nocc
         with pytest.raises(ValueError, match="for disentanglement"):
@@ -306,7 +306,7 @@ class TestDscfBlocks:
         so run that check on its own: paired with the coverage check it
         would pass for the wrong reason.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         from koopmans.aiida.workflows import (
             _create_explicit_blocks,
@@ -328,7 +328,7 @@ class TestDscfBlocks:
         occupied outright and the boundary check has nothing to say; what is
         wrong is that two Wannier functions cannot seed four occupied bands.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         s = [self._FakeProjection("Si", 0)]  # 2 wann < nocc 4
         with pytest.raises(ValueError, match="every occupied band"):
@@ -336,7 +336,7 @@ class TestDscfBlocks:
 
     def test_blocks_beyond_nbnd_raise(self, si_structure: Any) -> None:
         """Blocks spanning more bands than nbnd are an input error."""
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]
         with pytest.raises(ValueError, match="nbnd"):
@@ -350,7 +350,7 @@ class TestDscfBlocks:
         re-read off the band indices — which is exactly what the plugin
         stopped doing.
         """
-        from aiida_koopmans.types import SpinChannel
+        from aiida_koopmans.spin import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 4
         blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)

@@ -16,13 +16,13 @@ from __future__ import annotations
 
 from typing import Self, cast
 
-from aiida_koopmans.types import CODE_NAMES, ParallelizationDict
+from aiida_koopmans.parallelization import CODE_NAMES, ParallelizationDict
 from pydantic import Field, model_validator
 
 from koopmans.base import BaseModel
 
 # Every code the parallelization block recognises. Sourced from the single
-# ``aiida_koopmans.types`` vocabulary (``CodeName``) rather than duplicated here.
+# ``aiida_koopmans.parallelization`` vocabulary (``CodeName``) rather than duplicated here.
 ALL_CODES: tuple[str, ...] = CODE_NAMES
 
 # Codes that accept ``-npool`` (k-point pools) and ``-pd`` (pencil
@@ -37,7 +37,7 @@ PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wann
 
 
 # NOTE: keep this Pydantic model (and the per-code fields it validates) in
-# sync with the ``CodeParallelization`` TypedDict in ``aiida_koopmans.types``
+# sync with the ``CodeParallelization`` TypedDict in ``aiida_koopmans.parallelization``
 # — the TypedDict is the runtime shape the graphs consume; this model is the
 # user-facing validated view of the same data.
 class CodeParallelization(BaseModel):
