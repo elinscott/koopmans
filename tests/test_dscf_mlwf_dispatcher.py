@@ -404,8 +404,7 @@ class TestPeriodicMlwfsBuild:
         occupied Wannier functions wherever the blocks sit in the list.
         """
         import koopmans.aiida.workflows.dscf as dscf_module
-
-        derive = dscf_module.create_explicit_blocks
+        from koopmans.aiida.workflows.blocks import create_explicit_blocks as derive
 
         def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
             """Derive the real blocks, reversed — the layout only the validator rejects."""
@@ -615,8 +614,7 @@ class TestPluginErrorTranslation:
         """
         import koopmans.aiida.workflows.dscf as dscf_module
         from koopmans.aiida.workflows import build_workgraph
-
-        derive = dscf_module.create_explicit_blocks
+        from koopmans.aiida.workflows.blocks import create_explicit_blocks as derive
 
         def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
             """Derive the real blocks, reversed."""
