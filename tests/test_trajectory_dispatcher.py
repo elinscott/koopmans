@@ -272,7 +272,7 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A 3-frame xyz produces ``dscf_snapshot_1 .. dscf_snapshot_3``."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 3)
         koopmans_input = KoopmansInput.model_validate(_trajectory_input_dict(str(xyz)))
@@ -307,7 +307,7 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``atom_proj_ext`` is rejected: the trajectory route never consults it."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz))
@@ -357,7 +357,7 @@ class TestOrbitalDensityDescriptor:
         The discriminator against a dispatcher that accepts the keyword but
         silently keeps building the self-Hartree dataset.
         """
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _wannier_trajectory_input_dict(str(xyz))
@@ -381,7 +381,7 @@ class TestOrbitalDensityDescriptor:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """The same Wannier-route input on ``self_hartree`` builds no decompose pass."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
@@ -402,7 +402,7 @@ class TestOrbitalDensityDescriptor:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A Kohn-Sham-initialised trajectory cannot feed the decompose pass."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz))
@@ -418,7 +418,7 @@ class TestOrbitalDensityDescriptor:
         Without this mapping the power spectra would silently be built on
         the CalcJob's default basis rather than the requested one.
         """
-        from koopmans.aiida.workflows import _decompose_parameters
+        from koopmans.aiida.workflows.trajectory import _decompose_parameters
         from koopmans.input_file.ml import MLConfig
 
         ml_config = MLConfig(n_max=6, l_max=5, r_min=1.0, r_max=4.5)
@@ -470,7 +470,7 @@ class TestPredictMode:
         that routing is asserted in aiida-koopmans' kcp workgraph tests)
         and must not grow a dataset / fit / score layer.
         """
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         model_path, model = self._write_model(tmp_path)
@@ -505,7 +505,7 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``mode: predict`` without a model file fails at build."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
@@ -520,7 +520,7 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``mode: predict`` with the power-spectrum descriptor is an explicit gap."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
@@ -535,7 +535,7 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``alpha_numsteps > 1`` cannot take effect under ``mode: predict``."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import _build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz), alpha_numsteps=2)
