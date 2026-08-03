@@ -403,6 +403,7 @@ class TestPeriodicMlwfsBuild:
         derive = workflows_module._create_explicit_blocks
 
         def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
+            """Derive the real blocks, reversed — the layout only the validator rejects."""
             return list(reversed(derive(*args, **kwargs)))
 
         monkeypatch.setattr(workflows_module, "_create_explicit_blocks", reversed_blocks)
