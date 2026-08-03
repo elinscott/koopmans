@@ -10,7 +10,8 @@
 
 .. container:: landing-subtitle
 
-    **Spectral properties of molecules and materials, from Koopmans functionals.**
+    **accurate and efficient spectral properties of molecules and materials with
+    Koopmans functionals**
 
 Koopmans functionals give you orbital energies that can be compared against a
 photoemission spectrum — ionization potentials, electron affinities and band structures —
