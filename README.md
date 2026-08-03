@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="https://github.com/elinscott/koopmans/raw/main/docs/source/_static/logo.png" alt="koopmans" width="400">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/elinscott/koopmans/raw/main/docs/source/_static/logo_white.svg">
+    <img src="https://github.com/elinscott/koopmans/raw/main/docs/source/_static/logo.png" alt="koopmans" width="400">
+  </picture>
 </p>
 
 <p align="center">
