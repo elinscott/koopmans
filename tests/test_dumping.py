@@ -117,7 +117,13 @@ class TestDumpModelJson:
         train: Any = self._run_train_task(aiida_profile_clean)
         # The surrounding WorkGraph node exposes no top-level ``model``
         # output, so it stands in for any modelless process.
-        workgraph_node = train.base.links.get_incoming().all()[0].node
+        from aiida import orm
+
+        workgraph_node = next(
+            link.node
+            for link in train.base.links.get_incoming().all()
+            if isinstance(link.node, orm.ProcessNode)
+        )
 
         _dump_model_json(workgraph_node, tmp_path)
 

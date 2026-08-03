@@ -692,3 +692,11 @@ class TestModelNodeRoute:
 
         with pytest.raises(ValueError, match="supply exactly one"):
             MLConfig.model_validate({"mode": "predict", "model": 42, "model_file": "model.json"})
+
+    @pytest.mark.parametrize("bad", [True, 42.0], ids=["bool", "float"])
+    def test_coercible_model_identifiers_rejected(self, bad: object) -> None:
+        """``true`` (PK 1) and ``42.0`` (PK 42) would name a node by accident."""
+        from koopmans.input_file.ml import MLConfig
+
+        with pytest.raises(ValueError, match="integer PK or string UUID"):
+            MLConfig.model_validate({"mode": "predict", "model": bad})

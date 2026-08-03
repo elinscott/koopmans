@@ -12,7 +12,7 @@ from koopmans.aiida.utils import suppress_aiida_logging
 if TYPE_CHECKING:
     from aiida import orm
 
-__all__ = ["dump_workgraph"]
+__all__ = ["dump_workgraph", "trained_model_output"]
 
 
 # AiiDA's dump names each child folder "<NN>-<link_label>", appends the
@@ -87,6 +87,16 @@ def _simplify_calcjob_dump(output_path: Path) -> None:
             filepath.unlink()
 
 
+def trained_model_output(process: orm.ProcessNode) -> orm.Dict | None:
+    """Return the process's non-empty trained-model ``Dict`` output, if any."""
+    from aiida import orm
+
+    model_node = getattr(process.outputs, "model", None)
+    if isinstance(model_node, orm.Dict) and model_node.get_dict():  # type: ignore[no-untyped-call]
+        return model_node
+    return None
+
+
 def _dump_model_json(process: orm.ProcessNode, output_path: Path) -> None:
     """Write a trained screening model as a ``model.json`` convenience copy.
 
@@ -97,14 +107,10 @@ def _dump_model_json(process: orm.ProcessNode, output_path: Path) -> None:
     """
     import json
 
-    from aiida import orm
-
-    model_node = getattr(process.outputs, "model", None)
-    if not isinstance(model_node, orm.Dict):
+    model_node = trained_model_output(process)
+    if model_node is None:
         return
     model = model_node.get_dict()  # type: ignore[no-untyped-call]
-    if not model:
-        return
     (output_path / "model.json").write_text(json.dumps(model, indent=2) + "\n")
 
 

@@ -53,6 +53,23 @@ class MLConfig(BaseModel):
         description="What to use as the descriptor for the ML model",
     )
 
+    @field_validator("model", mode="before")
+    @classmethod
+    def check_model_identifier(cls, value: object) -> object:
+        """Reject identifier forms that would silently coerce to a wrong PK.
+
+        Pydantic would turn ``42.0`` into PK 42 and ``true`` into PK 1;
+        only an integer PK or a string UUID names a node deliberately.
+        """
+        if value is None or isinstance(value, str):
+            return value
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                f"`ml:model` takes the stored model node's integer PK or string UUID; "
+                f"got {value!r}."
+            )
+        return value
+
     @model_validator(mode="after")
     def model_sources_are_exclusive(self) -> Self:
         """Validate that ``model`` and ``model_file`` are not both given."""
