@@ -33,8 +33,8 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
     .. container:: capability-cell
 
-        .. image:: _static/capabilities/molecular_orbital_energies.png
-            :alt: The density of states of an ozone molecule
+        .. image:: _static/capabilities/molecular_orbital_energies.svg
+            :alt: Placeholder tile for the orbital energies of molecules
 
         Orbital energies for :doc:`paramagnetic <tutorials/ozone>` and :doc:`magnetic
         <tutorials/magnetic_molecules>` molecules
@@ -53,8 +53,8 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
         .. image:: _static/capabilities/zno_bands.png
             :alt: The LDA and Koopmans band structures of ZnO, with the band gap marked
 
-        Valence manifolds that need :doc:`several Wannier blocks <tutorials/zno>`, found
-        for you
+        The band structure of ZnO, whose valence manifold needs :doc:`several Wannier
+        blocks <tutorials/zno>`
 
     .. container:: capability-cell
 
@@ -70,7 +70,7 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
             :alt: Predicted against calculated orbital energies, and their error
                 distribution
 
-        Screening parameters :doc:`predicted by a trained model
+        Orbital energies from screening parameters :doc:`predicted by a trained model
         <tutorials/machine_learning>`, not calculated
 
     .. container:: capability-cell

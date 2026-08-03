@@ -1,8 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="Optical spectra, planned">
   <rect width="640" height="480" fill="#fafafa"/>
-  <rect x="16" y="16" width="608" height="448" rx="12" fill="none" stroke="#d0d0d0" stroke-width="2" stroke-dasharray="10 8"/>
-  <text x="320" y="225" text-anchor="middle" font-family="Lato, Helvetica, Arial, sans-serif" font-size="34" fill="#8a8a8a">Optical spectra</text>
-
-  <rect x="256" y="300" width="128" height="38" rx="19" fill="#ececec"/>
-  <text x="320" y="326" text-anchor="middle" font-family="Lato, Helvetica, Arial, sans-serif" font-size="20" fill="#9a9a9a" letter-spacing="1">planned</text>
+  <rect x="16" y="16" width="608" height="448" rx="12" fill="none" stroke="#d5d5d5" stroke-width="2"/>
+  <text x="320" y="218" text-anchor="middle" font-family="Lato, Helvetica, Arial, sans-serif" font-size="34" fill="#8a8a8a">Optical spectra</text>
+  <rect x="262" y="258" width="116" height="36" rx="18" fill="#ededed"/>
+  <text x="320" y="283" text-anchor="middle" font-family="Lato, Helvetica, Arial, sans-serif" font-size="19" fill="#9a9a9a" letter-spacing="1">planned</text>
 </svg>
