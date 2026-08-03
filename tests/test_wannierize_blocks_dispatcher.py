@@ -14,11 +14,11 @@ from typing import Any
 import pytest
 from aiida_koopmans.projections import get_wannier_indices
 
-from koopmans.aiida.workflows import (
+from koopmans.aiida.workflows.blocks import _create_explicit_blocks
+from koopmans.aiida.workflows.wannierize import (
     _build_wannierize_blocks_workgraph,
     _build_wannierize_workgraph,
 )
-from koopmans.aiida.workflows.blocks import _create_explicit_blocks
 from koopmans.input_file import KoopmansInput
 
 
@@ -657,7 +657,7 @@ class TestExternalProjectors:
         pw2wannier90 step's staged inputs. No frozen list is ever emitted:
         every external projector is Lowdin-orthonormalized.
         """
-        from koopmans.aiida.workflows import _build_wannierize_workgraph
+        from koopmans.aiida.workflows.wannierize import _build_wannierize_workgraph
         from koopmans.input_file import KoopmansInput
 
         d = _si_external_dict(si_external_projector_dir)
