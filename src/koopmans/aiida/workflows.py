@@ -1620,7 +1620,7 @@ def _build_trajectory_workgraph(
 
 def _resolve_trajectory_ml(
     ml_config: MLConfig, workflow: WorkflowConfig
-) -> tuple[MLMode, dict | None]:
+) -> tuple[MLMode, dict[str, Any] | None]:
     """Map the ``ml`` block onto a trajectory mode and its loaded model.
 
     ``test`` and ``predict`` load the JSON model from ``ml:model_file``.
