@@ -141,7 +141,7 @@ for more information on getting involved.
 
 ## License
 
-The code in this package is licensed under the GNU General Public License v2, matching the original koopmans package.
+The code in this package is licensed under the GNU General Public License v2.
 
 ## For developers
 
