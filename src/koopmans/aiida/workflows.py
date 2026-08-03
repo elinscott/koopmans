@@ -1079,8 +1079,8 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
         try:
             block_occupancy(block)
         except ValueError as exc:
-            include_bands = get_wannier_indices(block)
-            start, end = include_bands[0], include_bands[-1]
+            wannier_indices = get_wannier_indices(block)
+            start, end = wannier_indices[0], wannier_indices[-1]
             raise ValueError(
                 f"The projection block '{block['label']}' (bands {start}-{end}) straddles "
                 f"the occupied/empty boundary at band {nocc}: its own bands cross it, or "
