@@ -566,3 +566,64 @@ class TestPeriodicMlwfsBuild:
         assert nbnd is not None
         extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
+
+
+class TestPluginErrorTranslation:
+    """Plugin exceptions gain input-file advice at the dispatch boundary."""
+
+    def test_advice_keys_on_the_raise_site(self, aiida_profile: Any) -> None:
+        """A projections-module raise earns advice; a dispatcher raise earns none.
+
+        The same exception type carries advice or not depending only on
+        where it was raised, which is the key the translation uses while
+        the plugin has no typed exceptions.
+        """
+        from aiida_koopmans.projections import validate_projection_block_sequence
+        from aiida_koopmans.spin import SpinChannel
+
+        from koopmans.aiida.conversion import atoms_input_to_structure
+        from koopmans.aiida.workflows import advice_for
+        from koopmans.aiida.workflows.blocks import create_explicit_blocks
+
+        inp = KoopmansInput.model_validate(_si_dscf_dict())
+        structure = atoms_input_to_structure(inp.atoms)
+        blocks = create_explicit_blocks(
+            structure, inp.calculator_parameters.wannier90.projections, 8, 4, SpinChannel.NONE
+        )
+        with pytest.raises(ValueError, match="ascending band order") as excinfo:
+            validate_projection_block_sequence(list(reversed(blocks)))
+        advice = advice_for(excinfo.value)
+        assert advice is not None
+        assert "calculator_parameters.w90.projections" in advice
+
+        with pytest.raises(ValueError, match="not the plugin") as local_excinfo:
+            raise ValueError("raised by the dispatcher, not the plugin")
+        assert advice_for(local_excinfo.value) is None
+
+    def test_dispatch_appends_advice_to_plugin_errors(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Through ``build_workgraph`` a plugin rejection carries both sentences.
+
+        Reuses the reversed-blocks derivation: the plugin's sequence
+        validator is the only check that rejects it, so the raised message
+        must pair the plugin's own sentence with the input-file advice.
+        """
+        import koopmans.aiida.workflows.dscf as dscf_module
+        from koopmans.aiida.workflows import build_workgraph
+
+        derive = dscf_module.create_explicit_blocks
+
+        def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
+            """Derive the real blocks, reversed."""
+            return list(reversed(derive(*args, **kwargs)))
+
+        monkeypatch.setattr(dscf_module, "create_explicit_blocks", reversed_blocks)
+        inp = KoopmansInput.model_validate(_si_dscf_dict())
+        with pytest.raises(ValueError, match="ascending band order") as excinfo:
+            build_workgraph(inp)
+        assert "Adjust the projections" in str(excinfo.value)

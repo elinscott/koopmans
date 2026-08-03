@@ -151,6 +151,37 @@ def prepare_common_inputs(
     return structure, pseudo_family, overrides
 
 
+#: Input-file advice keyed by the plugin module that raised. The plugin
+#: raises builtin ValueError/NotImplementedError everywhere, so the raise
+#: site is the only structural key available until it grows typed
+#: exceptions to dispatch on.
+_PLUGIN_ADVICE = {
+    "aiida_koopmans.projections": (
+        "The blocks named above are derived from the input file's projections "
+        "(`calculator_parameters.w90.projections`, or its `up`/`down` variants "
+        "for collinear spin): they tile the bands in listed order, each taking "
+        "its own Wannier-function count, and the last block reads any bands "
+        "left up to `nbnd` for disentanglement. Adjust the projections or "
+        "`nbnd` there."
+    ),
+}
+
+
+def advice_for(exc: BaseException) -> str | None:
+    """Return input-file advice for an exception the plugin raised, if any.
+
+    Keyed on the module of the raise site (the innermost traceback frame).
+    An exception the dispatcher already re-raised in input-file vocabulary
+    carries a koopmans raise site, so it gets no second translation.
+    """
+    module = None
+    tb = exc.__traceback__
+    while tb is not None:
+        module = tb.tb_frame.f_globals.get("__name__")
+        tb = tb.tb_next
+    return _PLUGIN_ADVICE.get(module) if isinstance(module, str) else None
+
+
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build the appropriate workgraph for a KoopmansInput.
 
@@ -181,30 +212,38 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # Load required codes
     codes = load_codes_for_task(koopmans_input.workflow)
 
-    # Build the workgraph based on task
-    if task == Task.DFT_BANDS:
-        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
+    # Build the workgraph based on task. An error raised inside the plugin
+    # speaks its vocabulary (derived blocks, `num_bands`), which the user
+    # never wrote; append the input-file advice at this boundary.
+    try:
+        if task == Task.DFT_BANDS:
+            from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
 
-        return build_dft_bands_workgraph(koopmans_input, codes)
-    elif task == Task.WANNIERIZE:
-        from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
+            return build_dft_bands_workgraph(koopmans_input, codes)
+        elif task == Task.WANNIERIZE:
+            from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
 
-        return build_wannierize_workgraph(koopmans_input, codes)
-    elif task == Task.SINGLEPOINT:
-        from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
+            return build_wannierize_workgraph(koopmans_input, codes)
+        elif task == Task.SINGLEPOINT:
+            from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
 
-        return build_singlepoint_workgraph(koopmans_input, codes)
-    elif task == Task.TRAJECTORY:
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+            return build_singlepoint_workgraph(koopmans_input, codes)
+        elif task == Task.TRAJECTORY:
+            from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
-        return build_trajectory_workgraph(koopmans_input, codes)
-    elif task == Task.DFT_EPS:
-        from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
+            return build_trajectory_workgraph(koopmans_input, codes)
+        elif task == Task.DFT_EPS:
+            from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
 
-        return build_dft_eps_workgraph(koopmans_input, codes)
-    else:
-        raise ValueError(
-            f"Task '{task.value}' is not yet implemented. "
-            f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
-        )
+            return build_dft_eps_workgraph(koopmans_input, codes)
+        else:
+            raise ValueError(
+                f"Task '{task.value}' is not yet implemented. "
+                f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
+                f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
+            )
+    except (NotImplementedError, ValueError) as exc:
+        advice = advice_for(exc)
+        if advice is None:
+            raise
+        raise type(exc)(f"{exc}\n{advice}") from exc
