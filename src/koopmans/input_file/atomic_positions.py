@@ -7,6 +7,8 @@ from pydantic import BeforeValidator
 from koopmans.base import BaseModel
 from koopmans.input_file._utils import tidy_units
 
+__all__ = ["AtomicPositionsInput"]
+
 
 class AtomicPositionsInput(BaseModel):
     """Input schema for specifying atomic positions in a structure."""

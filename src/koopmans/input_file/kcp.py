@@ -14,6 +14,18 @@ from koopmans.base import BaseModel
 # ruff: noqa: ERA001
 
 
+__all__ = [
+    "CellNamelist",
+    "ControlNamelist",
+    "EENamelist",
+    "ElectronsNamelist",
+    "IonsNamelist",
+    "KCPInputParameters",
+    "NKSICNamelist",
+    "SystemNamelist",
+]
+
+
 class ControlNamelist(BaseModel):
     """``CONTROL`` namelist parameters for ``kcp.x``."""
 

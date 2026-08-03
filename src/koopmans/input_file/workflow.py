@@ -10,11 +10,18 @@ from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
 
-# Re-export so ``from koopmans.input_file.workflow import Correction``
-# (and ``VariationalOrbitalType``) keeps working — the canonical
-# definitions live in ``aiida_koopmans.functionals`` and
+# ``Correction`` and ``VariationalOrbitalType`` are re-exported so that
+# ``from koopmans.input_file.workflow import Correction`` keeps working — the
+# canonical definitions live in ``aiida_koopmans.functionals`` and
 # ``aiida_koopmans.variational_orbitals``.
-__all__ = ["Correction", "VariationalOrbitalType"]
+__all__ = [
+    "CalculateScreeningMethod",
+    "Correction",
+    "GroupOrbitalsBy",
+    "Task",
+    "VariationalOrbitalType",
+    "WorkflowConfig",
+]
 
 FloatGE1 = Annotated[float, Field(ge=1.0)]
 
