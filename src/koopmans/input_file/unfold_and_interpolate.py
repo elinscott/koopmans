@@ -1,6 +1,5 @@
 """Input parameters for unfold-and-interpolate post-processing."""
 
-from pathlib import Path
 from typing import Any
 
 from pydantic import Field, field_validator
@@ -13,16 +12,6 @@ __all__ = ["UnfoldAndInterpolateConfig"]
 class UnfoldAndInterpolateConfig(BaseModel):
     """Input parameters for unfold-and-interpolate post-processing."""
 
-    kc_ham_file: Path | None = Field(
-        default=None, description="the name of the Hamiltonian file to read in"
-    )
-    wannier90_seedname: Path = Field(
-        default=Path("wannier90"),
-        description=(
-            "wannier90_seedname must be equal to the seedname used in the previous Wannier90 calculation. The code "
-            "will look for a file called wannier90_seedname.wout"
-        ),
-    )
     use_ws_distance: bool = Field(
         default=True,
         description=(
@@ -44,8 +33,6 @@ class UnfoldAndInterpolateConfig(BaseModel):
             "gauge, i.e. the Wannier gauge"
         ),
     )
-    dft_ham_file: Path | None = Field(default=None, description="")
-    dft_smooth_ham_file: Path | None = Field(default=None, description="")
     do_dos: bool = Field(
         default=True,
         description=(
@@ -53,8 +40,6 @@ class UnfoldAndInterpolateConfig(BaseModel):
             '`kpoints` block. The DOS is written to a file called "dos_interpolated.dat"'
         ),
     )
-    num_wann: int | None = Field(default=None, description="")
-    num_wann_sc: int | None = Field(default=None, description="")
 
     @field_validator("smooth_int_factor", mode="before")
     @classmethod
