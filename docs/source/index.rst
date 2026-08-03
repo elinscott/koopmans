@@ -2,6 +2,12 @@
  koopmans
 ##########
 
+.. container:: landing-logo
+
+    .. image:: _static/logo.png
+        :width: 400
+        :alt: koopmans
+
 **Spectral properties of molecules and materials, from Koopmans functionals.**
 
 Koopmans functionals give you orbital energies that can be compared against a
@@ -23,36 +29,78 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
  What you can calculate
 ************************
 
-.. list-table::
-    :header-rows: 1
-    :widths: 30 35 35
-    :class: capability-matrix
+.. container:: capability-grid
 
-    - -
-      - Molecules
-      - Periodic solids
-    - - Orbital energies and band structures
-      - :doc:`Ozone <tutorials/ozone>` — ionization potential and electron affinity
-      - :doc:`Silicon from a supercell <tutorials/silicon_supercell>`, :doc:`silicon
-        from linear response <tutorials/silicon_dfpt>`, :doc:`ZnO <tutorials/zno>`
-    - - Magnetic systems
-      - :doc:`The oxygen molecule <tutorials/magnetic_molecules>`
-      - :doc:`A ferromagnetic solid <tutorials/magnetic_solids>`
-    - - Spin-orbit coupled band structures
-      - —
-      - :doc:`Silicon with spin-orbit coupling <tutorials/spin_orbit>`
-    - - Dielectric constants
-      - —
-      - :doc:`The dielectric constant of a semiconductor <tutorials/dielectric>`
-    - - Optical spectra
-      - *planned*
-      - *planned*
-    - - Real-time spectroscopy
-      - *planned*
-      - *planned*
+    .. container:: capability-cell
 
-Optical spectra, from the Bethe-Salpeter equation on top of a Koopmans ground state, and
-real-time spectroscopy are both under development.
+        .. image:: _static/capabilities/molecular_orbital_energies.png
+            :alt: The density of states of an ozone molecule
+
+        Orbital energies for :doc:`paramagnetic <tutorials/ozone>` and :doc:`magnetic
+        <tutorials/magnetic_molecules>` molecules
+
+    .. container:: capability-cell
+
+        .. image:: _static/capabilities/silicon_bands.png
+            :alt: The Koopmans band structure of bulk silicon
+
+        Band structures of solids, screened in a :doc:`supercell
+        <tutorials/silicon_supercell>` or by :doc:`linear response
+        <tutorials/silicon_dfpt>`
+
+    .. container:: capability-cell
+
+        .. image:: _static/capabilities/zno_bands.png
+            :alt: The LDA and Koopmans band structures of ZnO, with the band gap marked
+
+        Valence manifolds that need :doc:`several Wannier blocks <tutorials/zno>`, found
+        for you
+
+    .. container:: capability-cell
+
+        .. image:: _static/capabilities/magnetic_bands.png
+            :alt: Spin-up and spin-down band structures of a ferromagnet
+
+        A band structure per spin channel, for :doc:`magnetic solids
+        <tutorials/magnetic_solids>`
+
+    .. container:: capability-cell
+
+        .. image:: _static/capabilities/ml_screening.png
+            :alt: Predicted against calculated orbital energies, and their error
+                distribution
+
+        Screening parameters :doc:`predicted by a trained model
+        <tutorials/machine_learning>`, not calculated
+
+    .. container:: capability-cell
+
+        .. image:: _static/capabilities/spin_orbit.svg
+            :alt: Placeholder tile for spin-orbit coupled band structures
+
+        Band structures with :doc:`spin-orbit coupling <tutorials/spin_orbit>`
+
+    .. container:: capability-cell
+
+        .. image:: _static/capabilities/dielectric.svg
+            :alt: Placeholder tile for dielectric constants
+
+        :doc:`Dielectric constants <tutorials/dielectric>`, which a Koopmans calculation
+        on a solid needs
+
+    .. container:: capability-cell planned
+
+        .. image:: _static/capabilities/optical_spectra.svg
+            :alt: Placeholder tile for optical spectra, planned
+
+        Optical spectra, from the Bethe-Salpeter equation — *planned*
+
+    .. container:: capability-cell planned
+
+        .. image:: _static/capabilities/realtime.svg
+            :alt: Placeholder tile for real-time spectroscopy, planned
+
+        Real-time spectroscopy — *planned*
 
 **************************
  How the calculation runs

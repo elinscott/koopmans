@@ -145,10 +145,9 @@ html_css_files = ["custom.css"]
 # html_sidebars = {}
 
 # The name of an image file (relative to this directory) to place at the top
-# of the sidebar.
-#
-if os.path.exists("logo.png"):
-    html_logo = "logo.png"
+# of the sidebar. The sidebar is dark, hence the white wordmark; the landing
+# page uses the grey one against the white page body.
+html_logo = "_static/logo_white.svg"
 
 # -- Options for HTMLHelp output ---------------------------------------------
 

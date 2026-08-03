@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="Dielectric constants">
+  <rect width="640" height="480" fill="#fafafa"/>
+  <rect x="16" y="16" width="608" height="448" rx="12" fill="none" stroke="#d0d0d0" stroke-width="2" stroke-dasharray="10 8"/>
+  <text x="320" y="240" text-anchor="middle" font-family="Lato, Helvetica, Arial, sans-serif" font-size="34" fill="#8a8a8a">Dielectric constants</text>
+
+
+</svg>

@@ -2,8 +2,53 @@
     max-width: none;
 }
 
-/* The capability tables on the landing page. Rendered as a grid of linked
-   cells rather than a data table: no row banding, generous padding, and
+/* The landing page leads with the wordmark, so the page title it duplicates is
+   hidden. Browsers without :has() simply show both. */
+.landing-logo {
+    text-align: center;
+    margin: 0 0 1.5em;
+}
+
+section:has(> .landing-logo) > h1 {
+    display: none;
+}
+
+/* The capability grid on the landing page: one tile per capability, its caption
+   carrying the links. Tiles are forced to a common aspect ratio so that figures
+   of different shapes still line up. */
+.capability-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.75em;
+    margin-bottom: 2em;
+}
+
+.capability-cell img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: contain;
+    background-color: #fff;
+    border: 1px solid #e3e3e3;
+    border-radius: 6px;
+}
+
+.capability-cell p {
+    margin: 0.7em 0 0;
+    line-height: 1.5;
+}
+
+/* Capabilities that do not exist yet are dimmed until hovered. */
+.capability-cell.planned img,
+.capability-cell.planned p {
+    opacity: 0.55;
+}
+
+.capability-cell.planned:hover img,
+.capability-cell.planned:hover p {
+    opacity: 1;
+}
+
+/* The "how the calculation runs" table: no row banding, generous padding, and
    greyed-out entries for capabilities that do not exist yet. */
 .capability-matrix {
     width: 100%;

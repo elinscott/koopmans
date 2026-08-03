@@ -36,8 +36,8 @@ works without them.
  The Python package
 ********************
 
-``koopmans`` requires Python 3.12 or 3.13. Install the most recent code from GitHub
-with uv:
+``koopmans`` requires Python 3.12 or 3.13. Install the most recent code from GitHub with
+uv:
 
 .. code-block:: console
 

@@ -38,7 +38,11 @@ format-docs:
     # note that this doesn't work with sphinx-click
     # or any other extension that adds extra directives
     # See the [dependency-groups] entry in pyproject.toml for "rstfmt"
-    uv run --group format-docs docstrfmt src/ tests/ docs/ --no-docstring-trailing-line
+    # index.rst is excluded because docstrfmt cannot parse the `container`
+    # directive that builds the capability grid ("Unknown node type container"),
+    # even though it is plain docutils. The cost is that index.rst is not
+    # auto-formatted; doc8 still checks it in CI.
+    uv run --group format-docs docstrfmt src/ tests/ docs/ --no-docstring-trailing-line --extend-exclude 'docs/source/index.rst'
 
 [doc("format documentation")]
 format-markdown:

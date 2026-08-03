@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" role="img" aria-label="Spin-orbit coupled band structures">
+  <rect width="640" height="480" fill="#fafafa"/>
+  <rect x="16" y="16" width="608" height="448" rx="12" fill="none" stroke="#d0d0d0" stroke-width="2" stroke-dasharray="10 8"/>
+  <text x="320" y="215" text-anchor="middle" font-family="Lato, Helvetica, Arial, sans-serif" font-size="34" fill="#8a8a8a">Spin-orbit coupled</text>
+  <text x="320" y="260" text-anchor="middle" font-family="Lato, Helvetica, Arial, sans-serif" font-size="34" fill="#8a8a8a">band structures</text>
+
+</svg>
