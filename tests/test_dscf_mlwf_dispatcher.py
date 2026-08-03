@@ -383,6 +383,32 @@ class TestPeriodicMlwfsBuild:
         assert "wannier_initialization" in wg.get_task_names()
         wg.check_before_run()
 
+    def test_out_of_order_blocks_rejected_at_build_time(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A block set violating the sequence invariants dies before submission.
+
+        The block builder emits ascending blocks by construction, so the
+        derivation cannot produce this set today; the plugin validator backs
+        that structural guarantee with a check, and this pins that the route
+        runs it. The coverage check alone passes a reversed set — it counts
+        occupied Wannier functions wherever the blocks sit in the list.
+        """
+        import koopmans.aiida.workflows as workflows_module
+
+        derive = workflows_module._create_explicit_blocks
+
+        def reversed_blocks(*args: Any, **kwargs: Any) -> Any:
+            return list(reversed(derive(*args, **kwargs)))
+
+        monkeypatch.setattr(workflows_module, "_create_explicit_blocks", reversed_blocks)
+        with pytest.raises(ValueError, match="ascending band order"):
+            _build(_si_dscf_dict(), dscf_codes)
+
     def test_wannier_initialization_gets_the_input_mesh(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:

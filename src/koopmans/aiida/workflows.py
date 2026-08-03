@@ -19,6 +19,7 @@ from aiida_koopmans.types import (
     SpinChannel,
     block_occupancy,
     get_wannier_indices,
+    validate_projection_block_sequence,
 )
 from aiida_koopmans.workgraphs import Codes
 from aiida_quantumespresso.common.types import SpinType
@@ -1100,10 +1101,12 @@ def _validate_blocks_cover_all_occ_bands(blocks: Sequence[ProjectionBlock], nocc
     of the supercell kcp.x run, so the occupied blocks must span every
     occupied band.
 
-    Runs after :func:`_validate_blocks_separate_occ_and_emp`, whose rule
-    this one assumes: with every block on one side of the boundary, a
-    block's own bands place it in a manifold, so counting the Wannier
-    functions sitting in occupied bands answers the coverage question.
+    Runs after ``validate_projection_block_sequence`` and
+    :func:`_validate_blocks_separate_occ_and_emp`, whose rules this one
+    assumes: the sequence rules make a block's Wannier indices band
+    indices, and with every block on one side of the boundary a block's
+    own bands place it in a manifold, so counting the Wannier functions
+    sitting in occupied bands answers the coverage question.
     """
     covered_occ = sum(b["num_wann"] for b in blocks if get_wannier_indices(b)[-1] <= nocc)
     if covered_occ != nocc:
@@ -1185,11 +1188,13 @@ def _dscf_wannier_init_inputs(
         up_blocks = _create_explicit_blocks(
             structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
         )
+        validate_projection_block_sequence(up_blocks)
         _validate_blocks_separate_occ_and_emp(up_blocks, nocc_up)
         _validate_blocks_cover_all_occ_bands(up_blocks, nocc_up)
         down_blocks = _create_explicit_blocks(
             structure, w90.down.projections, nscf_nbnd, nocc_down, SpinChannel.DOWN
         )
+        validate_projection_block_sequence(down_blocks)
         _validate_blocks_separate_occ_and_emp(down_blocks, nocc_down)
         _validate_blocks_cover_all_occ_bands(down_blocks, nocc_down)
         blocks = up_blocks + down_blocks
@@ -1203,6 +1208,7 @@ def _dscf_wannier_init_inputs(
         blocks = _create_explicit_blocks(
             structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
         )
+        validate_projection_block_sequence(blocks)
         _validate_blocks_separate_occ_and_emp(blocks, nocc)
         _validate_blocks_cover_all_occ_bands(blocks, nocc)
 
