@@ -70,28 +70,8 @@ section:has(> .landing-logo) > h1 {
     opacity: 1;
 }
 
-/* The "how the calculation runs" table: no row banding, generous padding, and
-   greyed-out entries for capabilities that do not exist yet. */
-.capability-matrix {
-    width: 100%;
-}
-
-.capability-matrix td,
-.capability-matrix th {
-    padding: 1em 1.2em;
-    vertical-align: top;
-    white-space: normal;
-}
-
-.capability-matrix tbody tr td {
-    background-color: transparent;
-}
-
-.capability-matrix tbody tr td:first-child {
-    font-weight: bold;
-}
-
-.capability-matrix em {
+/* Capabilities that do not exist yet name themselves in italics. */
+.capability-cell em {
     color: #999;
     font-style: italic;
 }

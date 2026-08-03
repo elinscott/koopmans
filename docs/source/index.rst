@@ -41,28 +41,14 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
     .. container:: capability-cell
 
-        .. image:: _static/capabilities/silicon_bands.png
-            :alt: The Koopmans band structure of bulk silicon
-
-        Band structures of solids, screened in a :doc:`supercell
-        <tutorials/silicon_supercell>` or by :doc:`linear response
-        <tutorials/silicon_dfpt>`
-
-    .. container:: capability-cell
-
         .. image:: _static/capabilities/zno_bands.png
             :alt: The LDA and Koopmans band structures of ZnO, with the band gap marked
 
-        The band structure of ZnO, whose valence manifold needs :doc:`several Wannier
-        blocks <tutorials/zno>`
-
-    .. container:: capability-cell
-
-        .. image:: _static/capabilities/magnetic_bands.png
-            :alt: Spin-up and spin-down band structures of a ferromagnet
-
-        A band structure per spin channel, for :doc:`magnetic solids
-        <tutorials/magnetic_solids>`
+        Band structures of solids, with screening parameters from :doc:`finite differences
+        <tutorials/silicon_supercell>` or :doc:`linear response <tutorials/silicon_dfpt>` —
+        and with :doc:`automated Wannierization <tutorials/zno>`, for :doc:`magnetic systems
+        <tutorials/magnetic_solids>`, or with :doc:`spin-orbit coupling
+        <tutorials/spin_orbit>`
 
     .. container:: capability-cell
 
@@ -72,13 +58,6 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
         Orbital energies from screening parameters :doc:`predicted by a trained model
         <tutorials/machine_learning>`, not calculated
-
-    .. container:: capability-cell
-
-        .. image:: _static/capabilities/spin_orbit.svg
-            :alt: Placeholder tile for spin-orbit coupled band structures
-
-        Band structures with :doc:`spin-orbit coupling <tutorials/spin_orbit>`
 
     .. container:: capability-cell
 
@@ -101,32 +80,6 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
             :alt: Placeholder tile for real-time spectroscopy, planned
 
         Real-time spectroscopy — *planned*
-
-**************************
- How the calculation runs
-**************************
-
-The screening parameters are the expensive part of a Koopmans calculation, and there is
-more than one way to obtain them. Which route you take is independent of whether your
-system is a molecule or a solid, and of how the variational orbitals are chosen.
-
-.. list-table::
-    :header-rows: 1
-    :widths: 45 55
-    :class: capability-matrix
-
-    - -
-      - Where it is shown
-    - - Screening from total-energy differences (ΔSCF)
-      - :doc:`Ozone <tutorials/ozone>`, :doc:`silicon <tutorials/silicon_supercell>`
-    - - Screening from linear response (DFPT)
-      - :doc:`Silicon <tutorials/silicon_dfpt>`, :doc:`ZnO <tutorials/zno>`
-    - - Screening predicted by a machine-learned model
-      - :doc:`Water snapshots <tutorials/machine_learning>`
-    - - Variational orbitals split into blocks automatically
-      - :doc:`ZnO <tutorials/zno>`
-    - - Convergence testing
-      - *planned*
 
 .. toctree::
     :maxdepth: 2
