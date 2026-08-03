@@ -425,8 +425,8 @@ class _BandRange(NamedTuple):
 
     ``start`` and ``end`` are 1-based and inclusive, and span the block's
     own ``num_wann`` Wannier bands. ``num_bands`` counts the bands
-    wannier90 reads, exceeding ``num_wann`` only for a block carrying a
-    disentanglement pool.
+    wannier90 reads, exceeding ``num_wann`` only for a block that requires
+    disentanglement.
     """
 
     start: int
@@ -444,11 +444,12 @@ def _assign_band_ranges(
 
     Each block takes the ``num_wann`` bands above the one before it, so the
     blocks tile the manifold from band 1 upwards in the order given. The
-    bands left above the last block become its disentanglement pool:
-    ``num_bands`` grows to cover them while the range still spans only the
-    block's own Wannier bands. Whether that pool exists at all is decided
-    by the user's ``num_wann`` against ``nbnd``; the ``dis_*`` keywords
-    refine the window wannier90 disentangles over, they never create it.
+    bands left above the last block become its extra disentanglement
+    bands: ``num_bands`` grows to cover them while the range still spans
+    only the block's own Wannier bands. Whether those extras exist at all
+    is decided by the user's ``num_wann`` against ``nbnd``; the ``dis_*``
+    keywords refine the window wannier90 disentangles over, they never
+    create it.
     """
     from aiida_koopmans.projections import projection_num_wann
 
@@ -480,26 +481,28 @@ def _create_explicit_blocks(
 
     Every wannierization block a Koopmans calculation consumes lies wholly
     inside the occupied or the empty manifold. A block whose read window —
-    its own bands together with any disentanglement pool — stays on one
+    its own bands together with any extra disentanglement bands — stays on one
     side of ``num_occ_bands`` therefore has its occupancy settled here: it
     is stamped ``filled`` and named after its manifold. A block spanning
     the boundary is provisional instead, left unstamped and named by
-    position; only a route that cuts blocks at the boundary at runtime can
+    list position; only a route that cuts blocks at the boundary at runtime can
     finalize it, and a route that cannot must reject it
     (:func:`_validate_blocks_separate_occ_and_emp`).
 
-    The pool belongs to the read window, not to the Wannier positions the
-    block takes, so an occupied block that disentangles against empty
-    bands is provisional too: its Wannier functions are optimized out of
-    those bands and are not the occupied manifold's.
+    The extra disentanglement bands belong to the read window, not to the
+    Wannier-function indices the block takes, so an occupied block that
+    disentangles against empty bands is provisional too: its Wannier
+    functions are optimized out of those bands and are not the occupied
+    manifold's.
 
     One provisional block makes the whole set provisional, so the stamps
     go on all together or not at all: what a set of occupancies buys
     downstream is a partition of the orbitals, and a partition missing a
     block accounts for nobody.
 
-    A block carrying a pool stops excluding the bands above it, which it
-    does read; its own Wannier bands stay the lowest ``num_wann`` of them.
+    A block that requires disentanglement stops excluding the bands above
+    it, which it does read; its own Wannier bands stay the lowest
+    ``num_wann`` of them.
     """
     from aiida_koopmans.projections import band_range_complement, projection_win_string
     from aiida_koopmans.types import ExplicitProjectionBlock
@@ -513,8 +516,9 @@ def _create_explicit_blocks(
 
     for index, (band_range, block) in enumerate(zip(ranges, projection_blocks, strict=True)):
         disentangle = band_range.num_bands > band_range.num_wann
-        # The pool always reaches nbnd, so it is where the block's read
-        # window ends; without one the window ends at the block's own bands.
+        # The extra disentanglement bands always reach nbnd, so they are
+        # where the block's read window ends; without them the window ends
+        # at the block's own bands.
         window_end = nbnd if disentangle else band_range.end
         if window_end <= num_occ_bands:
             filling = "occ"
@@ -590,7 +594,7 @@ def _create_automatic_blocks(
     member, and from the pseudopotentials otherwise (``atom_proj``).
     Returns the single-block list and the band count the nscf must cover.
 
-    The block carries no disentanglement pool: the detected groups cover
+    The block requires no disentanglement: the detected groups cover
     only the Wannierized manifold, so a block with bands above it cannot be
     split. It carries no ``filled`` stamp either — it is the provisional
     block par excellence, existing only to be cut into the groups the
@@ -1060,8 +1064,8 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
     state, and the orbitals it produces answer to neither. What counts as
     spanning is the plugin's rule and is asked of the plugin
     (``block_occupancy``): a block reads both manifolds either through its
-    own bands or through a disentanglement pool that reaches across the
-    boundary, and neither is visible in its Wannier positions alone. The
+    own bands or through extra disentanglement bands that reach across the
+    boundary, and neither is visible in its Wannier-function indices alone. The
     plugin asks the same question again when it receives the blocks; this
     is the build-time answer, so the user hears it before anything is
     submitted.
@@ -1085,7 +1089,7 @@ def _validate_blocks_separate_occ_and_emp(blocks: Sequence[ProjectionBlock], noc
             raise ValueError(
                 f"The projection block '{block['label']}' (bands {start}-{end}) straddles "
                 f"the occupied/empty boundary at band {nocc}: its own bands cross it, or "
-                "the disentanglement pool it reads does. Its Wannier functions seed either "
+                "the extra bands it reads for disentanglement do. Its Wannier functions seed "
                 "the occupied or the empty manifold of the supercell kcp.x run, so they "
                 "must come from one of them. Split "
                 "``calculator_parameters.w90.projections`` at the boundary, add "

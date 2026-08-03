@@ -166,12 +166,14 @@ class TestBlockDerivation:
         assert [b["label"] for b in blocks] == ["occ_1", "block_2"]
         assert all("filled" not in block for block in blocks)
 
-    def test_a_pool_crossing_the_boundary_is_provisional(self, silicon_structure: Any) -> None:
+    def test_disentanglement_crossing_the_boundary_is_provisional(
+        self, silicon_structure: Any
+    ) -> None:
         """An occupied block that disentangles against empty bands is unstamped.
 
-        The two Wannier positions it takes are occupied ones, but
+        The two Wannier-function indices it takes are occupied ones, but
         wannier90 optimizes its Wannier functions out of all ten bands it
-        reads, so they are not the occupied manifold's and the positions
+        reads, so they are not the occupied manifold's and the indices
         cannot say otherwise.
         """
         blocks = self._blocks(silicon_structure, self._s_block() * 2, nbnd=12)
@@ -179,13 +181,13 @@ class TestBlockDerivation:
         assert all("filled" not in block for block in blocks)
 
     def test_last_block_absorbs_extra_bands(self, silicon_structure: Any) -> None:
-        """An nbnd beyond the Wannier count becomes the disentanglement pool.
+        """An nbnd beyond the Wannier count becomes the extra disentanglement bands.
 
-        The pool shows up as ``num_bands`` and the absent upper exclusion,
-        and the positions derived from those two keep naming exactly the
+        The extras show up as ``num_bands`` and the absent upper exclusion,
+        and the indices derived from those two keep naming exactly the
         eight Wannier functions, so the runtime group detection and the
         band-to-Wannier map stay addressed to the manifold rather than the
-        pool.
+        extra bands.
         """
         blocks = self._blocks(silicon_structure, self._sp3_block(), nbnd=12)
         assert blocks[0]["num_wann"] == 8
@@ -330,11 +332,11 @@ class TestAutomaticProjections:
     def test_derived_block_covers_the_projector_manifold_exactly(
         self, aiida_profile_clean: Any, fake_sg15_cutoffs_family: Any, silicon_structure: Any
     ) -> None:
-        """The single derived block is pool-free and covers every projector band.
+        """The single derived block needs no disentanglement and covers every projector band.
 
-        Its Wannier positions must run over exactly ``1..num_wann`` — a
-        shorter list would silently drop Wannier functions from the runtime
-        split — and ``num_bands == num_wann`` is the no-pool invariant
+        Its Wannier-function indices must run over exactly ``1..num_wann``
+        — a shorter list would silently drop Wannier functions from the
+        runtime split — and ``num_bands == num_wann`` is the invariant
         behind the nbnd guards. The block states no occupancy: it spans the
         whole manifold and exists only to be cut up by the runtime
         detection.
@@ -369,7 +371,7 @@ class TestAutomaticProjections:
     def test_nbnd_above_projector_count_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """A disentanglement pool above the projector manifold cannot split."""
+        """Extra disentanglement bands above the projector manifold cannot split."""
         d = _si_auto_dict()
         d["calculator_parameters"]["nbnd"] = 12
         with pytest.raises(NotImplementedError, match="disentangle"):
@@ -531,13 +533,13 @@ class TestExternalProjectors:
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
         assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
 
-    def test_derived_block_is_external_and_pool_free(
+    def test_derived_block_is_external_and_needs_no_disentanglement(
         self,
         aiida_profile_clean: Any,
         fake_sg15_cutoffs_family: Any,
         silicon_structure: Any,
     ) -> None:
-        """The derived block carries the external type, the no-pool shape and no occupancy."""
+        """The derived block carries the external type, no disentanglement and no occupancy."""
         from aiida_wannier90_workflows.common.types import WannierProjectionType
 
         from koopmans.aiida.conversion import get_pseudos_from_family
@@ -634,7 +636,7 @@ class TestExternalProjectors:
         fake_sg15_cutoffs_family: Any,
         si_external_projector_dir: Any,
     ) -> None:
-        """The no-pool constraint applies to the external source too."""
+        """The no-disentanglement constraint applies to the external source too."""
         d = _si_external_dict(si_external_projector_dir)
         d["calculator_parameters"]["nbnd"] = 12
         with pytest.raises(NotImplementedError, match="external projector files"):

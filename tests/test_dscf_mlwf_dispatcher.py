@@ -178,10 +178,10 @@ class TestDscfBlocks:
         assert occ["num_wann"] == 4
         assert occ["projections"] == ["f=0.25,0.25,0.25:l=-3"]
         assert emp["num_wann"] == 4
-        assert emp["num_bands"] == 4  # sized to its own manifold, no pool
+        assert emp["num_bands"] == 4  # sized to its own manifold, no extra bands
 
     def test_every_block_is_sized_to_its_own_manifold(self, si_structure: Any) -> None:
-        """With nbnd exactly spanned, no block carries a disentanglement pool.
+        """With nbnd exactly spanned, no block requires disentanglement.
 
         Each block spans exactly the bands its projections name
         (``num_bands == num_wann``) and excludes everything below *and*
@@ -199,12 +199,13 @@ class TestDscfBlocks:
         assert get_wannier_indices(emp) == [5, 6, 7, 8]
         assert emp["exclude_bands"] == [1, 2, 3, 4]
 
-    def test_leftover_nscf_bands_become_the_pool(self, si_structure: Any) -> None:
-        """Absorb nscf headroom above the blocks into the uppermost block's pool.
+    def test_leftover_nscf_bands_become_the_extra_bands(self, si_structure: Any) -> None:
+        """Absorb nscf headroom above the blocks into the uppermost block.
 
-        The pool widens only ``num_bands`` and drops the upper exclusion —
-        the derived Wannier positions still name the block's four
-        functions, since they are the map every downstream consumer reads.
+        The extra disentanglement bands widen only ``num_bands`` and drop
+        the upper exclusion — the derived Wannier-function indices still
+        name the block's four functions, since they are the map every
+        downstream consumer reads.
         """
         from aiida_koopmans.types import SpinChannel
 
@@ -213,11 +214,13 @@ class TestDscfBlocks:
         assert occ["num_bands"] == 4
         assert occ["exclude_bands"] == list(range(5, 21))
         assert emp["num_wann"] == 4
-        assert emp["num_bands"] == 16  # 4 Wannier bands + 12 pool bands
+        assert emp["num_bands"] == 16  # 4 Wannier bands + 12 extra bands
         assert get_wannier_indices(emp) == [5, 6, 7, 8]
         assert emp["exclude_bands"] == [1, 2, 3, 4]
 
-    def test_pool_block_preserves_the_wann2kcp_band_identity(self, si_structure: Any) -> None:
+    def test_disentangling_block_preserves_the_wann2kcp_band_identity(
+        self, si_structure: Any
+    ) -> None:
         """Every block satisfies ``len(exclude_bands) + num_bands == nbnd``.
 
         wann2kcp.x reads the ``.chk`` against the pw.x band count and rejects
@@ -276,27 +279,29 @@ class TestDscfBlocks:
         with pytest.raises(ValueError, match="span 8 bands but nbnd = 6"):
             _dscf_blocks(si_structure, [sp, sp], 6, 6, SpinChannel.NONE)
 
-    def test_pool_above_an_occupied_block_raises(self, si_structure: Any) -> None:
+    def test_disentanglement_above_an_occupied_block_raises(self, si_structure: Any) -> None:
         """Occupied-only projections must not disentangle against empty bands.
 
-        The pool would land on the topmost *occupied* block, whose Wannier
-        functions seed the occupied manifold of the supercell kcp.x run;
-        letting them mix in empty character corrupts that seed with nothing
-        downstream to catch it.
+        The extra bands would land on the topmost *occupied* block, whose
+        Wannier functions seed the occupied manifold of the supercell kcp.x
+        run; letting them mix in empty character corrupts that seed with
+        nothing downstream to catch it.
         """
         from aiida_koopmans.types import SpinChannel
 
         sp = [self._FakeProjection("Si", -1)]  # 4 = nocc
-        with pytest.raises(ValueError, match="disentanglement pool"):
+        with pytest.raises(ValueError, match="for disentanglement"):
             _dscf_blocks(si_structure, [sp], 4, 8, SpinChannel.NONE)
 
-    def test_boundary_check_alone_rejects_a_pool_that_crosses(self, si_structure: Any) -> None:
-        """The boundary check rejects a pool crossing it, reading no positions.
+    def test_boundary_check_alone_rejects_disentanglement_that_crosses(
+        self, si_structure: Any
+    ) -> None:
+        """The boundary check rejects extra bands crossing it, reading no indices.
 
         This block's own bands are the four occupied ones — a check that
-        compares its Wannier positions against the boundary sees nothing
-        wrong with it,
-        and only its disentanglement pool reaches into the empty manifold.
+        compares its Wannier-function indices against the boundary sees
+        nothing wrong with it, and only the extra bands it reads for
+        disentanglement reach into the empty manifold.
         Asking the plugin whether the block is occupied is what catches it,
         so run that check on its own: paired with the coverage check it
         would pass for the wrong reason.
@@ -313,7 +318,7 @@ class TestDscfBlocks:
         sp = cast("list[Projection]", [self._FakeProjection("Si", -1)])  # 4 = nocc
         blocks = _create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
         assert get_wannier_indices(blocks[0]) == [1, 2, 3, 4]  # entirely occupied
-        with pytest.raises(ValueError, match="disentanglement pool"):
+        with pytest.raises(ValueError, match="for disentanglement"):
             _validate_blocks_separate_occ_and_emp(blocks, 4)
 
     def test_uncovered_occupied_bands_raise(self, si_structure: Any) -> None:
@@ -366,14 +371,14 @@ class TestPeriodicMlwfsBuild:
         # The molecular KS-init chain must NOT be present.
         assert "dft_init_nspin1" not in names
 
-    def test_pool_carrying_input_builds_and_validates(
+    def test_disentangling_input_builds_and_validates(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """An nscf with headroom above the Wannier manifold is a buildable input.
 
         ``nbnd`` sets the kcp.x orbital count and ``pw.system.nbnd`` the nscf
         band count; the eight bands between them are the uppermost block's
-        disentanglement pool. Building is not enough to call this wired —
+        extra disentanglement bands. Building is not enough to call this wired —
         ``check_before_run`` is what proves every task of the assembled graph
         has the inputs it declares as required.
         """
