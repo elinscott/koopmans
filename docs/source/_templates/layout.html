@@ -1,0 +1,11 @@
+{% extends "!layout.html" %}
+
+{# The theme has no announcement bar, so the banner is prepended to the content
+   column. It sticks to the top of that column rather than spanning the page, so
+   it needs no layout offsets against the theme's fixed sidebar. #}
+{% block content %}
+<div class="site-banner" role="status">
+  🚧 These pages are under construction &mdash; come back soon! 🚧
+</div>
+{{ super() }}
+{% endblock %}

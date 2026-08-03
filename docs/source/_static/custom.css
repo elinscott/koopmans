@@ -1,3 +1,90 @@
 .wy-nav-content {
     max-width: none;
 }
+
+/* Site-wide notice at the top of the content column, stuck there while the page
+   scrolls. Negative side margins bleed it across the column's own padding. */
+.site-banner {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin: -1.618em -3.236em 1.618em;
+    padding: 0.8em 1em;
+    text-align: center;
+    font-size: 95%;
+    font-weight: bold;
+    letter-spacing: 0.01em;
+    color: #3d2c07;
+    background-color: #f5c451;
+    border-bottom: 3px solid #d99a2b;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+@media screen and (max-width: 768px) {
+    .site-banner {
+        margin-left: -1.618em;
+        margin-right: -1.618em;
+    }
+}
+
+/* The landing page leads with the wordmark, so the page title it duplicates is
+   hidden. Browsers without :has() simply show both. */
+.landing-logo {
+    text-align: center;
+    margin: 0 0 1.2em;
+}
+
+.landing-subtitle {
+    text-align: center;
+    margin-bottom: 1.5em;
+}
+
+.landing-subtitle p {
+    margin-bottom: 0;
+    font-size: 115%;
+}
+
+section:has(> .landing-logo) > h1 {
+    display: none;
+}
+
+/* The capability grid on the landing page: one tile per capability, its caption
+   carrying the links. Tiles are forced to a common aspect ratio so that figures
+   of different shapes still line up. */
+.capability-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.75em;
+    margin-bottom: 2em;
+}
+
+.capability-cell img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: contain;
+    background-color: #fff;
+    border: 1px solid #e3e3e3;
+    border-radius: 6px;
+}
+
+.capability-cell p {
+    margin: 0.7em 0 0;
+    line-height: 1.5;
+}
+
+/* Capabilities that do not exist yet are dimmed until hovered. */
+.capability-cell.planned img,
+.capability-cell.planned p {
+    opacity: 0.55;
+}
+
+.capability-cell.planned:hover img,
+.capability-cell.planned:hover p {
+    opacity: 1;
+}
+
+/* Capabilities that do not exist yet name themselves in italics. */
+.capability-cell em {
+    color: #999;
+    font-style: italic;
+}

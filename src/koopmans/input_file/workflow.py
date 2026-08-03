@@ -145,7 +145,9 @@ class WorkflowConfig(BaseModel):
         description="if True, derive the Wannier projections automatically from the "
         "pseudopotentials' atomic orbitals (or, if `pw2wannier90.atom_proj_ext` is set, "
         "from external projector files) instead of requiring explicit projections in "
-        "`calculator_parameters.w90.projections`",
+        "`calculator_parameters.w90.projections`. Setting `pw2wannier90.atom_proj_ext` "
+        "requires this too: the projector files choose where the projector functions "
+        "come from, not whether the projections are derived automatically",
     )
     max_time: int | float | None = Field(
         default=None,
