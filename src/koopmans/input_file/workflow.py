@@ -25,7 +25,6 @@ class Task(Enum):
     SINGLEPOINT = "singlepoint"
     CONVERGENCE = "convergence"
     WANNIERIZE = "wannierize"
-    UNFOLD_AND_INTERPOLATE = "unfold_and_interpolate"
     DFT_BANDS = "dft_bands"
     DFT_EPS = "dft_eps"
     TRAJECTORY = "trajectory"
