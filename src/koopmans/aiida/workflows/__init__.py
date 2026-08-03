@@ -9,11 +9,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from aiida import orm
-from aiida_koopmans.ml import MLMode, ModelMismatchError
-from aiida_koopmans.parallelization import ParallelizationError
-from aiida_koopmans.projections import ProjectionBlockError
+from aiida_koopmans.ml import MLMode
 from aiida_koopmans.workgraphs import Codes
-from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
@@ -29,6 +26,10 @@ from koopmans.input_file.workflow import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from aiida_koopmans.ml import ModelMismatchError
+    from aiida_koopmans.parallelization import ParallelizationError
+    from aiida_koopmans.projections import ProjectionBlockError
+    from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
@@ -199,17 +200,31 @@ def _model_mismatch_advice(exc: ModelMismatchError) -> str:
     )
 
 
-#: Input-file advice for the plugin's typed errors, most specific first.
-#: One advice per class — the plugin defines each class for exactly one
-#: piece of advice — and the class's structured attribute (block label,
-#: code name, model stamp) sharpens the sentence when the raise site
-#: filled it in.
-_PLUGIN_ADVICE: tuple[tuple[type[ValueError], Callable[[Any], str]], ...] = (
-    (ProjectionBlockError, _projection_block_advice),
-    (FrozenWindowError, _frozen_window_advice),
-    (ParallelizationError, _parallelization_advice),
-    (ModelMismatchError, _model_mismatch_advice),
-)
+def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str]], ...]:
+    """Return the advice table for the plugin's typed errors, most specific first.
+
+    One advice per class — the plugin defines each class for exactly one
+    piece of advice — and the class's structured attribute (block label,
+    code name, model stamp) sharpens the sentence when the raise site
+    filled it in.
+
+    The classes are imported here, not at module level: importing
+    ``aiida_koopmans.workgraphs.block_wannierize`` loads the AiiDA
+    configuration (via aiida-pythonjob, aiidateam/aiida-pythonjob#84),
+    which a configuration-less interpreter cannot do. Advice runs only
+    after a failure, so the import cost here is irrelevant.
+    """
+    from aiida_koopmans.ml import ModelMismatchError
+    from aiida_koopmans.parallelization import ParallelizationError
+    from aiida_koopmans.projections import ProjectionBlockError
+    from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
+
+    return (
+        (ProjectionBlockError, _projection_block_advice),
+        (FrozenWindowError, _frozen_window_advice),
+        (ParallelizationError, _parallelization_advice),
+        (ModelMismatchError, _model_mismatch_advice),
+    )
 
 
 def advice_for(exc: BaseException) -> str | None:
@@ -221,7 +236,7 @@ def advice_for(exc: BaseException) -> str | None:
     ``raise ... from exc`` is translated only if the replacement is
     itself a typed plugin error.
     """
-    for exc_type, advise in _PLUGIN_ADVICE:
+    for exc_type, advise in _plugin_advice():
         if isinstance(exc, exc_type):
             return advise(exc)
     return None
