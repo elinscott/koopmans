@@ -9,8 +9,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from aiida import orm
-from aiida_koopmans.ml import MLMode
+from aiida_koopmans.ml import MLMode, ModelMismatchError
+from aiida_koopmans.parallelization import ParallelizationError
+from aiida_koopmans.projections import ProjectionBlockError
 from aiida_koopmans.workgraphs import Codes
+from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
@@ -24,6 +27,8 @@ from koopmans.input_file.workflow import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
@@ -151,38 +156,75 @@ def prepare_common_inputs(
     return structure, pseudo_family, overrides
 
 
-#: Input-file advice keyed by the plugin module that raised. The plugin
-#: raises builtin ValueError/NotImplementedError everywhere, so the raise
-#: site is the only structural key available until it grows typed
-#: exceptions to dispatch on. The key is module-wide: any error escaping a
-#: keyed module carries that module's advice, and an error raised in a
-#: helper module that a keyed module calls carries none.
-_PLUGIN_ADVICE = {
-    "aiida_koopmans.projections": (
-        "The blocks named above are derived from the input file's projections "
+def _projection_block_advice(exc: ProjectionBlockError) -> str:
+    """Phrase the projection-block advice in input-file vocabulary."""
+    subject = f"Block {exc.label!r} is" if exc.label else "The blocks named above are"
+    return (
+        f"{subject} derived from the input file's projections "
         "(`calculator_parameters.w90.projections`, or its `up`/`down` variants "
-        "for collinear spin): they tile the bands in listed order, each taking "
-        "its own Wannier-function count, and the last block reads any bands "
+        "for collinear spin): blocks tile the bands in listed order, each "
+        "taking its own Wannier-function count, and the last reads any bands "
         "left up to `nbnd` for disentanglement. Adjust the projections or "
         "`nbnd` there."
-    ),
-}
+    )
+
+
+def _frozen_window_advice(exc: FrozenWindowError) -> str:
+    """Phrase the frozen-window advice in input-file vocabulary."""
+    subject = f"block {exc.label!r}" if exc.label else "the disentangling block"
+    return (
+        "The frozen window comes from the `dis_froz_min` / `dis_froz_max` "
+        "keywords in `calculator_parameters.w90`; adjust them there until "
+        f"{subject} freezes no more bands than it Wannierises."
+    )
+
+
+def _parallelization_advice(exc: ParallelizationError) -> str:
+    """Phrase the parallelization advice in input-file vocabulary."""
+    entry = f"`parallelization.{exc.code}`" if exc.code else "the offending entry"
+    return (
+        "Per-code ranks and flags come from the input file's top-level "
+        f"`parallelization` block; adjust {entry} "
+        "(`ntasks` / `npool` / `pd` / `omp`) there."
+    )
+
+
+def _model_mismatch_advice(exc: ModelMismatchError) -> str:
+    """Phrase the model-mismatch advice in input-file vocabulary."""
+    stamp = f" (its {exc.field!r} stamp)" if exc.field else ""
+    return (
+        f"The model loaded from `ml.model_file` was trained under different "
+        f"settings{stamp}: retrain with `ml: {{mode: train}}` under this run's "
+        "settings, or point `ml.model_file` at a matching model."
+    )
+
+
+#: Input-file advice for the plugin's typed errors, most specific first.
+#: One advice per class — the plugin defines each class for exactly one
+#: piece of advice — and the class's structured attribute (block label,
+#: code name, model stamp) sharpens the sentence when the raise site
+#: filled it in.
+_PLUGIN_ADVICE: tuple[tuple[type[ValueError], Callable[[Any], str]], ...] = (
+    (ProjectionBlockError, _projection_block_advice),
+    (FrozenWindowError, _frozen_window_advice),
+    (ParallelizationError, _parallelization_advice),
+    (ModelMismatchError, _model_mismatch_advice),
+)
 
 
 def advice_for(exc: BaseException) -> str | None:
-    """Return input-file advice for an exception the plugin raised, if any.
+    """Return input-file advice for a typed plugin error, or None.
 
-    Keyed on the module of the raise site (the innermost traceback frame).
-    An exception the dispatcher replaced via ``raise ... from exc`` carries
-    a koopmans raise site and gets no translation; a bare ``raise`` in a
-    koopmans ``except`` block keeps the plugin raise site and still does.
+    Dispatches on the exception's type, so an untyped error — the
+    plugin's own plain ``ValueError``s included — passes through
+    untranslated, and an error the dispatcher replaced via
+    ``raise ... from exc`` is translated only if the replacement is
+    itself a typed plugin error.
     """
-    module = None
-    tb = exc.__traceback__
-    while tb is not None:
-        module = tb.tb_frame.f_globals.get("__name__")
-        tb = tb.tb_next
-    return _PLUGIN_ADVICE.get(module) if isinstance(module, str) else None
+    for exc_type, advise in _PLUGIN_ADVICE:
+        if isinstance(exc, exc_type):
+            return advise(exc)
+    return None
 
 
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
