@@ -25,6 +25,133 @@ _FOLDER_NAME_SUFFIXES = [
     re.compile(r"^(.+)-WorkGraph<[^<>]+>$"),
 ]
 
+# "<NN>-<link_label>", the shape every dumped step folder has once the pk
+# and the process label are gone.
+_STEP_FOLDER_NAME = re.compile(r"^(\d+)-(.+)$")
+
+# The CalcJob class name AiiDA appends to a calculation folder, e.g. the
+# "-KcpCalculation" of "01-dft_init-KcpCalculation". What is left has to
+# be a step folder in its own right, so that a folder whose link label is
+# itself capitalised ("05-RunFinalKI") keeps its label.
+_CLASS_NAME_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
+
+
+def _is_calculation_folder(path: Path) -> bool:
+    """Return whether the folder holds one dumped process, run and recorded."""
+    return (path / "inputs").is_dir() and (path / "outputs").is_dir()
+
+
+def _produced_outputs(path: Path) -> bool:
+    """Return whether any process under the folder recorded outputs."""
+    return any(candidate.is_dir() for candidate in path.rglob("outputs"))
+
+
+def _step_folders(path: Path) -> list[Path]:
+    """Return the folder's "<NN>-<label>" subfolders, in number order."""
+    numbered = []
+    for child in path.iterdir():
+        match = _STEP_FOLDER_NAME.match(child.name)
+        if child.is_dir() and match is not None:
+            numbered.append((int(match.group(1)), len(match.group(1)), child))
+    numbered.sort()
+    return [child for _, _, child in numbered]
+
+
+def _prune_outputless_step_folders(path: Path) -> None:
+    """Delete step folders under which no process recorded outputs.
+
+    Such a folder holds at most the bookkeeping task's own source and a
+    serialized copy of the inputs it was handed, both of which the step
+    that consumed them already carries. A folder holding only such
+    folders goes with them.
+    """
+    for child in _step_folders(path):
+        if _produced_outputs(child):
+            _prune_outputless_step_folders(child)
+        else:
+            shutil.rmtree(child)
+
+
+def _renumber_step_folders(path: Path) -> None:
+    """Renumber the step folders under ``path`` contiguously from one.
+
+    Keeps the order the original numbers gave and the zero padding they
+    were written with.
+    """
+    children = _step_folders(path)
+    matches = [_STEP_FOLDER_NAME.match(child.name) for child in children]
+    width = max((len(m.group(1)) for m in matches if m is not None), default=2)
+
+    for number, (child, match) in enumerate(zip(children, matches, strict=True), start=1):
+        if match is None:
+            continue
+        renamed = child.parent / f"{number:0{width}d}-{match.group(2)}"
+        # Compacting never raises a number, so the target is always free.
+        if renamed != child:
+            shutil.move(str(child), str(renamed))
+        _renumber_step_folders(renamed)
+
+
+def _strip_class_name_suffixes(path: Path) -> None:
+    """Drop the trailing "-<ClassName>" from every calculation folder.
+
+    A folder whose stripped name is already taken keeps its suffix.
+    """
+    for child in _step_folders(path):
+        if not _is_calculation_folder(child):
+            _strip_class_name_suffixes(child)
+            continue
+        match = _CLASS_NAME_SUFFIX.match(child.name)
+        if match is None:
+            continue
+        stripped = child.parent / match.group(1)
+        if not stripped.exists():
+            shutil.move(str(child), str(stripped))
+
+
+def _hoist_lone_calculations(path: Path) -> None:
+    """Lift a lone calculation's contents into the step folder holding it.
+
+    Descends top-down and stops at the folder it hoists into, so a chain
+    of single-child steps collapses by one layer only and every step name
+    on the way survives.
+    """
+    children = list(path.iterdir())
+    if len(children) == 1 and children[0].is_dir() and _is_calculation_folder(children[0]):
+        calculation = children[0]
+        for item in calculation.iterdir():
+            shutil.move(str(item), str(path / item.name))
+        calculation.rmdir()
+        return
+    for child in _step_folders(path):
+        _hoist_lone_calculations(child)
+
+
+def _tidy_dumped_tree(root_path: Path) -> None:
+    """Prune, renumber and flatten the step folders of a dumped tree.
+
+    The passes run in a fixed order:
+
+    - a step folder under which nothing recorded outputs goes;
+    - the surviving siblings are renumbered contiguously from one;
+    - a calculation folder drops its trailing "-<ClassName>";
+    - a step folder holding nothing but one calculation takes over its
+      contents.
+
+    Pruning has to precede flattening: a step is left holding a single
+    calculation only once its bookkeeping siblings are gone. Stripping
+    has to precede flattening too, because a step that has taken over a
+    calculation's contents then looks like a calculation folder itself.
+
+    Runs once, on a freshly dumped tree.
+
+    :param root_path: Root of the dumped tree; it is never itself pruned.
+    """
+    _prune_outputless_step_folders(root_path)
+    _renumber_step_folders(root_path)
+    _strip_class_name_suffixes(root_path)
+    _hoist_lone_calculations(root_path)
+
 
 def _simplify_folder_names(root_path: Path) -> None:
     """Strip pk numbers and WorkGraph process labels from folder names.
@@ -125,6 +252,7 @@ def dump_workgraph(
     - Strips pk numbers and WorkGraph process labels from folder names
     - Simplifies each CalcJobNode folder structure
     - Removes top-level metadata files
+    - Tidies the step folders (see :func:`_tidy_dumped_tree`)
 
     :param process: The workgraph ProcessNode.
     :param output_path: Output directory. Defaults to current working directory.
@@ -164,6 +292,10 @@ def dump_workgraph(
     ]:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
+
+    # Only now, with the metadata files gone, does a step that ran no
+    # calculation look empty.
+    _tidy_dumped_tree(output_path)
 
     _dump_model_json(process, output_path)
 

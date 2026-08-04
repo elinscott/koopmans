@@ -171,13 +171,23 @@ def _finished_dscf_node(
             remote.store()
             remote.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=label)
     if with_calcjob:
-        calc = orm.CalcJobNode()
-        calc.set_process_state(ProcessState.FINISHED)
-        calc.set_exit_status(0)
-        calc.base.repository.put_object_from_bytes(b"output data\n", "aiida.cpo")
-        calc.base.links.add_incoming(node, link_type=LinkType.CALL_CALC, link_label="ki_final")
-        calc.store()
-        calc.seal()
+        # Two steps, each with the retrieved folder a finished CalcJob
+        # always has: the dump reads the input files off the calculation
+        # itself and the output files off ``retrieved``.
+        for label in ("dft_init", "ki_final"):
+            calc = orm.CalcJobNode()
+            calc.set_process_state(ProcessState.FINISHED)
+            calc.set_exit_status(0)
+            calc.base.repository.put_object_from_bytes(b"input data\n", "aiida.cpi")
+            calc.base.links.add_incoming(node, link_type=LinkType.CALL_CALC, link_label=label)
+            calc.store()
+            retrieved = orm.FolderData()
+            retrieved.base.repository.put_object_from_bytes(b"output data\n", "aiida.cpo")
+            retrieved.base.links.add_incoming(
+                calc, link_type=LinkType.CREATE, link_label="retrieved"
+            )
+            retrieved.store()
+            calc.seal()
     if sealed:
         node.seal()
     return node
