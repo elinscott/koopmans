@@ -223,25 +223,52 @@ class TestRenumberStepFolders:
 
         assert sorted(p.name for p in tmp_path.iterdir()) == ["01-wannierize", "02-dft_bands"]
 
-    def test_a_family_holds_the_slot_of_its_first_member(self, tmp_path: Path) -> None:
-        """A late member of an indexed family sorts into it, not to the end."""
+    def test_an_interleaved_family_keeps_its_run_order(self, tmp_path: Path) -> None:
+        """A family split by another step is left exactly as it ran.
+
+        The spin initialization is one such family: the dummy nspin=2
+        step lays out the restart files the real nspin=2 step reads, so
+        sorting ``nspin1``, ``nspin2`` and the dummy together would put
+        the reader before the writer.
+        """
         _make_tree(
             tmp_path,
             [
-                "01-compute_alpha_orb_1/a",
-                "02-final_scf/a",
-                "03-compute_alpha_orb_10/a",
-                "04-compute_alpha_orb_2/a",
+                "03-dft_init_nspin1/a",
+                "04-dft_init_nspin2_dummy/a",
+                "06-dft_init_nspin2/a",
             ],
         )
 
         _renumber_step_folders(tmp_path)
 
         assert sorted(p.name for p in tmp_path.iterdir()) == [
-            "01-compute_alpha_orb_1",
-            "02-compute_alpha_orb_2",
-            "03-compute_alpha_orb_10",
-            "04-final_scf",
+            "01-dft_init_nspin1",
+            "02-dft_init_nspin2_dummy",
+            "03-dft_init_nspin2",
+        ]
+
+    def test_a_contiguous_family_sorts_amid_untouched_siblings(self, tmp_path: Path) -> None:
+        """The fan-out counts properly; the steps around it do not move."""
+        _make_tree(
+            tmp_path,
+            [
+                "01-ki_trial/a",
+                "02-compute_alpha_orb_1/a",
+                "03-compute_alpha_orb_10/a",
+                "04-compute_alpha_orb_2/a",
+                "05-final_scf/a",
+            ],
+        )
+
+        _renumber_step_folders(tmp_path)
+
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "01-ki_trial",
+            "02-compute_alpha_orb_1",
+            "03-compute_alpha_orb_2",
+            "04-compute_alpha_orb_10",
+            "05-final_scf",
         ]
 
     def test_renumbering_reaches_every_level(self, tmp_path: Path) -> None:
@@ -442,12 +469,12 @@ class TestTidyDumpedTree:
         │   │   └── aiida.cpi
         │   └── outputs
         │       └── aiida.cpo
-        ├── 02-dft_init_nspin2
+        ├── 02-dft_init_nspin2_dummy
         │   ├── inputs
         │   │   └── aiida.cpi
         │   └── outputs
         │       └── aiida.cpo
-        ├── 03-dft_init_nspin2_dummy
+        ├── 03-dft_init_nspin2
         │   ├── inputs
         │   │   └── aiida.cpi
         │   └── outputs

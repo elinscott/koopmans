@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,11 +42,11 @@ _PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
 
 # Sibling ordering, shared with the live progress table's
 # ``_ordered_children`` (``koopmans.aiida.progress``): siblings group into
-# families — the label with its digit runs masked — families run where
-# their first member stood, and a family's own members run in natural
-# numeric order. The two carry their own copy of the convention because
-# the table orders nodes by ctime and the dump orders folders by the
-# number already written on them; keep them in step.
+# families — the label with its digit runs masked — and a family whose
+# members already sit in consecutive positions is sorted naturally.
+# Everything else keeps the order it ran in. The two carry their own copy
+# of the convention because the table orders nodes by ctime and the dump
+# orders folders by the number already written on them; keep them in step.
 _DIGIT_RUN_RE = re.compile(r"(\d+)")
 
 
@@ -108,22 +109,30 @@ def _display_order(children: Sequence[Path]) -> list[tuple[Path, str]]:
 
     The dump numbers a fan-out in creation order, which is lexicographic
     by map key, so ``orb_10`` lands between ``orb_1`` and ``orb_2``.
-    Ordering by family and then naturally puts the indices back in
-    counting order while leaving distinct steps in the order they ran.
+    Sorting a family naturally puts those indices back in counting order.
+
+    Only a family whose members already occupy consecutive positions is
+    sorted. A family split by another step never was a fan-out — the
+    three-step spin initialization runs ``nspin1``, ``nspin2_dummy``,
+    ``nspin2`` — and pulling it together would put a step before the one
+    whose output it reads.
     """
     entries = []
     for child in children:
         match = _STEP_FOLDER_NAME.match(child.name)
         if match is not None:
-            entries.append((int(match.group(1)), match.group(2), child))
+            entries.append((child, match.group(2)))
 
-    first_seen: dict[str, int] = {}
-    for number, label, _ in entries:
-        family = _family_key(label)
-        first_seen[family] = min(first_seen.get(family, number), number)
+    positions: dict[str, list[int]] = defaultdict(list)
+    for index, (_, label) in enumerate(entries):
+        positions[_family_key(label)].append(index)
 
-    entries.sort(key=lambda entry: (first_seen[_family_key(entry[1])], _natural_key(entry[1])))
-    return [(child, label) for _, label, child in entries]
+    ordered = list(entries)
+    for indices in positions.values():
+        if len(indices) > 1 and indices == list(range(indices[0], indices[-1] + 1)):
+            run = sorted((entries[index] for index in indices), key=lambda e: _natural_key(e[1]))
+            ordered[indices[0] : indices[-1] + 1] = run
+    return ordered
 
 
 def _renumber_step_folders(path: Path) -> None:
