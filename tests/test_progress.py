@@ -273,6 +273,32 @@ class TestSiblingOrder:
             "DFT Init (nspin=2)",
         ]
 
+    def test_an_interleaved_family_is_not_sorted_across_the_row_splitting_it(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """Interleaved members hold their rows even when out of index order.
+
+        Sorting a split family among the positions it already occupies
+        would reorder it across the row in between, which is the
+        reordering the contiguity requirement exists to prevent.
+        """
+        root = FakeNode(
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+            children=[
+                FakeNode(label="compute_alpha_orb_2", seconds=1.0),
+                FakeNode(label="final_scf", seconds=2.0),
+                FakeNode(label="compute_alpha_orb_1", seconds=3.0),
+            ],
+        )
+
+        rows = render(root)
+
+        assert [row.label for row in rows[1:]] == [
+            "Compute Alpha Orb 2",
+            "Final SCF",
+            "Compute Alpha Orb 1",
+        ]
+
     def test_a_contiguous_family_sorts_amid_unmoved_rows(
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
     ) -> None:
