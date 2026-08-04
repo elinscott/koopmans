@@ -354,17 +354,15 @@ def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     """
     from aiida.orm import load_node
 
-    from koopmans.aiida.setup.daemon import ensure_daemon_running
+    from koopmans.api import launch
 
     console = Console()
     console.print()
 
-    # Ensure daemon is running before submitting
-    ensure_daemon_running()
-
-    # Submit the workgraph (suppress aiida-workgraph's print statements)
+    # Launch through the api funnel — the one call site for the workgraph
+    # verbs — suppressing aiida-workgraph's print statements.
     with suppress_stdout():
-        wg.submit()
+        launch(wg, blocking=False)
 
     # Wait for process to be created
     while wg.process is None:
