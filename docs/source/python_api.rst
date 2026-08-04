@@ -28,18 +28,16 @@ eV — and can write the same per-step directory layout as ``koopmans run``:
    print(f"EA = {results.electron_affinity:.2f} eV")
    results.dump("ozone")
 
-An input can equally be built without a file — it is the same model the
+An input can equally be built without a file — it is the same object the
 file parser produces:
 
 .. code:: python
 
    from koopmans import KoopmansInput, submit
 
-   inp = KoopmansInput.model_validate(
-       {
-           "workflow": {"task": "singlepoint", "correction": "ki"},
-           # ... the same blocks an input file holds ...
-       }
+   inp = KoopmansInput(
+       workflow={"task": "singlepoint", "correction": "ki"},
+       # ... the same blocks an input file holds ...
    )
    results = submit(inp)  # returns immediately; the daemon runs it
 

@@ -16,7 +16,7 @@ import pytest
 
 import koopmans
 from koopmans import KoopmansInput, Results, read_input_file
-from koopmans.api import _launch
+from koopmans.api import launch
 
 
 class TestPublicSurface:
@@ -66,7 +66,7 @@ class TestLaunchFunnel:
             return Results(object())  # type: ignore[arg-type]
 
         sentinel = object()
-        monkeypatch.setattr("koopmans.api._launch", fake_launch)
+        monkeypatch.setattr("koopmans.api.launch", fake_launch)
         monkeypatch.setattr("koopmans.api.build", lambda inp: sentinel)
 
         assert isinstance(koopmans.run("unused"), Results)  # type: ignore[arg-type]
@@ -103,13 +103,13 @@ class TestLaunchFunnel:
                 self.calls.append(("submit", wait))
 
         blocking_wg = FakeWorkGraph()
-        results = _launch(blocking_wg, blocking=True)
+        results = launch(blocking_wg, blocking=True)
         assert blocking_wg.calls == [("run", None)]
         assert isinstance(results, Results)
         assert not daemon_checks
 
         daemon_wg = FakeWorkGraph()
-        _launch(daemon_wg, blocking=False, wait=True)
+        launch(daemon_wg, blocking=False, wait=True)
         assert daemon_wg.calls == [("submit", True)]
         assert daemon_checks == [True]
 
@@ -119,6 +119,7 @@ def _finished_dscf_node(
     exit_status: int = 0,
     with_outputs: bool = True,
     with_calcjob: bool = False,
+    remote_computer: Any = None,
     sealed: bool = True,
 ) -> Any:
     """Build a node shaped like a finished ``KoopmansDSCFWorkflow`` one.
@@ -160,6 +161,10 @@ def _finished_dscf_node(
         for label, data in outputs.items():
             data.store()
             data.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=label)
+    if remote_computer is not None:
+        remote = orm.RemoteData(remote_path="/scratch/run", computer=remote_computer)
+        remote.store()
+        remote.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label="remote_folder")
     if with_calcjob:
         calc = orm.CalcJobNode()
         calc.set_process_state(ProcessState.FINISHED)
@@ -198,6 +203,17 @@ class TestResults:
         assert out == tmp_path / "ozone"
         step_dirs = [p.name for p in out.rglob("*") if p.is_dir()]
         assert any("ki_final" in name for name in step_dirs), step_dirs
+
+    def test_outputs_deserializes_every_socket(
+        self, aiida_profile: Any, localhost_computer: Any
+    ) -> None:
+        """``outputs`` returns plain nested values; file handles are omitted."""
+        node = _finished_dscf_node(remote_computer=localhost_computer)
+        outputs = Results(node).outputs
+        assert outputs["parameters"]["energy"] == pytest.approx(-1296.39)
+        assert outputs["eigenvalues"].shape == (2, 2)
+        assert outputs["alphas"] == {"filled": {"none": [0.66, 0.73]}, "empty": {"none": [0.72]}}
+        assert "remote_folder" not in outputs
 
     def test_from_pk_reconnects(self, aiida_profile: Any) -> None:
         """The integer id round-trips to a working accessor."""
@@ -243,7 +259,7 @@ def test_launch_verbs_only_in_the_funnel() -> None:
 
     A naming-convention tripwire (workgraph variables are ``wg`` /
     ``workgraph`` throughout the package): it is what catches a stray
-    ``wg.submit()`` reappearing outside ``_launch``, where the upstream
+    ``wg.submit()`` reappearing outside ``launch``, where the upstream
     launch-inversion migration would then miss it.
     """
     import re

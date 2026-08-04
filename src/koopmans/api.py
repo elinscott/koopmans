@@ -36,7 +36,7 @@ def run(koopmans_input: KoopmansInput) -> Results:
     Blocks until the calculation finishes; the returned :class:`Results`
     is ready to read.
     """
-    return _launch(build(koopmans_input), blocking=True)
+    return launch(build(koopmans_input), blocking=True)
 
 
 def submit(koopmans_input: KoopmansInput, *, wait: bool = False) -> Results:
@@ -46,10 +46,10 @@ def submit(koopmans_input: KoopmansInput, *, wait: bool = False) -> Results:
     calculation. Otherwise the returned :class:`Results` is a handle on the
     running calculation: poll ``finished`` and read it once done.
     """
-    return _launch(build(koopmans_input), blocking=False, wait=wait)
+    return launch(build(koopmans_input), blocking=False, wait=wait)
 
 
-def _launch(workgraph: WorkGraph, *, blocking: bool, wait: bool = False) -> Results:
+def launch(workgraph: WorkGraph, *, blocking: bool, wait: bool = False) -> Results:
     """Start ``workgraph`` — the single call site every verb goes through.
 
     If upstream's launch inversion lands (aiida-core#7261 /
@@ -80,10 +80,11 @@ class Results:
     """A koopmans calculation's results, read back in user vocabulary.
 
     Returned by :func:`run` and :func:`submit`, or reconstructed later with
-    :meth:`from_pk`. Every accessor returns plain python / numpy values.
-    Energies are in eV. The accessors read the singlepoint (kcp.x DSCF)
-    outputs; for the other tasks they raise ``NotImplementedError`` naming
-    the gap.
+    :meth:`from_pk`. ``outputs`` deserializes every output of the
+    calculation to plain python / numpy values, whatever the task; the
+    named accessors are views over it in user vocabulary, read the
+    singlepoint (kcp.x DSCF) outputs, and raise ``NotImplementedError``
+    naming the gap for the other tasks. Energies are in eV.
     """
 
     def __init__(self, node: orm.ProcessNode) -> None:
@@ -113,6 +114,31 @@ class Results:
     def finished(self) -> bool:
         """Whether the calculation has finished (successfully or not)."""
         return bool(self._node.is_terminated)
+
+    @property
+    def outputs(self) -> dict[str, Any]:
+        """Every output of the calculation, deserialized to plain python.
+
+        Keyed by output socket name, with nested namespaces as nested
+        dicts. Remote-scratch and retrieved-file handles have no plain
+        python analogue and are omitted; read those from the AiiDA node.
+        """
+        from aiida import orm
+        from aiida.common.links import LinkType
+        from aiida_pythonjob.data.deserializer import deserialize_to_raw_python_data
+
+        self._require_finished()
+        outputs: dict[str, Any] = {}
+        links = self._node.base.links.get_outgoing(link_type=LinkType.RETURN).all()
+        for triple in sorted(links, key=lambda t: t.link_label):
+            if isinstance(triple.node, (orm.RemoteData, orm.FolderData)):
+                continue
+            cursor = outputs
+            *parents, leaf = triple.link_label.split("__")
+            for part in parents:
+                cursor = cursor.setdefault(part, {})
+            cursor[leaf] = deserialize_to_raw_python_data(triple.node)
+        return outputs
 
     @property
     def total_energy(self) -> float:
@@ -150,7 +176,7 @@ class Results:
         One row per spin channel, occupied and empty states together in
         ascending band order.
         """
-        eigenvalues: np.ndarray = self._outputs().eigenvalues.get_array("eigenvalues")
+        eigenvalues: np.ndarray = self._curated()["eigenvalues"]
         return eigenvalues
 
     @property
@@ -161,11 +187,8 @@ class Results:
         unpolarized calculation, ``up`` / ``down`` for a spin-polarized
         one); each value lists one alpha per orbital of that channel.
         """
-        outputs = self._outputs()
-        return {
-            "filled": dict(outputs.alphas.filled.get_dict()),
-            "empty": dict(outputs.alphas.empty.get_dict()),
-        }
+        alphas: dict[str, dict[str, list[float]]] = self._curated()["alphas"]
+        return alphas
 
     def dump(self, path: str | Path) -> Path:
         """Write the calculation's files under ``path`` and return that path.
@@ -192,19 +215,18 @@ class Results:
                 "its results cannot be read."
             )
 
-    def _outputs(self) -> Any:
-        """Return the finished calculation's output sockets, guarded."""
-        self._require_finished()
-        outputs = self._node.outputs
+    def _curated(self) -> dict[str, Any]:
+        """Return the deserialized outputs, guarded for the curated views."""
+        outputs = self.outputs
         if "parameters" not in outputs:
             raise NotImplementedError(
-                f"Results reads the singlepoint (kcp.x DSCF) outputs, which "
+                f"The named accessors read the singlepoint (kcp.x DSCF) outputs, which "
                 f"calculation {self._node.pk} ({self._node.process_label}) does not "
-                "provide; read this calculation's outputs from its AiiDA node for now."
+                "provide; use `outputs` or the AiiDA node for this calculation."
             )
         return outputs
 
     def _parameters(self) -> dict[str, Any]:
         """Return the final KI's parsed output parameters."""
-        parameters: dict[str, Any] = self._outputs().parameters.get_dict()
+        parameters: dict[str, Any] = self._curated()["parameters"]
         return parameters
