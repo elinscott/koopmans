@@ -19,7 +19,8 @@ molecular oxygen, and see whether the IP and EA compare as well to experiment. O
 linear molecule with a bond length of 1.21 Å, and — unlike ozone — it is paramagnetic,
 so its two spin channels differ.
 
-.. dropdown:: ❓ Question — Do the IP and EA of O₂ compare as well to experiment?
+.. dropdown:: ❔ Question — Do the IP and EA of O₂ compare as well to experiment?
+    :color: primary
     :class-title: question-header
 
     Set ``spin: collinear`` in the ``workflow`` block, add ``tot_magnetization: 2`` and
