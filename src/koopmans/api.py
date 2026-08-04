@@ -117,23 +117,33 @@ def _require_finished_ok(node: orm.ProcessNode) -> None:
 
 
 def _deserialized_outputs(node: orm.ProcessNode) -> dict[str, Any]:
-    """Walk the node's outputs into a plain nested dict, keyed by socket name.
+    """Return the node's outputs as a plain nested dict, keyed by socket name.
 
-    Every output link deserializes through aiida-pythonjob; file and
-    scratch handles (``RemoteData``, ``FolderData``) are skipped.
+    File and scratch handles (``RemoteData``, ``FolderData``) are dropped,
+    along with any namespace left empty by dropping them.
     """
-    from aiida import orm
     from aiida.common.links import LinkType
     from aiida_pythonjob.data.deserializer import deserialize_to_raw_python_data
 
-    deserialized: dict[str, Any] = {}
-    links = node.base.links.get_outgoing(link_type=LinkType.RETURN).all()
-    for triple in sorted(links, key=lambda t: t.link_label):
-        if isinstance(triple.node, (orm.RemoteData, orm.FolderData)):
-            continue
-        cursor = deserialized
-        *parents, leaf = triple.link_label.split("__")
-        for part in parents:
-            cursor = cursor.setdefault(part, {})
-        cursor[leaf] = deserialize_to_raw_python_data(triple.node)
+    links = node.base.links.get_outgoing(link_type=LinkType.RETURN)
+    nested: dict[str, Any] = links.nested()  # type: ignore[no-untyped-call]
+    deserialized: dict[str, Any] = deserialize_to_raw_python_data(_without_file_handles(nested))
     return deserialized
+
+
+def _without_file_handles(namespace: dict[str, Any]) -> dict[str, Any]:
+    """Return ``namespace`` without its ``RemoteData`` / ``FolderData`` leaves.
+
+    A namespace the pruning leaves empty is dropped too.
+    """
+    from aiida import orm
+
+    kept: dict[str, Any] = {}
+    for key, value in namespace.items():
+        if isinstance(value, dict):
+            subspace = _without_file_handles(value)
+            if subspace:
+                kept[key] = subspace
+        elif not isinstance(value, (orm.RemoteData, orm.FolderData)):
+            kept[key] = value
+    return kept

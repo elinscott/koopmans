@@ -27,10 +27,6 @@ plain python or numpy one — energies in eV:
    print(f"IP = {-results['parameters']['homo_energy']:.2f} eV")
    print(f"EA = {-results['parameters']['lumo_energy']:.2f} eV")
 
-The output names are part of the public interface: a koopmans release that
-renames one treats it as a user-breaking change, like renaming an input
-file keyword.
-
 An input can equally be built without a file — it is the same object the
 file parser produces:
 

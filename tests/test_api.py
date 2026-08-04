@@ -166,9 +166,10 @@ def _finished_dscf_node(
             data.store()
             data.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=label)
     if remote_computer is not None:
-        remote = orm.RemoteData(remote_path="/scratch/run", computer=remote_computer)
-        remote.store()
-        remote.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label="remote_folder")
+        for label in ("remote_folder", "ki_final__remote_folder"):
+            remote = orm.RemoteData(remote_path="/scratch/run", computer=remote_computer)
+            remote.store()
+            remote.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=label)
     if with_calcjob:
         calc = orm.CalcJobNode()
         calc.set_process_state(ProcessState.FINISHED)
@@ -194,6 +195,7 @@ class TestOutputs:
         assert results["eigenvalues"].shape == (2, 2)
         assert results["alphas"] == {"filled": {"none": [0.66, 0.73]}, "empty": {"none": [0.72]}}
         assert "remote_folder" not in results
+        assert "ki_final" not in results  # a namespace holding only a file handle
 
     def test_running_calculation_refuses_to_read(self, aiida_profile: Any) -> None:
         """A still-running calculation raises rather than returning stale data."""
