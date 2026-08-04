@@ -28,7 +28,13 @@ if TYPE_CHECKING:
 
     from aiida_koopmans.ml import ModelMismatchError
     from aiida_koopmans.parallelization import ParallelizationError
-    from aiida_koopmans.projections import ProjectionBlockError
+    from aiida_koopmans.projections import (
+        BlockBoundaryError,
+        BlockDisentanglementError,
+        EmptyBandsError,
+        OccupiedCoverageError,
+        ProjectionSiteError,
+    )
     from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
     from aiida_workgraph import WorkGraph
 
@@ -157,16 +163,51 @@ def prepare_common_inputs(
     return structure, pseudo_family, overrides
 
 
-def _projection_block_advice(exc: ProjectionBlockError) -> str:
-    """Phrase the projection-block advice in input-file vocabulary."""
-    subject = f"Block {exc.label!r} is" if exc.label else "The blocks named above are"
+def _projection_site_advice(exc: ProjectionSiteError) -> str:
+    """Phrase the unknown-site advice in input-file vocabulary."""
+    site = f" ({exc.site!r})" if exc.site else ""
     return (
-        f"{subject} derived from the input file's projections "
-        "(`calculator_parameters.w90.projections`, or its `up`/`down` variants "
-        "for collinear spin): blocks tile the bands in listed order, each "
-        "taking its own Wannier-function count, and the last reads any bands "
-        "left up to `nbnd` for disentanglement. Adjust the projections or "
-        "`nbnd` there."
+        "Check that the projections you provided name only elements of the "
+        f"structure: the offending `site`{site} must be an element label "
+        "appearing in `atomic_positions`."
+    )
+
+
+def _block_boundary_advice(exc: BlockBoundaryError) -> str:
+    """Phrase the boundary-straddle advice in input-file vocabulary."""
+    return (
+        "Check that the projections you provided split at the occupied/empty "
+        "boundary: every block must lie wholly in one manifold, so divide the "
+        "straddling block's projections into an occupied and an empty block."
+    )
+
+
+def _occupied_coverage_advice(exc: OccupiedCoverageError) -> str:
+    """Phrase the occupied-coverage advice in input-file vocabulary."""
+    return (
+        "Check that the projections you provided cover the occupied manifold: "
+        "the occupied blocks must supply exactly one Wannier function per "
+        "occupied band."
+    )
+
+
+def _empty_bands_advice(exc: EmptyBandsError) -> str:
+    """Phrase the empty-headroom advice in input-file vocabulary."""
+    return (
+        "Check `nbnd` against the projections you provided for the empty "
+        "manifold: raise `calculator_parameters.nbnd` until it covers every "
+        "empty Wannier function, or trim the empty projections."
+    )
+
+
+def _block_disentanglement_advice(exc: BlockDisentanglementError) -> str:
+    """Phrase the lower-block-disentanglement advice in input-file vocabulary."""
+    label = f" ({exc.label!r})" if exc.label else ""
+    return (
+        "Check that only the last of the projection blocks you provided is "
+        f"left extra bands to disentangle over: a lower block{label} reads "
+        "more bands than it Wannierises, so either lower `nbnd` to remove the "
+        "extra bands or move those bands' projections into the final block."
     )
 
 
@@ -174,9 +215,9 @@ def _frozen_window_advice(exc: FrozenWindowError) -> str:
     """Phrase the frozen-window advice in input-file vocabulary."""
     subject = f"block {exc.label!r}" if exc.label else "the disentangling block"
     return (
-        "The frozen window comes from the `dis_froz_min` / `dis_froz_max` "
-        "keywords in `calculator_parameters.w90`; adjust them there until "
-        f"{subject} freezes no more bands than it Wannierises."
+        "The frozen window comes from `dis_froz_max` in "
+        f"`calculator_parameters.w90`: decrease it until {subject} freezes no "
+        "more bands than it Wannierises."
     )
 
 
@@ -223,11 +264,21 @@ def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str]], ...
     """
     from aiida_koopmans.ml import ModelMismatchError
     from aiida_koopmans.parallelization import ParallelizationError
-    from aiida_koopmans.projections import ProjectionBlockError
+    from aiida_koopmans.projections import (
+        BlockBoundaryError,
+        BlockDisentanglementError,
+        EmptyBandsError,
+        OccupiedCoverageError,
+        ProjectionSiteError,
+    )
     from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
 
     return (
-        (ProjectionBlockError, _projection_block_advice),
+        (ProjectionSiteError, _projection_site_advice),
+        (BlockBoundaryError, _block_boundary_advice),
+        (OccupiedCoverageError, _occupied_coverage_advice),
+        (EmptyBandsError, _empty_bands_advice),
+        (BlockDisentanglementError, _block_disentanglement_advice),
         (FrozenWindowError, _frozen_window_advice),
         (ParallelizationError, _parallelization_advice),
         (ModelMismatchError, _model_mismatch_advice),
