@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import sys
 
-#: Modules a config-less context must be able to import: the input-file
-#: schema (docs builds render it) and the dispatcher package (the CLI
-#: imports it before any profile exists).
+#: Modules a config-less context must be able to import: the package top
+#: level (the public python API), the input-file schema (docs builds
+#: render it), and the dispatcher package (the CLI imports it before any
+#: profile exists).
 CONFIGLESS_MODULES = (
+    "koopmans",
     "koopmans.input_file",
     "koopmans.aiida.workflows",
 )
