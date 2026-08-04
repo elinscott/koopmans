@@ -1,9 +1,9 @@
-"""The public python API: the build/run/submit triple and Results.
+"""The public python API: build/run/submit and the outputs dict.
 
 No calculation runs here: ``build`` is checked against the dispatcher it
 wraps, the two launching verbs are checked to funnel through the single
-internal launch helper, and ``Results`` is read off a hand-built finished
-node shaped like a real ``KoopmansDSCFWorkflow`` one.
+internal launch helper, and the outputs dict is read off a hand-built
+finished node shaped like a real ``KoopmansDSCFWorkflow`` one.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 import koopmans
-from koopmans import KoopmansInput, Results, read_input_file
+from koopmans import KoopmansInput, outputs, read_input_file
 from koopmans.api import launch
 
 
@@ -26,7 +26,7 @@ class TestPublicSurface:
         """Every ``__all__`` name resolves on the package."""
         for name in koopmans.__all__:
             assert getattr(koopmans, name) is not None
-        assert set(koopmans.__all__) >= {"build", "run", "submit", "Results", "KoopmansInput"}
+        assert set(koopmans.__all__) >= {"build", "run", "submit", "outputs", "KoopmansInput"}
 
 
 class TestBuild:
@@ -56,21 +56,25 @@ class TestBuild:
 class TestLaunchFunnel:
     """Both launching verbs go through the one internal launch helper."""
 
-    def test_run_and_submit_route_through_launch(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``run`` launches blocking, ``submit`` non-blocking with its wait flag."""
+    def test_run_and_submit_route_through_launch(
+        self, aiida_profile: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``run`` launches blocking and returns the outputs; ``submit`` the id."""
         calls: list[tuple[Any, bool, bool]] = []
+        node = _finished_dscf_node()
 
-        def fake_launch(workgraph: Any, *, blocking: bool, wait: bool = False) -> Results:
-            """Record the launch request."""
+        def fake_launch(workgraph: Any, *, blocking: bool, wait: bool = False) -> Any:
+            """Record the launch request and hand back the finished node."""
             calls.append((workgraph, blocking, wait))
-            return Results(object())  # type: ignore[arg-type]
+            return node
 
         sentinel = object()
         monkeypatch.setattr("koopmans.api.launch", fake_launch)
         monkeypatch.setattr("koopmans.api.build", lambda inp: sentinel)
 
-        assert isinstance(koopmans.run("unused"), Results)  # type: ignore[arg-type]
-        assert isinstance(koopmans.submit("unused", wait=True), Results)  # type: ignore[arg-type]
+        results = koopmans.run("unused")  # type: ignore[arg-type]
+        assert results["parameters"]["energy"] == pytest.approx(-1296.39)
+        assert koopmans.submit("unused", wait=True) == node.pk  # type: ignore[arg-type]
         assert calls == [(sentinel, True, False), (sentinel, False, True)]
 
     def test_launch_calls_the_workgraph_verbs(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,9 +107,9 @@ class TestLaunchFunnel:
                 self.calls.append(("submit", wait))
 
         blocking_wg = FakeWorkGraph()
-        results = launch(blocking_wg, blocking=True)
+        node = launch(blocking_wg, blocking=True)
         assert blocking_wg.calls == [("run", None)]
-        assert isinstance(results, Results)
+        assert node == "the-node"
         assert not daemon_checks
 
         daemon_wg = FakeWorkGraph()
@@ -178,68 +182,39 @@ def _finished_dscf_node(
     return node
 
 
-class TestResults:
-    """``Results`` reads a finished calculation in user vocabulary."""
+class TestOutputs:
+    """``outputs`` reads a finished calculation back as a plain dict."""
 
-    def test_reads_the_dscf_outputs(self, aiida_profile: Any) -> None:
-        """Energies, orbital energies and alphas come back as plain values."""
-        results = Results(_finished_dscf_node())
-        assert results.finished
-        assert results.total_energy == pytest.approx(-1296.39)
-        assert results.homo_energy == pytest.approx(-12.52)
-        assert results.lumo_energy == pytest.approx(-1.82)
-        assert results.ionization_potential == pytest.approx(12.52)
-        assert results.electron_affinity == pytest.approx(1.82)
-        assert results.orbital_energies.shape == (2, 2)
-        assert results.alphas == {
-            "filled": {"none": [0.66, 0.73]},
-            "empty": {"none": [0.72]},
-        }
-
-    def test_dump_writes_the_per_step_layout(self, aiida_profile: Any, tmp_path: Path) -> None:
-        """``dump`` writes one folder per calculation step and returns the path."""
-        results = Results(_finished_dscf_node(with_calcjob=True))
-        out = results.dump(tmp_path / "ozone")
-        assert out == tmp_path / "ozone"
-        step_dirs = [p.name for p in out.rglob("*") if p.is_dir()]
-        assert any("ki_final" in name for name in step_dirs), step_dirs
-
-    def test_outputs_deserializes_every_socket(
-        self, aiida_profile: Any, localhost_computer: Any
-    ) -> None:
-        """``outputs`` returns plain nested values; file handles are omitted."""
+    def test_deserializes_every_socket(self, aiida_profile: Any, localhost_computer: Any) -> None:
+        """Values come back plain and nested; file handles are omitted."""
         node = _finished_dscf_node(remote_computer=localhost_computer)
-        outputs = Results(node).outputs
-        assert outputs["parameters"]["energy"] == pytest.approx(-1296.39)
-        assert outputs["eigenvalues"].shape == (2, 2)
-        assert outputs["alphas"] == {"filled": {"none": [0.66, 0.73]}, "empty": {"none": [0.72]}}
-        assert "remote_folder" not in outputs
-
-    def test_from_pk_reconnects(self, aiida_profile: Any) -> None:
-        """The integer id round-trips to a working accessor."""
-        node = _finished_dscf_node()
-        results = Results.from_pk(node.pk)
-        assert results.pk == node.pk
-        assert results.total_energy == pytest.approx(-1296.39)
+        results = outputs(node.pk)
+        assert results["parameters"]["energy"] == pytest.approx(-1296.39)
+        assert -results["parameters"]["homo_energy"] == pytest.approx(12.52)
+        assert results["eigenvalues"].shape == (2, 2)
+        assert results["alphas"] == {"filled": {"none": [0.66, 0.73]}, "empty": {"none": [0.72]}}
+        assert "remote_folder" not in results
 
     def test_running_calculation_refuses_to_read(self, aiida_profile: Any) -> None:
         """A still-running calculation raises rather than returning stale data."""
-        results = Results(_finished_dscf_node(sealed=False))
-        assert not results.finished
+        node = _finished_dscf_node(sealed=False)
         with pytest.raises(RuntimeError, match="still running"):
-            _ = results.total_energy
+            outputs(node.pk)
 
     def test_failed_calculation_refuses_to_read(self, aiida_profile: Any) -> None:
         """A failed calculation raises, naming its exit status."""
-        results = Results(_finished_dscf_node(exit_status=302, with_outputs=False))
+        node = _finished_dscf_node(exit_status=302, with_outputs=False)
         with pytest.raises(RuntimeError, match=r"failed \(exit status 302\)"):
-            _ = results.total_energy
+            outputs(node.pk)
 
-    def test_unmapped_task_names_the_gap(self, aiida_profile: Any) -> None:
-        """A graph without the DSCF sockets raises NotImplementedError."""
-        results = Results(_finished_dscf_node(with_outputs=False))
-        with pytest.raises(NotImplementedError, match="singlepoint"):
-            _ = results.total_energy
+    def test_dump_writes_the_per_step_layout(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The dump path the docs point at writes one folder per step."""
+        from koopmans.aiida.dumping import dump_workgraph
+
+        out = dump_workgraph(_finished_dscf_node(with_calcjob=True), tmp_path / "ozone")
+        assert out == tmp_path / "ozone"
+        step_dirs = [p.name for p in out.rglob("*") if p.is_dir()]
+        assert any("ki_final" in name for name in step_dirs), step_dirs
 
 
 class TestInputConstructibleInPython:

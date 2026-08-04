@@ -9,14 +9,14 @@ three verbs cover the life of a calculation:
 
 - :func:`koopmans.build` prepares the calculation without running anything,
   so an input can be checked cheaply;
-- :func:`koopmans.run` runs it to completion, blocking until it finishes;
-- :func:`koopmans.submit` hands it to the background daemon and returns
-  immediately (or with ``wait=True``, blocks like ``run``).
+- :func:`koopmans.run` runs it to completion, blocking until it finishes,
+  and returns its outputs;
+- :func:`koopmans.submit` hands it to the background daemon and returns the
+  calculation's integer id immediately (or with ``wait=True``, blocks like
+  ``run``).
 
-``run`` and ``submit`` return a :class:`koopmans.Results`, which exposes
-the quantities the tutorials read — total energy, orbital energies,
-screening parameters, ionization potential and electron affinity, all in
-eV — and can write the same per-step directory layout as ``koopmans run``:
+Outputs come back as a plain dict, keyed by output name with every value a
+plain python or numpy one — energies in eV:
 
 .. code:: python
 
@@ -24,27 +24,35 @@ eV — and can write the same per-step directory layout as ``koopmans run``:
 
    results = run(read_input_file("ozone.json"))
 
-   print(f"IP = {results.ionization_potential:.2f} eV")
-   print(f"EA = {results.electron_affinity:.2f} eV")
-   results.dump("ozone")
+   print(f"IP = {-results['parameters']['homo_energy']:.2f} eV")
+   print(f"EA = {-results['parameters']['lumo_energy']:.2f} eV")
+
+The output names are part of the public interface: a koopmans release that
+renames one treats it as a user-breaking change, like renaming an input
+file keyword.
 
 An input can equally be built without a file — it is the same object the
 file parser produces:
 
 .. code:: python
 
-   from koopmans import KoopmansInput, submit
+   from koopmans import KoopmansInput, outputs, submit
 
    inp = KoopmansInput(
        workflow={"task": "singlepoint", "correction": "ki"},
        # ... the same blocks an input file holds ...
    )
-   results = submit(inp)  # returns immediately; the daemon runs it
+   pk = submit(inp)  # returns immediately; the daemon runs it
+   # ... later, in this session or another:
+   results = outputs(pk)
 
-A submitted calculation is identified by its integer id: ``results.pk``
-survives the python session, and ``Results.from_pk`` reconnects to it
-later. Provenance is stored by AiiDA, the workflow engine underneath; none
-of its machinery is needed to read results back.
+The integer id survives the python session, and :func:`koopmans.outputs`
+reads the finished calculation back by it — raising, rather than returning
+half a result, while the calculation still runs or if it failed.
+Provenance is stored by AiiDA, the workflow engine underneath; none of its
+machinery is needed to read outputs back, and the per-step directory
+layout ``koopmans run`` writes is available from
+``koopmans.aiida.dumping.dump_workgraph``.
 
 ***********
  Reference

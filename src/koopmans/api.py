@@ -2,24 +2,25 @@
 
 ``build`` / ``run`` / ``submit`` take a
 :class:`~koopmans.input_file.KoopmansInput` and mirror the workgraph verbs
-of the underlying AiiDA engine; :class:`Results` reads a finished
-calculation back in user vocabulary (energies, orbital energies, screening
-parameters), so no AiiDA fluency is needed.
+of the underlying AiiDA engine. A finished calculation is read back as a
+plain dict of its outputs — deserialized to python / numpy values and keyed
+by output socket name — either from ``run`` directly or from
+:func:`outputs` given the calculation's integer id. Output socket names
+are public API: renaming one is a user-breaking change, reviewed like a
+schema keyword.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import numpy as np
     from aiida import orm
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
 
-__all__ = ["Results", "build", "run", "submit"]
+__all__ = ["build", "outputs", "run", "submit"]
 
 
 def build(koopmans_input: KoopmansInput) -> WorkGraph:
@@ -30,26 +31,50 @@ def build(koopmans_input: KoopmansInput) -> WorkGraph:
     return build_workgraph(koopmans_input)
 
 
-def run(koopmans_input: KoopmansInput) -> Results:
+def run(koopmans_input: KoopmansInput) -> dict[str, Any]:
     """Run the calculation to completion in this interpreter.
 
-    Blocks until the calculation finishes; the returned :class:`Results`
-    is ready to read.
+    Blocks until the calculation finishes and returns its outputs
+    (:func:`outputs`); a calculation that fails raises instead.
     """
-    return launch(build(koopmans_input), blocking=True)
+    node = launch(build(koopmans_input), blocking=True)
+    _require_finished_ok(node)
+    return _deserialized_outputs(node)
 
 
-def submit(koopmans_input: KoopmansInput, *, wait: bool = False) -> Results:
-    """Hand the calculation to the daemon and return without blocking.
+def submit(koopmans_input: KoopmansInput, *, wait: bool = False) -> int:
+    """Hand the calculation to the daemon and return its integer id.
 
     With ``wait=True`` the call blocks until the daemon finishes the
-    calculation. Otherwise the returned :class:`Results` is a handle on the
-    running calculation: poll ``finished`` and read it once done.
+    calculation. The id survives the python session; read the finished
+    calculation back with :func:`outputs`.
     """
-    return launch(build(koopmans_input), blocking=False, wait=wait)
+    node = launch(build(koopmans_input), blocking=False, wait=wait)
+    pk = node.pk
+    if pk is None:
+        raise RuntimeError("The calculation was never stored, so it has no id.")
+    return int(pk)
 
 
-def launch(workgraph: WorkGraph, *, blocking: bool, wait: bool = False) -> Results:
+def outputs(pk: int) -> dict[str, Any]:
+    """Return the outputs of the finished calculation ``pk``, deserialized.
+
+    Keyed by output socket name, with nested namespaces as nested dicts
+    and every value a plain python / numpy one. Remote-scratch and
+    retrieved-file handles have no plain python analogue and are omitted.
+    A calculation that is still running, or failed, raises instead.
+    """
+    from aiida import orm
+
+    _ensure_profile()
+    node = orm.load_node(pk)
+    if not isinstance(node, orm.ProcessNode):
+        raise ValueError(f"pk {pk} is not a calculation; it holds a {type(node).__name__}.")
+    _require_finished_ok(node)
+    return _deserialized_outputs(node)
+
+
+def launch(workgraph: WorkGraph, *, blocking: bool, wait: bool = False) -> orm.ProcessNode:
     """Start ``workgraph`` — the single call site every verb goes through.
 
     If upstream's launch inversion lands (aiida-core#7261 /
@@ -63,7 +88,8 @@ def launch(workgraph: WorkGraph, *, blocking: bool, wait: bool = False) -> Resul
 
         ensure_daemon_running()
         workgraph.submit(wait=wait)
-    return Results(workgraph.process)
+    node: orm.ProcessNode = workgraph.process
+    return node
 
 
 def _ensure_profile() -> None:
@@ -76,157 +102,38 @@ def _ensure_profile() -> None:
         load_koopmans_profile()
 
 
-class Results:
-    """A koopmans calculation's results, read back in user vocabulary.
+def _require_finished_ok(node: orm.ProcessNode) -> None:
+    """Raise unless the calculation finished successfully."""
+    if not node.is_terminated:
+        raise RuntimeError(
+            f"Calculation {node.pk} is still running: wait for it to finish "
+            "(or submit with wait=True) before reading its outputs."
+        )
+    if not node.is_finished_ok:
+        raise RuntimeError(
+            f"Calculation {node.pk} failed (exit status {node.exit_status}); "
+            "its outputs cannot be read."
+        )
 
-    Returned by :func:`run` and :func:`submit`, or reconstructed later with
-    :meth:`from_pk`. ``outputs`` deserializes every output of the
-    calculation to plain python / numpy values, whatever the task; the
-    named accessors are views over it in user vocabulary, read the
-    singlepoint (kcp.x DSCF) outputs, and raise ``NotImplementedError``
-    naming the gap for the other tasks. Energies are in eV.
+
+def _deserialized_outputs(node: orm.ProcessNode) -> dict[str, Any]:
+    """Walk the node's outputs into a plain nested dict, keyed by socket name.
+
+    Every output link deserializes through aiida-pythonjob; file and
+    scratch handles (``RemoteData``, ``FolderData``) are skipped.
     """
+    from aiida import orm
+    from aiida.common.links import LinkType
+    from aiida_pythonjob.data.deserializer import deserialize_to_raw_python_data
 
-    def __init__(self, node: orm.ProcessNode) -> None:
-        """Wrap the calculation's provenance node (internal; see ``from_pk``)."""
-        self._node = node
-
-    @classmethod
-    def from_pk(cls, pk: int) -> Results:
-        """Reconnect to an earlier calculation by the integer id ``pk``."""
-        from aiida import orm
-
-        _ensure_profile()
-        node = orm.load_node(pk)
-        if not isinstance(node, orm.ProcessNode):
-            raise ValueError(f"pk {pk} is not a calculation; it holds a {type(node).__name__}.")
-        return cls(node)
-
-    @property
-    def pk(self) -> int:
-        """Integer id of the calculation; feed it to :meth:`from_pk`."""
-        pk = self._node.pk
-        if pk is None:
-            raise RuntimeError("The calculation was never stored, so it has no id.")
-        return int(pk)
-
-    @property
-    def finished(self) -> bool:
-        """Whether the calculation has finished (successfully or not)."""
-        return bool(self._node.is_terminated)
-
-    @property
-    def outputs(self) -> dict[str, Any]:
-        """Every output of the calculation, deserialized to plain python.
-
-        Keyed by output socket name, with nested namespaces as nested
-        dicts. Remote-scratch and retrieved-file handles have no plain
-        python analogue and are omitted; read those from the AiiDA node.
-        """
-        from aiida import orm
-        from aiida.common.links import LinkType
-        from aiida_pythonjob.data.deserializer import deserialize_to_raw_python_data
-
-        self._require_finished()
-        outputs: dict[str, Any] = {}
-        links = self._node.base.links.get_outgoing(link_type=LinkType.RETURN).all()
-        for triple in sorted(links, key=lambda t: t.link_label):
-            if isinstance(triple.node, (orm.RemoteData, orm.FolderData)):
-                continue
-            cursor = outputs
-            *parents, leaf = triple.link_label.split("__")
-            for part in parents:
-                cursor = cursor.setdefault(part, {})
-            cursor[leaf] = deserialize_to_raw_python_data(triple.node)
-        return outputs
-
-    @property
-    def total_energy(self) -> float:
-        """Total energy of the final KI calculation (eV)."""
-        return float(self._parameters()["energy"])
-
-    @property
-    def homo_energy(self) -> float | None:
-        """Energy of the highest occupied orbital (eV)."""
-        homo = self._parameters()["homo_energy"]
-        return float(homo) if homo is not None else None
-
-    @property
-    def lumo_energy(self) -> float | None:
-        """Energy of the lowest unoccupied orbital (eV)."""
-        lumo = self._parameters()["lumo_energy"]
-        return float(lumo) if lumo is not None else None
-
-    @property
-    def ionization_potential(self) -> float | None:
-        """Ionization potential: the negative of the HOMO energy (eV)."""
-        homo = self.homo_energy
-        return -homo if homo is not None else None
-
-    @property
-    def electron_affinity(self) -> float | None:
-        """Electron affinity: the negative of the LUMO energy (eV)."""
-        lumo = self.lumo_energy
-        return -lumo if lumo is not None else None
-
-    @property
-    def orbital_energies(self) -> np.ndarray:
-        """Orbital energies of the final KI calculation (eV).
-
-        One row per spin channel, occupied and empty states together in
-        ascending band order.
-        """
-        eigenvalues: np.ndarray = self._curated()["eigenvalues"]
-        return eigenvalues
-
-    @property
-    def alphas(self) -> dict[str, dict[str, list[float]]]:
-        """Screening parameters the final KI consumed, one per orbital.
-
-        Keyed ``filled`` / ``empty``, then by spin channel (``none`` for an
-        unpolarized calculation, ``up`` / ``down`` for a spin-polarized
-        one); each value lists one alpha per orbital of that channel.
-        """
-        alphas: dict[str, dict[str, list[float]]] = self._curated()["alphas"]
-        return alphas
-
-    def dump(self, path: str | Path) -> Path:
-        """Write the calculation's files under ``path`` and return that path.
-
-        Produces the same directory layout as ``koopmans run``: one folder
-        per step, each with its ``inputs`` and ``outputs``.
-        """
-        from koopmans.aiida.dumping import dump_workgraph
-
-        self._require_finished()
-        return dump_workgraph(self._node, Path(path), overwrite=True)
-
-    def _require_finished(self) -> None:
-        """Raise unless the calculation finished successfully."""
-        node = self._node
-        if not node.is_terminated:
-            raise RuntimeError(
-                f"Calculation {node.pk} is still running: wait for it to finish "
-                "(or submit with wait=True) before reading its results."
-            )
-        if not node.is_finished_ok:
-            raise RuntimeError(
-                f"Calculation {node.pk} failed (exit status {node.exit_status}); "
-                "its results cannot be read."
-            )
-
-    def _curated(self) -> dict[str, Any]:
-        """Return the deserialized outputs, guarded for the curated views."""
-        outputs = self.outputs
-        if "parameters" not in outputs:
-            raise NotImplementedError(
-                f"The named accessors read the singlepoint (kcp.x DSCF) outputs, which "
-                f"calculation {self._node.pk} ({self._node.process_label}) does not "
-                "provide; use `outputs` or the AiiDA node for this calculation."
-            )
-        return outputs
-
-    def _parameters(self) -> dict[str, Any]:
-        """Return the final KI's parsed output parameters."""
-        parameters: dict[str, Any] = self._curated()["parameters"]
-        return parameters
+    deserialized: dict[str, Any] = {}
+    links = node.base.links.get_outgoing(link_type=LinkType.RETURN).all()
+    for triple in sorted(links, key=lambda t: t.link_label):
+        if isinstance(triple.node, (orm.RemoteData, orm.FolderData)):
+            continue
+        cursor = deserialized
+        *parents, leaf = triple.link_label.split("__")
+        for part in parents:
+            cursor = cursor.setdefault(part, {})
+        cursor[leaf] = deserialize_to_raw_python_data(triple.node)
+    return deserialized
