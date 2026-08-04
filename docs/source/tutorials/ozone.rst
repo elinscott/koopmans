@@ -331,6 +331,38 @@ and EA compare as well to experiment. O₂ is a linear molecule with a bond leng
     0.40 eV, against experimental values of 12.07 and 0.45 eV (`NIST
     <https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782447&Mask=20#Ion-Energetics>`_).
 
+*************
+ From python
+*************
+
+The same calculation runs from python, which is the easier route for sweeping a
+parameter or working in a notebook. Reading the input file and running it are a line
+each, and the results come back as a dict instead of as output files to search:
+
+.. code-block:: python
+
+    from koopmans import read_input_file, run
+
+    results = run(read_input_file("ozone.json"))
+
+    homo = results["parameters"]["homo_energy"]
+    lumo = results["parameters"]["lumo_energy"]
+
+    print(f"IP = {-homo:.2f} eV")  # IP = 12.52 eV
+    print(f"EA = {-lumo:.2f} eV")  # EA = 1.82 eV
+
+Energies are in eV, and the ionization potential and electron affinity are the negated
+HOMO and LUMO energies as before — the same two numbers read out of ``aiida.cpo`` above.
+``results`` carries the rest of the final calculation's outputs alongside them,
+``eigenvalues`` among them: the orbital energies of the ``Eigenvalues`` line, as an
+array.
+
+``run`` blocks until the workflow finishes. For a calculation long enough that this is
+inconvenient, ``submit`` returns an integer id immediately and leaves the workflow
+running in the background, and ``outputs(pk)`` reads the finished result back by that id
+— in this python session or a later one. See :doc:`../python_api` for the three verbs in
+full.
+
 .. admonition:: Coming from the ASE-based koopmans 1.x?
 
     - ``functional`` and ``method`` are now ``correction`` and ``screening_method``, and
