@@ -1,7 +1,7 @@
 """Plot the KI and PBE binding energies of ozone against photoemission.
 
 Run this script in the directory that contains the ``ozone/`` output directory produced
-by ``koopmans run ozone.json``. It writes ``ozone_spectrum.svg``.
+by ``koopmans run ozone.yaml``. It writes ``ozone_spectrum.svg``.
 """
 
 import re

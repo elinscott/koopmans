@@ -17,42 +17,30 @@ them.
  The input file
 ****************
 
-Download :download:`ozone.json <ozone.json>` and place it in an empty directory. Here it
+Download :download:`ozone.yaml <ozone.yaml>` and place it in an empty directory. Here it
 is in full:
 
-.. literalinclude:: ozone.json
-    :language: json
+.. literalinclude:: ozone.yaml
+    :language: yaml
 
-The ``workflow`` block chooses what kind of calculation to run:
+The comments say what each keyword is; the ``workflow`` block is worth a little more
+than that:
 
-- ``"task": "singlepoint"`` computes the spectral properties of the system at fixed
-  geometry — the standard task, and the one every tutorial so far uses.
-- ``"correction": "ki"`` selects the KI flavor of the Koopmans correction (as opposed to
-  KIPZ).
-- ``"screening_method": "dscf"`` computes the screening parameters from total-energy
-  differences: for each orbital, the code performs constrained calculations with
-  :math:`N`, :math:`N-1`, or :math:`N+1` electrons and compares the resulting energy
-  differences against the orbital energies (see :doc:`the theory page <../theory>`).
-- ``"init_orbitals": "kohn-sham"`` uses the Kohn-Sham orbitals of the base functional as
-  the variational orbitals that the correction acts on — and for KI they also *remain*
-  the variational orbitals, since KI leaves the orbitals of its base functional
-  unchanged. This is common practice for molecules; periodic systems use Wannier
-  functions instead.
-- ``"alpha_numsteps": 1`` performs a single pass of the screening-parameter loop:
-  compute the screening parameters once, starting from a guess, and use them. More steps
-  refine them self-consistently.
-- ``"pseudo_library"`` selects the pseudopotential family — here SG15 version 1.2,
-  scalar-relativistic, generated with PBE. This also fixes PBE as the base functional
-  that the KI correction is applied on top of.
+- ``screening_method: dscf`` means that, for each orbital, the code performs constrained
+  calculations with :math:`N`, :math:`N-1`, or :math:`N+1` electrons and compares the
+  resulting energy differences against the orbital energies (see :doc:`the theory page
+  <../theory>`).
+- ``init_orbitals: kohn-sham`` uses the Kohn-Sham orbitals of the base functional as the
+  variational orbitals — and for KI they also *remain* the variational orbitals, since KI
+  leaves the orbitals of its base functional unchanged. This is common practice for
+  molecules; periodic systems use Wannier functions instead.
+- ``alpha_numsteps`` above is 1, so the screening parameters are computed once, from a
+  guess, and used. More steps refine them self-consistently.
+- ``pseudo_library`` also fixes PBE as the base functional that the KI correction is
+  applied on top of.
 
 The ``atoms`` block describes the cell and the atoms in it, much like a Quantum ESPRESSO
-input file (albeit in JSON):
-
-- ``cell_parameters`` gives the three cell vectors; ``"periodic": false`` declares the
-  system to be an isolated molecule.
-- ``atomic_positions`` lists each atom and its Cartesian position in the chosen units —
-  here the bent ozone geometry, with a bond length of roughly 1.27 Å and a bond angle of
-  117°.
+input file. The positions are Cartesian, in the units the block declares.
 
 .. dropdown:: Why is the simulation cell so much larger than the molecule itself?
 
@@ -65,14 +53,13 @@ input file (albeit in JSON):
 
 The ``calculator_parameters`` block holds the plane-wave settings:
 
-- ``ecutwfc`` is the wavefunction cutoff in Ry.
-- ``nbnd`` is the number of orbitals. Ozone has 18 valence electrons and therefore nine
-  filled orbitals; ``"nbnd": 10`` adds one empty orbital, which we need because the
-  electron affinity is the energy of the LUMO.
-- ``kcp.system.ecutrho`` is the charge-density cutoff in Ry, passed straight through to
-  ``kcp.x``, the Quantum ESPRESSO code that evaluates the corrected functional. Keywords
-  that ``koopmans`` does not define itself can be handed to the underlying codes this
-  way.
+- Ozone has 18 valence electrons and therefore nine filled orbitals; ``nbnd: 10`` adds
+  one empty orbital, which we need because the electron affinity is the energy of the
+  LUMO.
+- ``ecutrho`` sits under ``kcp.system`` rather than at the top level because it is passed
+  straight through to ``kcp.x``, the Quantum ESPRESSO code that evaluates the corrected
+  functional. Keywords that ``koopmans`` does not define itself can be handed to the
+  underlying codes this way.
 
 *************************
  Running the calculation
@@ -83,7 +70,7 @@ this workflow needs ``pw.x`` and ``kcp.x``), then run
 
 .. code-block:: console
 
-    $ koopmans run ozone.json
+    $ koopmans run ozone.yaml
 
 The terminal shows a live progress table that grows as the workflow proceeds. At the end
 it reads
@@ -326,8 +313,8 @@ and EA compare as well to experiment. O₂ is a linear molecule with a bond leng
     Set ``"spin": "collinear"`` in the ``workflow`` block, add ``"tot_magnetization":
     2`` and lower ``"nbnd"`` to ``8`` in ``calculator_parameters``, and update the
     atoms. A complete input file — which also runs two screening iterations and lets
-    near-degenerate orbitals share a screening parameter — is :download:`o2.json
-    <o2.json>`. Running it gives an IP of 12.35 eV and an EA of
+    near-degenerate orbitals share a screening parameter — is :download:`o2.yaml
+    <o2.yaml>`. Running it gives an IP of 12.35 eV and an EA of
     0.40 eV, against experimental values of 12.07 and 0.45 eV (`NIST
     <https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782447&Mask=20#Ion-Energetics>`_).
 
@@ -343,7 +330,7 @@ each, and the results come back as a dict instead of as output files to search:
 
     from koopmans import read_input_file, run
 
-    results = run(read_input_file("ozone.json"))
+    results = run(read_input_file("ozone.yaml"))
 
     homo = results["parameters"]["homo_energy"]
     lumo = results["parameters"]["lumo_energy"]

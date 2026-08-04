@@ -47,7 +47,7 @@ class TestBuild:
         """
         from koopmans.aiida.workflows import build_workgraph
 
-        inp = read_input_file(tutorials_dir / "ozone.json")
+        inp = read_input_file(tutorials_dir / "ozone.yaml")
         via_api = koopmans.build(inp)
         via_dispatcher = build_workgraph(inp)
         assert via_api.get_task_names() == via_dispatcher.get_task_names()
@@ -224,11 +224,11 @@ class TestInputConstructibleInPython:
 
     def test_model_validate_equals_file_parse(self, tutorials_dir: Path) -> None:
         """The documented in-python construction path produces the same model."""
-        from json import load
+        from yaml import safe_load
 
-        with open(tutorials_dir / "ozone.json") as handle:
-            raw = load(handle)
-        assert KoopmansInput.model_validate(raw) == read_input_file(tutorials_dir / "ozone.json")
+        with open(tutorials_dir / "ozone.yaml") as handle:
+            raw = safe_load(handle)
+        assert KoopmansInput.model_validate(raw) == read_input_file(tutorials_dir / "ozone.yaml")
 
 
 def test_launch_verbs_only_in_the_funnel() -> None:

@@ -1,0 +1,32 @@
+# The ionization potential and electron affinity of ozone, with the KI
+# functional and screening parameters computed from total-energy differences.
+
+workflow:
+  task: singlepoint               # spectral properties at fixed geometry
+  correction: ki                  # the KI flavor of the correction, not KIPZ
+  screening_method: dscf          # screening from total-energy differences
+  init_orbitals: kohn-sham        # the orbitals the correction acts on
+  alpha_numsteps: 1               # one pass of the screening-parameter loop
+  pseudo_library: SG15/1.2/PBE/SR # scalar-relativistic, generated with PBE
+
+atoms:
+  cell_parameters:
+    vectors:                      # a box of vacuum around the molecule
+      - [14.1738, 0.0, 0.0]
+      - [0.0, 12.0, 0.0]
+      - [0.0, 0.0, 12.66]
+    units: angstrom
+    periodic: false               # an isolated molecule, not a crystal
+  atomic_positions:
+    units: angstrom
+    positions:                    # bent, with 1.27 Å bonds and a 117° angle
+      - [O, 7.0869, 6.0, 5.89]
+      - [O, 8.1738, 6.0, 6.55]
+      - [O, 6.0, 6.0, 6.55]
+
+calculator_parameters:
+  ecutwfc: 65.0                   # wavefunction cutoff (Ry)
+  nbnd: 10                        # 9 filled orbitals, plus 1 empty for the LUMO
+  kcp:
+    system:
+      ecutrho: 260.0              # charge-density cutoff (Ry)

@@ -22,15 +22,15 @@ from koopmans.input_file.workflow import (
 
 
 @pytest.fixture
-def ozone_json(tutorials_dir: Path) -> Path:
-    """Return the path to the ozone tutorial JSON."""
-    return tutorials_dir / "ozone.json"
+def ozone_yaml(tutorials_dir: Path) -> Path:
+    """Return the path to the ozone tutorial input file."""
+    return tutorials_dir / "ozone.yaml"
 
 
 @pytest.fixture
-def ozone_input(ozone_json: Path) -> KoopmansInput:
+def ozone_input(ozone_yaml: Path) -> KoopmansInput:
     """Return a freshly parsed ozone ``KoopmansInput``."""
-    return read_input_file(ozone_json)
+    return read_input_file(ozone_yaml)
 
 
 def _copy_with_calc_overrides(inp: KoopmansInput, **calc_param_updates: object) -> KoopmansInput:
@@ -55,10 +55,10 @@ class TestOzoneInputParse:
     """Parsing checks for the ozone tutorial JSON."""
 
     def test_ozone_parses_with_expected_workflow_fields(
-        self, ozone_json: Path, ozone_input: KoopmansInput
+        self, ozone_yaml: Path, ozone_input: KoopmansInput
     ) -> None:
         """The ozone tutorial should parse with the expected workflow fields."""
-        assert ozone_json.exists(), f"Tutorial file not found: {ozone_json}"
+        assert ozone_yaml.exists(), f"Tutorial file not found: {ozone_yaml}"
 
         assert isinstance(ozone_input, KoopmansInput)
         assert ozone_input.workflow.task == Task.SINGLEPOINT
