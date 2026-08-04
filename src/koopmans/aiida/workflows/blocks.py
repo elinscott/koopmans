@@ -106,7 +106,6 @@ def create_explicit_blocks(
     from aiida_koopmans.projections import (
         ExplicitProjectionBlock,
         band_range_complement,
-        projection_win_string,
     )
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
@@ -149,7 +148,7 @@ def create_explicit_blocks(
                 num_bands=band_range.num_bands,
                 exclude_bands=exclude,
                 projection_type=WannierProjectionType.ANALYTIC,
-                projections=[projection_win_string(p) for p in block],
+                projections=[str(p) for p in block],
             )
         )
 

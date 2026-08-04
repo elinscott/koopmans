@@ -24,6 +24,18 @@ from koopmans.input_file.workflow import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from aiida_koopmans.ml import ModelMismatchError
+    from aiida_koopmans.parallelization import ParallelizationError
+    from aiida_koopmans.projections import (
+        BlockBoundaryError,
+        BlockDisentanglementError,
+        EmptyCoverageError,
+        OccupiedCoverageError,
+        ProjectionSiteError,
+    )
+    from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
@@ -151,38 +163,141 @@ def prepare_common_inputs(
     return structure, pseudo_family, overrides
 
 
-#: Input-file advice keyed by the plugin module that raised. The plugin
-#: raises builtin ValueError/NotImplementedError everywhere, so the raise
-#: site is the only structural key available until it grows typed
-#: exceptions to dispatch on. The key is module-wide: any error escaping a
-#: keyed module carries that module's advice, and an error raised in a
-#: helper module that a keyed module calls carries none.
-_PLUGIN_ADVICE = {
-    "aiida_koopmans.projections": (
-        "The blocks named above are derived from the input file's projections "
-        "(`calculator_parameters.w90.projections`, or its `up`/`down` variants "
-        "for collinear spin): they tile the bands in listed order, each taking "
-        "its own Wannier-function count, and the last block reads any bands "
-        "left up to `nbnd` for disentanglement. Adjust the projections or "
-        "`nbnd` there."
-    ),
-}
+def _projection_site_advice(exc: ProjectionSiteError) -> str:
+    """Phrase the unknown-site advice in input-file vocabulary."""
+    site = f" ({exc.site!r})" if exc.site else ""
+    return (
+        "Check that the projections you provided name only elements of the "
+        f"structure: the offending `site`{site} must be an element label "
+        "appearing in `atomic_positions`."
+    )
+
+
+def _block_boundary_advice(exc: BlockBoundaryError) -> str:
+    """Phrase the boundary-straddle advice in input-file vocabulary."""
+    return (
+        "Check that the projections you provided split at the occupied/empty "
+        "boundary: every block must lie wholly in one manifold, so divide the "
+        "straddling block's projections into an occupied and an empty block."
+    )
+
+
+def _occupied_coverage_advice(exc: OccupiedCoverageError) -> str:
+    """Phrase the occupied-coverage advice in input-file vocabulary."""
+    return (
+        "Check that the projections you provided cover the occupied manifold: "
+        "the occupied blocks must supply exactly one Wannier function per "
+        "occupied band."
+    )
+
+
+def _empty_coverage_advice(exc: EmptyCoverageError) -> str:
+    """Phrase the empty-headroom advice in input-file vocabulary."""
+    return (
+        "Check `nbnd` against the projections you provided for the empty "
+        "manifold: raise `calculator_parameters.nbnd` until it covers every "
+        "empty Wannier function, or trim the empty projections."
+    )
+
+
+def _block_disentanglement_advice(exc: BlockDisentanglementError) -> str:
+    """Phrase the lower-block-disentanglement advice in input-file vocabulary."""
+    label = f" ({exc.label!r})" if exc.label else ""
+    return (
+        "Check that only the last of the projection blocks you provided is "
+        f"left extra bands to disentangle over: a lower block{label} reads "
+        "more bands than it Wannierises, so either lower `nbnd` to remove the "
+        "extra bands or move those bands' projections into the final block."
+    )
+
+
+def _frozen_window_advice(exc: FrozenWindowError) -> str:
+    """Phrase the frozen-window advice in input-file vocabulary."""
+    subject = f"block {exc.label!r}" if exc.label else "the disentangling block"
+    return (
+        "The frozen window comes from `dis_froz_max` in "
+        f"`calculator_parameters.w90`: decrease it until {subject} freezes no "
+        "more bands than it Wannierises."
+    )
+
+
+def _parallelization_advice(exc: ParallelizationError) -> str:
+    """Phrase the parallelization advice in input-file vocabulary."""
+    entry = f"`parallelization.{exc.code}`" if exc.code else "the offending entry"
+    return (
+        "Per-code ranks and flags come from the input file's top-level "
+        f"`parallelization` block; adjust {entry} "
+        "(`ntasks` / `npool` / `pd` / `omp`) there."
+    )
+
+
+def _model_mismatch_advice(exc: ModelMismatchError) -> str:
+    """Phrase the model-mismatch advice in input-file vocabulary."""
+    stamp = f" (its {exc.field!r} stamp)" if exc.field else ""
+    return (
+        f"The model loaded from `ml.model_file` was trained under different "
+        f"settings{stamp}: retrain with `ml: {{mode: train}}` under this run's "
+        "settings, or point `ml.model_file` at a matching model."
+    )
+
+
+def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str]], ...]:
+    """Return the advice table for the plugin's typed errors.
+
+    One advice per class — the plugin defines each class for exactly one
+    piece of advice — and the class's structured attribute (block label,
+    code name, model stamp) sharpens the sentence when the raise site
+    filled it in.
+
+    Advice attaches where ``build_workgraph`` catches: the build boundary.
+    ``FrozenWindowError`` and ``ModelMismatchError`` currently raise
+    daemon-side only (their validators need runtime data — nscf
+    eigenvalues, trial-KI descriptors), so their entries provision for
+    validators that reach the build path rather than translate anything
+    today.
+
+    The classes are imported here, not at module level: importing
+    ``aiida_koopmans.workgraphs.block_wannierize`` loads the AiiDA
+    configuration (via aiida-pythonjob, aiidateam/aiida-pythonjob#84),
+    which a configuration-less interpreter cannot do. Advice runs only
+    after a failure, so the import cost here is irrelevant.
+    """
+    from aiida_koopmans.ml import ModelMismatchError
+    from aiida_koopmans.parallelization import ParallelizationError
+    from aiida_koopmans.projections import (
+        BlockBoundaryError,
+        BlockDisentanglementError,
+        EmptyCoverageError,
+        OccupiedCoverageError,
+        ProjectionSiteError,
+    )
+    from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
+
+    return (
+        (ProjectionSiteError, _projection_site_advice),
+        (BlockBoundaryError, _block_boundary_advice),
+        (OccupiedCoverageError, _occupied_coverage_advice),
+        (EmptyCoverageError, _empty_coverage_advice),
+        (BlockDisentanglementError, _block_disentanglement_advice),
+        (FrozenWindowError, _frozen_window_advice),
+        (ParallelizationError, _parallelization_advice),
+        (ModelMismatchError, _model_mismatch_advice),
+    )
 
 
 def advice_for(exc: BaseException) -> str | None:
-    """Return input-file advice for an exception the plugin raised, if any.
+    """Return input-file advice for a typed plugin error, or None.
 
-    Keyed on the module of the raise site (the innermost traceback frame).
-    An exception the dispatcher replaced via ``raise ... from exc`` carries
-    a koopmans raise site and gets no translation; a bare ``raise`` in a
-    koopmans ``except`` block keeps the plugin raise site and still does.
+    Dispatches on the exception's type, so an untyped error — the
+    plugin's own plain ``ValueError``s included — passes through
+    untranslated, and an error the dispatcher replaced via
+    ``raise ... from exc`` is translated only if the replacement is
+    itself a typed plugin error.
     """
-    module = None
-    tb = exc.__traceback__
-    while tb is not None:
-        module = tb.tb_frame.f_globals.get("__name__")
-        tb = tb.tb_next
-    return _PLUGIN_ADVICE.get(module) if isinstance(module, str) else None
+    for exc_type, advise in _plugin_advice():
+        if isinstance(exc, exc_type):
+            return advise(exc)
+    return None
 
 
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
