@@ -88,3 +88,24 @@ section:has(> .landing-logo) > h1 {
     color: #999;
     font-style: italic;
 }
+
+/* Tutorial questions: a sphinx-design dropdown whose header reads as a banner.
+   Violet is not among the theme's admonition colors (note blue, tip green,
+   warning orange, danger red), so a question never reads as one of those.
+   sphinx-design's own :color: options carry no violet, hence the rule here. */
+.sd-dropdown .sd-summary-title.question-header {
+    background-color: #6f42c1;
+    color: #fff;
+}
+
+.sd-dropdown:has(> .question-header) {
+    border: 1px solid #6f42c1;
+}
+
+/* Inline literals in a question title keep the theme's light background by
+   default, which is illegible on violet. */
+.sd-dropdown .sd-summary-title.question-header code {
+    background-color: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.4);
+    color: #fff;
+}

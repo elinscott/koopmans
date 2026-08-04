@@ -31,8 +31,8 @@ than that:
   resulting energy differences against the orbital energies (see :doc:`the theory page
   <../theory>`).
 - ``init_orbitals: kohn-sham`` uses the Kohn-Sham orbitals of the base functional as the
-  variational orbitals — and for KI they also *remain* the variational orbitals, since KI
-  leaves the orbitals of its base functional unchanged. This is common practice for
+  variational orbitals — and for KI they also *remain* the variational orbitals, since
+  KI leaves the orbitals of its base functional unchanged. This is common practice for
   molecules; periodic systems use Wannier functions instead.
 - ``alpha_numsteps`` above is 1, so the screening parameters are computed once, from a
   guess, and used. More steps refine them self-consistently.
@@ -42,7 +42,8 @@ than that:
 The ``atoms`` block describes the cell and the atoms in it, much like a Quantum ESPRESSO
 input file. The positions are Cartesian, in the units the block declares.
 
-.. dropdown:: Why is the simulation cell so much larger than the molecule itself?
+.. dropdown:: ❓ Question — Why is the simulation cell so much larger than the molecule itself?
+    :class-title: question-header
 
     The cell is a box of vacuum that keeps the molecule's periodic images apart — a
     plane-wave code works in a supercell even when the system is treated as
@@ -56,10 +57,10 @@ The ``calculator_parameters`` block holds the plane-wave settings:
 - Ozone has 18 valence electrons and therefore nine filled orbitals; ``nbnd: 10`` adds
   one empty orbital, which we need because the electron affinity is the energy of the
   LUMO.
-- ``ecutrho`` sits under ``kcp.system`` rather than at the top level because it is passed
-  straight through to ``kcp.x``, the Quantum ESPRESSO code that evaluates the corrected
-  functional. Keywords that ``koopmans`` does not define itself can be handed to the
-  underlying codes this way.
+- ``ecutrho`` sits under ``kcp.system`` rather than at the top level because it is
+  passed straight through to ``kcp.x``, the Quantum ESPRESSO code that evaluates the
+  corrected functional. Keywords that ``koopmans`` does not define itself can be handed
+  to the underlying codes this way.
 
 *************************
  Running the calculation
@@ -112,7 +113,8 @@ calculation, a dummy spin-resolved calculation that lays out the restart files, 
 final spin-resolved calculation that restarts from the spin-unpolarized density
 duplicated into both spin channels.
 
-.. dropdown:: Why the detour, instead of one spin-resolved calculation from scratch?
+.. dropdown:: ❓ Question — Why the detour, instead of one spin-resolved calculation from scratch?
+    :class-title: question-header
 
     For ozone — a closed-shell molecule — a direct spin-resolved calculation would in
     fact converge to the correct spin-symmetric solution. The detour has two virtues all
@@ -215,7 +217,8 @@ bottom for the ``HOMO Eigenvalue`` and ``LUMO Eigenvalue`` lines — and, for th
 comparison, find the same lines in the initialization output,
 ``ozone/06-dft_init_nspin2/01-dft_init-KcpCalculation/outputs/aiida.cpo``.
 
-.. dropdown:: What do you find?
+.. dropdown:: ❓ Question — What do you find?
+    :class-title: question-header
 
     Near the bottom of the final KI output:
 
@@ -276,7 +279,8 @@ The screening parameters behind this result are recorded in the final calculatio
 input: ``inputs/file_alpharef.txt`` lists one :math:`\alpha_i` per orbital, here ranging
 from 0.66 to 0.78 — each one computed, not fitted.
 
-.. dropdown:: Why one screening parameter per orbital, rather than a single α?
+.. dropdown:: ❓ Question — Why one screening parameter per orbital, rather than a single α?
+    :class-title: question-header
 
     A single :math:`\alpha` fitted to the HOMO would enforce the Koopmans condition on
     the HOMO alone — the ionization potential would come out the same by construction,
@@ -284,7 +288,8 @@ from 0.66 to 0.78 — each one computed, not fitted.
     noticeably, because an :math:`\alpha` tuned for the HOMO cannot simultaneously
     describe the LUMO. Screening is an orbital-by-orbital affair.
 
-.. dropdown:: What happens if you increase ``alpha_numsteps`` to 2 and rerun?
+.. dropdown:: ❓ Question — What happens if you increase ``alpha_numsteps`` to 2 and rerun?
+    :class-title: question-header
 
     With ``alpha_numsteps: 1`` the screening parameters are computed once from the
     starting guess and never checked for self-consistency. With a second step, the
@@ -293,7 +298,8 @@ from 0.66 to 0.78 — each one computed, not fitted.
     convergence threshold (``alpha_conv_thr``). You should find that the parameters
     barely move — the first pass already brought them close to self-consistency.
 
-.. dropdown:: How does the cost of all this scale with system size?
+.. dropdown:: ❓ Question — How does the cost of all this scale with system size?
+    :class-title: question-header
 
     Each screening iteration runs roughly one constrained calculation per orbital, so a
     ΔSCF Koopmans calculation costs about :math:`N_\text{orb}` times a single DFT
@@ -303,20 +309,6 @@ from 0.66 to 0.78 — each one computed, not fitted.
     in the loop is itself far more expensive. That is what makes ΔSCF impractical for
     solids, and why the :doc:`silicon tutorial <silicon_dfpt>` computes the screening
     parameters from linear response (DFPT) instead.
-
-Finally, a challenge: modify the input file for molecular oxygen, and see whether the IP
-and EA compare as well to experiment. O₂ is a linear molecule with a bond length of 1.21
-Å, and — unlike ozone — it is paramagnetic, so its two spin channels differ.
-
-.. dropdown:: Solution
-
-    Set ``"spin": "collinear"`` in the ``workflow`` block, add ``"tot_magnetization":
-    2`` and lower ``"nbnd"`` to ``8`` in ``calculator_parameters``, and update the
-    atoms. A complete input file — which also runs two screening iterations and lets
-    near-degenerate orbitals share a screening parameter — is :download:`o2.yaml
-    <o2.yaml>`. Running it gives an IP of 12.35 eV and an EA of
-    0.40 eV, against experimental values of 12.07 and 0.45 eV (`NIST
-    <https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782447&Mask=20#Ion-Energetics>`_).
 
 *************
  From python
