@@ -248,8 +248,8 @@ _DISPATCH_CASES = (
         note=("one Wannier function per occupied band",),
     ),
     _DispatchCase(
-        id="empty_bands",
-        error="aiida_koopmans.projections.EmptyBandsError",
+        id="empty_coverage",
+        error="aiida_koopmans.projections.EmptyCoverageError",
         fixtures=_DFPT_FIXTURES,
         input_builder=lambda request: _cramped_dfpt_input(),
         match="leaves only",

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from aiida_koopmans.projections import (
         BlockBoundaryError,
         BlockDisentanglementError,
-        EmptyBandsError,
+        EmptyCoverageError,
         OccupiedCoverageError,
         ProjectionSiteError,
     )
@@ -191,7 +191,7 @@ def _occupied_coverage_advice(exc: OccupiedCoverageError) -> str:
     )
 
 
-def _empty_bands_advice(exc: EmptyBandsError) -> str:
+def _empty_coverage_advice(exc: EmptyCoverageError) -> str:
     """Phrase the empty-headroom advice in input-file vocabulary."""
     return (
         "Check `nbnd` against the projections you provided for the empty "
@@ -267,7 +267,7 @@ def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str]], ...
     from aiida_koopmans.projections import (
         BlockBoundaryError,
         BlockDisentanglementError,
-        EmptyBandsError,
+        EmptyCoverageError,
         OccupiedCoverageError,
         ProjectionSiteError,
     )
@@ -277,7 +277,7 @@ def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str]], ...
         (ProjectionSiteError, _projection_site_advice),
         (BlockBoundaryError, _block_boundary_advice),
         (OccupiedCoverageError, _occupied_coverage_advice),
-        (EmptyBandsError, _empty_bands_advice),
+        (EmptyCoverageError, _empty_coverage_advice),
         (BlockDisentanglementError, _block_disentanglement_advice),
         (FrozenWindowError, _frozen_window_advice),
         (ParallelizationError, _parallelization_advice),
