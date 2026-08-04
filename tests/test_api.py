@@ -178,11 +178,15 @@ def _finished_dscf_node(
             calc = orm.CalcJobNode()
             calc.set_process_state(ProcessState.FINISHED)
             calc.set_exit_status(0)
-            calc.base.repository.put_object_from_bytes(b"input data\n", "aiida.cpi")
+            # Distinct content per step: two calculations that wrote the
+            # same bytes would be one calculation dumped twice.
+            calc.base.repository.put_object_from_bytes(f"input for {label}\n".encode(), "aiida.cpi")
             calc.base.links.add_incoming(node, link_type=LinkType.CALL_CALC, link_label=label)
             calc.store()
             retrieved = orm.FolderData()
-            retrieved.base.repository.put_object_from_bytes(b"output data\n", "aiida.cpo")
+            retrieved.base.repository.put_object_from_bytes(
+                f"output of {label}\n".encode(), "aiida.cpo"
+            )
             retrieved.base.links.add_incoming(
                 calc, link_type=LinkType.CREATE, link_label="retrieved"
             )

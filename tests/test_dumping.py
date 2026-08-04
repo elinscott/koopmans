@@ -9,7 +9,7 @@ import pytest
 
 from koopmans.aiida.dumping import (
     _hoist_lone_calculations,
-    _prune_outputless_step_folders,
+    _prune_recoverable_step_folders,
     _renumber_step_folders,
     _simplify_folder_names,
     _strip_process_label_suffixes,
@@ -17,22 +17,25 @@ from koopmans.aiida.dumping import (
 )
 
 
-def _make_tree(root: Path, layout: Sequence[str]) -> None:
+def _make_tree(root: Path, layout: Sequence[str | tuple[str, str]]) -> None:
     """Create the listed paths under ``root``.
 
-    An entry ending in "/" becomes an empty folder; any other entry
-    becomes an empty file, with its parent folders created for it.
+    An entry ending in "/" becomes an empty folder. A plain entry becomes
+    a file holding its own path, so that no two files collide by
+    accident; a ``(path, content)`` entry becomes a file holding that
+    content, which is how two files are given identical bytes.
 
     :param root: Folder the entries are created under.
-    :param layout: Slash-separated paths relative to ``root``.
+    :param layout: Paths relative to ``root``, optionally with content.
     """
     for entry in layout:
-        target = root / entry
-        if entry.endswith("/"):
+        path, content = entry if isinstance(entry, tuple) else (entry, entry)
+        target = root / path
+        if path.endswith("/"):
             target.mkdir(parents=True, exist_ok=True)
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.touch()
+            target.write_text(content)
 
 
 def _folders(root: Path) -> list[str]:
@@ -63,12 +66,26 @@ def _calculation(name: str) -> list[str]:
 
 
 def _bookkeeping(name: str) -> list[str]:
-    """Return the layout entries of a python step that recorded no outputs.
+    """Return the layout entries of a python step that dumped only its source.
 
-    AiiDA dumps such a step its own source, and a serialized copy of
-    whichever inputs it was handed.
+    Its ``source_file`` is the task's own code, which the installed
+    package holds, so nothing goes with the folder.
     """
     return [f"{name}/inputs/source_file"]
+
+
+def _lambdas(name: str, content: str = "trial-hamiltonian") -> list[tuple[str, str]]:
+    """Return a python step's serialized ``ArrayData`` input.
+
+    aiida-core dumps an ``ArrayData`` only as its consumer's
+    ``function_inputs``, never under the task that produced it, so this
+    is the tree's one copy of that array unless a sibling holds the same
+    bytes.
+    """
+    return [
+        (f"{name}/inputs/source_file", f"{name}/inputs/source_file"),
+        (f"{name}/inputs/function_inputs/trial_lambdas/lambdas.npy", content),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -121,17 +138,17 @@ def test_simplify_folder_names_keeps_taken_names(tmp_path: Path) -> None:
     assert all_dirs == ["02-scf", "02-scf-WorkGraph<scf>-99"]
 
 
-class TestPruneOutputlessStepFolders:
-    """A step that recorded no outputs leaves no folder behind."""
+class TestPruneRecoverableStepFolders:
+    """A step folder goes only when nothing on disk goes with it."""
 
-    def test_a_bookkeeping_step_goes_and_a_calculation_stays(self, tmp_path: Path) -> None:
-        """The source and inputs AiiDA dumps alongside are no reason to keep it."""
+    def test_a_source_only_step_goes_and_a_calculation_stays(self, tmp_path: Path) -> None:
+        """A task's own code is not data the run produced."""
         _make_tree(
             tmp_path,
             [*_bookkeeping("01-count_electrons_task"), *_calculation("02-dft_init")],
         )
 
-        _prune_outputless_step_folders(tmp_path)
+        _prune_recoverable_step_folders(tmp_path)
 
         assert _folders(tmp_path) == ["02-dft_init", "02-dft_init/inputs", "02-dft_init/outputs"]
 
@@ -139,39 +156,87 @@ class TestPruneOutputlessStepFolders:
         """A step AiiDA dumped nothing at all for is the same case."""
         _make_tree(tmp_path, ["01-resolve_pseudo_family_task/"])
 
-        _prune_outputless_step_folders(tmp_path)
+        _prune_recoverable_step_folders(tmp_path)
 
         assert _folders(tmp_path) == []
 
-    def test_a_step_holding_only_outputless_steps_goes_too(self, tmp_path: Path) -> None:
-        """Having no outputs propagates outwards, however deeply nested."""
+    def test_a_step_holding_only_such_steps_goes_too(self, tmp_path: Path) -> None:
+        """Holding nothing of one's own propagates outwards, however deep."""
         _make_tree(tmp_path, ["01-outer/01-middle/", *_bookkeeping("01-outer/02-inner")])
 
-        _prune_outputless_step_folders(tmp_path)
+        _prune_recoverable_step_folders(tmp_path)
 
         assert _folders(tmp_path) == []
 
-    def test_a_python_step_that_wrote_files_survives(self, tmp_path: Path) -> None:
-        """Outputs, not the kind of process, decide.
+    def test_a_step_holding_a_unique_payload_survives(self, tmp_path: Path) -> None:
+        """A serialized array reaches disk only under the task that consumed it.
 
-        ``prepare_kcw_wannier_files`` is a python step like the pruned
-        ones, but it writes the merged Wannier files the next step reads.
+        ``compute_alpha_from_dscf`` records no outputs and looks exactly
+        like a bookkeeping step, but its ``function_inputs`` hold the KI
+        trial Hamiltonian, which appears nowhere else in the tree.
         """
-        _make_tree(tmp_path, _calculation("01-prepare_kcw_wannier_files"))
+        _make_tree(tmp_path, _lambdas("01-compute_alpha_from_dscf"))
 
-        _prune_outputless_step_folders(tmp_path)
+        _prune_recoverable_step_folders(tmp_path)
 
-        assert "01-prepare_kcw_wannier_files" in _folders(tmp_path)
+        assert _folders(tmp_path) == [
+            "01-compute_alpha_from_dscf",
+            "01-compute_alpha_from_dscf/inputs",
+            "01-compute_alpha_from_dscf/inputs/function_inputs",
+            "01-compute_alpha_from_dscf/inputs/function_inputs/trial_lambdas",
+        ]
+
+    def test_a_killed_calculation_survives(self, tmp_path: Path) -> None:
+        """A calculation killed before retrieval has inputs and no outputs.
+
+        Dumping it at all is the point of ``dump_unsealed``, so its input
+        file has to outlive the pass.
+        """
+        _make_tree(tmp_path, ["01-dft_init/inputs/aiida.cpi"])
+
+        _prune_recoverable_step_folders(tmp_path)
+
+        assert (tmp_path / "01-dft_init/inputs/aiida.cpi").is_file()
+
+    def test_a_duplicated_payload_goes_but_its_last_copy_stays(self, tmp_path: Path) -> None:
+        """Ten orbitals are handed the same trial Hamiltonian; one copy is enough."""
+        _make_tree(
+            tmp_path,
+            [
+                *_lambdas("01-orb_1/01-compute_alpha_from_dscf"),
+                *_lambdas("02-orb_2/01-compute_alpha_from_dscf"),
+                *_lambdas("03-orb_3/01-compute_alpha_from_dscf"),
+            ],
+        )
+
+        _prune_recoverable_step_folders(tmp_path)
+
+        survivors = [f for f in _folders(tmp_path) if f.endswith("compute_alpha_from_dscf")]
+        assert survivors == ["03-orb_3/01-compute_alpha_from_dscf"]
+
+    def test_a_folder_is_not_saved_by_its_own_duplicates(self, tmp_path: Path) -> None:
+        """Two copies of one file inside one folder are still one file."""
+        _make_tree(
+            tmp_path,
+            [
+                ("01-step/inputs/first.npy", "same-bytes"),
+                ("01-step/inputs/second.npy", "same-bytes"),
+            ],
+        )
+
+        _prune_recoverable_step_folders(tmp_path)
+
+        assert _folders(tmp_path) == ["01-step", "01-step/inputs"]
 
     def test_an_unnumbered_folder_is_never_pruned(self, tmp_path: Path) -> None:
         """Only "<NN>-<label>" step folders are candidates.
 
-        A calculation's own ``inputs`` is not a step that recorded no
-        outputs, and has to survive the pass whatever it holds.
+        A calculation's own ``inputs`` is not a step, and has to survive
+        the pass whatever it holds.
         """
         _make_tree(tmp_path, _calculation("01-dft_init"))
 
-        _prune_outputless_step_folders(tmp_path)
+        _prune_recoverable_step_folders(tmp_path)
 
         assert _folders(tmp_path) == ["01-dft_init", "01-dft_init/inputs", "01-dft_init/outputs"]
 
@@ -458,7 +523,7 @@ class TestTidyDumpedTree:
     SCREENING = "07-ComputeScreeningParameters/02-ScreeningIteration"
     ORBITALS = f"{SCREENING}/04-compute_orbital_screening_parameters"
 
-    OZONE_DUMP: ClassVar[list[str]] = [
+    OZONE_DUMP: ClassVar[list[str | tuple[str, str]]] = [
         "01-resolve_pseudo_family_task/",
         *_bookkeeping("02-count_electrons_task"),
         *_calculation("03-dft_init_nspin1/01-dft_init-KcpCalculation"),
@@ -470,15 +535,17 @@ class TestTidyDumpedTree:
         *_bookkeeping(f"{SCREENING}/02-extract_self_hartree_from_kcp"),
         *_bookkeeping(f"{SCREENING}/03-assign_orbital_groups"),
         *_calculation(f"{ORBITALS}/01-compute_alpha_orb_1/01-dft_n_minus_1-KcpCalculation"),
-        *_bookkeeping(f"{ORBITALS}/01-compute_alpha_orb_1/02-compute_alpha_from_dscf"),
+        # Every orbital is handed the same KI trial Hamiltonian, which
+        # reaches disk only here — so all but the last copy of it go.
+        *_lambdas(f"{ORBITALS}/01-compute_alpha_orb_1/02-compute_alpha_from_dscf"),
         # The dump numbers the fan-out lexicographically by map key, so
         # orb_10 sits between orb_1 and orb_2 until the renumbering.
         *_calculation(f"{ORBITALS}/02-compute_alpha_orb_10/01-dft_n_plus_1_dummy-KcpCalculation"),
         *_calculation(f"{ORBITALS}/02-compute_alpha_orb_10/02-pz_print-KcpCalculation"),
         *_calculation(f"{ORBITALS}/02-compute_alpha_orb_10/03-dft_n_plus_1-KcpCalculation"),
-        *_bookkeeping(f"{ORBITALS}/02-compute_alpha_orb_10/04-compute_alpha_from_dscf"),
+        *_lambdas(f"{ORBITALS}/02-compute_alpha_orb_10/04-compute_alpha_from_dscf"),
         *_calculation(f"{ORBITALS}/03-compute_alpha_orb_2/01-dft_n_minus_1-KcpCalculation"),
-        *_bookkeeping(f"{ORBITALS}/03-compute_alpha_orb_2/02-compute_alpha_from_dscf"),
+        *_lambdas(f"{ORBITALS}/03-compute_alpha_orb_2/02-compute_alpha_from_dscf"),
         *_bookkeeping(f"{ORBITALS}/11-expand_alphas_by_group"),
         *_bookkeeping(f"{SCREENING}/05-max_alpha_error"),
         *_calculation("08-RunFinalKI/01-ki_final-KcpCalculation"),
@@ -515,10 +582,17 @@ class TestTidyDumpedTree:
         │           │   └── outputs
         │           │       └── aiida.cpo
         │           ├── 02-compute_alpha_orb_2
-        │           │   ├── inputs
-        │           │   │   └── aiida.cpi
-        │           │   └── outputs
-        │           │       └── aiida.cpo
+        │           │   ├── 01-dft_n_minus_1
+        │           │   │   ├── inputs
+        │           │   │   │   └── aiida.cpi
+        │           │   │   └── outputs
+        │           │   │       └── aiida.cpo
+        │           │   └── 02-compute_alpha_from_dscf
+        │           │       └── inputs
+        │           │           ├── function_inputs
+        │           │           │   └── trial_lambdas
+        │           │           │       └── lambdas.npy
+        │           │           └── source_file
         │           └── 03-compute_alpha_orb_10
         │               ├── 01-dft_n_plus_1_dummy
         │               │   ├── inputs

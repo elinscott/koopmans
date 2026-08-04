@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -40,13 +41,17 @@ _STEP_FOLDER_NAME = re.compile(r"^(\d+)-(.+)$")
 _PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
 
 
-# Sibling ordering, shared with the live progress table's
-# ``_ordered_children`` (``koopmans.aiida.progress``): siblings group into
-# families — the label with its digit runs masked — and a family whose
-# members already sit in consecutive positions is sorted naturally.
-# Everything else keeps the order it ran in. The two carry their own copy
-# of the convention because the table orders nodes by ctime and the dump
-# orders folders by the number already written on them; keep them in step.
+# The dumped source of a python task: its code, not data the run made.
+_TASK_SOURCE_FILE = "source_file"
+
+_DIGEST_BLOCK = 1 << 20
+
+# Sibling ordering: siblings group into families — the label with its
+# digit runs masked — and a family whose members already sit in
+# consecutive positions is sorted naturally, while everything else keeps
+# the order it ran in. The live progress table draws its rows by the same
+# rule, against creation time rather than the number written on a folder,
+# and carries its own copy of it; keep the two in step.
 _DIGIT_RUN_RE = re.compile(r"(\d+)")
 
 
@@ -73,11 +78,6 @@ def _is_calculation_folder(path: Path) -> bool:
     return (path / "inputs").is_dir() and (path / "outputs").is_dir()
 
 
-def _produced_outputs(path: Path) -> bool:
-    """Return whether any process under the folder recorded outputs."""
-    return any(candidate.is_dir() for candidate in path.rglob("outputs"))
-
-
 def _step_folders(path: Path) -> list[Path]:
     """Return the folder's "<NN>-<label>" subfolders, in number order."""
     numbered = []
@@ -89,19 +89,79 @@ def _step_folders(path: Path) -> list[Path]:
     return [child for _, _, child in numbered]
 
 
-def _prune_outputless_step_folders(path: Path) -> None:
-    """Delete step folders under which no process recorded outputs.
+def _file_digest(path: Path) -> str:
+    """Return the SHA-256 of a file's contents."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(_DIGEST_BLOCK), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
-    Such a folder holds at most the bookkeeping task's own source and a
-    serialized copy of the inputs it was handed, both of which the step
-    that consumed them already carries. A folder holding only such
-    folders goes with them.
+
+def _content_keys(root_path: Path) -> dict[Path, str]:
+    """Return a key per file that two files share exactly when identical.
+
+    A file whose size occurs once in the tree can have no twin, so it
+    takes a key of its own and is never read — which keeps the pass off
+    the large outputs a finished run retrieves.
     """
-    for child in _step_folders(path):
-        if _produced_outputs(child):
-            _prune_outputless_step_folders(child)
+    by_size: dict[int, list[Path]] = defaultdict(list)
+    for path in root_path.rglob("*"):
+        if path.is_file():
+            by_size[path.stat().st_size].append(path)
+
+    keys: dict[Path, str] = {}
+    for size, paths in by_size.items():
+        if len(paths) == 1:
+            keys[paths[0]] = f"{size}:{paths[0]}"
         else:
-            shutil.rmtree(child)
+            keys.update({path: f"{size}:{_file_digest(path)}" for path in paths})
+    return keys
+
+
+def _prune_recoverable_step_folders(root_path: Path) -> None:
+    """Delete step folders that hold nothing which would go with them.
+
+    A folder goes when every file under it either is a python task's
+    dumped ``source_file`` — the task's code, which the installed package
+    holds — or has a byte-identical copy that stays behind elsewhere in
+    the tree.
+
+    What a process is says nothing about what its folder is worth
+    keeping. aiida-core writes ``node_outputs`` only for
+    ``SinglefileData`` and ``FolderData``, so an ``ArrayData`` a task
+    produced reaches disk only as the ``function_inputs`` of whatever
+    consumed it; a calculation killed before retrieval has inputs and no
+    outputs at all. Both keep their folders here.
+
+    A folder's own copies of a file do not save it, and pruning one
+    folder drops its files from what later folders are checked against,
+    so the last copy of anything always stays.
+
+    :param root_path: Root of the dumped tree; never itself pruned.
+    """
+    keys = _content_keys(root_path)
+    live: Counter[str] = Counter(keys.values())
+
+    def files_under(folder: Path) -> list[Path]:
+        """Return every file under the folder."""
+        return [path for path in folder.rglob("*") if path.is_file()]
+
+    def is_recoverable(folder: Path) -> bool:
+        """Return whether removing the folder would lose no file."""
+        held = Counter(keys[path] for path in files_under(folder) if path.name != _TASK_SOURCE_FILE)
+        return all(live[key] > count for key, count in held.items())
+
+    def prune(folder: Path) -> None:
+        """Prune the folder's step subfolders, descending into the keepers."""
+        for child in _step_folders(folder):
+            if is_recoverable(child):
+                live.subtract(keys[path] for path in files_under(child))
+                shutil.rmtree(child)
+            else:
+                prune(child)
+
+    prune(root_path)
 
 
 def _display_order(children: Sequence[Path]) -> list[tuple[Path, str]]:
@@ -208,7 +268,7 @@ def _tidy_dumped_tree(root_path: Path) -> None:
 
     The passes run in a fixed order:
 
-    - a step folder under which nothing recorded outputs goes;
+    - a step folder holding nothing that would go with it goes;
     - the surviving siblings are renumbered contiguously from one;
     - every step folder drops its trailing "-<ProcessLabel>";
     - a step folder holding nothing but one calculation takes over its
@@ -225,7 +285,7 @@ def _tidy_dumped_tree(root_path: Path) -> None:
 
     :param root_path: Root of the dumped tree; it is never itself pruned.
     """
-    _prune_outputless_step_folders(root_path)
+    _prune_recoverable_step_folders(root_path)
     _renumber_step_folders(root_path)
     _strip_process_label_suffixes(root_path)
     _hoist_lone_calculations(root_path)
