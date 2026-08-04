@@ -179,8 +179,8 @@ class TestPruneOutputlessStepFolders:
 class TestRenumberStepFolders:
     """Pruning leaves holes in the numbering; renumbering closes them."""
 
-    def test_holes_close_and_the_order_survives(self, tmp_path: Path) -> None:
-        """The numbers are dump-side prose, the order they encode is not."""
+    def test_holes_close(self, tmp_path: Path) -> None:
+        """The numbers are dump-side prose, so they count from one again."""
         _make_tree(tmp_path, ["03-dft_init_nspin1/a", "06-dft_init_nspin2/a", "08-RunFinalKI/a"])
 
         _renumber_step_folders(tmp_path)
@@ -189,6 +189,59 @@ class TestRenumberStepFolders:
             "01-dft_init_nspin1",
             "02-dft_init_nspin2",
             "03-RunFinalKI",
+        ]
+
+    def test_an_indexed_family_is_numbered_in_counting_order(self, tmp_path: Path) -> None:
+        """``orb_10`` follows ``orb_2``, though the dump wrote it between 1 and 2.
+
+        The dump numbers a fan-out in creation order, which is
+        lexicographic by map key. This is also the case that makes two
+        folders swap numbers, which the renaming has to survive.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                "01-compute_alpha_orb_1/a",
+                "02-compute_alpha_orb_10/a",
+                "03-compute_alpha_orb_2/a",
+            ],
+        )
+
+        _renumber_step_folders(tmp_path)
+
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "01-compute_alpha_orb_1",
+            "02-compute_alpha_orb_2",
+            "03-compute_alpha_orb_10",
+        ]
+
+    def test_distinct_steps_keep_execution_order(self, tmp_path: Path) -> None:
+        """Sequential steps are not alphabetized: the tree still reads as the run did."""
+        _make_tree(tmp_path, ["01-wannierize/a", "02-dft_bands/a"])
+
+        _renumber_step_folders(tmp_path)
+
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["01-wannierize", "02-dft_bands"]
+
+    def test_a_family_holds_the_slot_of_its_first_member(self, tmp_path: Path) -> None:
+        """A late member of an indexed family sorts into it, not to the end."""
+        _make_tree(
+            tmp_path,
+            [
+                "01-compute_alpha_orb_1/a",
+                "02-final_scf/a",
+                "03-compute_alpha_orb_10/a",
+                "04-compute_alpha_orb_2/a",
+            ],
+        )
+
+        _renumber_step_folders(tmp_path)
+
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "01-compute_alpha_orb_1",
+            "02-compute_alpha_orb_2",
+            "03-compute_alpha_orb_10",
+            "04-final_scf",
         ]
 
     def test_renumbering_reaches_every_level(self, tmp_path: Path) -> None:
@@ -369,10 +422,14 @@ class TestTidyDumpedTree:
         *_bookkeeping(f"{SCREENING}/03-assign_orbital_groups"),
         *_calculation(f"{ORBITALS}/01-compute_alpha_orb_1/01-dft_n_minus_1-KcpCalculation"),
         *_bookkeeping(f"{ORBITALS}/01-compute_alpha_orb_1/02-compute_alpha_from_dscf"),
+        # The dump numbers the fan-out lexicographically by map key, so
+        # orb_10 sits between orb_1 and orb_2 until the renumbering.
         *_calculation(f"{ORBITALS}/02-compute_alpha_orb_10/01-dft_n_plus_1_dummy-KcpCalculation"),
         *_calculation(f"{ORBITALS}/02-compute_alpha_orb_10/02-pz_print-KcpCalculation"),
         *_calculation(f"{ORBITALS}/02-compute_alpha_orb_10/03-dft_n_plus_1-KcpCalculation"),
         *_bookkeeping(f"{ORBITALS}/02-compute_alpha_orb_10/04-compute_alpha_from_dscf"),
+        *_calculation(f"{ORBITALS}/03-compute_alpha_orb_2/01-dft_n_minus_1-KcpCalculation"),
+        *_bookkeeping(f"{ORBITALS}/03-compute_alpha_orb_2/02-compute_alpha_from_dscf"),
         *_bookkeeping(f"{ORBITALS}/11-expand_alphas_by_group"),
         *_bookkeeping(f"{SCREENING}/05-max_alpha_error"),
         *_calculation("08-RunFinalKI/01-ki_final-KcpCalculation"),
@@ -385,12 +442,12 @@ class TestTidyDumpedTree:
         │   │   └── aiida.cpi
         │   └── outputs
         │       └── aiida.cpo
-        ├── 02-dft_init_nspin2_dummy
+        ├── 02-dft_init_nspin2
         │   ├── inputs
         │   │   └── aiida.cpi
         │   └── outputs
         │       └── aiida.cpo
-        ├── 03-dft_init_nspin2
+        ├── 03-dft_init_nspin2_dummy
         │   ├── inputs
         │   │   └── aiida.cpi
         │   └── outputs
@@ -408,7 +465,12 @@ class TestTidyDumpedTree:
         │           │   │   └── aiida.cpi
         │           │   └── outputs
         │           │       └── aiida.cpo
-        │           └── 02-compute_alpha_orb_10
+        │           ├── 02-compute_alpha_orb_2
+        │           │   ├── inputs
+        │           │   │   └── aiida.cpi
+        │           │   └── outputs
+        │           │       └── aiida.cpo
+        │           └── 03-compute_alpha_orb_10
         │               ├── 01-dft_n_plus_1_dummy
         │               │   ├── inputs
         │               │   │   └── aiida.cpi

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,34 @@ _STEP_FOLDER_NAME = re.compile(r"^(\d+)-(.+)$")
 # suffix as appended, which is why a folder whose link label is itself
 # capitalised ("05-RunFinalKI") keeps its label.
 _PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
+
+
+# Sibling ordering, shared with the live progress table's
+# ``_ordered_children`` (``koopmans.aiida.progress``): siblings group into
+# families — the label with its digit runs masked — families run where
+# their first member stood, and a family's own members run in natural
+# numeric order. The two carry their own copy of the convention because
+# the table orders nodes by ctime and the dump orders folders by the
+# number already written on them; keep them in step.
+_DIGIT_RUN_RE = re.compile(r"(\d+)")
+
+
+def _natural_key(label: str) -> tuple[tuple[str, int], ...]:
+    """Return a sort key that compares digit runs in a label numerically.
+
+    ``re.split`` on a capturing digit group always alternates text,
+    digits, text, …, so pairing them up yields keys whose components line
+    up across labels: ``"orb_2"`` sorts before ``"orb_10"``.
+    """
+    parts = _DIGIT_RUN_RE.split(label)
+    return tuple(
+        (parts[i], int(parts[i + 1]) if i + 1 < len(parts) else -1) for i in range(0, len(parts), 2)
+    )
+
+
+def _family_key(label: str) -> str:
+    """Return the label with every digit run masked ("orb_10" → "orb_#")."""
+    return _DIGIT_RUN_RE.sub("#", label)
 
 
 def _is_calculation_folder(path: Path) -> bool:
@@ -74,23 +103,58 @@ def _prune_outputless_step_folders(path: Path) -> None:
             shutil.rmtree(child)
 
 
+def _display_order(children: Sequence[Path]) -> list[tuple[Path, str]]:
+    """Return the step folders as ``(folder, label)`` in reading order.
+
+    The dump numbers a fan-out in creation order, which is lexicographic
+    by map key, so ``orb_10`` lands between ``orb_1`` and ``orb_2``.
+    Ordering by family and then naturally puts the indices back in
+    counting order while leaving distinct steps in the order they ran.
+    """
+    entries = []
+    for child in children:
+        match = _STEP_FOLDER_NAME.match(child.name)
+        if match is not None:
+            entries.append((int(match.group(1)), match.group(2), child))
+
+    first_seen: dict[str, int] = {}
+    for number, label, _ in entries:
+        family = _family_key(label)
+        first_seen[family] = min(first_seen.get(family, number), number)
+
+    entries.sort(key=lambda entry: (first_seen[_family_key(entry[1])], _natural_key(entry[1])))
+    return [(child, label) for _, label, child in entries]
+
+
 def _renumber_step_folders(path: Path) -> None:
     """Renumber the step folders under ``path`` contiguously from one.
 
-    Keeps the order the original numbers gave and the zero padding they
-    were written with.
+    Numbers follow :func:`_display_order` rather than the order the dump
+    wrote, and keep the zero padding it used.
     """
     children = _step_folders(path)
-    matches = [_STEP_FOLDER_NAME.match(child.name) for child in children]
-    width = max((len(m.group(1)) for m in matches if m is not None), default=2)
+    widths = [len(m.group(1)) for c in children if (m := _STEP_FOLDER_NAME.match(c.name))]
+    width = max(widths, default=2)
 
-    for number, (child, match) in enumerate(zip(children, matches, strict=True), start=1):
-        if match is None:
+    ordered = _display_order(children)
+    final_names = [f"{number:0{width}d}-{label}" for number, (_, label) in enumerate(ordered, 1)]
+
+    # Reordering can send a folder to a number a sibling still holds, so
+    # everything that moves is parked under a name no step folder can
+    # have before anything takes its final one.
+    parked = []
+    for index, ((child, _), final_name) in enumerate(zip(ordered, final_names, strict=True)):
+        if child.name == final_name:
+            parked.append(child)
             continue
-        renamed = child.parent / f"{number:0{width}d}-{match.group(2)}"
-        # Compacting never raises a number, so the target is always free.
-        if renamed != child:
-            shutil.move(str(child), str(renamed))
+        staging = child.parent / f".tidy-{index}-{child.name}"
+        shutil.move(str(child), str(staging))
+        parked.append(staging)
+
+    for staged, final_name in zip(parked, final_names, strict=True):
+        renamed = staged.parent / final_name
+        if staged != renamed:
+            shutil.move(str(staged), str(renamed))
         _renumber_step_folders(renamed)
 
 
