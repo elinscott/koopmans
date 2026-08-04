@@ -49,14 +49,19 @@ The ``atoms`` block describes the cell and the atoms in it, much like a Quantum 
 input file (albeit in JSON):
 
 - ``cell_parameters`` gives the three cell vectors; ``"periodic": false`` declares the
-  system to be an isolated molecule, so the cell is just a large box of vacuum that
-  keeps the molecule's periodic images apart. The box is especially generous because the
-  screening calculations later on give the molecule a net charge, and charged images
-  interact through the long-range Coulomb tail; on top of the vacuum, the code applies a
-  counter-charge correction that compensates the residual interaction between images.
+  system to be an isolated molecule.
 - ``atomic_positions`` lists each atom and its Cartesian position in the chosen units —
   here the bent ozone geometry, with a bond length of roughly 1.27 Å and a bond angle of
   117°.
+
+.. dropdown:: Why is the simulation cell so much larger than the molecule itself?
+
+    The cell is a box of vacuum that keeps the molecule's periodic images apart — a
+    plane-wave code works in a supercell even when the system is treated as
+    non-periodic. The box is especially generous here because the screening calculations
+    later on give the molecule a net charge, and charged images interact through the
+    long-range Coulomb tail; on top of the vacuum, the code applies a counter-charge
+    correction that compensates the residual interaction between images.
 
 The ``calculator_parameters`` block holds the plane-wave settings:
 
@@ -118,12 +123,17 @@ electrons, which requires a spin-resolved description, so the workflow ends up a
 spin-resolved calculation — but it gets there via a detour: a spin-unpolarized
 calculation, a dummy spin-resolved calculation that lays out the restart files, and a
 final spin-resolved calculation that restarts from the spin-unpolarized density
-duplicated into both spin channels. The detour has two virtues. In harder systems than
-ozone, a spin-resolved calculation started from scratch can collapse into a spurious
-broken-symmetry solution with :math:`n^\uparrow(\mathbf{r}) \neq
-n^\downarrow(\mathbf{r})`; handing it an already-converged symmetric density avoids
-that. And it is cheaper: most of the self-consistency cycles happen in the
-spin-unpolarized problem, which has half the wavefunctions.
+duplicated into both spin channels.
+
+.. dropdown:: Why the detour, instead of one spin-resolved calculation from scratch?
+
+    For ozone — a closed-shell molecule — a direct spin-resolved calculation would in
+    fact converge to the correct spin-symmetric solution. The detour has two virtues all
+    the same. In harder systems, a spin-resolved calculation started from scratch can
+    collapse into a spurious broken-symmetry solution with :math:`n^\uparrow(\mathbf{r})
+    \neq n^\downarrow(\mathbf{r})`; handing it an already-converged symmetric density
+    avoids that. And it is cheaper: most of the self-consistency cycles happen in the
+    spin-unpolarized problem, which has half the wavefunctions.
 
 From this point on the density never changes: KI, by construction, returns the same
 density as its base functional. (This is not true of KIPZ.)
@@ -164,31 +174,31 @@ to mirror the workflow outline above:
     ozone
     ├── 01-resolve_pseudo_family_task
     ├── 02-count_electrons_task
-    ├── 03-dft_init_nspin1-WorkGraph<dft_init_nspin1>
+    ├── 03-dft_init_nspin1
     │   └── 01-dft_init-KcpCalculation
     │       ├── inputs
     │       └── outputs
-    ├── 04-dft_init_nspin2_dummy-WorkGraph<dft_init_nspin2_dummy>
+    ├── 04-dft_init_nspin2_dummy
     ├── 05-convert_spin1_to_spin2
-    ├── 06-dft_init_nspin2-WorkGraph<dft_init_nspin2>
-    ├── 07-ComputeScreeningParameters-WorkGraph<ComputeScreeningParameters>
+    ├── 06-dft_init_nspin2
+    ├── 07-ComputeScreeningParameters
     │   ├── 01-generate_alphas
-    │   └── 02-ScreeningIteration-WorkGraph<ScreeningIteration>
+    │   └── 02-ScreeningIteration
     │       ├── 01-ki_trial-KcpCalculation
     │       ├── 02-extract_self_hartree_from_kcp
     │       ├── 03-assign_orbital_groups
-    │       ├── 04-compute_orbital_screening_parameters-WorkGraph<...>
-    │       │   ├── 01-compute_alpha_orb_1-WorkGraph<compute_alpha_orb_1>
+    │       ├── 04-compute_orbital_screening_parameters
+    │       │   ├── 01-compute_alpha_orb_1
     │       │   │   ├── 01-dft_n_minus_1-KcpCalculation
     │       │   │   └── 02-compute_alpha_from_dscf
-    │       │   ├── 02-compute_alpha_orb_10-WorkGraph<compute_alpha_orb_10>
+    │       │   ├── 02-compute_alpha_orb_10
     │       │   │   ├── 01-dft_n_plus_1_dummy-KcpCalculation
     │       │   │   ├── 02-pz_print-KcpCalculation
     │       │   │   ├── 03-dft_n_plus_1-KcpCalculation
     │       │   │   └── 04-compute_alpha_from_dscf
     │       │   └── ...
     │       └── 05-max_alpha_error
-    └── 08-RunFinalKI-WorkGraph<RunFinalKI>
+    └── 08-RunFinalKI
         └── 01-ki_final-KcpCalculation
             ├── inputs
             └── outputs
@@ -213,38 +223,45 @@ the screening parameters, and so on.
 
 The ionization potential (IP) is the negative of the HOMO energy, and the electron
 affinity (EA) is the negative of the LUMO energy. Open
-``ozone/08-RunFinalKI-WorkGraph<RunFinalKI>/01-ki_final-KcpCalculation/outputs/aiida.cpo``
-and search near the bottom for
+``ozone/08-RunFinalKI/01-ki_final-KcpCalculation/outputs/aiida.cpo`` and search near the
+bottom for the ``HOMO Eigenvalue`` and ``LUMO Eigenvalue`` lines — and, for the PBE
+comparison, find the same lines in the initialization output,
+``ozone/06-dft_init_nspin2/01-dft_init-KcpCalculation/outputs/aiida.cpo``.
 
-.. code-block:: text
+.. dropdown:: What do you find?
 
-    HOMO Eigenvalue (eV)
+    Near the bottom of the final KI output:
 
-    -12.5234
+    .. code-block:: text
 
-    LUMO Eigenvalue (eV)
+        HOMO Eigenvalue (eV)
 
-    -1.8221
+        -12.5234
 
-    Electronic Gap (eV) =    10.7013
+        LUMO Eigenvalue (eV)
+
+        -1.8221
+
+        Electronic Gap (eV) =    10.7013
 
 
-    Eigenvalues (eV), kp =   1 , spin =  1
+        Eigenvalues (eV), kp =   1 , spin =  1
 
-    -40.1865  -32.9126  -24.2279  -19.6844  -19.4901  -19.2698  -13.6039  -12.7621  -12.5234
+        -40.1865  -32.9126  -24.2279  -19.6844  -19.4901  -19.2698  -13.6039  -12.7621  -12.5234
 
-    Empty States Eigenvalues (eV), kp =   1 , spin =  1
+        Empty States Eigenvalues (eV), kp =   1 , spin =  1
 
-    -1.8221
+        -1.8221
+
+    The initialization output puts the PBE HOMO at −7.9550 eV and the PBE LUMO at
+    −6.1684 eV.
 
 The KI ionization potential is therefore 12.52 eV. This compares extremely well with the
 `experimental value
 <https://webbook.nist.gov/cgi/cbook.cgi?ID=C10028156&Mask=20#Ion-Energetics>`_ of ~12.5
-eV, and is a dramatic improvement on PBE: the same ``HOMO Eigenvalue`` line in the
-initialization output
-(``ozone/06-dft_init_nspin2-WorkGraph<dft_init_nspin2>/01-dft_init-KcpCalculation/outputs/aiida.cpo``)
-reads −7.9550 eV, an IP underestimated by more than 4.5 eV. Likewise the KI electron
-affinity is 1.82 eV (experiment: ~2.1 eV), where PBE would have given 6.17 eV.
+eV, and is a dramatic improvement on PBE, whose HOMO would put it at 7.96 eV — more than
+4.5 eV too small. Likewise the KI electron affinity is 1.82 eV (experiment: ~2.1 eV),
+where PBE would have given 6.17 eV.
 
 The comparison need not stop at the frontier orbitals: KI predicts a binding energy —
 minus the orbital energy — for *every* occupied orbital, and gas-phase photoemission
@@ -253,8 +270,8 @@ whose experimental binding energies are cleanly resolved — 12.73, 13.00 and 13
 (`Mocellin et al., Chem. Phys. Lett. 375, 76 (2003)
 <https://doi.org/10.1016/S0009-2614(03)00818-2>`_); the assignments of the deeper
 orbitals are less certain, so they are left out. The three KI values sit at the end of
-the ``Eigenvalues`` line quoted above, and the PBE ones in the corresponding line of the
-initialization output. Plotting one against the other:
+the final KI output's ``Eigenvalues`` line, and the PBE ones in the corresponding line
+of the initialization output. Plotting one against the other:
 
 .. figure:: ../_static/tutorials/ozone_spectrum.svg
     :width: 420
@@ -272,12 +289,47 @@ The screening parameters behind this result are recorded in the final calculatio
 input: ``inputs/file_alpharef.txt`` lists one :math:`\alpha_i` per orbital, here ranging
 from 0.66 to 0.78 — each one computed, not fitted.
 
-.. note::
+.. dropdown:: Why one screening parameter per orbital, rather than a single α?
+
+    A single :math:`\alpha` fitted to the HOMO would enforce the Koopmans condition on
+    the HOMO alone — the ionization potential would come out the same by construction,
+    but every other level would suffer. In particular the electron affinity worsens
+    noticeably, because an :math:`\alpha` tuned for the HOMO cannot simultaneously
+    describe the LUMO. Screening is an orbital-by-orbital affair.
+
+.. dropdown:: What happens if you increase ``alpha_numsteps`` to 2 and rerun?
 
     With ``alpha_numsteps: 1`` the screening parameters are computed once from the
-    starting guess and never checked for self-consistency. Try increasing
-    ``alpha_numsteps`` to ``2``: the workflow will repeat the screening loop with the
-    new parameters and only stop early if they have converged.
+    starting guess and never checked for self-consistency. With a second step, the
+    workflow repeats the screening loop starting from the just-computed parameters
+    instead of 0.6, and only updates a parameter further if its residual is above the
+    convergence threshold (``alpha_conv_thr``). You should find that the parameters
+    barely move — the first pass already brought them close to self-consistency.
+
+.. dropdown:: How does the cost of all this scale with system size?
+
+    Each screening iteration runs roughly one constrained calculation per orbital, so a
+    ΔSCF Koopmans calculation costs about :math:`N_\text{orb}` times a single DFT
+    calculation — multiplied by ``alpha_numsteps``. Crystals are worse still: every
+    constrained :math:`N \pm 1` calculation needs a supercell large enough that the
+    added electron or hole does not overlap its own periodic images, so each calculation
+    in the loop is itself far more expensive. That is what makes ΔSCF impractical for
+    solids, and why the :doc:`silicon tutorial <silicon_dfpt>` computes the screening
+    parameters from linear response (DFPT) instead.
+
+Finally, a challenge: modify the input file for molecular oxygen, and see whether the IP
+and EA compare as well to experiment. O₂ is a linear molecule with a bond length of 1.21
+Å, and — unlike ozone — it is paramagnetic, so its two spin channels differ.
+
+.. dropdown:: Solution
+
+    Set ``"spin": "collinear"`` in the ``workflow`` block, add ``"tot_magnetization":
+    2`` and lower ``"nbnd"`` to ``8`` in ``calculator_parameters``, and update the
+    atoms. A complete input file — which also runs two screening iterations and lets
+    near-degenerate orbitals share a screening parameter — is :download:`o2.json
+    <o2.json>`. Running it gives an IP of 12.35 eV and an EA of
+    0.40 eV, against experimental values of 12.07 and 0.45 eV (`NIST
+    <https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782447&Mask=20#Ion-Energetics>`_).
 
 .. admonition:: Coming from the ASE-based koopmans 1.x?
 
@@ -301,8 +353,5 @@ from 0.66 to 0.78 — each one computed, not fitted.
   screening procedure in full and benchmarks it against experiment.
 - The :doc:`next tutorial <magnetic_molecules>` treats molecules whose ground state is
   spin-polarized.
-- A ΔSCF screening loop runs one constrained calculation per orbital, so its cost grows
-  with system size — and in a crystal each of those calculations additionally needs a
-  supercell large enough to host the localized :math:`N \pm 1` density. The
-  :doc:`silicon tutorial <silicon_dfpt>` sidesteps this by computing the screening
-  parameters from linear response instead.
+- The :doc:`silicon tutorial <silicon_dfpt>` computes the screening parameters from
+  linear response — the route that makes crystals affordable.
