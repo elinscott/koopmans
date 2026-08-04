@@ -96,10 +96,11 @@ def _ensure_profile() -> None:
     """Load the koopmans AiiDA profile unless one is already loaded."""
     from aiida.manage.configuration import get_profile
 
-    from koopmans.aiida.setup.profile import load_koopmans_profile
+    from koopmans.aiida.setup.profile import close_engine_at_exit, load_koopmans_profile
 
     if get_profile() is None:
         load_koopmans_profile()
+    close_engine_at_exit()
 
 
 def _require_finished_ok(node: orm.ProcessNode) -> None:
