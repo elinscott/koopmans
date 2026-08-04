@@ -68,6 +68,8 @@ class TestAdviceFor:
 
         class _SitelessProjection:
             site = None
+            fractional_site = None
+            cartesian_site = None
             ang_mtm = "sp3"
 
         with pytest.raises(ValueError, match="defines no site") as excinfo:
