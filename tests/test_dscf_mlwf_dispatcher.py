@@ -546,3 +546,25 @@ class TestPeriodicMlwfsBuild:
         assert nbnd is not None
         extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
+
+
+class TestFrozenWindowThreading:
+    """The disentanglement window reaches the wannier-initialization inputs."""
+
+    def test_frozen_window_reaches_the_wannier_initialization(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """``dis_froz_max`` lands on the route's wannier_overrides socket.
+
+        Regression for koopmans#94: the seam between the input file and
+        the plugin's per-block builders — a keyword lost here disentangles
+        unfrozen and silently shifts the folded empty manifold.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["pw"] = {"system": {"nbnd": 16}}
+        d["calculator_parameters"]["wannier90"]["dis_froz_max"] = 1.0
+        wg = _build(d, dscf_codes)
+
+        init = next(t for t in wg.tasks if t.name == "wannier_initialization")
+        overrides = init.inputs.wannier_overrides["wannier90"].value
+        assert overrides["dis_froz_max"] == 1.0
