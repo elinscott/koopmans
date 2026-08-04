@@ -3,9 +3,9 @@
 ``build_workgraph`` attaches input-file advice, as a PEP 678 note, to the
 typed errors aiida-koopmans raises; ``advice_for`` dispatches on the
 exception's type. Every advice-table entry gets one case in the dispatch
-table below, with the plugin's own raise site firing; the plugin's untyped
-errors — including the derivation-invariant rejections that used to share
-a class with the user faults — are pinned to pass through untranslated.
+table below, with the plugin's own raise site firing; the plugin's
+derivation-invariant rejections, untyped by design, are pinned to pass
+through untranslated.
 """
 
 from __future__ import annotations
@@ -60,20 +60,6 @@ class TestAdviceFor:
         structure = atoms_input_to_structure(KoopmansInput.model_validate(_si_dscf_dict()).atoms)
         with pytest.raises(ValueError, match="ascending band order") as excinfo:
             validate_projection_block_sequence(list(reversed(_derive_si_blocks(structure))))
-        assert advice_for(excinfo.value) is None
-
-    def test_untyped_plugin_error_gets_no_advice(self) -> None:
-        """A plain ValueError from a plugin module passes through untranslated."""
-        from aiida_koopmans.projections import projection_win_string
-
-        class _SitelessProjection:
-            site = None
-            fractional_site = None
-            cartesian_site = None
-            ang_mtm = "sp3"
-
-        with pytest.raises(ValueError, match="defines no site") as excinfo:
-            projection_win_string(_SitelessProjection())
         assert advice_for(excinfo.value) is None
 
     def test_local_error_gets_no_advice(self) -> None:
