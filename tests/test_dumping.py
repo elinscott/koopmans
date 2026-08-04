@@ -12,7 +12,7 @@ from koopmans.aiida.dumping import (
     _prune_outputless_step_folders,
     _renumber_step_folders,
     _simplify_folder_names,
-    _strip_class_name_suffixes,
+    _strip_process_label_suffixes,
     _tidy_dumped_tree,
 )
 
@@ -80,7 +80,8 @@ def _bookkeeping(name: str) -> list[str]:
         # sub-workgraph: the WorkGraph<...> process label always repeats the
         # link label, so it goes along with the pk
         ("03-dft_init_nspin1-WorkGraph<dft_init_nspin1>-4712", "03-dft_init_nspin1"),
-        # CalcJob: the class name says which code ran, so it stays
+        # CalcJob: only the pk goes here, the class name being the
+        # business of the later _strip_process_label_suffixes pass
         ("01-dft_init-KcpCalculation-4713", "01-dft_init-KcpCalculation"),
     ],
     ids=["pyfunction", "sub-workgraph", "calcjob"],
@@ -219,14 +220,14 @@ class TestRenumberStepFolders:
         assert sorted(p.name for p in tmp_path.iterdir())[-1] == "10-orb_10"
 
 
-class TestStripClassNameSuffixes:
-    """A calculation folder does not need to name the class that ran."""
+class TestStripProcessLabelSuffixes:
+    """A step folder does not need to name the process class that ran."""
 
     def test_the_class_name_goes_from_a_calculation_folder(self, tmp_path: Path) -> None:
         """The step-local name stays; the appended class name goes."""
         _make_tree(tmp_path, _calculation("01-dft_n_plus_1-KcpCalculation"))
 
-        _strip_class_name_suffixes(tmp_path)
+        _strip_process_label_suffixes(tmp_path)
 
         assert sorted(p.name for p in tmp_path.iterdir()) == ["01-dft_n_plus_1"]
 
@@ -241,7 +242,7 @@ class TestStripClassNameSuffixes:
             ],
         )
 
-        _strip_class_name_suffixes(tmp_path)
+        _strip_process_label_suffixes(tmp_path)
 
         assert sorted(p.name for p in (tmp_path / "01-step").iterdir()) == [
             "01-dft_n_plus_1_dummy",
@@ -249,27 +250,38 @@ class TestStripClassNameSuffixes:
             "03-scf",
         ]
 
-    def test_a_step_folder_keeps_its_name(self, tmp_path: Path) -> None:
-        """A sub-workgraph folder is not a calculation, whatever it is called."""
-        _make_tree(tmp_path, ["01-RunFinalKI/01-ki_final/inputs/aiida.cpi"])
+    def test_a_wrapped_workchain_layer_loses_its_suffix_too(self, tmp_path: Path) -> None:
+        """The WorkChain wrapping a calculation is stripped like the calculation."""
+        _make_tree(
+            tmp_path,
+            _calculation("01-scf_nscf/01-scf-PwBaseWorkChain/02-iteration_01-PwCalculation"),
+        )
 
-        _strip_class_name_suffixes(tmp_path)
+        _strip_process_label_suffixes(tmp_path)
 
-        assert sorted(p.name for p in tmp_path.iterdir()) == ["01-RunFinalKI"]
+        assert _folders(tmp_path)[:3] == [
+            "01-scf_nscf",
+            "01-scf_nscf/01-scf",
+            "01-scf_nscf/01-scf/02-iteration_01",
+        ]
 
-    def test_a_capitalised_link_label_is_not_mistaken_for_a_class_name(
+    def test_a_capitalised_link_label_is_not_mistaken_for_a_process_label(
         self, tmp_path: Path
     ) -> None:
         """Stripping needs a "<NN>-<label>" to be left over.
 
-        Sub-workgraph labels are capitalised, and hoisting turns such a
-        folder into a calculation folder.
+        A link label is a python identifier and holds no dash, so a
+        one-dash folder carries no appended process label however
+        capitalised its label is.
         """
-        _make_tree(tmp_path, _calculation("05-RunFinalKI"))
+        _make_tree(tmp_path, [*_calculation("05-RunFinalKI"), "06-ScreeningIteration/a"])
 
-        _strip_class_name_suffixes(tmp_path)
+        _strip_process_label_suffixes(tmp_path)
 
-        assert sorted(p.name for p in tmp_path.iterdir()) == ["05-RunFinalKI"]
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "05-RunFinalKI",
+            "06-ScreeningIteration",
+        ]
 
     def test_a_taken_name_keeps_the_suffix(self, tmp_path: Path) -> None:
         """Nothing is overwritten if two folders would strip to one name."""
@@ -278,7 +290,7 @@ class TestStripClassNameSuffixes:
             ["01-step/01-scf/", *_calculation("01-step/01-scf-PwCalculation")],
         )
 
-        _strip_class_name_suffixes(tmp_path)
+        _strip_process_label_suffixes(tmp_path)
 
         assert sorted(p.name for p in (tmp_path / "01-step").iterdir()) == [
             "01-scf",
@@ -432,12 +444,11 @@ class TestTidyDumpedTree:
 
         assert _render(root) == dedent(self.TIDIED)
 
-    def test_a_wrapped_workchain_keeps_the_process_label_in_its_name(self, tmp_path: Path) -> None:
-        """Only a calculation folder is stripped, so a WorkChain layer keeps its.
+    def test_a_wrapped_workchain_reduces_to_its_link_label(self, tmp_path: Path) -> None:
+        """A wrapped WorkChain sheds both its class name and its own layer.
 
-        The suffix on a wrapped-WorkChain step is the same decoration
-        AiiDA appends to a calculation folder, but stripping it is a
-        separate decision from the one this pass implements.
+        The zno shape: a ``PwBaseWorkChain`` whose kpoint step recorded
+        no outputs and whose one iteration is the calculation itself.
         """
         root = tmp_path / "zno"
         _make_tree(
@@ -452,9 +463,9 @@ class TestTidyDumpedTree:
 
         assert _folders(root) == [
             "01-scf_nscf",
-            "01-scf_nscf/01-scf-PwBaseWorkChain",
-            "01-scf_nscf/01-scf-PwBaseWorkChain/inputs",
-            "01-scf_nscf/01-scf-PwBaseWorkChain/outputs",
+            "01-scf_nscf/01-scf",
+            "01-scf_nscf/01-scf/inputs",
+            "01-scf_nscf/01-scf/outputs",
         ]
 
 

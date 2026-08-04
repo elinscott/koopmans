@@ -29,11 +29,13 @@ _FOLDER_NAME_SUFFIXES = [
 # and the process label are gone.
 _STEP_FOLDER_NAME = re.compile(r"^(\d+)-(.+)$")
 
-# The CalcJob class name AiiDA appends to a calculation folder, e.g. the
-# "-KcpCalculation" of "01-dft_init-KcpCalculation". What is left has to
-# be a step folder in its own right, so that a folder whose link label is
-# itself capitalised ("05-RunFinalKI") keeps its label.
-_CLASS_NAME_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
+# The process label AiiDA appends to a step folder, e.g. the
+# "-KcpCalculation" of "01-dft_init-KcpCalculation" and the
+# "-PwBaseWorkChain" of "01-scf-PwBaseWorkChain". A link label is a python
+# identifier and so holds no dash: the second dash is what marks the
+# suffix as appended, which is why a folder whose link label is itself
+# capitalised ("05-RunFinalKI") keeps its label.
+_PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
 
 
 def _is_calculation_folder(path: Path) -> bool:
@@ -92,21 +94,22 @@ def _renumber_step_folders(path: Path) -> None:
         _renumber_step_folders(renamed)
 
 
-def _strip_class_name_suffixes(path: Path) -> None:
-    """Drop the trailing "-<ClassName>" from every calculation folder.
+def _strip_process_label_suffixes(path: Path) -> None:
+    """Drop the trailing "-<ProcessLabel>" from every step folder.
 
-    A folder whose stripped name is already taken keeps its suffix.
+    The CalcJob class name on a calculation folder and the WorkChain
+    class name on the step wrapping it both go. A folder whose stripped
+    name is already taken keeps its suffix.
     """
     for child in _step_folders(path):
-        if not _is_calculation_folder(child):
-            _strip_class_name_suffixes(child)
-            continue
-        match = _CLASS_NAME_SUFFIX.match(child.name)
-        if match is None:
-            continue
-        stripped = child.parent / match.group(1)
-        if not stripped.exists():
-            shutil.move(str(child), str(stripped))
+        renamed = child
+        match = _PROCESS_LABEL_SUFFIX.match(child.name)
+        if match is not None:
+            stripped = child.parent / match.group(1)
+            if not stripped.exists():
+                shutil.move(str(child), str(stripped))
+                renamed = stripped
+        _strip_process_label_suffixes(renamed)
 
 
 def _hoist_lone_calculations(path: Path) -> None:
@@ -134,22 +137,24 @@ def _tidy_dumped_tree(root_path: Path) -> None:
 
     - a step folder under which nothing recorded outputs goes;
     - the surviving siblings are renumbered contiguously from one;
-    - a calculation folder drops its trailing "-<ClassName>";
+    - every step folder drops its trailing "-<ProcessLabel>";
     - a step folder holding nothing but one calculation takes over its
       contents.
 
     Pruning has to precede flattening: a step is left holding a single
     calculation only once its bookkeeping siblings are gone. Stripping
-    has to precede flattening too, because a step that has taken over a
-    calculation's contents then looks like a calculation folder itself.
+    has to precede flattening too, so that a hoisted-into step folder is
+    named for its own step rather than for the calculation it absorbed.
 
-    Runs once, on a freshly dumped tree.
+    Runs once, on a freshly dumped tree: hoisting deliberately collapses
+    one layer per pass, so a second pass over the same tree collapses
+    another.
 
     :param root_path: Root of the dumped tree; it is never itself pruned.
     """
     _prune_outputless_step_folders(root_path)
     _renumber_step_folders(root_path)
-    _strip_class_name_suffixes(root_path)
+    _strip_process_label_suffixes(root_path)
     _hoist_lone_calculations(root_path)
 
 
