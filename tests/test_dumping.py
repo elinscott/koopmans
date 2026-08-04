@@ -248,6 +248,28 @@ class TestRenumberStepFolders:
             "03-dft_init_nspin2",
         ]
 
+    def test_an_interleaved_family_is_not_sorted_across_the_step_splitting_it(
+        self, tmp_path: Path
+    ) -> None:
+        """Interleaved members hold their positions even when out of index order.
+
+        Sorting a split family among the positions it already occupies
+        would reorder it across the step in between, which is the
+        reordering the contiguity requirement exists to prevent.
+        """
+        _make_tree(
+            tmp_path,
+            ["01-compute_alpha_orb_2/a", "02-final_scf/a", "03-compute_alpha_orb_1/a"],
+        )
+
+        _renumber_step_folders(tmp_path)
+
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "01-compute_alpha_orb_2",
+            "02-final_scf",
+            "03-compute_alpha_orb_1",
+        ]
+
     def test_a_contiguous_family_sorts_amid_untouched_siblings(self, tmp_path: Path) -> None:
         """The fan-out counts properly; the steps around it do not move."""
         _make_tree(
