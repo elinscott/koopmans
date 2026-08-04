@@ -8,10 +8,11 @@ profile, dummy codes; nothing runs).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from aiida_koopmans.projections import get_wannier_indices
+from wannier90_input.models.parameters import Projection
 
 from koopmans.aiida.workflows.dscf import (
     build_singlepoint_workgraph,
@@ -144,26 +145,6 @@ class TestDscfBlocks:
         )
         return struct
 
-    class _FakeQuantumNumbers:
-        def __init__(self, l_value: int) -> None:
-            self.angular = type("A", (), {"value": l_value})()
-            self.m_r = None
-
-        def __str__(self) -> str:
-            return f"l={self.angular.value}"
-
-    class _FakeProjection:
-        def __init__(
-            self,
-            site: str | None,
-            l_value: int,
-            fractional_site: list[float] | None = None,
-        ) -> None:
-            self.site = site
-            self.fractional_site = fractional_site
-            self.cartesian_site = None
-            self.ang_mtm = TestDscfBlocks._FakeQuantumNumbers(l_value)
-
     def test_fractional_site_projections(self, si_structure: Any) -> None:
         """Point-hosted (bond-centred) projections derive and format.
 
@@ -172,7 +153,9 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        sp3 = [self._FakeProjection(None, -3, fractional_site=[0.25, 0.25, 0.25])]
+        sp3 = [
+            Projection.model_validate({"fractional_site": [0.25, 0.25, 0.25], "ang_mtm": "l=-3"})
+        ]
         blocks = _dscf_blocks(si_structure, [sp3, sp3], 4, 8, SpinChannel.NONE)
         occ, emp = blocks
         assert occ["num_wann"] == 4
@@ -189,7 +172,9 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
+        sp = [
+            Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})
+        ]  # 2 orbitals x 2 sites = 4
         blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         occ, emp = blocks
         assert occ["num_bands"] == 4
@@ -209,7 +194,7 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]  # 4
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]  # 4
         occ, emp = _dscf_blocks(si_structure, [sp, sp], 4, 20, SpinChannel.NONE)
         assert occ["num_bands"] == 4
         assert occ["exclude_bands"] == list(range(5, 21))
@@ -228,7 +213,7 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]  # 4
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]  # 4
         for nbnd in (8, 12, 20):
             for block in _dscf_blocks(si_structure, [sp, sp], 4, nbnd, SpinChannel.NONE):
                 excluded = block["exclude_bands"] or []
@@ -238,7 +223,9 @@ class TestDscfBlocks:
         """Two sp blocks split into occ_1 (bands 1-4) and emp_1 (5-8)."""
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]  # 2 orbitals x 2 sites = 4
+        sp = [
+            Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})
+        ]  # 2 orbitals x 2 sites = 4
         blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "emp_1"]
         assert get_wannier_indices(blocks[0]) == [1, 2, 3, 4]
@@ -250,8 +237,8 @@ class TestDscfBlocks:
         """A block sandwiched between others excludes bands on both sides."""
         from aiida_koopmans.spin import SpinChannel
 
-        s = [self._FakeProjection("Si", 0)]  # 1 x 2 sites = 2
-        sp = [self._FakeProjection("Si", -1)]  # 4
+        s = [Projection.model_validate({"site": "Si", "ang_mtm": "l=0"})]  # 1 x 2 sites = 2
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]  # 4
         blocks = _dscf_blocks(si_structure, [s, s, sp], 4, 8, SpinChannel.NONE)
         assert [b["label"] for b in blocks] == ["occ_1", "occ_2", "emp_1"]
         assert blocks[1]["exclude_bands"] == [1, 2, 5, 6, 7, 8]
@@ -260,7 +247,7 @@ class TestDscfBlocks:
         """A block crossing the occupied/empty boundary is an input error."""
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]  # 4
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]  # 4
         with pytest.raises(ValueError, match="straddles"):
             _dscf_blocks(si_structure, [sp, sp], 6, 8, SpinChannel.NONE)
 
@@ -275,7 +262,7 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]  # 4
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]  # 4
         with pytest.raises(ValueError, match="span 8 bands but nbnd = 6"):
             _dscf_blocks(si_structure, [sp, sp], 6, 6, SpinChannel.NONE)
 
@@ -289,7 +276,7 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]  # 4 = nocc
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]  # 4 = nocc
         with pytest.raises(ValueError, match="for disentanglement"):
             _dscf_blocks(si_structure, [sp], 4, 8, SpinChannel.NONE)
 
@@ -315,7 +302,7 @@ class TestDscfBlocks:
 
         # The stand-in projections duck-type the pydantic model the
         # derivation reads (``.site`` / ``.ang_mtm``), which is all it touches.
-        sp = cast("list[Projection]", [self._FakeProjection("Si", -1)])  # 4 = nocc
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]  # 4 = nocc
         blocks = create_explicit_blocks(si_structure, [sp], 8, 4, SpinChannel.NONE)
         assert get_wannier_indices(blocks[0]) == [1, 2, 3, 4]  # entirely occupied
         with pytest.raises(ValueError, match="for disentanglement"):
@@ -330,7 +317,7 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        s = [self._FakeProjection("Si", 0)]  # 2 wann < nocc 4
+        s = [Projection.model_validate({"site": "Si", "ang_mtm": "l=0"})]  # 2 wann < nocc 4
         with pytest.raises(ValueError, match="every occupied band"):
             _dscf_blocks(si_structure, [s], 4, 4, SpinChannel.NONE)
 
@@ -338,7 +325,7 @@ class TestDscfBlocks:
         """Blocks spanning more bands than nbnd are an input error."""
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]
         with pytest.raises(ValueError, match="nbnd"):
             _dscf_blocks(si_structure, [sp, sp], 4, 6, SpinChannel.NONE)
 
@@ -352,7 +339,7 @@ class TestDscfBlocks:
         """
         from aiida_koopmans.spin import SpinChannel
 
-        sp = [self._FakeProjection("Si", -1)]  # 4
+        sp = [Projection.model_validate({"site": "Si", "ang_mtm": "l=-1"})]  # 4
         blocks = _dscf_blocks(si_structure, [sp, sp], 4, 8, SpinChannel.NONE)
         assert [b["filled"] for b in blocks] == [True, False]
 
