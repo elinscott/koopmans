@@ -1,41 +1,17 @@
 """Input parameters for unfold-and-interpolate post-processing."""
 
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import Field, field_validator
 
 from koopmans.base import BaseModel
 
+__all__ = ["UnfoldAndInterpolateConfig"]
+
 
 class UnfoldAndInterpolateConfig(BaseModel):
     """Input parameters for unfold-and-interpolate post-processing."""
 
-    kc_ham_file: Path | None = Field(
-        default=None, description="the name of the Hamiltonian file to read in"
-    )
-    wannier90_seedname: Path = Field(
-        default=Path("wannier90"),
-        description=(
-            "wannier90_seedname must be equal to the seedname used in the previous Wannier90 calculation. The code "
-            "will look for a file called wannier90_seedname.wout"
-        ),
-    )
-    wannier90_calc: Literal["pc", "sc"] = Field(
-        default="pc",
-        description=(
-            "Specifies the type of PW/Wannier90 calculation preceding the koopmans calculation. If the latter "
-            "is done in a supercell at Gamma then wannier90_calc must be equal to 'sc', otherwise if it comes from "
-            "a calculation with k-points it must be equal to 'pc'.\n"
-        ),
-    )
-    do_map: bool = Field(
-        default=False,
-        description=(
-            "if True, connect the Wannier functions in the supercell to those in the primitive cell. This is "
-            "basically the unfolding procedure. It can be activated only if ``wannier90_calc='sc'``"
-        ),
-    )
     use_ws_distance: bool = Field(
         default=True,
         description=(
@@ -57,8 +33,6 @@ class UnfoldAndInterpolateConfig(BaseModel):
             "gauge, i.e. the Wannier gauge"
         ),
     )
-    dft_ham_file: Path | None = Field(default=None, description="")
-    dft_smooth_ham_file: Path | None = Field(default=None, description="")
     do_dos: bool = Field(
         default=True,
         description=(
@@ -66,9 +40,6 @@ class UnfoldAndInterpolateConfig(BaseModel):
             '`kpoints` block. The DOS is written to a file called "dos_interpolated.dat"'
         ),
     )
-    num_wann: int | None = Field(default=None, description="")
-    num_wann_sc: int | None = Field(default=None, description="")
-    wannier90_input_sc: bool = Field(default=False, description="")
 
     @field_validator("smooth_int_factor", mode="before")
     @classmethod

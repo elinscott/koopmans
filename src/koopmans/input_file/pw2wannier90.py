@@ -5,6 +5,8 @@ from typing import ClassVar
 
 from pydantic_espresso.models.pw2wannier90.develop import InputppNamelist
 
+__all__ = ["PW2Wannier90InputParameters"]
+
 
 class PW2Wannier90InputParameters(InputppNamelist):
     """Input parameters for ``pw2wannier90.x`` calculations (the ``INPUTPP`` namelist)."""

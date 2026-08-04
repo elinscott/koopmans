@@ -12,33 +12,42 @@ from koopmans.aiida.utils import suppress_aiida_logging
 if TYPE_CHECKING:
     from aiida import orm
 
-__all__ = ["dump_workgraph"]
+__all__ = ["dump_workgraph", "trained_model_output"]
 
 
-def _strip_pk_from_folder_names(root_path: Path) -> None:
-    """Remove trailing pk numbers from folder names throughout a directory tree.
+# AiiDA's dump names each child folder "<NN>-<link_label>", appends the
+# process label when it differs from the link label, and ends with the pk.
+# A sub-workgraph's process label is always "WorkGraph<graph_name>", which
+# never equals the link label, so every sub-workgraph folder repeats its
+# name inside the suffix. Both decorations go; "<NN>-<link_label>" stays.
+_FOLDER_NAME_SUFFIXES = [
+    re.compile(r"^(.+)-\d+$"),
+    re.compile(r"^(.+)-WorkGraph<[^<>]+>$"),
+]
 
-    AiiDA's dump creates folders like "WorkGraphName-1234" or "01-task-5678".
-    This function strips the trailing "-<number>" from all folder names.
 
-    Processes directories bottom-up to avoid path issues when renaming parents.
+def _simplify_folder_names(root_path: Path) -> None:
+    """Strip pk numbers and WorkGraph process labels from folder names.
+
+    Processes directories bottom-up to avoid path issues when renaming
+    parents, and leaves a folder untouched if the simplified name is
+    already taken.
 
     :param root_path: Root directory to process.
     """
-    # Pattern to match folder names ending with -<pk_number>
-    pk_pattern = re.compile(r"^(.+)-(\d+)$")
-
     # Get all directories, sorted by depth (deepest first) for bottom-up processing
     all_dirs = sorted(root_path.rglob("*"), key=lambda p: len(p.parts), reverse=True)
     all_dirs = [d for d in all_dirs if d.is_dir()]
 
     for dir_path in all_dirs:
-        match = pk_pattern.match(dir_path.name)
-        if match:
-            new_name = match.group(1)
-            new_path = dir_path.parent / new_name
-            if dir_path != new_path and not new_path.exists():
-                shutil.move(str(dir_path), str(new_path))
+        new_name = dir_path.name
+        for pattern in _FOLDER_NAME_SUFFIXES:
+            match = pattern.match(new_name)
+            if match:
+                new_name = match.group(1)
+        new_path = dir_path.parent / new_name
+        if dir_path != new_path and not new_path.exists():
+            shutil.move(str(dir_path), str(new_path))
 
 
 def _simplify_calcjob_dump(output_path: Path) -> None:
@@ -78,6 +87,33 @@ def _simplify_calcjob_dump(output_path: Path) -> None:
             filepath.unlink()
 
 
+def trained_model_output(process: orm.ProcessNode) -> orm.Dict | None:
+    """Return the process's non-empty trained-model ``Dict`` output, if any."""
+    from aiida import orm
+
+    model_node = getattr(process.outputs, "model", None)
+    if isinstance(model_node, orm.Dict) and model_node.get_dict():  # type: ignore[no-untyped-call]
+        return model_node
+    return None
+
+
+def _dump_model_json(process: orm.ProcessNode, output_path: Path) -> None:
+    """Write a trained screening model as a ``model.json`` convenience copy.
+
+    The stored ``model`` ``orm.Dict`` output stays the canonical artifact
+    (a later run references it via ``ml: {model: <pk-or-uuid>}``); the JSON
+    copy feeds ``ml: {model_file: ...}`` outside the training profile.
+    Processes without a non-empty ``model`` Dict output are left alone.
+    """
+    import json
+
+    model_node = trained_model_output(process)
+    if model_node is None:
+        return
+    model = model_node.get_dict()  # type: ignore[no-untyped-call]
+    (output_path / "model.json").write_text(json.dumps(model, indent=2) + "\n")
+
+
 def dump_workgraph(
     process: orm.ProcessNode,
     output_path: Path,
@@ -86,7 +122,7 @@ def dump_workgraph(
     """Dump a workgraph to a local directory with simplified structure.
 
     Uses AiiDA's dump functionality, then:
-    - Renames CalcJobNode folders to have descriptive names (e.g., "01-pw-scf")
+    - Strips pk numbers and WorkGraph process labels from folder names
     - Simplifies each CalcJobNode folder structure
     - Removes top-level metadata files
 
@@ -110,8 +146,8 @@ def dump_workgraph(
             dump_unsealed=True,
         )
 
-    # Strip pk numbers from all folder names
-    _strip_pk_from_folder_names(output_path)
+    # Strip pk numbers and WorkGraph process labels from all folder names
+    _simplify_folder_names(output_path)
 
     # Simplify each CalcJobNode folder (merge node_inputs/outputs)
     for folder in output_path.rglob("*"):
@@ -128,5 +164,7 @@ def dump_workgraph(
     ]:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
+
+    _dump_model_json(process, output_path)
 
     return output_path

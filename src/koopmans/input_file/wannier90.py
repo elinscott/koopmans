@@ -12,6 +12,8 @@ from wannier90_input.models.parameters import (
     Projection,
 )
 
+__all__ = ["RestrictedWannier90InputParameters"]
+
 
 class RestrictedWannier90InputParameters(Wannier90Input):
     """Wannier90 input parameters, excluding those that ``koopmans`` manages itself.

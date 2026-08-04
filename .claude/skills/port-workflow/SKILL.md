@@ -17,17 +17,17 @@ If missing, ask the user which class to port and list candidates from `/home/lin
 
 1. **Read `koopmans2/CLAUDE.md`** if you haven't already this session — it has the mapping table and architectural rules.
 2. **Locate and read the legacy class.** It's in `/home/linsco_e/code/koopmans/src/koopmans/workflows/`. Read the whole file plus any sub-workflows it instantiates.
-3. **Check what's already done.** Read `koopmans2/src/koopmans/aiida/workflows.py` and `aiida-koopmans2/src/aiida_koopmans/workgraphs/` — the task may be partially ported.
+3. **Check what's already done.** Read `koopmans2/src/koopmans/aiida/workflows/` and `aiida-koopmans2/src/aiida_koopmans/workgraphs/` — the task may be partially ported.
 4. **For each QE calculator the workflow uses, delegate to the `qe-plugin-scout` agent** in a single batched message if there are multiple. Collect the recommendations before writing code.
 5. **Delegate the actual porting to the `koopmans-porter` agent.** Pass it:
    - The legacy class name and file path.
    - The scout's findings.
    - Any relevant existing workgraphs it should compose with.
 6. **Review the produced `@task.graph` with `workgraph-author`** if the wiring is non-trivial (chained SCF→NSCF→X, optimizer loops, conditional branches).
-7. **Ensure the dispatcher is updated** in `koopmans2/src/koopmans/aiida/workflows.py`:
+7. **Ensure the dispatcher is updated** in `koopmans2/src/koopmans/aiida/workflows/`:
    - `Task` enum entry (if new) in `koopmans2/src/koopmans/input_file/workflow.py`.
    - `load_codes_for_task` branch.
-   - `_build_<task>_workgraph` helper.
+   - `build_<task>_workgraph` route module.
    - `build_workgraph` dispatch branch.
 8. **Add a regression test via `aiida-test-author`.** Construction-only (no QE execution) is fine for the first pass; flag to the user whether an execution-based test should follow.
 9. **Summarize for the user**: what was ported, what was deferred, what new dependencies (if any), and which tutorial JSONs can now be dispatched.

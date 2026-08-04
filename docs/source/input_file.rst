@@ -21,8 +21,11 @@ The formats of each of the sections are defined as follows
 Specifications for all elements of the input file
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+.. Members come from ``koopmans.input_file.__all__``; adding an import cannot
+   put a name on this page. ``KoopmansInput`` is the one exclusion because it is
+   documented in full above.
+
 .. automodule:: koopmans.input_file
    :members:
-   :imported-members:
    :member-order: alphabetical
-   :exclude-members: KoopmansInput, load, Path, Field, model_validator, field_validator, AfterValidator, safe_load, ErrorDetails, BaseModel, convert_errors, prettify_errors
+   :exclude-members: KoopmansInput

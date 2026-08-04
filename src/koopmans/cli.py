@@ -19,7 +19,7 @@ from pathlib import Path
 
 import click
 
-from koopmans.aiida.dumping import dump_workgraph
+from koopmans.aiida.dumping import dump_workgraph, trained_model_output
 from koopmans.aiida.progress import run_with_progress
 from koopmans.aiida.setup.codes import list_codes
 from koopmans.aiida.setup.daemon import is_daemon_running, start_daemon, stop_daemon
@@ -98,6 +98,12 @@ def run(input_file: str) -> None:
 
     if wg.process is not None:
         dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
+        model_node = trained_model_output(wg.process)
+        if model_node is not None:
+            click.echo(
+                f"Trained model stored as node {model_node.pk} ({model_node.uuid}) — "
+                f"reference it via `ml: {{model: {model_node.pk}}}`."
+            )
 
 
 # Shared option for caching

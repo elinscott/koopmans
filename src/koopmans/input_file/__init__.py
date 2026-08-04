@@ -28,6 +28,37 @@ from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfi
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
 from koopmans.input_file.workflow import WorkflowConfig
 
+# The public schema surface. The documentation renders this list, so a name
+# absent from it is undocumented however it reaches the module namespace;
+# `Projection` and the per-calculator models are re-exports and belong here.
+__all__ = [
+    "INPUT_FILE_FORMAT_VERSION",
+    "AtomicPositionsInput",
+    "AtomsInput",
+    "CalculatorParametersInput",
+    "CellParametersViaAlat",
+    "CellParametersViaIbrav",
+    "CellParametersViaVectors",
+    "GammaOnlyKpointsInput",
+    "GridKpointsInput",
+    "KCPInputParameters",
+    "KoopmansInput",
+    "KpointOffset",
+    "MLConfig",
+    "NoOffset",
+    "PW2Wannier90InputParameters",
+    "PWInputParameters",
+    "ParallelizationInput",
+    "Projection",
+    "RestrictedWannier90InputParameters",
+    "SpinSpecificWannierInput",
+    "UnfoldAndInterpolateConfig",
+    "Wannier90InputParametersWithUpDown",
+    "WorkflowConfig",
+    "migrate_input_dict",
+    "read_input_file",
+]
+
 INPUT_FILE_FORMAT_VERSION = 1
 """Current version of the input file format.
 

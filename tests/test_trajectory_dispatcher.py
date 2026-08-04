@@ -261,7 +261,7 @@ def trajectory_codes(installed_pw_code: Any, installed_kcp_code: Any) -> dict[st
 
 
 class TestTrajectoryDispatcher:
-    """``_build_trajectory_workgraph`` fans one DSCF task out per snapshot."""
+    """``build_trajectory_workgraph`` fans one DSCF task out per snapshot."""
 
     def test_builds_one_dscf_task_per_snapshot(
         self,
@@ -272,12 +272,12 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A 3-frame xyz produces ``dscf_snapshot_1 .. dscf_snapshot_3``."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 3)
         koopmans_input = KoopmansInput.model_validate(_trajectory_input_dict(str(xyz)))
 
-        workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
 
         names = set(workgraph.get_task_names())
         assert {f"dscf_snapshot_{i}" for i in range(1, 4)} <= names
@@ -291,7 +291,7 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A singlepoint task fed a snapshots block fails with a clear ValueError."""
-        from koopmans.aiida.workflows import _build_singlepoint_workgraph
+        from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz), task="singlepoint")
@@ -299,7 +299,7 @@ class TestTrajectoryDispatcher:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="trajectory"):
-            _build_singlepoint_workgraph(koopmans_input, trajectory_codes)
+            build_singlepoint_workgraph(koopmans_input, trajectory_codes)
 
     def test_external_projectors_rejected(
         self,
@@ -307,7 +307,7 @@ class TestTrajectoryDispatcher:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``atom_proj_ext`` is rejected: the trajectory route never consults it."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz))
@@ -315,7 +315,7 @@ class TestTrajectoryDispatcher:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="not wired into the trajectory route"):
-            _build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={})
 
 
 def _wannier_trajectory_input_dict(snapshots: str) -> dict[str, Any]:
@@ -357,14 +357,14 @@ class TestOrbitalDensityDescriptor:
         The discriminator against a dispatcher that accepts the keyword but
         silently keeps building the self-Hartree dataset.
         """
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _wannier_trajectory_input_dict(str(xyz))
         d["ml"]["descriptor"] = "power_spectrum"
         koopmans_input = KoopmansInput.model_validate(d)
 
-        workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
 
         names = set(workgraph.get_task_names())
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
@@ -381,12 +381,12 @@ class TestOrbitalDensityDescriptor:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """The same Wannier-route input on ``self_hartree`` builds no decompose pass."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
 
-        workgraph = _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
 
         names = set(workgraph.get_task_names())
         assert not any(name.startswith("descriptors_") for name in names), names
@@ -402,7 +402,7 @@ class TestOrbitalDensityDescriptor:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A Kohn-Sham-initialised trajectory cannot feed the decompose pass."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
         d = _trajectory_input_dict(str(xyz))
@@ -410,7 +410,7 @@ class TestOrbitalDensityDescriptor:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="init_orbitals"):
-            _build_trajectory_workgraph(koopmans_input, trajectory_codes)
+            build_trajectory_workgraph(koopmans_input, trajectory_codes)
 
     def test_basis_settings_reach_the_namelist(self) -> None:
         """The ``ml`` radial-basis settings become decompose namelist keys.
@@ -418,7 +418,7 @@ class TestOrbitalDensityDescriptor:
         Without this mapping the power spectra would silently be built on
         the CalcJob's default basis rather than the requested one.
         """
-        from koopmans.aiida.workflows import _decompose_parameters
+        from koopmans.aiida.workflows.trajectory import _decompose_parameters
         from koopmans.input_file.ml import MLConfig
 
         ml_config = MLConfig(n_max=6, l_max=5, r_min=1.0, r_max=4.5)
@@ -431,25 +431,30 @@ class TestOrbitalDensityDescriptor:
         }
 
 
+def _fitted_model() -> dict[str, Any]:
+    """Fit a small, stamped self-Hartree screening model."""
+    from aiida_koopmans.workgraphs.ml import helpers as ml_helpers
+
+    return ml_helpers.fit_screening_model(  # type: ignore[no-any-return]
+        {
+            "descriptors": [[-1.0], [-2.0], [-3.0]],
+            "alpha_targets": [0.5, 0.6, 0.7],
+            "filled": [True, True, False],
+            "labels": ["orb_1", "orb_2", "orb_3"],
+        },
+        "linear_regression",
+        correction="ki",
+        init_orbitals="kohn-sham",
+    )
+
+
 class TestPredictMode:
     """``ml: {mode: predict}`` loads the model file and hands the model to every DSCF."""
 
     @staticmethod
     def _write_model(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
-        """Fit a small self-Hartree model and write it as a model-file JSON."""
-        from aiida_koopmans.workgraphs.ml import helpers as ml_helpers
-
-        model = ml_helpers.fit_screening_model(
-            {
-                "descriptors": [[-1.0], [-2.0], [-3.0]],
-                "alpha_targets": [0.5, 0.6, 0.7],
-                "filled": [True, True, False],
-                "labels": ["orb_1", "orb_2", "orb_3"],
-            },
-            "linear_regression",
-            correction="ki",
-            init_orbitals="kohn-sham",
-        )
+        """Write the fitted model as a model-file JSON."""
+        model = _fitted_model()
         path = tmp_path / "model.json"
         path.write_text(json.dumps(model))
         return path, model
@@ -470,18 +475,18 @@ class TestPredictMode:
         that routing is asserted in aiida-koopmans' kcp workgraph tests)
         and must not grow a dataset / fit / score layer.
         """
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         model_path, model = self._write_model(tmp_path)
 
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {}
-        ab_initio = _build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        ab_initio = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
 
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"}
-        predict = _build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        predict = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
 
         def _dscf(workgraph: Any) -> Any:
             names = set(workgraph.get_task_names())
@@ -504,15 +509,15 @@ class TestPredictMode:
         tmp_path: Path,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """``mode: predict`` without a model file fails at build."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        """``mode: predict`` without a model source fails at build."""
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
-        with pytest.raises(ValueError, match="requires ml:model_file"):
-            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+        with pytest.raises(ValueError, match="requires a trained model"):
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
     def test_predict_rejects_power_spectrum(
         self,
@@ -520,14 +525,14 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``mode: predict`` with the power-spectrum descriptor is an explicit gap."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "descriptor": "power_spectrum"}
 
         with pytest.raises(NotImplementedError, match="self_hartree"):
-            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
     def test_predict_rejects_alpha_numsteps(
         self,
@@ -535,14 +540,14 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``alpha_numsteps > 1`` cannot take effect under ``mode: predict``."""
-        from koopmans.aiida.workflows import _build_trajectory_workgraph
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz), alpha_numsteps=2)
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="alpha_numsteps cannot take effect"):
-            _build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
     def test_non_trajectory_task_rejects_ml_block(
         self,
@@ -563,3 +568,135 @@ class TestPredictMode:
 
         with pytest.raises(NotImplementedError, match="trajectory task only"):
             build_workgraph(KoopmansInput.model_validate(d))
+
+
+class TestModelNodeRoute:
+    """``ml: {model: <pk-or-uuid>}`` threads the stored Dict node to the graph."""
+
+    @staticmethod
+    def _stored_model() -> Any:
+        from aiida import orm
+
+        return orm.Dict(dict=_fitted_model()).store()  # type: ignore[no-untyped-call]
+
+    def _build_with_ml(
+        self,
+        ml_block: dict[str, Any],
+        *,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> Any:
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"] = ml_block
+        return build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+
+    @staticmethod
+    def _dscf_model_value(workgraph: Any) -> Any:
+        return next(t for t in workgraph.tasks if t.name == "dscf_snapshot_1").inputs.ml_model.value
+
+    @pytest.mark.parametrize("identify", ["pk", "uuid"])
+    def test_node_route_threads_the_stored_dict(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+        identify: str,
+    ) -> None:
+        """The named node itself reaches the DSCF's ml_model input.
+
+        Node identity (not just payload equality) at the graph input is
+        the provenance claim: the prediction run consumes the training
+        run's stored artifact.
+        """
+        from aiida import orm
+
+        node = self._stored_model()
+        workgraph = self._build_with_ml(
+            {
+                "mode": "predict",
+                "model": node.pk if identify == "pk" else node.uuid,
+                "descriptor": "self_hartree",
+            },
+            tmp_path=tmp_path,
+            trajectory_codes=trajectory_codes,
+            write_multiframe_xyz=write_multiframe_xyz,
+        )
+        # The stored node sits on the trajectory graph's own input (a
+        # TaggedValue proxy forwards isinstance and attribute access), so
+        # the run's provenance links the training artifact; the DSCF
+        # sub-graph receives the payload.
+        value = workgraph.inputs.ml_model.value
+        assert isinstance(value, orm.Dict), type(value)
+        assert value.uuid == node.uuid
+        assert self._dscf_model_value(workgraph) == node.get_dict()
+
+    def test_routes_deliver_the_same_payload(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """Node and file routes hand the plugin's stamp guards the same model.
+
+        The guards (``ModelMismatchError``) live plugin-side and read the
+        payload; equal payloads across routes is what makes their behavior
+        route-independent.
+        """
+        node = self._stored_model()
+        by_node = self._build_with_ml(
+            {"mode": "predict", "model": node.pk, "descriptor": "self_hartree"},
+            tmp_path=tmp_path,
+            trajectory_codes=trajectory_codes,
+            write_multiframe_xyz=write_multiframe_xyz,
+        )
+        model_path = tmp_path / "model.json"
+        model_path.write_text(json.dumps(node.get_dict()))
+        by_file = self._build_with_ml(
+            {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"},
+            tmp_path=tmp_path,
+            trajectory_codes=trajectory_codes,
+            write_multiframe_xyz=write_multiframe_xyz,
+        )
+        assert self._dscf_model_value(by_node) == self._dscf_model_value(by_file)
+
+    def test_non_dict_node_rejected(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """A node of the wrong type fails naming what ml:model must point at."""
+        from aiida import orm
+
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        wrong = orm.Int(7).store()  # type: ignore[no-untyped-call]
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _trajectory_input_dict(str(xyz))
+        d["ml"] = {"mode": "predict", "model": wrong.pk, "descriptor": "self_hartree"}
+
+        with pytest.raises(ValueError, match="must name the stored trained-model Dict"):
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+
+    def test_model_and_model_file_are_exclusive(self) -> None:
+        """Naming both model sources fails at schema validation."""
+        from koopmans.input_file.ml import MLConfig
+
+        with pytest.raises(ValueError, match="supply exactly one"):
+            MLConfig.model_validate({"mode": "predict", "model": 42, "model_file": "model.json"})
+
+    @pytest.mark.parametrize("bad", [True, 42.0], ids=["bool", "float"])
+    def test_coercible_model_identifiers_rejected(self, bad: object) -> None:
+        """``true`` (PK 1) and ``42.0`` (PK 42) would name a node by accident."""
+        from koopmans.input_file.ml import MLConfig
+
+        with pytest.raises(ValueError, match="integer PK or string UUID"):
+            MLConfig.model_validate({"mode": "predict", "model": bad})

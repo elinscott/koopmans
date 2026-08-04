@@ -8,6 +8,8 @@ from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
 
+__all__ = ["MLConfig"]
+
 
 class MLConfig(BaseModel):
     """Configuration for machine learning models used to predict screening parameters."""
@@ -18,9 +20,16 @@ class MLConfig(BaseModel):
         "an existing model against them, 'predict' applies an existing model in place of "
         "the alpha calculation",
     )
+    model: int | str | None = Field(
+        default=None,
+        description="reuse a model trained in this database: the identifier a "
+        "mode='train' run prints on completion ('Trained model stored as node "
+        "<pk> ...'). If you have a model.json file instead, use `model_file`",
+    )
     model_file: str | None = Field(
         default=None,
-        description="JSON file containing the ML model information",
+        description="path to a trained model's JSON file (a mode='train' run writes "
+        "model.json next to its other outputs)",
     )
     n_max: int = Field(
         default=4,
@@ -45,6 +54,33 @@ class MLConfig(BaseModel):
         default=MLDescriptor.POWER_SPECTRUM,
         description="What to use as the descriptor for the ML model",
     )
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def check_model_identifier(cls, value: object) -> object:
+        """Reject identifier forms that would silently coerce to a wrong PK.
+
+        Pydantic would turn ``42.0`` into PK 42 and ``true`` into PK 1;
+        only an integer PK or a string UUID names a node deliberately.
+        """
+        if value is None or isinstance(value, str):
+            return value
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                f"`ml:model` takes the stored model node's integer PK or string UUID; "
+                f"got {value!r}."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def model_sources_are_exclusive(self) -> Self:
+        """Validate that ``model`` and ``model_file`` are not both given."""
+        if self.model is not None and self.model_file is not None:
+            raise ValueError(
+                "`ml:model` (a stored model node) and `ml:model_file` (a JSON copy) "
+                "are two sources for the same model; supply exactly one."
+            )
+        return self
 
     @field_validator("r_min", mode="after")
     @classmethod

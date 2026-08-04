@@ -22,24 +22,30 @@ def is_daemon_running() -> bool:
         return False
 
 
-def _ensure_hq_env() -> None:
-    """Make ``hq`` and our HQ server discoverable to the AiiDA daemon worker.
+def _ensure_daemon_env() -> None:
+    """Set the environment the AiiDA daemon worker needs before it forks.
 
     The daemon inherits environment from whoever launches it. Without
-    this, two failures happen at submit time:
+    this, three failures happen:
 
-    1. ``bash: line 1: hq: command not found`` — bundled ``hq`` lives at
-       ``${AIIDA_CONFIG}/koopmans/bin/hq``, not on system PATH.
+    1. ``bash: line 1: hq: command not found`` at submit time — bundled
+       ``hq`` lives at ``${AIIDA_CONFIG}/koopmans/bin/hq``, not on
+       system PATH.
     2. ``hq submit`` finds the binary but defaults to looking for the
        server at ``$HOME/.hq-server``; ours lives under the koopmans
        config dir.
+    3. ``sqlite3.OperationalError: unable to open database file`` when
+       a large transaction (e.g. the link inserts of a wide fan-out)
+       spills to a temporary file: sqlite tries ``/var/tmp`` first,
+       which sandboxed environments may not grant.
 
     Fixed by prepending the bundled bin dir to ``PATH`` and exporting
-    ``HQ_SERVER_DIR`` to point at the koopmans-managed server-dir.
-    Both are scoped to *this* Python process (and its forks — the
-    daemon worker), not the user's shell.
+    ``HQ_SERVER_DIR`` and ``SQLITE_TMPDIR`` to koopmans-managed
+    directories. All are scoped to *this* Python process (and its
+    forks — the daemon worker), not the user's shell.
     """
     from .hq import _hq_server_dir, hq_bin_path
+    from .profile import koopmans_dir
 
     bin_dir = str(hq_bin_path().parent)
     current_path = os.environ.get("PATH", "")
@@ -47,6 +53,10 @@ def _ensure_hq_env() -> None:
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{current_path}" if current_path else bin_dir
 
     os.environ["HQ_SERVER_DIR"] = str(_hq_server_dir())
+
+    sqlite_tmpdir = koopmans_dir() / "sqlite-tmp"
+    sqlite_tmpdir.mkdir(parents=True, exist_ok=True)
+    os.environ["SQLITE_TMPDIR"] = str(sqlite_tmpdir)
 
 
 def start_daemon(wait: bool = True, cache: bool = True) -> bool:
@@ -66,7 +76,7 @@ def start_daemon(wait: bool = True, cache: bool = True) -> bool:
     if is_daemon_running():
         return True
 
-    _ensure_hq_env()
+    _ensure_daemon_env()
 
     try:
         client = get_daemon_client()
