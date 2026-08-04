@@ -22,12 +22,14 @@ class MLConfig(BaseModel):
     )
     model: int | str | None = Field(
         default=None,
-        description="PK or UUID of the stored trained-model node (the `model` output "
-        "of a mode='train' run in this profile)",
+        description="reuse a model trained in this database: the identifier a "
+        "mode='train' run prints on completion ('Trained model stored as node "
+        "<pk> ...'). If you have a model.json file instead, use `model_file`",
     )
     model_file: str | None = Field(
         default=None,
-        description="JSON file containing the ML model information",
+        description="path to a trained model's JSON file (a mode='train' run writes "
+        "model.json next to its other outputs)",
     )
     n_max: int = Field(
         default=4,
