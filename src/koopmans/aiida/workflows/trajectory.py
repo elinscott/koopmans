@@ -18,6 +18,7 @@ from koopmans.aiida.workflows.projectors import reject_unwired_external_projecto
 from koopmans.input_file.workflow import CalculateScreeningMethod, VariationalOrbitalType
 
 if TYPE_CHECKING:
+    from aiida import orm
     from aiida_koopmans.workgraphs import Codes
     from aiida_workgraph import WorkGraph
 
@@ -115,14 +116,17 @@ def build_trajectory_workgraph(
 
 def _resolve_trajectory_ml(
     ml_config: MLConfig, workflow: WorkflowConfig
-) -> tuple[MLMode, dict[str, Any] | None]:
+) -> tuple[MLMode, dict[str, Any] | orm.Dict | None]:
     """Map the ``ml`` block onto a trajectory mode and its loaded model.
 
-    ``test`` and ``predict`` modes load the JSON model from
-    ``ml:model_file``. Predict-mode inputs that cannot take effect raise
-    here: the ``power_spectrum`` descriptor (its decompose pass is not
-    wired into the DSCF's screening stage, where the prediction runs)
-    and ``alpha_numsteps != 1``.
+    ``test`` and ``predict`` modes take the model from exactly one of two
+    sources: the stored node named by ``ml:model`` (set as the graph input
+    ``orm.Dict`` itself, so the run's provenance links back to the
+    training artifact) or the JSON file named by ``ml:model_file``.
+    Predict-mode inputs that cannot take effect raise here: the
+    ``power_spectrum`` descriptor (its decompose pass is not wired into
+    the DSCF's screening stage, where the prediction runs) and
+    ``alpha_numsteps != 1``.
     """
     from json import load as json_load
 
@@ -143,16 +147,39 @@ def _resolve_trajectory_ml(
                 "set it to 1."
             )
 
-    ml_model = None
+    ml_model: dict[str, Any] | orm.Dict | None = None
     if ml_mode in (MLMode.TEST, MLMode.PREDICT):
-        if ml_config.model_file is None:
+        if ml_config.model is not None:
+            ml_model = _load_model_node(ml_config.model)
+        elif ml_config.model_file is not None:
+            with open(ml_config.model_file) as handle:
+                ml_model = json_load(handle)
+        else:
             raise ValueError(
-                f"ml:mode='{ml_mode.value}' requires ml:model_file (the JSON model "
-                "produced by a mode='train' run)."
+                f"ml:mode='{ml_mode.value}' requires a trained model: name its stored "
+                "node via ml:model or its JSON copy via ml:model_file (both produced "
+                "by a mode='train' run)."
             )
-        with open(ml_config.model_file) as handle:
-            ml_model = json_load(handle)
     return ml_mode, ml_model
+
+
+def _load_model_node(identifier: int | str) -> orm.Dict:
+    """Load the stored trained-model ``Dict`` node named by PK or UUID.
+
+    The node is set as the trajectory graph's ``ml_model`` input, so the
+    run's provenance links back to the training artifact; the DSCF
+    sub-graphs receive its payload.
+    """
+    from aiida import orm
+
+    raw = str(identifier)
+    node = orm.load_node(int(raw) if raw.isdigit() else raw)
+    if not isinstance(node, orm.Dict):
+        raise ValueError(
+            f"ml:model must name the stored trained-model Dict node (the `model` "
+            f"output of a mode='train' run); node {raw} is a {type(node).__name__}."
+        )
+    return node
 
 
 def _decompose_parameters(ml_config: MLConfig) -> dict[str, float | int]:
