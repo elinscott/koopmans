@@ -22,9 +22,9 @@ so its two spin channels differ.
 .. dropdown:: ❓ Question — Do the IP and EA of O₂ compare as well to experiment?
     :class-title: question-header
 
-    Set ``"spin": "collinear"`` in the ``workflow`` block, add ``"tot_magnetization":
-    2`` and lower ``"nbnd"`` to ``8`` in ``calculator_parameters``, and update the
-    atoms. A complete input file — which also runs two screening iterations and lets
+    Set ``spin: collinear`` in the ``workflow`` block, add ``tot_magnetization: 2`` and
+    lower ``nbnd`` to ``8`` in ``calculator_parameters``, and update the atoms. A
+    complete input file — which also runs two screening iterations and lets
     near-degenerate orbitals share a screening parameter — is :download:`o2.yaml
     <o2.yaml>`. Running it gives an IP of 12.35 eV and an EA of
     0.40 eV, against experimental values of 12.07 and 0.45 eV (`NIST
