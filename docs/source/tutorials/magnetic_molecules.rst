@@ -20,8 +20,8 @@ linear molecule with a bond length of 1.21 Å, and — unlike ozone — it is pa
 so its two spin channels differ.
 
 .. dropdown:: ❔ Question — Do the IP and EA of O₂ compare as well to experiment?
-    :color: primary
-    :class-title: question-header
+    :class-container: admonition note question-box
+    :class-title: admonition-title
 
     Set ``spin: collinear`` in the ``workflow`` block, add ``tot_magnetization: 2`` and
     lower ``nbnd`` to ``8`` in ``calculator_parameters``, and update the atoms. A

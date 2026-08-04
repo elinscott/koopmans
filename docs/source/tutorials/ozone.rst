@@ -43,8 +43,8 @@ The ``atoms`` block describes the cell and the atoms in it, much like a Quantum 
 input file. The positions are Cartesian, in the units the block declares.
 
 .. dropdown:: ❔ Question — Why is the simulation cell so much larger than the molecule itself?
-    :color: primary
-    :class-title: question-header
+    :class-container: admonition note question-box
+    :class-title: admonition-title
 
     The cell is a box of vacuum that keeps the molecule's periodic images apart — a
     plane-wave code works in a supercell even when the system is treated as
@@ -115,8 +115,8 @@ final spin-resolved calculation that restarts from the spin-unpolarized density
 duplicated into both spin channels.
 
 .. dropdown:: ❔ Question — Why the detour, instead of one spin-resolved calculation from scratch?
-    :color: primary
-    :class-title: question-header
+    :class-container: admonition note question-box
+    :class-title: admonition-title
 
     For ozone — a closed-shell molecule — a direct spin-resolved calculation would in
     fact converge to the correct spin-symmetric solution. The detour has two virtues all
@@ -220,8 +220,8 @@ comparison, find the same lines in the initialization output,
 ``ozone/06-dft_init_nspin2/01-dft_init-KcpCalculation/outputs/aiida.cpo``.
 
 .. dropdown:: ❔ Question — What do you find?
-    :color: primary
-    :class-title: question-header
+    :class-container: admonition note question-box
+    :class-title: admonition-title
 
     Near the bottom of the final KI output:
 
@@ -283,8 +283,8 @@ input: ``inputs/file_alpharef.txt`` lists one :math:`\alpha_i` per orbital, here
 from 0.66 to 0.78 — each one computed, not fitted.
 
 .. dropdown:: ❔ Question — Why one screening parameter per orbital, rather than a single α?
-    :color: primary
-    :class-title: question-header
+    :class-container: admonition note question-box
+    :class-title: admonition-title
 
     A single :math:`\alpha` fitted to the HOMO would enforce the Koopmans condition on
     the HOMO alone — the ionization potential would come out the same by construction,
@@ -293,8 +293,8 @@ from 0.66 to 0.78 — each one computed, not fitted.
     describe the LUMO. Screening is an orbital-by-orbital affair.
 
 .. dropdown:: ❔ Question — What happens if you increase ``alpha_numsteps`` to 2 and rerun?
-    :color: primary
-    :class-title: question-header
+    :class-container: admonition note question-box
+    :class-title: admonition-title
 
     With ``alpha_numsteps: 1`` the screening parameters are computed once from the
     starting guess and never checked for self-consistency. With a second step, the
@@ -304,8 +304,8 @@ from 0.66 to 0.78 — each one computed, not fitted.
     barely move — the first pass already brought them close to self-consistency.
 
 .. dropdown:: ❔ Question — How does the cost of all this scale with system size?
-    :color: primary
-    :class-title: question-header
+    :class-container: admonition note question-box
+    :class-title: admonition-title
 
     Each screening iteration runs roughly one constrained calculation per orbital, so a
     ΔSCF Koopmans calculation costs about :math:`N_\text{orb}` times a single DFT

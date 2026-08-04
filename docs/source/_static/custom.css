@@ -89,12 +89,38 @@ section:has(> .landing-logo) > h1 {
     font-style: italic;
 }
 
-/* Tutorial questions are sphinx-design dropdowns carrying :color: primary,
-   whose blue is the hue the theme already gives a note. All that is left to
-   style is an inline literal in the header, which keeps the theme's white
-   background and red text and so fights the banner it sits on. */
-.sd-dropdown .sd-summary-title.question-header code {
-    background-color: rgba(255, 255, 255, 0.16);
-    border-color: rgba(255, 255, 255, 0.4);
-    color: #fff;
+/* Tutorial questions are the theme's own note admonition, made collapsible.
+   The dropdown borrows `admonition note` and `admonition-title`, so the band
+   colour, the body tint and the text colours are all the theme's. What is left
+   here undoes the card sphinx-design layers underneath, which the borrowed
+   classes do not outrank: a card draws a border, pads its header and body on
+   its own terms, and lays the header out as an inline-flex box that shrinks to
+   its text instead of spanning the width. */
+.rst-content .question-box.sd-card,
+.rst-content .question-box:not([open]).sd-card {
+    border: none;
+    border-radius: 0;
+}
+
+.rst-content .question-box > .admonition-title,
+.rst-content .question-box:not([open]) > .admonition-title {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 12px;
+    font-size: inherit;
+    font-weight: 700;
+    border: none;
+    border-radius: 0;
+}
+
+/* The ❔ stands in for the exclamation mark the theme prefixes a note with. */
+.rst-content .question-box > .admonition-title::before {
+    content: none;
+    margin-right: 0;
+}
+
+/* The container's own 12px padding spaces the body, as it does in a note. */
+.rst-content .question-box > .sd-card-body {
+    padding: 0;
 }
