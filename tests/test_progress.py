@@ -246,23 +246,52 @@ class TestSiblingOrder:
 
         assert [row.label for row in rows[1:]] == ["Wannierize", "DFT Bands"]
 
-    def test_a_family_holds_the_slot_of_its_first_member(
+    def test_an_interleaved_family_keeps_its_creation_order(
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
     ) -> None:
-        """Late members of an indexed family sort into it, not to the end of the table."""
+        """A family split by another step is left exactly as it ran.
+
+        The spin initialization is one such family: the dummy nspin=2
+        step lays out the restart files the real nspin=2 step reads, so
+        sorting the two nspin rows together would put the reader above
+        the writer.
+        """
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(label="compute_alpha_orb_1", seconds=1.0),
-                FakeNode(label="final_scf", seconds=2.0),
-                FakeNode(label="compute_alpha_orb_10", seconds=3.0),
-                FakeNode(label="compute_alpha_orb_2", seconds=4.0),
+                FakeNode(label="dft_init_nspin_1", seconds=1.0),
+                FakeNode(label="dft_init_nspin_2_dummy", seconds=2.0),
+                FakeNode(label="dft_init_nspin_2", seconds=3.0),
             ],
         )
 
         rows = render(root)
 
         assert [row.label for row in rows[1:]] == [
+            "DFT Init (nspin=1)",
+            "DFT Init (nspin=2; dummy)",
+            "DFT Init (nspin=2)",
+        ]
+
+    def test_a_contiguous_family_sorts_amid_unmoved_rows(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """The fan-out counts properly; the rows around it do not move."""
+        root = FakeNode(
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+            children=[
+                FakeNode(label="ki_trial", seconds=1.0),
+                FakeNode(label="compute_alpha_orb_1", seconds=2.0),
+                FakeNode(label="compute_alpha_orb_10", seconds=3.0),
+                FakeNode(label="compute_alpha_orb_2", seconds=4.0),
+                FakeNode(label="final_scf", seconds=5.0),
+            ],
+        )
+
+        rows = render(root)
+
+        assert [row.label for row in rows[1:]] == [
+            "KI Trial",
             "Compute Alpha Orb 1",
             "Compute Alpha Orb 2",
             "Compute Alpha Orb 10",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from time import sleep
 from typing import TYPE_CHECKING, NamedTuple, cast
 
@@ -15,7 +16,6 @@ from koopmans.aiida.utils import get_node_label, suppress_stdout
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import datetime
 
     from aiida.orm import ProcessNode
     from aiida_workgraph import WorkGraph
@@ -248,12 +248,14 @@ def _reload(pk: int) -> ProcessNode:
 def _ordered_children(process_node: ProcessNode) -> list[tuple[str, ProcessNode]]:
     """Return the displayable children as ``(prettified label, node)``, in display order.
 
-    Children are grouped into *families* — the label with its digit runs
-    masked, so every ``Compute Alpha Orb N`` shares one family. Families
-    follow the creation order of their first member, keeping a
-    workflow's sequential steps in the order they ran; within a family
-    the order is natural (``Orb 2`` before ``Orb 10``), then ctime, then
-    pk.
+    Children read in creation order, by ctime and then pk. Against that
+    order, a *family* — the label with its digit runs masked, so every
+    ``Compute Alpha Orb N`` shares one — is sorted naturally (``Orb 2``
+    before ``Orb 10``), but only where its members were created
+    consecutively. A family split by another step never was a fan-out:
+    the spin initialization runs ``nspin=1``, ``nspin=2 (dummy)``,
+    ``nspin=2``, and pulling the two ``nspin=2`` rows together would put
+    the row that reads the restart files above the one that writes them.
 
     ``@calcfunction`` / ``@workfunction`` / ``@task`` PyFunctions are
     dropped here, along with their descendants (see
@@ -276,22 +278,16 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[str, ProcessNode]
             continue
         entries.append((prettify_label(get_node_label(child, include_code=True)), child))
 
-    first_seen: dict[str, tuple[datetime, int]] = {}
-    for label, child in entries:
-        stamp = (child.ctime, child.pk or 0)
-        family = _family_key(label)
-        earliest = first_seen.get(family)
-        if earliest is None or stamp < earliest:
-            first_seen[family] = stamp
+    entries.sort(key=lambda entry: (entry[1].ctime, entry[1].pk or 0))
 
-    entries.sort(
-        key=lambda entry: (
-            first_seen[_family_key(entry[0])],
-            _natural_key(entry[0]),
-            entry[1].ctime,
-            entry[1].pk or 0,
-        )
-    )
+    positions: dict[str, list[int]] = defaultdict(list)
+    for index, (label, _) in enumerate(entries):
+        positions[_family_key(label)].append(index)
+
+    for indices in positions.values():
+        if len(indices) > 1 and indices == list(range(indices[0], indices[-1] + 1)):
+            run = sorted((entries[index] for index in indices), key=lambda e: _natural_key(e[0]))
+            entries[indices[0] : indices[-1] + 1] = run
     return entries
 
 
