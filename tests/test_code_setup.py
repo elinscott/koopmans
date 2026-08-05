@@ -520,7 +520,9 @@ class TestMpiFlagMigration:
         """A generator of override labels is honoured for the second code too.
 
         Membership is tested once per code, so an argument that can only be
-        iterated once would drop every override after the first.
+        iterated once loses every override the first test consumed. The
+        generator lists the codes in the opposite order to the migration, so
+        looking up the first code drains it entirely.
         """
         from aiida.orm import load_code
 
@@ -532,7 +534,7 @@ class TestMpiFlagMigration:
             assert code is not None
 
         migrations = migrate_code_mpi_flags(
-            ["pw", "dos"], aiida_localhost, parallel_labels=(label for label in ["pw", "dos"])
+            ["pw", "dos"], aiida_localhost, parallel_labels=(label for label in ["dos", "pw"])
         )
 
         assert sorted(m.label for m in migrations) == ["dos", "pw"]
