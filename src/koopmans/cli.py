@@ -114,6 +114,20 @@ cache_option = click.option(
 )
 
 
+def _validate_code_labels(labels: tuple[str, ...], param_hint: str) -> set[str]:
+    """Return the given code labels, rejecting any koopmans does not register."""
+    from koopmans.aiida.setup.codes import code_specs
+
+    known = code_specs()
+    unknown = sorted({label for label in labels if label not in known})
+    if unknown:
+        raise click.BadParameter(
+            f"Unknown code(s): {', '.join(unknown)}. Known codes: {', '.join(sorted(known))}",
+            param_hint=param_hint,
+        )
+    return set(labels)
+
+
 @cli.command()
 @click.option(
     "--use-postgres",
@@ -135,6 +149,20 @@ cache_option = click.option(
     help="Specify an executable path for a code, e.g. --code pw=/opt/qe/bin/pw.x",
 )
 @click.option(
+    "--serial",
+    "serial_labels",
+    multiple=True,
+    metavar="NAME",
+    help="Register a code to run without mpirun, overriding what its binary declares.",
+)
+@click.option(
+    "--parallel",
+    "parallel_labels",
+    multiple=True,
+    metavar="NAME",
+    help="Register a code to run under mpirun, overriding what its binary declares.",
+)
+@click.option(
     "--max-procs",
     type=int,
     default=None,
@@ -148,6 +176,8 @@ def install(
     use_postgres: bool,
     procs_per_calc: int | None,
     code_overrides: tuple[str, ...],
+    serial_labels: tuple[str, ...],
+    parallel_labels: tuple[str, ...],
     max_procs: int | None,
     cache: bool,
 ) -> None:
@@ -163,6 +193,11 @@ def install(
     Use --code to specify a custom executable path for a code, e.g.:
 
         koopmans install --code pw=/opt/qe/bin/pw.x --code wannier90=/usr/local/bin/wannier90.x
+
+    Whether each code is launched under mpirun is decided by inspecting its
+    binary. Use --serial/--parallel to overrule that, e.g.:
+
+        koopmans install --parallel wannier90
     """
     # Parse code overrides into a dict
     explicit_codes: dict[str, str] = {}
@@ -176,6 +211,14 @@ def install(
         if not Path(path).is_file():
             raise click.BadParameter(f"Executable not found: {path}", param_hint="--code")
         explicit_codes[name.strip()] = path
+
+    serial = _validate_code_labels(serial_labels, "--serial")
+    parallel = _validate_code_labels(parallel_labels, "--parallel")
+    both = sorted(serial & parallel)
+    if both:
+        raise click.BadParameter(
+            f"Cannot be both serial and parallel: {', '.join(both)}", param_hint="--serial"
+        )
 
     click.echo("Setting up koopmans AiiDA backend...")
     click.echo("=" * 60)
@@ -193,7 +236,12 @@ def install(
             "inspect the log under ${AIIDA_CONFIG}/koopmans/ for details."
         )
 
-    setup_computers(nprocs=procs_per_calc, explicit_codes=explicit_codes)
+    setup_computers(
+        nprocs=procs_per_calc,
+        explicit_codes=explicit_codes,
+        serial_labels=sorted(serial),
+        parallel_labels=sorted(parallel),
+    )
 
     # Clean up any input_tmp.in files created by QE executables during version detection
     for tmp_file in Path.cwd().glob("input_tmp*.in"):

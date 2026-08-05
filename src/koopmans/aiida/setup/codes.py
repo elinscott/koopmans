@@ -7,10 +7,12 @@ the localhost Computer with the appropriate plugin entry point.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import click
 
@@ -48,11 +50,137 @@ def code_specs() -> dict[str, tuple[str, str | None]]:
     }
 
 
-# Codes that must always run in serial (no MPI): wann2kcp.x races on its
-# buffer scratch under multiple ranks, and merge_evc.x is a plain
-# concatenation tool. The CalcJobs also enforce single-rank resources; this
-# additionally stops mpirun from being prepended at all.
-SERIAL_CODES: set[str] = {"wann2kcp", "merge_evc"}
+# Codes that must not use MPI whatever their build supports, mapped to the
+# reason quoted in the install summary. The CalcJobs also enforce single-rank
+# resources; this additionally stops mpirun from being prepended at all.
+SERIAL_CODES: dict[str, str] = {
+    "wann2kcp": "always serial: races on its buffer scratch",
+    "merge_evc": "always serial: a plain concatenation tool",
+}
+
+# Dynamic symbols only an MPI program carries: a serial build never calls
+# MPI_Init. Fortran bindings lower-case and suffix the name.
+MPI_INIT_SYMBOLS = ("MPI_Init", "mpi_init_", "MPI_Init_thread")
+
+# Sonames of the MPI runtimes. Matched against the soname alone, never the
+# resolved path: an OpenBLAS or ScaLAPACK build installed under an
+# ``openmpi/`` directory carries "mpi" in its path without being one.
+MPI_LIBRARY_PREFIXES = ("libmpi", "libmpich")
+
+
+class MpiDecision(NamedTuple):
+    """Whether one code runs under mpirun, and the evidence behind it."""
+
+    label: str
+    with_mpi: bool
+    reason: str
+
+
+class MpiMigration(NamedTuple):
+    """A registered code whose stored ``with_mpi`` disagreed with its binary."""
+
+    label: str
+    retired_label: str
+    decision: MpiDecision
+
+
+def mpi_evidence(dynamic_symbols: str, linked_libraries: str, raw_strings: str) -> str | None:
+    """Return why a binary looks MPI-capable, or ``None`` if nothing says so.
+
+    Evidence, strongest first: an ``MPI_Init`` entry among the dynamic symbols
+    (``nm -D``); an MPI runtime among the linked sonames (``ldd``); the
+    ``MPI_Init`` string in the binary, which catches a statically linked MPI
+    whose symbols were stripped. The bare substring "mpi" is not evidence —
+    OpenBLAS, ScaLAPACK and HDF5 paths carry it and none of them make a
+    program parallel.
+    """
+    for symbol in MPI_INIT_SYMBOLS:
+        if symbol in dynamic_symbols:
+            return f"declares {symbol}"
+
+    for soname in _linked_sonames(linked_libraries):
+        if soname.startswith(MPI_LIBRARY_PREFIXES):
+            return f"links {soname}"
+
+    if "MPI_Init" in raw_strings:
+        return "contains the MPI_Init string"
+
+    return None
+
+
+def declares_mpi(dynamic_symbols: str, linked_libraries: str, raw_strings: str) -> bool:
+    """Report whether the collected evidence shows the binary is MPI-capable."""
+    return mpi_evidence(dynamic_symbols, linked_libraries, raw_strings) is not None
+
+
+def _linked_sonames(linked_libraries: str) -> list[str]:
+    """Extract the library names from ``ldd`` output, dropping resolved paths."""
+    sonames = []
+    for line in linked_libraries.splitlines():
+        entry = line.split("=>")[0].split("(")[0].strip()
+        if entry:
+            sonames.append(Path(entry).name)
+    return sonames
+
+
+def _run_probe(command: list[str], executable_path: str) -> str:
+    """Run an inspection command over a binary, returning "" if it cannot run."""
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed command, path validated by caller
+            [*command, executable_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as exc:
+        logger.debug("MPI probe %s failed on %s: %s", command[0], executable_path, exc)
+        return ""
+    return result.stdout
+
+
+def collect_mpi_evidence(executable_path: str) -> tuple[str, str, str]:
+    """Inspect a binary, returning its dynamic symbols, linked libraries and strings.
+
+    Every probe that cannot run — missing tool, unreadable binary, timeout —
+    contributes an empty string rather than raising, so an undecidable binary
+    ends up serial.
+    """
+    if not os.path.isfile(executable_path):
+        return "", "", ""
+
+    symbols = _run_probe(["nm", "-D"], executable_path)
+    libraries = _run_probe(["ldd"], executable_path)
+    if declares_mpi(symbols, libraries, ""):
+        # The cheap probes already decided; skip reading the whole binary.
+        return symbols, libraries, ""
+    return symbols, libraries, _run_probe(["strings", "-a"], executable_path)
+
+
+def decide_with_mpi(
+    label: str,
+    executable_path: str,
+    serial_labels: Iterable[str] = (),
+    parallel_labels: Iterable[str] = (),
+) -> MpiDecision:
+    """Decide whether a code is registered to run under mpirun.
+
+    The default is set by an asymmetry: running an MPI-capable binary in
+    serial is correct and merely slower, while running a serial binary under
+    mpirun starts N independent copies that race on one working directory and
+    corrupt each other's output. So evidence only ever promotes a code to MPI,
+    and anything undecidable stays serial.
+    """
+    if label in serial_labels:
+        return MpiDecision(label, False, "requested by --serial")
+    if label in parallel_labels:
+        return MpiDecision(label, True, "requested by --parallel")
+    if label in SERIAL_CODES:
+        return MpiDecision(label, False, SERIAL_CODES[label])
+
+    evidence = mpi_evidence(*collect_mpi_evidence(executable_path))
+    if evidence is not None:
+        return MpiDecision(label, True, evidence)
+    return MpiDecision(label, False, "no MPI symbols, libraries or strings in the binary")
 
 
 def find_executable(name: str) -> str | None:
@@ -98,6 +226,26 @@ def code_exists(label: str) -> bool:
         return False
 
 
+def retire_code(label: str, computer: Computer, suffix: str) -> str:
+    """Relabel the code registered under ``label`` as ``<label><suffix>``.
+
+    A repeat of the same operation would otherwise collide with the code it
+    retired last time, so the suffix gains a counter until it is free.
+    """
+    from aiida import orm
+
+    old_code = orm.load_code(f"{label}@{computer.label}")
+    old_code.base.extras.set("replaced", True)
+
+    retired_label = f"{label}{suffix}"
+    counter = 1
+    while code_exists(f"{retired_label}@{computer.label}"):
+        counter += 1
+        retired_label = f"{label}{suffix}{counter}"
+    old_code.label = retired_label
+    return retired_label
+
+
 def setup_code(
     executable_name: str,
     executable_path: str,
@@ -105,12 +253,13 @@ def setup_code(
     computer: Computer,
     force: bool = False,
     label: str | None = None,
+    with_mpi: bool | None = None,
 ) -> InstalledCode | None:
     """Set up an AiiDA code for an executable.
 
-    ``label`` defaults to the executable stem.
+    ``label`` defaults to the executable stem. ``with_mpi`` defaults to what
+    inspecting the binary decides (see :func:`decide_with_mpi`).
     """
-    from aiida import orm
     from aiida.orm import InstalledCode
 
     label = label or executable_name.replace(".x", "")
@@ -120,16 +269,10 @@ def setup_code(
         if not force:
             click.echo(f"  Code '{full_label}' already exists, skipping.")
             return None
-        old_code = orm.load_code(full_label)
-        old_code.base.extras.set("replaced", True)
-        # Uniquify the retired label: a second forced reinstall would otherwise
-        # collide with the previous <label>_old on the same computer.
-        retired_label = f"{label}_old"
-        suffix = 1
-        while code_exists(f"{retired_label}@{computer.label}"):
-            suffix += 1
-            retired_label = f"{label}_old{suffix}"
-        old_code.label = retired_label
+        retire_code(label, computer, "_old")
+
+    if with_mpi is None:
+        with_mpi = decide_with_mpi(label, executable_path).with_mpi
 
     code = InstalledCode(
         label=label,
@@ -137,7 +280,7 @@ def setup_code(
         filepath_executable=executable_path,
         default_calc_job_plugin=plugin,
         description=f"{executable_name} on {computer.label}",
-        with_mpi=label not in SERIAL_CODES,
+        with_mpi=with_mpi,
     )
     code.store()
     click.echo(f"  Registered code '{full_label}' -> {executable_path}")
@@ -162,7 +305,9 @@ def scan_and_register_codes(
     codes_to_find: dict[str, tuple[str, str | None]],
     computer: Computer,
     explicit_codes: dict[str, str] | None = None,
-) -> tuple[list[str], list[str]]:
+    serial_labels: Iterable[str] = (),
+    parallel_labels: Iterable[str] = (),
+) -> tuple[list[str], list[str], list[MpiDecision]]:
     """Scan PATH for executables and register them as AiiDA codes.
 
     ``codes_to_find`` and ``explicit_codes`` are both keyed by code label,
@@ -173,6 +318,7 @@ def scan_and_register_codes(
 
     found_codes = []
     missing_codes = []
+    decisions = []
 
     for label, (executable, plugin) in codes_to_find.items():
         path = explicit_codes.get(label) or find_executable(executable)
@@ -182,12 +328,97 @@ def scan_and_register_codes(
             is_explicit = label in explicit_codes
             source = "Specified" if is_explicit else "Found"
             click.echo(f"  {source} {executable}{version_str}: {path}")
-            setup_code(executable, path, plugin, computer, force=is_explicit, label=label)
+            decision = decide_with_mpi(label, path, serial_labels, parallel_labels)
+            setup_code(
+                executable,
+                path,
+                plugin,
+                computer,
+                force=is_explicit,
+                label=label,
+                with_mpi=decision.with_mpi,
+            )
             found_codes.append(label)
+            decisions.append(decision)
         else:
             missing_codes.append(label)
 
-    return found_codes, missing_codes
+    return found_codes, missing_codes, decisions
+
+
+def migrate_code_mpi_flags(
+    labels: Iterable[str],
+    computer: Computer,
+    serial_labels: Iterable[str] = (),
+    parallel_labels: Iterable[str] = (),
+) -> list[MpiMigration]:
+    """Re-register any already-installed code whose stored ``with_mpi`` is wrong.
+
+    Code nodes are immutable, so a code registered before its binary was
+    inspected keeps whatever flag it was given. Each mismatching code is
+    relabelled ``<label>_mpi_pre`` and a replacement stored under the original
+    label; a code whose binary has since disappeared is left alone.
+    """
+    from aiida import orm
+
+    specs = code_specs()
+    migrations = []
+
+    for label in labels:
+        code = orm.load_code(f"{label}@{computer.label}")
+        executable_path = str(code.filepath_executable)
+        if not os.path.isfile(executable_path):
+            continue
+
+        decision = decide_with_mpi(label, executable_path, serial_labels, parallel_labels)
+        if code.with_mpi == decision.with_mpi:
+            continue
+
+        executable, plugin = specs[label]
+        retired_label = retire_code(label, computer, "_mpi_pre")
+        setup_code(
+            executable,
+            executable_path,
+            plugin,
+            computer,
+            label=label,
+            with_mpi=decision.with_mpi,
+        )
+        migrations.append(MpiMigration(label, retired_label, decision))
+
+    return migrations
+
+
+def print_mpi_decisions(decisions: Iterable[MpiDecision]) -> None:
+    """Print how each registered code was decided to run, and why."""
+    decisions = list(decisions)
+    if not decisions:
+        return
+
+    width = max(len(decision.label) for decision in decisions)
+    click.echo("\nMPI:")
+    for decision in decisions:
+        mode = "parallel" if decision.with_mpi else "serial"
+        click.echo(f"  {decision.label:<{width}}  {mode:<8}  ({decision.reason})")
+
+
+def print_mpi_migrations(migrations: Iterable[MpiMigration]) -> None:
+    """Print which codes were re-registered because their stored flag was wrong."""
+    migrations = list(migrations)
+    if not migrations:
+        return
+
+    click.echo(f"\nCorrected the MPI setting of {len(migrations)} registered code(s):")
+    for migration in migrations:
+        mode = "parallel" if migration.decision.with_mpi else "serial"
+        click.echo(
+            f"  {migration.label}: now {mode} ({migration.decision.reason}); "
+            f"the previous code node is kept as '{migration.retired_label}'"
+        )
+    click.echo(
+        "  A replacement code node hashes differently from the one it replaces, "
+        "so results calculated with the previous node will not be reused from the cache."
+    )
 
 
 def list_codes() -> None:

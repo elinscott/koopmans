@@ -91,6 +91,24 @@ def clear_database(clear_database_after_test: Any) -> Iterator[None]:
 
 
 @pytest.fixture
+def stub_executable(tmp_path: Path) -> Callable[[str], Path]:
+    """Return a factory writing an executable shell script that carries no MPI evidence.
+
+    The factory signature is ``(name) -> Path``. A shell script has no dynamic
+    symbols and no linked libraries, so the MPI probe finds nothing and the
+    code registers serial.
+    """
+
+    def _write(name: str = "pw.x") -> Path:
+        path = tmp_path / name
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+        return path
+
+    return _write
+
+
+@pytest.fixture
 def localhost_computer(aiida_computer_local: Any) -> Any:
     """Return a computer whose label is literally ``localhost``.
 

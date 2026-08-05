@@ -75,6 +75,27 @@ By default each calculation is given as many MPI processes as your machine has p
 cores. Use ``--procs-per-calc`` to change that, and ``--max-procs`` to cap how many
 processes may run at once across all concurrent calculations.
 
+Not every Quantum ESPRESSO build is compiled with MPI, and running a serial build under
+``mpirun`` starts several copies of it in one directory, where they overwrite each
+other's files. ``koopmans install`` therefore inspects each executable it registers and
+reports what it decided:
+
+.. code-block:: text
+
+    MPI:
+      pw         parallel  (links libmpi.so.40)
+      wannier90  serial    (no MPI symbols, libraries or strings in the binary)
+
+A build whose MPI support cannot be detected is registered serial, which is slower but
+always correct. If the guess is wrong for one of your executables, overrule it:
+
+.. code-block:: console
+
+    $ koopmans install --parallel wannier90
+
+Rerunning ``koopmans install`` also re-inspects codes registered earlier and replaces any
+whose setting no longer matches its executable, reporting each replacement.
+
 To check on the engine at any point:
 
 .. code-block:: console
