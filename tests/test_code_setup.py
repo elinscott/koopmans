@@ -206,6 +206,22 @@ class TestVariantCodes:
         assert str(code.filepath_executable) == str(exe)
         assert code.default_calc_job_plugin == "koopmans.pw2wannier_decompose"
 
+    def test_summary_tells_the_user_how_to_register_a_variant(self, capsys: Any) -> None:
+        """The install summary prints the registration command, not "not on PATH".
+
+        The variant is deliberately never scanned for, so the summary is
+        where a user learns it exists and how to supply it.
+        """
+        from koopmans.aiida.setup.codes import print_setup_summary
+
+        print_setup_summary([], [], ["kcw", "pw2wannier90_decompose"])
+
+        out = capsys.readouterr().out
+        assert "koopmans install --code pw2wannier90_decompose=" in out
+        not_on_path = out.split("Not found on PATH")[1].split("\n\n")[0]
+        assert "kcw" in not_on_path
+        assert "pw2wannier90_decompose" not in not_on_path
+
     def test_unknown_code_label_is_rejected(
         self, aiida_profile_clean: Any, aiida_localhost: Any, tmp_path: Any, monkeypatch: Any
     ) -> None:
