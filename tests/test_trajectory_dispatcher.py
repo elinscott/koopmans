@@ -370,6 +370,64 @@ class TestOrbitalDensityDescriptor:
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
         assert not any("extract_snapshot_dataset" in name for name in names), names
 
+    def test_decompose_segment_carries_the_decompose_code(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        installed_decompose_code: Any,
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """The decompose pass runs the decompose build, not the stock pw2wannier90.x.
+
+        Both codes are registered here, so the assertion discriminates
+        against a dispatcher that loads whichever pw2wannier90.x the
+        Wannierizations use — a binary that has no ``wan_mode='decompose'``
+        and would fail inside Quantum ESPRESSO after the graph submits.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["ml"]["descriptor"] = "power_spectrum"
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
+
+        task = next(t for t in workgraph.tasks if t.name == "descriptors_snapshot_1")
+        assert task.inputs.code.value.uuid == installed_decompose_code.uuid
+        assert task.inputs.code.value.uuid != installed_wannier_codes["pw2wannier90"].uuid
+
+    def test_missing_decompose_code_fails_at_build(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """Without the decompose code the build stops and names what to register.
+
+        The stock ``pw2wannier90`` is registered, so this fails only if the
+        route insists on the decompose build rather than falling back to a
+        binary that cannot run the pass.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["ml"]["descriptor"] = "power_spectrum"
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(ValueError, match="pw2wannier90_decompose") as exc_info:
+            build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        assert "self_hartree" in str(exc_info.value)
+
     def test_self_hartree_keeps_direct_read(
         self,
         aiida_profile_clean: Any,

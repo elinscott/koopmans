@@ -27,6 +27,18 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
+# The decompose pass needs the patched pw2wannier90.x, which PATH cannot
+# distinguish from the stock build, so `koopmans install` registers it only
+# from an explicit path and under its own label.
+_DECOMPOSE_CODE_HINT = (
+    "`ml:descriptor='power_spectrum'` builds its descriptors with a pw2wannier90.x "
+    "`wan_mode='decompose'` pass, which the stock pw2wannier90.x does not implement. "
+    "Register the decompose-capable build:\n"
+    "  koopmans install --code pw2wannier90_decompose=/path/to/pw2wannier90.x\n"
+    "or set `ml:descriptor='self_hartree'`, which needs no decompose pass."
+)
+
+
 def build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
@@ -46,8 +58,10 @@ def build_trajectory_workgraph(
     ``power_spectrum`` builds its power spectra from a pw2wannier90.x
     ``wan_mode='decompose'`` pass over each snapshot's per-block Wannier
     functions, so it requires the Wannier-initialised route
-    (``init_orbitals`` in ``mlwfs`` / ``projwfs``); the ``ml``
-    radial-basis settings become that pass's namelist keys. ``mode: predict``
+    (``init_orbitals`` in ``mlwfs`` / ``projwfs``) and the
+    ``pw2wannier90_decompose`` code, a pw2wannier90.x build that
+    implements that mode; the ``ml`` radial-basis settings become that
+    pass's namelist keys. ``mode: predict``
     supports ``self_hartree`` only: the decompose pass that builds the
     power-spectrum descriptors is not wired into the DSCF's screening
     stage, where the prediction runs.
@@ -97,7 +111,9 @@ def build_trajectory_workgraph(
         )
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
-        extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
+        extra_kwargs["pw2wannier90_code"] = load_code(
+            "pw2wannier90_decompose", "pw2wannier90.x", hint=_DECOMPOSE_CODE_HINT
+        )
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
     return TrajectoryWorkflow.build(

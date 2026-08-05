@@ -40,12 +40,25 @@ QE_EXECUTABLES: dict[str, str | None] = {
 }
 
 
+# Codes whose executable name collides with a stock one because they are a
+# different build of it. PATH cannot tell the two apart, so these are
+# registered only when ``koopmans install --code <label>=<path>`` names the
+# binary. ``wan_mode='decompose'`` — the pw2wannier90.x mode that builds the
+# power-spectrum ML descriptors — exists only in a patched build, and the
+# stock binary rejects its namelist keys at run time.
+VARIANT_CODES: dict[str, tuple[str, str | None]] = {
+    "pw2wannier90_decompose": ("pw2wannier90.x", "koopmans.pw2wannier_decompose"),
+}
+
+
 def code_specs() -> dict[str, tuple[str, str | None]]:
     """Return every code koopmans registers, as ``{label: (executable, plugin)}``."""
-    return {
+    specs = {
         executable.replace(".x", ""): (executable, plugin)
         for executable, plugin in QE_EXECUTABLES.items()
     }
+    specs.update(VARIANT_CODES)
+    return specs
 
 
 # Codes that must always run in serial (no MPI): wann2kcp.x races on its
@@ -168,6 +181,9 @@ def scan_and_register_codes(
     ``codes_to_find`` and ``explicit_codes`` are both keyed by code label,
     so a label whose binary differs from the one PATH resolves (a
     decompose-capable pw2wannier90.x, say) can be pointed at explicitly.
+    A label in :data:`VARIANT_CODES` is registered only from
+    ``explicit_codes``: PATH resolves its executable name to the stock
+    build, which is not the binary that label promises.
     """
     explicit_codes = explicit_codes or {}
 
@@ -175,7 +191,10 @@ def scan_and_register_codes(
     missing_codes = []
 
     for label, (executable, plugin) in codes_to_find.items():
-        path = explicit_codes.get(label) or find_executable(executable)
+        if label in VARIANT_CODES:
+            path = explicit_codes.get(label)
+        else:
+            path = explicit_codes.get(label) or find_executable(executable)
         if path:
             version = get_executable_version(path)
             version_str = f" (v{version})" if version else ""
@@ -229,10 +248,21 @@ def print_setup_summary(
         for code in found_codes:
             click.echo(f"  - {code}")
 
-    if missing_codes:
-        click.echo(f"\nNot found on PATH ({len(missing_codes)} executable(s)):")
-        for code in missing_codes:
+    unspecified = [code for code in missing_codes if code in VARIANT_CODES]
+    not_on_path = [code for code in missing_codes if code not in VARIANT_CODES]
+
+    if not_on_path:
+        click.echo(f"\nNot found on PATH ({len(not_on_path)} executable(s)):")
+        for code in not_on_path:
             click.echo(f"  - {code}")
+
+    for code in unspecified:
+        executable = VARIANT_CODES[code][0]
+        click.echo(
+            f"\nNot registered: {code}. This is a non-standard build of "
+            f"{executable} that PATH cannot single out, so give its path:\n"
+            f"  koopmans install --code {code}=/path/to/{executable}"
+        )
 
     essential = ["pw"]
     all_registered = existing_codes + found_codes

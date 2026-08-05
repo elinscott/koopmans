@@ -42,14 +42,18 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
-def load_code(name: str, executable: str) -> orm.AbstractCode:
-    """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
+def load_code(name: str, executable: str, hint: str | None = None) -> orm.AbstractCode:
+    """Load the code labelled ``<name>@localhost``, with a setup hint on failure.
+
+    ``hint`` replaces the default advice for a code whose absence has a
+    remedy other than a plain ``koopmans install``.
+    """
     try:
         return orm.load_code(f"{name}@localhost")
     except Exception as exc:
         raise ValueError(
             f"Could not load {executable} code: {exc}\n"
-            "Please run 'koopmans install' first to set up the AiiDA backend."
+            + (hint or "Please run 'koopmans install' first to set up the AiiDA backend.")
         ) from exc
 
 

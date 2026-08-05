@@ -71,6 +71,15 @@ explicitly:
 
     $ koopmans install --code pw=/opt/qe/bin/pw.x
 
+One code is never picked up from your ``PATH``: the ``pw2wannier90.x`` build that
+implements ``wan_mode='decompose'``, which the ``power_spectrum`` machine-learning
+descriptor needs. It shares its name with the standard ``pw2wannier90.x``, so give its
+path and it is registered under a separate label:
+
+.. code-block:: console
+
+    $ koopmans install --code pw2wannier90_decompose=/path/to/pw2wannier90.x
+
 By default each calculation is given as many MPI processes as your machine has physical
 cores. Use ``--procs-per-calc`` to change that, and ``--max-procs`` to cap how many
 processes may run at once across all concurrent calculations.

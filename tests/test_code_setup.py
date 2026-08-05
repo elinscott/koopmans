@@ -153,3 +153,53 @@ class TestLabelKeyedRegistration:
         assert missing == ["kcp"]
         code = load_code(f"pw2wannier90@{aiida_localhost.label}")
         assert str(code.filepath_executable) == str(exe)
+
+
+class TestVariantCodes:
+    """A variant build is registered from an explicit path, never from PATH."""
+
+    def test_path_scan_leaves_a_variant_unregistered(
+        self, aiida_profile_clean: Any, aiida_localhost: Any, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        """A stock binary on PATH does not get registered under the variant label.
+
+        The variant's executable name is the stock one, so a scan that
+        honoured PATH here would register a binary that cannot run the mode
+        the label promises.
+        """
+        from koopmans.aiida.setup import codes as codes_module
+
+        exe = tmp_path / "pw2wannier90.x"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        monkeypatch.setattr(codes_module, "find_executable", lambda name: str(exe))
+
+        found, missing = codes_module.scan_and_register_codes(
+            {"pw2wannier90_decompose": codes_module.VARIANT_CODES["pw2wannier90_decompose"]},
+            aiida_localhost,
+        )
+        assert found == []
+        assert missing == ["pw2wannier90_decompose"]
+
+    def test_explicit_path_registers_the_variant(
+        self, aiida_profile_clean: Any, aiida_localhost: Any, tmp_path: Any
+    ) -> None:
+        """``--code pw2wannier90_decompose=<path>`` registers that binary."""
+        from aiida.orm import load_code
+
+        from koopmans.aiida.setup.codes import VARIANT_CODES, scan_and_register_codes
+
+        exe = tmp_path / "decompose_pw2wannier90.x"
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+
+        found, missing = scan_and_register_codes(
+            {"pw2wannier90_decompose": VARIANT_CODES["pw2wannier90_decompose"]},
+            aiida_localhost,
+            explicit_codes={"pw2wannier90_decompose": str(exe)},
+        )
+        assert found == ["pw2wannier90_decompose"]
+        assert missing == []
+        code = load_code(f"pw2wannier90_decompose@{aiida_localhost.label}")
+        assert str(code.filepath_executable) == str(exe)
+        assert code.default_calc_job_plugin == "koopmans.pw2wannier_decompose"
