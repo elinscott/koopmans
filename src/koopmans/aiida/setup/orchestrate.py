@@ -64,9 +64,9 @@ def setup_computers(
                 if label in existing_codes:
                     existing_codes.remove(label)
 
-    # Codes registered before their binary was inspected carry whatever flag
-    # they were given; the node is immutable, so correcting it means replacing
-    # it. Codes about to be re-registered below are skipped.
+    # A code node is immutable, so a code that runs the wrong way can only be
+    # corrected by replacing it. Codes about to be re-registered below are
+    # skipped.
     if migrate:
         migrations = migrate_code_mpi_flags(
             existing_codes, computer, serial_labels, parallel_labels

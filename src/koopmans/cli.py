@@ -117,10 +117,8 @@ cache_option = click.option(
 def _validate_code_labels(labels: tuple[str, ...], param_hint: str) -> set[str]:
     """Return the given code labels, rejecting any koopmans does not register.
 
-    ``--code`` names a path for a label and is silently ignored when the label
-    is unknown, because a user may point at an executable koopmans does not
-    yet register; ``--serial``/``--parallel`` only change how a registered
-    code runs, so an unknown label there can only be a typo.
+    For options that only change how an already-registered code runs, an
+    unknown label can only be a typo.
     """
     from koopmans.aiida.setup.codes import code_specs
 
