@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from time import sleep
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -14,6 +15,8 @@ from rich.text import Text
 from koopmans.aiida.utils import get_node_label, suppress_stdout
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from aiida.orm import ProcessNode
     from aiida_workgraph import WorkGraph
 
@@ -175,102 +178,207 @@ def _is_process_function_node(node: ProcessNode) -> bool:
     return isinstance(node, (CalcFunctionNode, WorkFunctionNode))
 
 
-def add_process_rows(
-    table: Table,
-    process_node: ProcessNode,
-    depth: int = 0,
-    parent_label: str | None = None,
-) -> None:
-    """Recursively add rows for a process and its children.
+class ProcessRow(NamedTuple):
+    """One line of the progress table: what to show, how far in, and its state."""
 
-    Skips ``@calcfunction`` / ``@workfunction`` / ``@task`` PyFunctions
-    (see :func:`_is_process_function_node`); those are internal helpers.
-    The root node is always rendered.
+    label: str
+    depth: int
+    state: str
 
-    Also suppresses a row whose prettified label is a *prefix* of (or
-    identical to) its parent's prettified label. This collapses the
-    redundant single-CalcJob wrappers — e.g. the ``DFTInitialization``
-    ``@task.graph`` wraps one ``kcp.x`` call whose label
-    (``"DFT Init"``) is already part of the wrapper's
-    (``"DFT Init (nspin=1)"``).
 
-    Children are re-loaded via ``load_node(pk)`` rather than reusing the
-    Node objects yielded by ``process_node.called``. AiiDA keeps Node
-    instances in a session-level cache, and the daemon's writes don't
-    always invalidate that cache fast enough to appear in the live
-    table — without an explicit reload, a graph task's children can
-    sit invisible until the whole run finishes.
+# States a process passes through before it terminates, ordered by how
+# far along they are. ``paused`` ranks top because it is the one
+# non-terminal state the user must act on. Terminal states are absent:
+# they never travel from a hidden row to a visible one (see
+# :func:`_promoted_state`), and an unrecognised state ranks below all of
+# these.
+_STATE_RANK = {"created": 0, "waiting": 1, "running": 2, "paused": 3}
+_TERMINAL_STATES = frozenset({"finished", "failed", "excepted", "killed"})
+
+# Splits a label into its alternating text and digit runs. The capture
+# group keeps the digits, so ``"Orb 10"`` → ``["Orb ", "10", ""]``.
+_DIGIT_RUN_RE = re.compile(r"(\d+)")
+
+
+def _natural_key(label: str) -> tuple[tuple[str, int], ...]:
+    """Return a sort key that compares digit runs in a label numerically.
+
+    ``re.split`` on a capturing digit group always alternates text,
+    digits, text, …, so pairing them up yields keys whose components
+    line up across labels: ``"Orb 2"`` sorts before ``"Orb 10"``.
+    """
+    parts = _DIGIT_RUN_RE.split(label)
+    return tuple(
+        (parts[i], int(parts[i + 1]) if i + 1 < len(parts) else -1) for i in range(0, len(parts), 2)
+    )
+
+
+def _family_key(label: str) -> str:
+    """Return the label with every digit run masked (``"Orb 10"`` → ``"Orb #"``)."""
+    return _DIGIT_RUN_RE.sub("#", label)
+
+
+def _most_advanced(states: Sequence[str]) -> str:
+    """Return the state furthest along ``created`` → ``waiting`` → ``running`` → ``paused``."""
+    return max(states, key=lambda state: _STATE_RANK.get(state, -1))
+
+
+def _promoted_state(state: str) -> str:
+    """Return the state a hidden row lends its visible ancestor.
+
+    A terminal state is clamped to ``running``: the ancestor is still
+    live, and only its own outcome may be reported as terminal.
+    """
+    return "running" if state in _TERMINAL_STATES else state
+
+
+def _reload(pk: int) -> ProcessNode:
+    """Re-fetch a node by pk.
+
+    AiiDA keeps Node instances in a session-level cache, and the daemon's
+    writes don't always invalidate that cache fast enough to appear in
+    the live table — without an explicit reload, a graph task's children
+    can sit invisible until the whole run finishes.
+    """
+    from aiida.orm import load_node
+
+    return cast("ProcessNode", load_node(pk))
+
+
+def _ordered_children(process_node: ProcessNode) -> list[tuple[str, ProcessNode]]:
+    """Return the displayable children as ``(prettified label, node)``, in display order.
+
+    Children read in creation order, by ctime and then pk. Against that
+    order, a *family* — the label with its digit runs masked, so every
+    ``Compute Alpha Orb N`` shares one — is sorted naturally (``Orb 2``
+    before ``Orb 10``), but only where its members were created
+    consecutively. A family split by another step never was a fan-out:
+    the spin initialization runs ``nspin=1``, ``nspin=2 (dummy)``,
+    ``nspin=2``, and pulling the two ``nspin=2`` rows together would put
+    the row that reads the restart files above the one that writes them.
+
+    ``@calcfunction`` / ``@workfunction`` / ``@task`` PyFunctions are
+    dropped here, along with their descendants (see
+    :func:`_is_process_function_node`).
+    """
+    try:
+        called_pks = [n.pk for n in process_node.called]
+    except Exception:
+        return []
+
+    entries: list[tuple[str, ProcessNode]] = []
+    for pk in called_pks:
+        if pk is None:
+            continue
+        try:
+            child = _reload(pk)
+        except Exception:  # noqa: S112 - skip unreadable children
+            continue
+        if _is_process_function_node(child):
+            continue
+        entries.append((prettify_label(get_node_label(child, include_code=True)), child))
+
+    entries.sort(key=lambda entry: (entry[1].ctime, entry[1].pk or 0))
+
+    positions: dict[str, list[int]] = defaultdict(list)
+    for index, (label, _) in enumerate(entries):
+        positions[_family_key(label)].append(index)
+
+    for indices in positions.values():
+        if len(indices) > 1 and indices == list(range(indices[0], indices[-1] + 1)):
+            run = sorted((entries[index] for index in indices), key=lambda e: _natural_key(e[0]))
+            entries[indices[0] : indices[-1] + 1] = run
+    return entries
+
+
+def build_progress_rows(process_node: ProcessNode) -> list[ProcessRow]:
+    """Assemble one row per displayed process, depth-first from the root.
+
+    The root row shows the top-level ``process_label``
+    (``KoopmansDSCFWorkflow`` etc.) rather than a hard-coded
+    ``"WorkGraph"``, so the user sees the workflow they invoked.
 
     Args:
-        table: The Table to add rows to.
-        process_node: The process node to display.
-        depth: Current indentation depth.
-        parent_label: The prettified label of the parent row, or ``None``
-            for the root. Used to suppress redundant child rows.
+        process_node: The root process node.
+
+    Returns:
+        The table's rows, parents before their children.
     """
-    if depth > 0 and _is_process_function_node(process_node):
-        return
+    root_label = prettify_label(getattr(process_node, "process_label", None) or "WorkGraph")
+    rows, _ = _collect_rows(process_node, root_label, depth=0, parent_label=None)
+    return rows
 
-    indent = "  " * depth
 
-    # Get label. The root row shows the top-level process_label
-    # (``KoopmansDSCFWorkflow`` etc.) rather than a hard-coded
-    # ``"WorkGraph"``, so the user sees the actual workflow they invoked.
-    # Both branches go through ``prettify_label`` for consistent
-    # CamelCase / snake_case / acronym handling.
-    if depth > 0:
-        raw_label = get_node_label(process_node, include_code=True)
-    else:
-        raw_label = getattr(process_node, "process_label", None) or "WorkGraph"
-    label = prettify_label(raw_label)
+def _collect_rows(
+    process_node: ProcessNode,
+    label: str,
+    depth: int,
+    parent_label: str | None,
+) -> tuple[list[ProcessRow], str | None]:
+    """Build the rows for one process and its descendants.
 
-    # Get type and state
+    A process whose label is a prefix of (or identical to) its parent's
+    gets no row of its own: it is a redundant single-CalcJob wrapper —
+    the ``DFTInitialization`` ``@task.graph`` wraps one ``kcp.x`` call
+    whose label (``"DFT Init"``) is already part of the wrapper's
+    (``"DFT Init (nspin=1)"``). Its descendants are rendered against the
+    nearest visible ancestor, at that ancestor's depth.
+
+    A hidden process lends its state to its visible ancestor: while that
+    ancestor is non-terminal it displays whichever of the two states is
+    further along, so a wrapper's row reads ``running`` while the
+    ``@task.graph`` around it still reports ``waiting``. No process is
+    hidden conditionally on its state, so a row that has appeared is
+    never withdrawn.
+
+    Args:
+        process_node: The process to render.
+        label: Its prettified label.
+        depth: Indentation depth of the row it would occupy.
+        parent_label: The prettified label of the nearest visible
+            ancestor, or ``None`` for the root.
+
+    Returns:
+        The rows for this subtree, and the state this process lends its
+        visible ancestor (``None`` when it has a row of its own).
+    """
     node_type = get_node_type(process_node) if depth > 0 else "workgraph"
     state = get_process_state(process_node, node_type)
     if state == "finished" and not process_node.is_finished_ok:
         state = "failed"
-    style = STATUS_STYLES.get(state, "")
-    if style:
-        status_text = f"[{style}]{state}[/{style}]"
-    else:
-        status_text = state
 
-    # Suppress redundant wrapper-rows: a child row whose label is a
-    # prefix of (or identical to) its parent's. *Only* once the child
-    # is terminal — while it's running we still want to surface the
-    # row so the user sees that step is making progress (the parent
-    # @task.graph's status can lag behind its child CalcJob's). After
-    # termination the duplicate row collapses away.
-    _terminal_states = {"finished", "failed", "excepted", "killed"}
-    suppress_self = (
-        parent_label is not None
-        and state in _terminal_states
-        and (label == parent_label or parent_label.startswith(label + " "))
+    suppress_self = parent_label is not None and (
+        label == parent_label or parent_label.startswith(label + " ")
     )
-
-    if not suppress_self:
-        table.add_row(f"{indent}{label}", status_text)
-
-    # Recursively add children — reload each one freshly so the live
-    # table picks up newly-spawned tasks without waiting for the run
-    # to terminate (see docstring).
-    from aiida.orm import load_node
-
-    try:
-        called_pks = [(n.pk, n.ctime) for n in process_node.called]
-    except Exception:
-        return
-    called_pks.sort(key=lambda pair: pair[1])
-    # Suppressed rows pass their parent's label / depth straight through
-    # so the grandchild is rendered against the *visible* ancestor.
     child_parent_label = parent_label if suppress_self else label
     child_depth = depth if suppress_self else depth + 1
-    for pk, _ in called_pks:
-        try:
-            child = cast("ProcessNode", load_node(pk))
-        except Exception:  # noqa: S112 - skip unreadable children
-            continue
-        add_process_rows(table, child, child_depth, parent_label=child_parent_label)
+
+    child_rows: list[ProcessRow] = []
+    borrowed: list[str] = []
+    for child_label, child in _ordered_children(process_node):
+        rows, promoted = _collect_rows(child, child_label, child_depth, child_parent_label)
+        child_rows.extend(rows)
+        if promoted is not None:
+            borrowed.append(promoted)
+
+    if suppress_self:
+        return child_rows, _most_advanced([_promoted_state(state), *borrowed])
+    if state not in _TERMINAL_STATES:
+        state = _most_advanced([state, *borrowed])
+    return [ProcessRow(label, depth, state), *child_rows], None
+
+
+def add_process_rows(table: Table, process_node: ProcessNode) -> None:
+    """Add a styled row to the table for each process in the tree.
+
+    Args:
+        table: The Table to add rows to.
+        process_node: The root process node.
+    """
+    for row in build_progress_rows(process_node):
+        style = STATUS_STYLES.get(row.state, "")
+        status_text = f"[{style}]{row.state}[/{style}]" if style else row.state
+        table.add_row(f"{'  ' * row.depth}{row.label}", status_text)
 
 
 def _walk_paused_descendants(node: ProcessNode) -> list[tuple[int | None, str]]:
@@ -279,9 +387,13 @@ def _walk_paused_descendants(node: ProcessNode) -> list[tuple[int | None, str]]:
     A *paused* sub-process is one whose transport-task retries have been
     exhausted and the daemon has stopped retrying.
 
-    Returns a list of ``(pk, process_label)`` tuples — empty when nothing
-    is paused. Used by :func:`make_progress_table` to surface a hint when
-    the live display would otherwise look like a normal slow run.
+    Returns a list of ``(pk, process_label)`` tuples in creation order —
+    empty when nothing is paused. Used by :func:`make_progress_table` to
+    surface a hint when the live display would otherwise look like a
+    normal slow run.
+
+    This walk keeps the PyFunction nodes that the table hides: a paused
+    upload belongs in the hint whether or not it has a row.
     """
     out: list[tuple[int | None, str]] = []
 
@@ -289,10 +401,11 @@ def _walk_paused_descendants(node: ProcessNode) -> list[tuple[int | None, str]]:
         if getattr(n, "paused", False):
             out.append((n.pk, n.process_label or n.__class__.__name__))
         try:
-            for child in n.called:
-                _visit(child)
+            children = sorted(n.called, key=lambda child: (child.ctime, child.pk or 0))
         except Exception:
             return
+        for child in children:
+            _visit(child)
 
     _visit(node)
     return out

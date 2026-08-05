@@ -777,6 +777,14 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        ml_test:
+          default: false
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         mp_correction:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1327,6 +1335,33 @@ raw:
           meta:
             child_default_link_limit: 1
             required: true
+        predicted_alphas:
+          dynamic: false
+          fields:
+            empty:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+            filled:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            required: false
+        predicted_eigenvalues:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: numpy.ndarray
+            required: false
         remote_folder:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1599,6 +1634,7 @@ raw:
         gamma_only: false
         init_orbitals: kohn-sham
         initial_alpha: 0.6
+        ml_test: false
         nbnd: 8
         nspin: 2
         orbital_groups_self_hartree_tol: 0.001
@@ -1909,6 +1945,14 @@ raw:
                 is_metadata: true
                 required: false
             ml_model:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            ml_test:
+              default: false
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2496,6 +2540,33 @@ raw:
               meta:
                 child_default_link_limit: 1
                 required: true
+            predicted_alphas:
+              dynamic: false
+              fields:
+                empty:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+                filled:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
+            predicted_eigenvalues:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: numpy.ndarray
+                required: false
             remote_folder:
               dynamic: false
               identifier: <scrubbed:identifier>

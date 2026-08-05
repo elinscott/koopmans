@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import shutil
+from collections import defaultdict
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,6 +28,321 @@ _FOLDER_NAME_SUFFIXES = [
     re.compile(r"^(.+)-\d+$"),
     re.compile(r"^(.+)-WorkGraph<[^<>]+>$"),
 ]
+
+# "<NN>-<link_label>", the shape every dumped step folder has once the pk
+# and the process label are gone.
+_STEP_FOLDER_NAME = re.compile(r"^(\d+)-(.+)$")
+
+# The process label AiiDA appends to a step folder, e.g. the
+# "-KcpCalculation" of "01-dft_init-KcpCalculation" and the
+# "-PwBaseWorkChain" of "01-scf-PwBaseWorkChain". A link label is a python
+# identifier and so holds no dash: the second dash is what marks the
+# suffix as appended, which is why a folder whose link label is itself
+# capitalised ("05-RunFinalKI") keeps its label.
+_PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
+
+
+# The dumped source of a python task: its code, not data the run made.
+_TASK_SOURCE_FILE = "source_file"
+
+_DIGEST_BLOCK = 1 << 20
+
+_SYMLINK_README = """\
+Some files here appear in more than one step: an input staged from an
+earlier step's output, a pseudopotential every calculation reads. Only
+one copy of each is a real file; the rest are relative symlinks to it.
+
+Most ways of copying this directory keep those links — `cp -r`, `tar`
+and `rsync -a` all do. The one to avoid is `rsync -r` without `-a` or
+`-l`: it skips every link, mentions it only in passing, exits 0 all the
+same, and leaves you a copy with those files missing. Use `rsync -a`.
+
+For a copy with no links in it at all, dereference them: `cp -aL`,
+`tar -h`, or `rsync -aL`.
+"""
+
+# Sibling ordering: siblings group into families — the label with its
+# digit runs masked — and a family whose members already sit in
+# consecutive positions is sorted naturally, while everything else keeps
+# the order it ran in. The live progress table draws its rows by the same
+# rule, against creation time rather than the number written on a folder,
+# and carries its own copy of it; keep the two in step.
+_DIGIT_RUN_RE = re.compile(r"(\d+)")
+
+
+def _natural_key(label: str) -> tuple[tuple[str, int], ...]:
+    """Return a sort key that compares digit runs in a label numerically.
+
+    ``re.split`` on a capturing digit group always alternates text,
+    digits, text, …, so pairing them up yields keys whose components line
+    up across labels: ``"orb_2"`` sorts before ``"orb_10"``.
+    """
+    parts = _DIGIT_RUN_RE.split(label)
+    return tuple(
+        (parts[i], int(parts[i + 1]) if i + 1 < len(parts) else -1) for i in range(0, len(parts), 2)
+    )
+
+
+def _family_key(label: str) -> str:
+    """Return the label with every digit run masked ("orb_10" → "orb_#")."""
+    return _DIGIT_RUN_RE.sub("#", label)
+
+
+def _is_calculation_folder(path: Path) -> bool:
+    """Return whether the folder holds one dumped process, run and recorded."""
+    return (path / "inputs").is_dir() and (path / "outputs").is_dir()
+
+
+def _step_folders(path: Path) -> list[Path]:
+    """Return the folder's "<NN>-<label>" subfolders, in number order."""
+    numbered = []
+    for child in path.iterdir():
+        match = _STEP_FOLDER_NAME.match(child.name)
+        if child.is_dir() and match is not None:
+            numbered.append((int(match.group(1)), len(match.group(1)), child))
+    numbered.sort()
+    return [child for _, _, child in numbered]
+
+
+def _file_digest(path: Path) -> str:
+    """Return the SHA-256 of a file's contents."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(_DIGEST_BLOCK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _content_keys(root_path: Path) -> dict[Path, str]:
+    """Return a key per real file that two share exactly when identical.
+
+    A file whose size occurs once in the tree can have no twin, so it
+    takes a key of its own and is never read — which keeps the pass off
+    the large outputs a finished run retrieves.
+
+    Symlinks are left out, so a tree that already holds some is not
+    counted through them.
+    """
+    by_size: dict[int, list[Path]] = defaultdict(list)
+    for path in root_path.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            by_size[path.stat().st_size].append(path)
+
+    keys: dict[Path, str] = {}
+    for size, paths in by_size.items():
+        if len(paths) == 1:
+            keys[paths[0]] = f"{size}:{paths[0]}"
+        else:
+            keys.update({path: f"{size}:{_file_digest(path)}" for path in paths})
+    return keys
+
+
+def _prune_source_only_step_folders(path: Path) -> None:
+    """Delete step folders holding nothing but python tasks' own source.
+
+    A bookkeeping task dumps its ``source_file`` — its code, which the
+    installed package holds — and nothing else. Any other file keeps the
+    folder, whatever the process was: aiida-core writes ``node_outputs``
+    only for ``SinglefileData`` and ``FolderData``, so an ``ArrayData`` a
+    task produced reaches disk only as the ``function_inputs`` of
+    whatever consumed it, and a calculation killed before retrieval has
+    inputs and no outputs at all.
+
+    Runs innermost first, so a folder left holding only such folders goes
+    with them.
+    """
+    for child in _step_folders(path):
+        _prune_source_only_step_folders(child)
+        if all(item.name == _TASK_SOURCE_FILE for item in child.rglob("*") if item.is_file()):
+            shutil.rmtree(child)
+
+
+def _canonical_rank(path: Path, root_path: Path) -> tuple[int, str]:
+    """Return the sort key that picks which copy of a file stays real.
+
+    A copy under a step's ``outputs`` ranks first: that step produced the
+    file, and is where a reader following a link should land rather than
+    in some later step that was handed it. Tree order settles the rest.
+    """
+    relative = path.relative_to(root_path)
+    return (0 if "outputs" in relative.parts else 1, str(relative))
+
+
+def _link_duplicate_files(root_path: Path) -> int:
+    """Replace repeated files with relative symlinks to one real copy.
+
+    Every step that ran keeps its folder and its own listing; only the
+    repeated bytes go, so a file staged into a later step's ``inputs``
+    now points at the ``outputs`` it came from. Links are relative, so
+    the tree survives being moved.
+
+    An empty file is left alone, and never serves as a target. A
+    successful run leaves an empty ``_scheduler-stderr.txt`` under every
+    calculation; linking them together saves nothing and asserts a
+    relationship between unrelated steps that the reader then has to
+    puzzle out.
+
+    A ``source_file`` links only to another ``source_file``: one task run
+    once per orbital dumps its code under each, and those copies collapse
+    like any other, but no data file is ever made to depend on a folder
+    that carries only code.
+
+    Expects a freshly written tree that holds no symlinks of its own. Any
+    it does find are left where they are and never chosen as the copy to
+    keep: a link ranked ahead of the real file would leave the two
+    pointing at each other and the bytes gone.
+
+    :param root_path: Root of the tidied tree.
+    :return: How many symlinks were made.
+    """
+    groups: dict[tuple[bool, str], list[Path]] = defaultdict(list)
+    for path, key in _content_keys(root_path).items():
+        if path.stat().st_size:
+            groups[(path.name == _TASK_SOURCE_FILE, key)].append(path)
+
+    created = 0
+    for paths in groups.values():
+        if len(paths) < 2:
+            continue
+        canonical, *duplicates = sorted(paths, key=lambda path: _canonical_rank(path, root_path))
+        for duplicate in duplicates:
+            duplicate.unlink()
+            duplicate.symlink_to(os.path.relpath(canonical, duplicate.parent))
+            created += 1
+    return created
+
+
+def _display_order(children: Sequence[Path]) -> list[tuple[Path, str]]:
+    """Return the step folders as ``(folder, label)`` in reading order.
+
+    The dump numbers a fan-out in creation order, which is lexicographic
+    by map key, so ``orb_10`` lands between ``orb_1`` and ``orb_2``.
+    Sorting a family naturally puts those indices back in counting order.
+
+    Only a family whose members already occupy consecutive positions is
+    sorted. A family split by another step never was a fan-out — the
+    three-step spin initialization runs ``nspin1``, ``nspin2_dummy``,
+    ``nspin2`` — and pulling it together would put a step before the one
+    whose output it reads.
+    """
+    entries = []
+    for child in children:
+        match = _STEP_FOLDER_NAME.match(child.name)
+        if match is not None:
+            entries.append((child, match.group(2)))
+
+    positions: dict[str, list[int]] = defaultdict(list)
+    for index, (_, label) in enumerate(entries):
+        positions[_family_key(label)].append(index)
+
+    ordered = list(entries)
+    for indices in positions.values():
+        if len(indices) > 1 and indices == list(range(indices[0], indices[-1] + 1)):
+            run = sorted((entries[index] for index in indices), key=lambda e: _natural_key(e[1]))
+            ordered[indices[0] : indices[-1] + 1] = run
+    return ordered
+
+
+def _renumber_step_folders(path: Path) -> None:
+    """Renumber the step folders under ``path`` contiguously from one.
+
+    Numbers follow :func:`_display_order` rather than the order the dump
+    wrote, and keep the zero padding it used.
+    """
+    children = _step_folders(path)
+    widths = [len(m.group(1)) for c in children if (m := _STEP_FOLDER_NAME.match(c.name))]
+    width = max(widths, default=2)
+
+    ordered = _display_order(children)
+    final_names = [f"{number:0{width}d}-{label}" for number, (_, label) in enumerate(ordered, 1)]
+
+    # Reordering can send a folder to a number a sibling still holds, so
+    # everything that moves is parked under a name no step folder can
+    # have before anything takes its final one.
+    parked = []
+    for index, ((child, _), final_name) in enumerate(zip(ordered, final_names, strict=True)):
+        if child.name == final_name:
+            parked.append(child)
+            continue
+        staging = child.parent / f".tidy-{index}-{child.name}"
+        shutil.move(str(child), str(staging))
+        parked.append(staging)
+
+    for staged, final_name in zip(parked, final_names, strict=True):
+        renamed = staged.parent / final_name
+        if staged != renamed:
+            shutil.move(str(staged), str(renamed))
+        _renumber_step_folders(renamed)
+
+
+def _strip_process_label_suffixes(path: Path) -> None:
+    """Drop the trailing "-<ProcessLabel>" from every step folder.
+
+    The CalcJob class name on a calculation folder and the WorkChain
+    class name on the step wrapping it both go. A folder whose stripped
+    name is already taken keeps its suffix.
+    """
+    for child in _step_folders(path):
+        renamed = child
+        match = _PROCESS_LABEL_SUFFIX.match(child.name)
+        if match is not None:
+            stripped = child.parent / match.group(1)
+            if not stripped.exists():
+                shutil.move(str(child), str(stripped))
+                renamed = stripped
+        _strip_process_label_suffixes(renamed)
+
+
+def _hoist_lone_calculations(path: Path) -> None:
+    """Lift a lone calculation's contents into the step folder holding it.
+
+    Descends top-down and stops at the folder it hoists into, so a chain
+    of single-child steps collapses by one layer only and every step name
+    on the way survives.
+    """
+    children = list(path.iterdir())
+    if len(children) == 1 and children[0].is_dir() and _is_calculation_folder(children[0]):
+        calculation = children[0]
+        for item in calculation.iterdir():
+            shutil.move(str(item), str(path / item.name))
+        calculation.rmdir()
+        return
+    for child in _step_folders(path):
+        _hoist_lone_calculations(child)
+
+
+def _tidy_dumped_tree(root_path: Path) -> None:
+    """Prune, renumber and flatten the step folders of a dumped tree.
+
+    The passes run in a fixed order:
+
+    - a step folder holding nothing but python source goes;
+    - the surviving siblings are renumbered contiguously from one;
+    - every step folder drops its trailing "-<ProcessLabel>";
+    - a step folder holding nothing but one calculation takes over its
+      contents;
+    - files repeated across steps become relative symlinks to one copy,
+      and the root gains a ``README`` saying so.
+
+    Pruning has to precede flattening: a step is left holding a single
+    calculation only once its bookkeeping siblings are gone. Stripping
+    has to precede flattening too, so that a hoisted-into step folder is
+    named for its own step rather than for the calculation it absorbed.
+    Linking comes last because the passes before it move folders, and a
+    relative link written earlier would no longer point anywhere.
+
+    Runs once, on a freshly dumped tree: hoisting deliberately collapses
+    one layer per pass, so a second pass over the same tree collapses
+    another.
+
+    :param root_path: Root of the dumped tree; it is never itself pruned.
+    """
+    _prune_source_only_step_folders(root_path)
+    _renumber_step_folders(root_path)
+    _strip_process_label_suffixes(root_path)
+    _hoist_lone_calculations(root_path)
+    if _link_duplicate_files(root_path):
+        (root_path / "README").write_text(_SYMLINK_README)
 
 
 def _simplify_folder_names(root_path: Path) -> None:
@@ -125,6 +444,7 @@ def dump_workgraph(
     - Strips pk numbers and WorkGraph process labels from folder names
     - Simplifies each CalcJobNode folder structure
     - Removes top-level metadata files
+    - Tidies the step folders (see :func:`_tidy_dumped_tree`)
 
     :param process: The workgraph ProcessNode.
     :param output_path: Output directory. Defaults to current working directory.
@@ -164,6 +484,10 @@ def dump_workgraph(
     ]:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
+
+    # Only now, with the metadata files gone, does a step that ran no
+    # calculation look empty.
+    _tidy_dumped_tree(output_path)
 
     _dump_model_json(process, output_path)
 
