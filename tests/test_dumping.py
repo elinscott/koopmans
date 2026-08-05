@@ -88,10 +88,11 @@ def _lambdas(name: str, content: str = "trial-hamiltonian") -> list[tuple[str, s
     aiida-core dumps an ``ArrayData`` only as its consumer's
     ``function_inputs``, never under the task that produced it, so this
     is the tree's one copy of that array unless a sibling holds the same
-    bytes.
+    bytes. Every caller is the same task, so they share a ``source_file``
+    too.
     """
     return [
-        (f"{name}/inputs/source_file", f"{name}/inputs/source_file"),
+        (f"{name}/inputs/source_file", "def compute_alpha_from_dscf():\n    return alpha\n"),
         (f"{name}/inputs/function_inputs/trial_lambdas/lambdas.npy", content),
     ]
 
@@ -298,14 +299,34 @@ class TestLinkDuplicateFiles:
         assert not Path(os.readlink(link)).is_absolute()
         assert link.read_text() == "pseudopotential"
 
-    def test_a_task_source_is_never_linked_or_pointed_at(self, tmp_path: Path) -> None:
+    def test_repeated_task_sources_collapse_to_one_copy(self, tmp_path: Path) -> None:
+        """One task run once per orbital dumps its code under each folder."""
+        source = "def compute_alpha_from_dscf():\n    return alpha\n"
+        _make_tree(
+            tmp_path,
+            [
+                ("01-orb_1/inputs/source_file", source),
+                ("01-orb_1/inputs/function_inputs/lambdas.npy", "first payload"),
+                ("02-orb_2/inputs/source_file", source),
+                ("02-orb_2/inputs/function_inputs/lambdas.npy", "second payload"),
+            ],
+        )
+
+        assert _link_duplicate_files(tmp_path) == 1
+
+        first = tmp_path / "01-orb_1/inputs/source_file"
+        second = tmp_path / "02-orb_2/inputs/source_file"
+        assert not first.is_symlink()
+        assert second.is_symlink()
+        assert second.read_text() == source
+
+    def test_a_task_source_is_never_linked_to_a_data_file(self, tmp_path: Path) -> None:
         """A task's source and a data file with its bytes both stay real files.
 
-        ``source_file`` is kept out of the comparison rather than merely
-        exempted from being replaced, so no data file is ever made to
-        depend on a folder that exists only to carry a task's code. Both
-        folders here survive the prune, so the two would otherwise be
-        linked whichever way the ordering fell.
+        Sources collapse among themselves, but never across the boundary:
+        no data file is made to depend on a folder that carries only
+        code. Both folders here survive the prune, so the two would
+        otherwise be linked whichever way the ordering fell.
         """
         shared = "def compute():\n    return 1\n"
         _make_tree(
@@ -685,7 +706,7 @@ class TestTidyDumpedTree:
         │           │           ├── function_inputs
         │           │           │   └── trial_lambdas
         │           │           │       └── lambdas.npy -> (link)
-        │           │           └── source_file
+        │           │           └── source_file -> (link)
         │           └── 03-compute_alpha_orb_10
         │               ├── 01-dft_n_plus_1_dummy
         │               │   ├── inputs
@@ -707,7 +728,7 @@ class TestTidyDumpedTree:
         │                       ├── function_inputs
         │                       │   └── trial_lambdas
         │                       │       └── lambdas.npy -> (link)
-        │                       └── source_file
+        │                       └── source_file -> (link)
         ├── 05-RunFinalKI
         │   ├── inputs
         │   │   └── aiida.cpi

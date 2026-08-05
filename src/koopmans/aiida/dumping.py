@@ -168,17 +168,17 @@ def _link_duplicate_files(root_path: Path) -> int:
     now points at the ``outputs`` it came from. Links are relative, so
     the tree survives being moved.
 
-    A task's own ``source_file`` takes no part: it is neither worth
-    pointing at, since a pruned bookkeeping folder would leave the link
-    dangling, nor worth replacing.
+    A ``source_file`` links only to another ``source_file``: one task run
+    once per orbital dumps its code under each, and those copies collapse
+    like any other, but no data file is ever made to depend on a folder
+    that carries only code.
 
     :param root_path: Root of the tidied tree.
     :return: How many symlinks were made.
     """
-    groups: dict[str, list[Path]] = defaultdict(list)
+    groups: dict[tuple[bool, str], list[Path]] = defaultdict(list)
     for path, key in _content_keys(root_path).items():
-        if path.name != _TASK_SOURCE_FILE:
-            groups[key].append(path)
+        groups[(path.name == _TASK_SOURCE_FILE, key)].append(path)
 
     created = 0
     for paths in groups.values():
