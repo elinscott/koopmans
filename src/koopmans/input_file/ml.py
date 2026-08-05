@@ -52,7 +52,12 @@ class MLConfig(BaseModel):
     )
     descriptor: MLDescriptor = Field(
         default=MLDescriptor.POWER_SPECTRUM,
-        description="What to use as the descriptor for the ML model",
+        description=(
+            "What to use as the descriptor for the ML model. `power_spectrum` needs "
+            "`init_orbitals` of `mlwfs` or `projwfs` and the `pw2wannier90_decompose` "
+            "code (a pw2wannier90.x build implementing `wan_mode='decompose'`); "
+            "`self_hartree` needs neither"
+        ),
     )
 
     @field_validator("model", mode="before")
