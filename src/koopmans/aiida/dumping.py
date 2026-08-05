@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -45,6 +46,15 @@ _PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
 _TASK_SOURCE_FILE = "source_file"
 
 _DIGEST_BLOCK = 1 << 20
+
+_SYMLINK_README = """\
+Some files here appear in more than one step: an input staged from an
+earlier step's output, a pseudopotential every calculation reads. Only
+one copy of each is a real file and the rest are relative symlinks to it,
+so copy this directory with something that preserves them (`cp -a`,
+`rsync -a`, `tar`) — or pass your tool's dereference option to expand
+every link back into a full copy.
+"""
 
 # Sibling ordering: siblings group into families — the label with its
 # digit runs masked — and a family whose members already sit in
@@ -119,49 +129,67 @@ def _content_keys(root_path: Path) -> dict[Path, str]:
     return keys
 
 
-def _prune_recoverable_step_folders(root_path: Path) -> None:
-    """Delete step folders that hold nothing which would go with them.
+def _prune_source_only_step_folders(path: Path) -> None:
+    """Delete step folders holding nothing but python tasks' own source.
 
-    A folder goes when every file under it either is a python task's
-    dumped ``source_file`` — the task's code, which the installed package
-    holds — or has a byte-identical copy that stays behind elsewhere in
-    the tree.
+    A bookkeeping task dumps its ``source_file`` — its code, which the
+    installed package holds — and nothing else. Any other file keeps the
+    folder, whatever the process was: aiida-core writes ``node_outputs``
+    only for ``SinglefileData`` and ``FolderData``, so an ``ArrayData`` a
+    task produced reaches disk only as the ``function_inputs`` of
+    whatever consumed it, and a calculation killed before retrieval has
+    inputs and no outputs at all.
 
-    What a process is says nothing about what its folder is worth
-    keeping. aiida-core writes ``node_outputs`` only for
-    ``SinglefileData`` and ``FolderData``, so an ``ArrayData`` a task
-    produced reaches disk only as the ``function_inputs`` of whatever
-    consumed it; a calculation killed before retrieval has inputs and no
-    outputs at all. Both keep their folders here.
-
-    A folder's own copies of a file do not save it, and pruning one
-    folder drops its files from what later folders are checked against,
-    so the last copy of anything always stays.
-
-    :param root_path: Root of the dumped tree; never itself pruned.
+    Runs innermost first, so a folder left holding only such folders goes
+    with them.
     """
-    keys = _content_keys(root_path)
-    live: Counter[str] = Counter(keys.values())
+    for child in _step_folders(path):
+        _prune_source_only_step_folders(child)
+        if all(item.name == _TASK_SOURCE_FILE for item in child.rglob("*") if item.is_file()):
+            shutil.rmtree(child)
 
-    def files_under(folder: Path) -> list[Path]:
-        """Return every file under the folder."""
-        return [path for path in folder.rglob("*") if path.is_file()]
 
-    def is_recoverable(folder: Path) -> bool:
-        """Return whether removing the folder would lose no file."""
-        held = Counter(keys[path] for path in files_under(folder) if path.name != _TASK_SOURCE_FILE)
-        return all(live[key] > count for key, count in held.items())
+def _canonical_rank(path: Path, root_path: Path) -> tuple[int, str]:
+    """Return the sort key that picks which copy of a file stays real.
 
-    def prune(folder: Path) -> None:
-        """Prune the folder's step subfolders, descending into the keepers."""
-        for child in _step_folders(folder):
-            if is_recoverable(child):
-                live.subtract(keys[path] for path in files_under(child))
-                shutil.rmtree(child)
-            else:
-                prune(child)
+    A copy under a step's ``outputs`` ranks first: that step produced the
+    file, and is where a reader following a link should land rather than
+    in some later step that was handed it. Tree order settles the rest.
+    """
+    relative = path.relative_to(root_path)
+    return (0 if "outputs" in relative.parts else 1, str(relative))
 
-    prune(root_path)
+
+def _link_duplicate_files(root_path: Path) -> int:
+    """Replace repeated files with relative symlinks to one real copy.
+
+    Every step that ran keeps its folder and its own listing; only the
+    repeated bytes go, so a file staged into a later step's ``inputs``
+    now points at the ``outputs`` it came from. Links are relative, so
+    the tree survives being moved.
+
+    A task's own ``source_file`` takes no part: it is neither worth
+    pointing at, since a pruned bookkeeping folder would leave the link
+    dangling, nor worth replacing.
+
+    :param root_path: Root of the tidied tree.
+    :return: How many symlinks were made.
+    """
+    groups: dict[str, list[Path]] = defaultdict(list)
+    for path, key in _content_keys(root_path).items():
+        if path.name != _TASK_SOURCE_FILE:
+            groups[key].append(path)
+
+    created = 0
+    for paths in groups.values():
+        if len(paths) < 2:
+            continue
+        canonical, *duplicates = sorted(paths, key=lambda path: _canonical_rank(path, root_path))
+        for duplicate in duplicates:
+            duplicate.unlink()
+            duplicate.symlink_to(os.path.relpath(canonical, duplicate.parent))
+            created += 1
+    return created
 
 
 def _display_order(children: Sequence[Path]) -> list[tuple[Path, str]]:
@@ -268,16 +296,20 @@ def _tidy_dumped_tree(root_path: Path) -> None:
 
     The passes run in a fixed order:
 
-    - a step folder holding nothing that would go with it goes;
+    - a step folder holding nothing but python source goes;
     - the surviving siblings are renumbered contiguously from one;
     - every step folder drops its trailing "-<ProcessLabel>";
     - a step folder holding nothing but one calculation takes over its
-      contents.
+      contents;
+    - files repeated across steps become relative symlinks to one copy,
+      and the root gains a ``README`` saying so.
 
     Pruning has to precede flattening: a step is left holding a single
     calculation only once its bookkeeping siblings are gone. Stripping
     has to precede flattening too, so that a hoisted-into step folder is
     named for its own step rather than for the calculation it absorbed.
+    Linking comes last because the passes before it move folders, and a
+    relative link written earlier would no longer point anywhere.
 
     Runs once, on a freshly dumped tree: hoisting deliberately collapses
     one layer per pass, so a second pass over the same tree collapses
@@ -285,10 +317,12 @@ def _tidy_dumped_tree(root_path: Path) -> None:
 
     :param root_path: Root of the dumped tree; it is never itself pruned.
     """
-    _prune_recoverable_step_folders(root_path)
+    _prune_source_only_step_folders(root_path)
     _renumber_step_folders(root_path)
     _strip_process_label_suffixes(root_path)
     _hoist_lone_calculations(root_path)
+    if _link_duplicate_files(root_path):
+        (root_path / "README").write_text(_SYMLINK_README)
 
 
 def _simplify_folder_names(root_path: Path) -> None:

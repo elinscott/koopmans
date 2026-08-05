@@ -1,5 +1,7 @@
 """Unit tests for the dump folder-name simplification."""
 
+import os
+import shutil
 from collections.abc import Sequence
 from pathlib import Path
 from textwrap import dedent
@@ -9,7 +11,8 @@ import pytest
 
 from koopmans.aiida.dumping import (
     _hoist_lone_calculations,
-    _prune_recoverable_step_folders,
+    _link_duplicate_files,
+    _prune_source_only_step_folders,
     _renumber_step_folders,
     _simplify_folder_names,
     _strip_process_label_suffixes,
@@ -44,7 +47,11 @@ def _folders(root: Path) -> list[str]:
 
 
 def _render(root: Path) -> str:
-    """Return the tree under ``root`` drawn the way the tutorials quote it."""
+    """Return the tree under ``root``, drawn the way the tutorials quote it.
+
+    A symlink is marked rather than spelled out; where a link points is
+    the business of :class:`TestLinkDuplicateFiles`.
+    """
     lines = [root.name]
 
     def draw(folder: Path, prefix: str) -> None:
@@ -52,8 +59,9 @@ def _render(root: Path) -> str:
         entries = sorted(folder.iterdir(), key=lambda p: p.name)
         for index, entry in enumerate(entries):
             last = index == len(entries) - 1
-            lines.append(prefix + ("└── " if last else "├── ") + entry.name)
-            if entry.is_dir():
+            arrow = " -> (link)" if entry.is_symlink() else ""
+            lines.append(prefix + ("└── " if last else "├── ") + entry.name + arrow)
+            if entry.is_dir() and not entry.is_symlink():
                 draw(entry, prefix + ("    " if last else "│   "))
 
     draw(root, "")
@@ -138,8 +146,8 @@ def test_simplify_folder_names_keeps_taken_names(tmp_path: Path) -> None:
     assert all_dirs == ["02-scf", "02-scf-WorkGraph<scf>-99"]
 
 
-class TestPruneRecoverableStepFolders:
-    """A step folder goes only when nothing on disk goes with it."""
+class TestPruneSourceOnlyStepFolders:
+    """Only a folder holding nothing but a task's own code goes."""
 
     def test_a_source_only_step_goes_and_a_calculation_stays(self, tmp_path: Path) -> None:
         """A task's own code is not data the run produced."""
@@ -148,7 +156,7 @@ class TestPruneRecoverableStepFolders:
             [*_bookkeeping("01-count_electrons_task"), *_calculation("02-dft_init")],
         )
 
-        _prune_recoverable_step_folders(tmp_path)
+        _prune_source_only_step_folders(tmp_path)
 
         assert _folders(tmp_path) == ["02-dft_init", "02-dft_init/inputs", "02-dft_init/outputs"]
 
@@ -156,7 +164,7 @@ class TestPruneRecoverableStepFolders:
         """A step AiiDA dumped nothing at all for is the same case."""
         _make_tree(tmp_path, ["01-resolve_pseudo_family_task/"])
 
-        _prune_recoverable_step_folders(tmp_path)
+        _prune_source_only_step_folders(tmp_path)
 
         assert _folders(tmp_path) == []
 
@@ -164,7 +172,7 @@ class TestPruneRecoverableStepFolders:
         """Holding nothing of one's own propagates outwards, however deep."""
         _make_tree(tmp_path, ["01-outer/01-middle/", *_bookkeeping("01-outer/02-inner")])
 
-        _prune_recoverable_step_folders(tmp_path)
+        _prune_source_only_step_folders(tmp_path)
 
         assert _folders(tmp_path) == []
 
@@ -177,7 +185,7 @@ class TestPruneRecoverableStepFolders:
         """
         _make_tree(tmp_path, _lambdas("01-compute_alpha_from_dscf"))
 
-        _prune_recoverable_step_folders(tmp_path)
+        _prune_source_only_step_folders(tmp_path)
 
         assert _folders(tmp_path) == [
             "01-compute_alpha_from_dscf",
@@ -194,12 +202,18 @@ class TestPruneRecoverableStepFolders:
         """
         _make_tree(tmp_path, ["01-dft_init/inputs/aiida.cpi"])
 
-        _prune_recoverable_step_folders(tmp_path)
+        _prune_source_only_step_folders(tmp_path)
 
         assert (tmp_path / "01-dft_init/inputs/aiida.cpi").is_file()
 
-    def test_a_duplicated_payload_goes_but_its_last_copy_stays(self, tmp_path: Path) -> None:
-        """Ten orbitals are handed the same trial Hamiltonian; one copy is enough."""
+    def test_every_folder_with_a_duplicated_payload_survives(self, tmp_path: Path) -> None:
+        """Repetition is no reason to drop a step: the reader still counts them.
+
+        All three orbitals are handed the same trial Hamiltonian.
+        Deleting two of the folders would leave the reader wondering what
+        happened to those orbitals; the repeated bytes are the symlink
+        pass's business, not this one's.
+        """
         _make_tree(
             tmp_path,
             [
@@ -209,24 +223,14 @@ class TestPruneRecoverableStepFolders:
             ],
         )
 
-        _prune_recoverable_step_folders(tmp_path)
+        _prune_source_only_step_folders(tmp_path)
 
         survivors = [f for f in _folders(tmp_path) if f.endswith("compute_alpha_from_dscf")]
-        assert survivors == ["03-orb_3/01-compute_alpha_from_dscf"]
-
-    def test_a_folder_is_not_saved_by_its_own_duplicates(self, tmp_path: Path) -> None:
-        """Two copies of one file inside one folder are still one file."""
-        _make_tree(
-            tmp_path,
-            [
-                ("01-step/inputs/first.npy", "same-bytes"),
-                ("01-step/inputs/second.npy", "same-bytes"),
-            ],
-        )
-
-        _prune_recoverable_step_folders(tmp_path)
-
-        assert _folders(tmp_path) == ["01-step", "01-step/inputs"]
+        assert survivors == [
+            "01-orb_1/01-compute_alpha_from_dscf",
+            "02-orb_2/01-compute_alpha_from_dscf",
+            "03-orb_3/01-compute_alpha_from_dscf",
+        ]
 
     def test_an_unnumbered_folder_is_never_pruned(self, tmp_path: Path) -> None:
         """Only "<NN>-<label>" step folders are candidates.
@@ -236,9 +240,91 @@ class TestPruneRecoverableStepFolders:
         """
         _make_tree(tmp_path, _calculation("01-dft_init"))
 
-        _prune_recoverable_step_folders(tmp_path)
+        _prune_source_only_step_folders(tmp_path)
 
         assert _folders(tmp_path) == ["01-dft_init", "01-dft_init/inputs", "01-dft_init/outputs"]
+
+
+class TestLinkDuplicateFiles:
+    """Repeated bytes become one real file and links to it."""
+
+    def test_a_staged_copy_points_at_the_step_that_produced_it(self, tmp_path: Path) -> None:
+        """The producer keeps the file; its consumer links to it.
+
+        A merge step writes ``hr.dat`` and the next step is handed it, so
+        the copy under ``outputs`` is the one to keep whatever the tree
+        order says.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("02-prepare_kcw_wannier_files/outputs/hr.dat", "merged-hamiltonian"),
+                ("03-wann2kc/inputs/hr.dat", "merged-hamiltonian"),
+            ],
+        )
+
+        assert _link_duplicate_files(tmp_path) == 1
+
+        producer = tmp_path / "02-prepare_kcw_wannier_files/outputs/hr.dat"
+        consumer = tmp_path / "03-wann2kc/inputs/hr.dat"
+        assert not producer.is_symlink()
+        assert consumer.is_symlink()
+        assert consumer.resolve() == producer.resolve()
+        assert consumer.read_text() == "merged-hamiltonian"
+
+    def test_a_unique_file_is_left_alone(self, tmp_path: Path) -> None:
+        """Only repeated bytes are replaced."""
+        _make_tree(tmp_path, [("01-scf/outputs/aiida.out", "one of a kind")])
+
+        assert _link_duplicate_files(tmp_path) == 0
+
+        assert not (tmp_path / "01-scf/outputs/aiida.out").is_symlink()
+
+    def test_the_links_are_relative_and_survive_a_move(self, tmp_path: Path) -> None:
+        """A dump handed to someone else still resolves."""
+        _make_tree(
+            tmp_path,
+            [
+                ("dump/01-scf/outputs/pseudo.upf", "pseudopotential"),
+                ("dump/02-nscf/inputs/pseudo.upf", "pseudopotential"),
+            ],
+        )
+        _link_duplicate_files(tmp_path / "dump")
+
+        moved = tmp_path / "moved"
+        shutil.move(str(tmp_path / "dump"), str(moved))
+
+        link = moved / "02-nscf/inputs/pseudo.upf"
+        assert not Path(os.readlink(link)).is_absolute()
+        assert link.read_text() == "pseudopotential"
+
+    def test_a_task_source_is_never_linked_or_pointed_at(self, tmp_path: Path) -> None:
+        """A task's source and a data file with its bytes both stay real files.
+
+        ``source_file`` is kept out of the comparison rather than merely
+        exempted from being replaced, so no data file is ever made to
+        depend on a folder that exists only to carry a task's code. Both
+        folders here survive the prune, so the two would otherwise be
+        linked whichever way the ordering fell.
+        """
+        shared = "def compute():\n    return 1\n"
+        _make_tree(
+            tmp_path,
+            [
+                ("01-compute_alpha/inputs/function_inputs/payload.npy", shared),
+                ("02-other_task/inputs/source_file", shared),
+                ("02-other_task/inputs/function_inputs/kept.npy", "a payload of its own"),
+            ],
+        )
+
+        _prune_source_only_step_folders(tmp_path)
+        _link_duplicate_files(tmp_path)
+
+        payload = tmp_path / "01-compute_alpha/inputs/function_inputs/payload.npy"
+        source = tmp_path / "02-other_task/inputs/source_file"
+        assert not payload.is_symlink()
+        assert not source.is_symlink()
+        assert payload.read_text() == source.read_text() == shared
 
 
 class TestRenumberStepFolders:
@@ -577,11 +663,6 @@ class TestTidyDumpedTree:
         │       │       └── aiida.cpo
         │       └── 02-compute_orbital_screening_parameters
         │           ├── 01-compute_alpha_orb_1
-        │           │   ├── inputs
-        │           │   │   └── aiida.cpi
-        │           │   └── outputs
-        │           │       └── aiida.cpo
-        │           ├── 02-compute_alpha_orb_2
         │           │   ├── 01-dft_n_minus_1
         │           │   │   ├── inputs
         │           │   │   │   └── aiida.cpi
@@ -592,6 +673,18 @@ class TestTidyDumpedTree:
         │           │           ├── function_inputs
         │           │           │   └── trial_lambdas
         │           │           │       └── lambdas.npy
+        │           │           └── source_file
+        │           ├── 02-compute_alpha_orb_2
+        │           │   ├── 01-dft_n_minus_1
+        │           │   │   ├── inputs
+        │           │   │   │   └── aiida.cpi
+        │           │   │   └── outputs
+        │           │   │       └── aiida.cpo
+        │           │   └── 02-compute_alpha_from_dscf
+        │           │       └── inputs
+        │           │           ├── function_inputs
+        │           │           │   └── trial_lambdas
+        │           │           │       └── lambdas.npy -> (link)
         │           │           └── source_file
         │           └── 03-compute_alpha_orb_10
         │               ├── 01-dft_n_plus_1_dummy
@@ -604,16 +697,23 @@ class TestTidyDumpedTree:
         │               │   │   └── aiida.cpi
         │               │   └── outputs
         │               │       └── aiida.cpo
-        │               └── 03-dft_n_plus_1
-        │                   ├── inputs
-        │                   │   └── aiida.cpi
-        │                   └── outputs
-        │                       └── aiida.cpo
-        └── 05-RunFinalKI
-            ├── inputs
-            │   └── aiida.cpi
-            └── outputs
-                └── aiida.cpo"""
+        │               ├── 03-dft_n_plus_1
+        │               │   ├── inputs
+        │               │   │   └── aiida.cpi
+        │               │   └── outputs
+        │               │       └── aiida.cpo
+        │               └── 04-compute_alpha_from_dscf
+        │                   └── inputs
+        │                       ├── function_inputs
+        │                       │   └── trial_lambdas
+        │                       │       └── lambdas.npy -> (link)
+        │                       └── source_file
+        ├── 05-RunFinalKI
+        │   ├── inputs
+        │   │   └── aiida.cpi
+        │   └── outputs
+        │       └── aiida.cpo
+        └── README"""
 
     def test_the_ozone_dump_tidies_to_the_documented_tree(self, tmp_path: Path) -> None:
         """Every pass is visible in the result, and they compose in one order.
