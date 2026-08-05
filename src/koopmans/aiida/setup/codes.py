@@ -73,6 +73,12 @@ MPI_INIT_NAMES = frozenset({"mpi_init", "mpi_init_thread"})
 # from the search rather than counted as evidence. Matched against the soname
 # alone, never the resolved path: a ScaLAPACK or OpenBLAS build installed
 # under an ``openmpi/`` directory spells "mpi" without being one.
+#
+# The prefix also matches libraries that are not the runtime: mpiP's
+# ``libmpiP.so`` and mpiFileUtils' ``libmpifileutils.so``. A program whose only
+# MPI_Init call reaches through one of those is read as serial and runs on one
+# rank — slower than it could be, but correct, which is the direction this
+# whole decision is biased towards (see :func:`decide_with_mpi`).
 MPI_RUNTIME_PREFIXES = ("libmpi", "libpmpi", "libmpich", "libopen-pal", "libopen-rte")
 
 
@@ -339,14 +345,23 @@ def get_executable_version(path: str) -> str | None:
 
 
 def code_exists(label: str) -> bool:
-    """Check if a code with the given label exists."""
+    """Report whether exactly one registered code resolves from ``label``.
+
+    ``MultipleObjectsError`` propagates instead of being reported as absent.
+    Two nodes sharing a label is a real state, and every caller here answers
+    "absent" by storing another code under that label — so swallowing it turns
+    a duplicate into a triplicate on the next run.
+    """
     from aiida import orm
+    from aiida.common.exceptions import MultipleObjectsError
 
     try:
         orm.load_code(label)
-        return True
+    except MultipleObjectsError:
+        raise
     except Exception:
         return False
+    return True
 
 
 def retire_code(code: AbstractCode, computer: Computer, suffix: str) -> str:
@@ -429,6 +444,52 @@ def _store_code(
     return code
 
 
+def _discard_code(code: InstalledCode) -> None:
+    """Delete a stored code, logging rather than raising if the deletion fails.
+
+    This undoes a replacement whose retirement failed, so letting an error of
+    its own escape would hide the one that caused it. An unstored node has
+    nothing in the database to remove.
+    """
+    from aiida.tools import delete_nodes
+
+    pk = code.pk
+    if pk is None:
+        return
+
+    try:
+        delete_nodes([pk], dry_run=False)
+    except Exception:
+        logger.exception("could not delete the replacement code node %s", pk)
+
+
+def _replace_code(
+    executable_name: str,
+    executable_path: str,
+    plugin: str | None,
+    computer: Computer,
+    label: str,
+    with_mpi: bool,
+    superseded: AbstractCode,
+    suffix: str,
+) -> tuple[InstalledCode, str]:
+    """Store a replacement for ``superseded`` under ``label`` and retire the original.
+
+    Between the store and the relabelling both nodes carry ``label``, and
+    ``load_code(label)`` raises ``MultipleObjectsError`` for as long as they
+    do. Retiring is several database operations, so it can fail there; the
+    replacement is then deleted and the error re-raised, leaving ``superseded``
+    the only node holding the label.
+    """
+    code = _store_code(executable_name, executable_path, plugin, computer, label, with_mpi)
+    try:
+        retired_label = retire_code(superseded, computer, suffix)
+    except Exception:
+        _discard_code(code)
+        raise
+    return code, retired_label
+
+
 def setup_code(
     executable_name: str,
     executable_path: str,
@@ -441,10 +502,9 @@ def setup_code(
     """Set up an AiiDA code for an executable.
 
     ``label`` defaults to the executable stem. ``with_mpi`` defaults to what
-    inspecting the binary decides (see :func:`decide_with_mpi`). When
-    ``force`` replaces an existing code, the replacement is stored before the
-    old node is relabelled, so a store that fails leaves the label resolving
-    to the code that was already there.
+    inspecting the binary decides (see :func:`decide_with_mpi`). A ``force``
+    replacement that fails at either step leaves exactly one node holding the
+    label (see :func:`_replace_code`).
     """
     from aiida import orm
 
@@ -461,9 +521,19 @@ def setup_code(
     if with_mpi is None:
         with_mpi = decide_with_mpi(label, executable_path).with_mpi
 
-    code = _store_code(executable_name, executable_path, plugin, computer, label, with_mpi)
-    if superseded is not None:
-        retire_code(superseded, computer, "_old")
+    if superseded is None:
+        return _store_code(executable_name, executable_path, plugin, computer, label, with_mpi)
+
+    code, _ = _replace_code(
+        executable_name,
+        executable_path,
+        plugin,
+        computer,
+        label,
+        with_mpi,
+        superseded,
+        "_old",
+    )
     return code
 
 
@@ -548,7 +618,9 @@ def migrate_code_mpi_flags(
 
     Each code that does disagree is relabelled ``<label>_mpi_pre`` after its
     replacement is stored under the original label. A code whose binary has
-    disappeared, or whose behaviour cannot be determined, is left alone.
+    disappeared is left alone silently; one whose behaviour cannot be
+    determined is left alone and reported, since no ``--serial``/``--parallel``
+    given here can take effect on it.
 
     ``serial_labels`` and ``parallel_labels`` are tested once per code, so
     they are materialized before the loop and may be given as generators.
@@ -568,6 +640,13 @@ def migrate_code_mpi_flags(
 
         current = effective_with_mpi(code)
         if current is None:
+            click.echo(
+                f"  Cannot tell how '{label}@{computer.label}' runs: it stores no "
+                "with_mpi and has no default CalcJob plugin to take one from, so "
+                "each submission decides for itself. Pin it with "
+                f"'koopmans install --code {label}=<path> --serial {label}' "
+                f"(or --parallel {label})."
+            )
             continue
 
         decision = decide_with_mpi(label, executable_path, serial_labels, parallel_labels)
@@ -575,8 +654,16 @@ def migrate_code_mpi_flags(
             continue
 
         executable, plugin = specs[label]
-        _store_code(executable, executable_path, plugin, computer, label, decision.with_mpi)
-        retired_label = retire_code(code, computer, "_mpi_pre")
+        _, retired_label = _replace_code(
+            executable,
+            executable_path,
+            plugin,
+            computer,
+            label,
+            decision.with_mpi,
+            code,
+            "_mpi_pre",
+        )
         migrations.append(MpiMigration(label, retired_label, decision))
 
     return migrations

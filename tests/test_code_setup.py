@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from tests.fixtures import (
+    LDD_SERIAL_LINKING_OPENMPI,
     LIBS_PARALLEL_HDF5,
     LIBS_QE,
     LIBS_SERIAL,
@@ -18,6 +19,8 @@ from tests.fixtures import (
     NM_MPI_INITIALIZED_ONLY,
     NM_NO_MPI_CALL,
     NM_SERIAL,
+    NM_SERIAL_MPIF90,
+    SERIAL_OPENMPI_CLOSURE,
 )
 
 # ``ldd`` output, kept here because only the parser tests read it.
@@ -273,6 +276,43 @@ class TestMpiEvidence:
         assert not codes.declares_mpi(probe)
 
 
+class TestRuntimeExclusionEndToEnd:
+    """A serial binary whose MPI runtime the loader resolves stays serial.
+
+    ``TestMpiEvidence`` feeds ``mpi_evidence`` a hand-built library dict, so it
+    never exercises the ldd parse or the skip inside the closure walk. And the
+    Intel-MPI wannier90.x on this box cannot stand in: its libmpi.so.12 does
+    not resolve, so it reads serial with or without the exclusion.
+    """
+
+    def test_the_runtime_is_not_walked(self, replay_probes: Callable[..., Path]) -> None:
+        """The OpenMPI libraries are skipped before nm is ever run on them.
+
+        Walking them would find libmpi_mpifh's undefined PMPI_Init entries.
+        """
+        from koopmans.aiida.setup.codes import collect_mpi_evidence
+
+        exe = replay_probes(NM_SERIAL_MPIF90, LDD_SERIAL_LINKING_OPENMPI, SERIAL_OPENMPI_CLOSURE)
+        walked = set(collect_mpi_evidence(str(exe)).library_symbols)
+
+        assert not walked & {
+            "libmpi_mpifh.so.40",
+            "libmpi.so.40",
+            "libopen-pal.so.40",
+            "libopen-rte.so.40",
+        }
+        assert "libhwloc.so.15" in walked, "the non-runtime libraries must still be walked"
+
+    def test_the_binary_is_registered_serial(self, replay_probes: Callable[..., Path]) -> None:
+        """The whole decision, from the recorded probes down, comes out serial."""
+        from koopmans.aiida.setup.codes import decide_with_mpi
+
+        exe = replay_probes(NM_SERIAL_MPIF90, LDD_SERIAL_LINKING_OPENMPI, SERIAL_OPENMPI_CLOSURE)
+        decision = decide_with_mpi("wannier90", str(exe))
+
+        assert decision.with_mpi is False, decision.reason
+
+
 class TestRealBinaries:
     """The decision made about the executables actually installed on this box."""
 
@@ -384,6 +424,39 @@ class TestMpiRegistration:
         assert found == ["wannier90"]
         assert decisions[0].with_mpi is True
         assert load_code(f"wannier90@{aiida_localhost.label}").with_mpi is True
+
+    def test_overrides_apply_to_every_code_in_one_scan(
+        self,
+        aiida_profile_clean: Any,
+        aiida_localhost: Any,
+        stub_executable: Callable[[str], Path],
+    ) -> None:
+        """A generator of override labels is honoured for the second code too.
+
+        Membership is tested once per code, so an argument that can only be
+        iterated once loses every override the first test consumed. The
+        generator lists the codes in the opposite order to the scan, so
+        looking up the first code drains it entirely.
+        """
+        from aiida.orm import load_code
+
+        from koopmans.aiida.setup.codes import scan_and_register_codes
+
+        exe = stub_executable("stub.x")
+        found, _, decisions = scan_and_register_codes(
+            {
+                "pw": ("pw.x", "quantumespresso.pw"),
+                "dos": ("dos.x", "quantumespresso.dos"),
+            },
+            aiida_localhost,
+            explicit_codes={"pw": str(exe), "dos": str(exe)},
+            parallel_labels=(label for label in ["dos", "pw"]),
+        )
+
+        assert sorted(found) == ["dos", "pw"]
+        assert all(decision.with_mpi is True for decision in decisions)
+        for label in ("pw", "dos"):
+            assert load_code(f"{label}@{aiida_localhost.label}").with_mpi is True
 
 
 class TestEffectiveWithMpi:
@@ -510,6 +583,69 @@ class TestMpiFlagMigration:
             codes.migrate_code_mpi_flags(["wannier90"], aiida_localhost)
 
         assert load_code(f"wannier90@{aiida_localhost.label}").pk == original.pk
+
+    def test_a_failed_retire_leaves_one_node_holding_the_label(
+        self,
+        aiida_profile_clean: Any,
+        aiida_localhost: Any,
+        stub_executable: Callable[[str], Path],
+        monkeypatch: Any,
+    ) -> None:
+        """If retiring the superseded code raises, the replacement is undone.
+
+        The replacement is stored under the live label before the original is
+        renamed off it, so both nodes hold that label in between. Leaving them
+        there makes ``load_code`` raise MultipleObjectsError for good, and the
+        next install stores a third node under it.
+        """
+        from aiida.common.exceptions import MultipleObjectsError
+        from aiida.orm import load_code
+
+        from koopmans.aiida.setup import codes
+
+        exe = stub_executable("wannier90.x")
+        original = codes.setup_code(
+            "wannier90.x", str(exe), "wannier90.wannier90", aiida_localhost, with_mpi=True
+        )
+        assert original is not None
+
+        def _boom(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("the database went away")
+
+        monkeypatch.setattr(codes, "retire_code", _boom)
+
+        with pytest.raises(RuntimeError, match="the database went away"):
+            codes.migrate_code_mpi_flags(["wannier90"], aiida_localhost)
+
+        full_label = f"wannier90@{aiida_localhost.label}"
+        try:
+            survivor = load_code(full_label)
+        except MultipleObjectsError as exc:
+            raise AssertionError(f"the label was left resolving to two codes: {exc}") from exc
+        assert survivor.pk == original.pk
+
+    def test_an_undecidable_code_is_reported(
+        self,
+        aiida_profile_clean: Any,
+        aiida_localhost: Any,
+        code_without_mpi_flag: Callable[..., Any],
+        capsys: Any,
+    ) -> None:
+        """Leaving a code alone because it cannot be read says so.
+
+        kcw stores no with_mpi and has no default plugin, so a --serial/
+        --parallel naming it cannot take effect; skipping in silence leaves
+        the user believing it did.
+        """
+        from koopmans.aiida.setup.codes import migrate_code_mpi_flags
+
+        code_without_mpi_flag("kcw", None, aiida_localhost)
+
+        assert migrate_code_mpi_flags(["kcw"], aiida_localhost, serial_labels=["kcw"]) == []
+
+        message = capsys.readouterr().out
+        assert "kcw" in message
+        assert "--serial kcw" in message
 
     def test_overrides_apply_to_every_code_in_one_run(
         self,
@@ -642,6 +778,45 @@ class TestMpiFlagMigration:
         assert replacement.base.caching.compute_hash() != stale_hash
 
 
+class TestDuplicateLabels:
+    """Two codes under one label is an error, never an absence."""
+
+    def test_a_duplicated_label_is_not_reported_as_absent(
+        self,
+        aiida_profile_clean: Any,
+        aiida_localhost: Any,
+        stub_executable: Callable[[str], Path],
+    ) -> None:
+        """``code_exists`` raises on a duplicate rather than answering False.
+
+        Every caller here treats False as "store one", so swallowing the error
+        turns a pair of nodes into three on the next install.
+        """
+        from aiida.common.exceptions import MultipleObjectsError
+        from aiida.orm import InstalledCode
+
+        from koopmans.aiida.setup.codes import code_exists
+
+        for _ in range(2):
+            InstalledCode(
+                label="wannier90",
+                computer=aiida_localhost,
+                filepath_executable=str(stub_executable("wannier90.x")),
+                default_calc_job_plugin="wannier90.wannier90",
+            ).store()
+
+        with pytest.raises(MultipleObjectsError):
+            code_exists(f"wannier90@{aiida_localhost.label}")
+
+    def test_an_absent_label_is_still_reported_as_absent(
+        self, aiida_profile_clean: Any, aiida_localhost: Any
+    ) -> None:
+        """Only the duplicate case propagates; a missing code is still False."""
+        from koopmans.aiida.setup.codes import code_exists
+
+        assert not code_exists(f"nothing_here@{aiida_localhost.label}")
+
+
 class TestCodeLabelValidation:
     """``--serial``/``--parallel`` reject a label koopmans never registers."""
 
@@ -684,6 +859,91 @@ class TestCodeLabelValidation:
         from koopmans.cli import _reject_parallel_on_serial_codes
 
         _reject_parallel_on_serial_codes({"pw", "wannier90"})
+
+    def test_the_install_command_refuses_before_it_touches_anything(self, monkeypatch: Any) -> None:
+        """``koopmans install --parallel wann2kcp`` stops at argument parsing.
+
+        The helper above is tested in isolation, so nothing caught the command
+        forgetting to call it — in which case the install would create a
+        profile and only then decide what to do about --parallel.
+        """
+        from click.testing import CliRunner
+
+        from koopmans import cli
+
+        def _too_far(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("the install began before --parallel was checked")
+
+        monkeypatch.setattr(cli, "setup_profile", _too_far)
+
+        result = CliRunner().invoke(cli.cli, ["install", "--parallel", "wann2kcp"])
+
+        assert result.exit_code != 0
+        assert "races on its buffer scratch" in result.output
+
+
+class TestMigrateFlag:
+    """``koopmans install --no-migrate`` keeps codes that run the wrong way."""
+
+    @staticmethod
+    def _stub_install(monkeypatch: Any, computer: Any) -> None:
+        """Point ``setup_computers`` at a test computer and skip the PATH scan."""
+        from koopmans.aiida.setup import orchestrate
+
+        monkeypatch.setattr(orchestrate, "get_localhost_computer", lambda **kwargs: computer)
+        monkeypatch.setattr(
+            orchestrate, "scan_and_register_codes", lambda *args, **kwargs: ([], [], [])
+        )
+
+    def test_no_migrate_keeps_a_code_that_runs_the_wrong_way(
+        self,
+        aiida_profile_clean: Any,
+        aiida_localhost: Any,
+        stub_executable: Callable[[str], Path],
+        monkeypatch: Any,
+    ) -> None:
+        """The stale code keeps its node, so its cached calculations stay reusable."""
+        from aiida.orm import load_code
+
+        from koopmans.aiida.setup.codes import setup_code
+        from koopmans.aiida.setup.orchestrate import setup_computers
+
+        self._stub_install(monkeypatch, aiida_localhost)
+        exe = stub_executable("wannier90.x")
+        stale = setup_code(
+            "wannier90.x", str(exe), "wannier90.wannier90", aiida_localhost, with_mpi=True
+        )
+        assert stale is not None
+
+        setup_computers(migrate=False)
+
+        assert load_code(f"wannier90@{aiida_localhost.label}").pk == stale.pk
+
+    def test_the_default_install_does_migrate(
+        self,
+        aiida_profile_clean: Any,
+        aiida_localhost: Any,
+        stub_executable: Callable[[str], Path],
+        monkeypatch: Any,
+    ) -> None:
+        """Without --no-migrate the same code is replaced, so the flag decides."""
+        from aiida.orm import load_code
+
+        from koopmans.aiida.setup.codes import setup_code
+        from koopmans.aiida.setup.orchestrate import setup_computers
+
+        self._stub_install(monkeypatch, aiida_localhost)
+        exe = stub_executable("wannier90.x")
+        stale = setup_code(
+            "wannier90.x", str(exe), "wannier90.wannier90", aiida_localhost, with_mpi=True
+        )
+        assert stale is not None
+
+        setup_computers()
+
+        replacement = load_code(f"wannier90@{aiida_localhost.label}")
+        assert replacement.pk != stale.pk
+        assert replacement.with_mpi is False
 
 
 class TestForcedCodeReinstall:

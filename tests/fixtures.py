@@ -133,6 +133,69 @@ LIBS_SERIAL = {
     "libopenblas.so.0": NM_SERIAL,
 }
 
+# ----------------------------------------------------------------------
+# A serial binary whose OpenMPI libraries the loader actually resolves
+# ----------------------------------------------------------------------
+# Recorded from ``int main(void) { return 0; }`` compiled through the OpenMPI
+# wrapper on a Debian box. The wrapper records libmpi_mpifh in DT_NEEDED, and
+# that library carries three undefined PMPI_Init entries — so anything that
+# walks it reads this program as parallel.
+#
+# The Intel-MPI wannier90.x under /usr/local/bin cannot stand in for this: its
+# libmpi.so.12 is unresolvable here, so ``linked_libraries`` drops it and the
+# binary reads serial whether or not the runtime is excluded.
+
+# ``ldd`` on that program: libmpi_mpifh and libmpi both resolve to real files.
+LDD_SERIAL_LINKING_OPENMPI = """\
+\tlinux-vdso.so.1 (0x00007ffcd5dac000)
+\tlibmpi_mpifh.so.40 => /lib/x86_64-linux-gnu/libmpi_mpifh.so.40 (0x00007b656e545000)
+\tlibmpi.so.40 => /lib/x86_64-linux-gnu/libmpi.so.40 (0x00007b656e40e000)
+\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007b656e000000)
+\tlibopen-pal.so.40 => /lib/x86_64-linux-gnu/libopen-pal.so.40 (0x00007b656e35b000)
+\tlibopen-rte.so.40 => /lib/x86_64-linux-gnu/libopen-rte.so.40 (0x00007b656e29c000)
+\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007b656df19000)
+\tlibhwloc.so.15 => /lib/x86_64-linux-gnu/libhwloc.so.15 (0x00007b656e240000)
+\t/lib64/ld-linux-x86-64.so.2 (0x00007b656e5cb000)
+\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007b656dec8000)
+"""
+
+# ``nm -D`` on that program: weak libc references and nothing else.
+NM_SERIAL_MPIF90 = """\
+                 w __cxa_finalize@GLIBC_2.2.5
+                 w __gmon_start__
+                 w _ITM_deregisterTMCloneTable
+                 w _ITM_registerTMCloneTable
+                 U __libc_start_main@GLIBC_2.34
+"""
+
+# ``nm -D`` on OpenMPI's Fortran bindings: the trap, since these are undefined.
+NM_LIBMPI_MPIFH = """\
+                 U PMPI_Init
+                 U PMPI_Initialized
+                 U PMPI_Init_thread
+"""
+
+# ``nm -D`` on the OpenMPI core, which defines MPI_Init rather than calling it.
+NM_LIBMPI = """\
+0000000000080bb0 T MPI_Init
+0000000000080d20 T MPI_Init_thread
+00000000000603e0 T ompi_init_preconnect_mpi
+"""
+
+# That program's whole closure, keyed by the path ``ldd`` resolved. Everything
+# outside the OpenMPI libraries is free of any MPI entry.
+SERIAL_OPENMPI_CLOSURE = {
+    "/lib/x86_64-linux-gnu/libmpi_mpifh.so.40": NM_LIBMPI_MPIFH,
+    "/lib/x86_64-linux-gnu/libmpi.so.40": NM_LIBMPI,
+    "/lib/x86_64-linux-gnu/libopen-pal.so.40": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libopen-rte.so.40": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libc.so.6": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libm.so.6": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libhwloc.so.15": NM_SERIAL,
+    "/lib64/ld-linux-x86-64.so.2": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libz.so.1": NM_SERIAL,
+}
+
 
 @pytest.fixture
 def binary_probe() -> Callable[..., Any]:
@@ -151,6 +214,44 @@ def binary_probe() -> Callable[..., Any]:
         return BinaryProbe(dynamic_symbols, library_symbols or {}, raw_strings)
 
     return _build
+
+
+@pytest.fixture
+def replay_probes(monkeypatch: Any, stub_executable: Callable[[str], Path]) -> Callable[..., Path]:
+    """Return a factory replaying recorded ``nm``/``ldd``/``strings`` output.
+
+    The factory signature is ``(dynamic_symbols, ldd_output="",
+    library_symbols=None, raw_strings="") -> Path``, where ``library_symbols``
+    is keyed by the path ``ldd`` resolved. It replaces
+    :func:`koopmans.aiida.setup.codes._run_probe` and returns a real file to
+    probe, so ``collect_mpi_evidence`` runs its whole pipeline — ldd parsing,
+    the runtime skip, the library walk — over the recording.
+    """
+
+    def _install(
+        dynamic_symbols: str,
+        ldd_output: str = "",
+        library_symbols: dict[str, str] | None = None,
+        raw_strings: str = "",
+    ) -> Path:
+        from koopmans.aiida.setup import codes
+
+        executable = stub_executable("recorded.x")
+        libraries = library_symbols or {}
+
+        def _replay(command: list[str], path: str) -> str:
+            if command[0] == "ldd":
+                return ldd_output
+            if command[0] == "strings":
+                return raw_strings
+            if path == str(executable):
+                return dynamic_symbols
+            return libraries.get(path, "")
+
+        monkeypatch.setattr(codes, "_run_probe", _replay)
+        return executable
+
+    return _install
 
 
 # ----------------------------------------------------------------------
