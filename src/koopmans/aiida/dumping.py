@@ -50,10 +50,15 @@ _DIGEST_BLOCK = 1 << 20
 _SYMLINK_README = """\
 Some files here appear in more than one step: an input staged from an
 earlier step's output, a pseudopotential every calculation reads. Only
-one copy of each is a real file and the rest are relative symlinks to it,
-so copy this directory with something that preserves them (`cp -a`,
-`rsync -a`, `tar`) — or pass your tool's dereference option to expand
-every link back into a full copy.
+one copy of each is a real file; the rest are relative symlinks to it.
+
+Most ways of copying this directory keep those links — `cp -r`, `tar`
+and `rsync -a` all do. The one to avoid is `rsync -r` without `-a` or
+`-l`: it skips every link, mentions it only in passing, exits 0 all the
+same, and leaves you a copy with those files missing. Use `rsync -a`.
+
+For a copy with no links in it at all, dereference them: `cp -aL`,
+`tar -h`, or `rsync -aL`.
 """
 
 # Sibling ordering: siblings group into families — the label with its
@@ -109,15 +114,18 @@ def _file_digest(path: Path) -> str:
 
 
 def _content_keys(root_path: Path) -> dict[Path, str]:
-    """Return a key per file that two files share exactly when identical.
+    """Return a key per real file that two share exactly when identical.
 
     A file whose size occurs once in the tree can have no twin, so it
     takes a key of its own and is never read — which keeps the pass off
     the large outputs a finished run retrieves.
+
+    Symlinks are left out, so a tree that already holds some is not
+    counted through them.
     """
     by_size: dict[int, list[Path]] = defaultdict(list)
     for path in root_path.rglob("*"):
-        if path.is_file():
+        if path.is_file() and not path.is_symlink():
             by_size[path.stat().st_size].append(path)
 
     keys: dict[Path, str] = {}
@@ -172,6 +180,11 @@ def _link_duplicate_files(root_path: Path) -> int:
     once per orbital dumps its code under each, and those copies collapse
     like any other, but no data file is ever made to depend on a folder
     that carries only code.
+
+    Expects a freshly written tree that holds no symlinks of its own. Any
+    it does find are left where they are and never chosen as the copy to
+    keep: a link ranked ahead of the real file would leave the two
+    pointing at each other and the bytes gone.
 
     :param root_path: Root of the tidied tree.
     :return: How many symlinks were made.

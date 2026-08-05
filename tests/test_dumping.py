@@ -273,6 +273,48 @@ class TestLinkDuplicateFiles:
         assert consumer.resolve() == producer.resolve()
         assert consumer.read_text() == "merged-hamiltonian"
 
+    def test_a_step_that_writes_and_reads_a_file_keeps_the_output_copy(
+        self, tmp_path: Path
+    ) -> None:
+        """One step's own staged input points at its own output.
+
+        The fold step stages the matrices it then writes back out, so
+        both copies live under the one folder. ``inputs`` sorts before
+        ``outputs``, so tree order alone would keep the staged copy; only
+        the preference for a producing ``outputs`` copy picks the other.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("01-fold/inputs/wannier_files/aiida_u.mat", "unitary-matrix"),
+                ("01-fold/outputs/wannier_files/aiida_u.mat", "unitary-matrix"),
+            ],
+        )
+
+        assert _link_duplicate_files(tmp_path) == 1
+
+        assert not (tmp_path / "01-fold/outputs/wannier_files/aiida_u.mat").is_symlink()
+        assert (tmp_path / "01-fold/inputs/wannier_files/aiida_u.mat").is_symlink()
+
+    def test_a_symlink_already_in_the_tree_is_left_alone(self, tmp_path: Path) -> None:
+        """A tree that already holds links is not linked into a loop.
+
+        Ranking an existing link as the copy to keep would replace the
+        real file with a link to it, leaving the two pointing at each
+        other and the bytes gone.
+        """
+        _make_tree(tmp_path, [("01-step/inputs/data.mat", "payload")])
+        real = tmp_path / "01-step/inputs/data.mat"
+        link = tmp_path / "01-step/outputs/data.mat"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(os.path.relpath(real, link.parent))
+
+        assert _link_duplicate_files(tmp_path) == 0
+
+        assert not real.is_symlink()
+        assert real.read_text() == "payload"
+        assert link.read_text() == "payload"
+
     def test_a_unique_file_is_left_alone(self, tmp_path: Path) -> None:
         """Only repeated bytes are replaced."""
         _make_tree(tmp_path, [("01-scf/outputs/aiida.out", "one of a kind")])
