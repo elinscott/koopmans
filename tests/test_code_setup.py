@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 def _workflows_source() -> str:
     """Concatenate the workflows package's module sources for call-site scans."""
@@ -203,3 +205,18 @@ class TestVariantCodes:
         code = load_code(f"pw2wannier90_decompose@{aiida_localhost.label}")
         assert str(code.filepath_executable) == str(exe)
         assert code.default_calc_job_plugin == "koopmans.pw2wannier_decompose"
+
+    def test_unknown_code_label_is_rejected(
+        self, aiida_profile_clean: Any, aiida_localhost: Any, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        """A mistyped ``--code`` label stops the install instead of doing nothing."""
+        import click
+
+        from koopmans.aiida.setup import orchestrate
+
+        monkeypatch.setattr(orchestrate, "get_localhost_computer", lambda **_: aiida_localhost)
+
+        with pytest.raises(click.ClickException, match="pw2wannier_decompose"):
+            orchestrate.setup_computers(
+                explicit_codes={"pw2wannier_decompose": str(tmp_path / "pw2wannier90.x")}
+            )

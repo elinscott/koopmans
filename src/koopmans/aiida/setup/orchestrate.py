@@ -49,6 +49,12 @@ def setup_computers(
     existing_codes, codes_to_find = get_codes_to_register(computer)
 
     if explicit_codes:
+        unknown = sorted(set(explicit_codes) - set(specs))
+        if unknown:
+            raise click.ClickException(
+                f"--code names {', '.join(unknown)}, which koopmans does not register. "
+                f"Choose from: {', '.join(sorted(specs))}."
+            )
         for label in explicit_codes:
             if label in specs and label not in codes_to_find:
                 codes_to_find[label] = specs[label]

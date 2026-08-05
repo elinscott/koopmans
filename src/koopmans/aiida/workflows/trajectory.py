@@ -61,10 +61,10 @@ def build_trajectory_workgraph(
     (``init_orbitals`` in ``mlwfs`` / ``projwfs``) and the
     ``pw2wannier90_decompose`` code, a pw2wannier90.x build that
     implements that mode; the ``ml`` radial-basis settings become that
-    pass's namelist keys. ``mode: predict``
-    supports ``self_hartree`` only: the decompose pass that builds the
-    power-spectrum descriptors is not wired into the DSCF's screening
-    stage, where the prediction runs.
+    pass's namelist keys. ``mode: predict`` supports ``self_hartree``
+    only: the decompose pass that builds the power-spectrum descriptors
+    is not wired into the DSCF's screening stage, where the prediction
+    runs.
 
     Each frame of the ``atoms.snapshots`` xyz becomes one ``snapshot_N``
     structure fed to the dynamic snapshots namespace. All frames share one
