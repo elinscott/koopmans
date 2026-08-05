@@ -1,7 +1,7 @@
 """Dispatcher smoke test for tutorial_1 / ozone driven by the KIPZ correction.
 
-Parses ``tutorials/ozone_kipz.yaml`` into a ``KoopmansInput`` and verifies
-that the dispatcher accepts ``correction=kipz`` and emits the same
+Parses ``tutorials/orbital_energies/ozone/ozone_kipz.yaml`` into a
+``KoopmansInput`` and verifies that the dispatcher accepts ``correction=kipz`` and emits the same
 top-level shape as the KI build (the KI vs KIPZ difference lives inside
 the ``ComputeScreeningParameters`` sub-graph, in the parameter dicts of
 the alpha-step builders — covered by ``aiida-koopmans2/tests/test_kcp_workgraph.py``).
@@ -26,7 +26,7 @@ from koopmans.input_file import KoopmansInput, read_input_file
 @pytest.fixture
 def tutorial_1_ozone_kipz_input(tutorials_dir: Path) -> KoopmansInput:
     """Parse the ozone_kipz.yaml tutorial into a ``KoopmansInput``."""
-    return read_input_file(tutorials_dir / "ozone_kipz.yaml")
+    return read_input_file(tutorials_dir / "orbital_energies/ozone/ozone_kipz.yaml")
 
 
 def test_dispatcher_accepts_kipz_correction(

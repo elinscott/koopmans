@@ -12,16 +12,9 @@ can be read in any order.
     umbrella issue is `#61 <https://github.com/elinscott/koopmans/issues/61>`_.
 
 .. toctree::
-    :maxdepth: 1
+    :maxdepth: 2
 
-    water
-    ozone
-    magnetic_molecules
-    silicon_supercell
-    silicon_dfpt
-    zno
-    external_projectors
-    magnetic_solids
-    machine_learning
-    spin_orbit
-    dielectric
+    orbital_energies/index
+    band_structures/index
+    screening_via_ml/index
+    dielectric_constants/index

@@ -25,7 +25,7 @@ everything for you.
     $ koopmans run silicon.json
 
 New here? :doc:`Install the code <installation>`, then run :doc:`your first calculation
-<tutorials/water>`.
+<tutorials/orbital_energies/water/index>`.
 
 ************************
  What you can calculate
@@ -38,19 +38,22 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
         .. image:: _static/capabilities/molecular_orbital_energies.svg
             :alt: Placeholder tile for the orbital energies of molecules
 
-        Orbital energies for :doc:`paramagnetic <tutorials/ozone>` and :doc:`magnetic
-        <tutorials/magnetic_molecules>` molecules
+        Orbital energies for :doc:`paramagnetic
+        <tutorials/orbital_energies/ozone/index>` and :doc:`magnetic
+        <tutorials/orbital_energies/magnetic/index>` molecules
 
     .. container:: capability-cell
 
         .. image:: _static/capabilities/zno_bands.png
             :alt: The LDA and Koopmans band structures of ZnO, with the band gap marked
 
-        Band structures of solids, with screening parameters from :doc:`finite differences
-        <tutorials/silicon_supercell>` or :doc:`linear response <tutorials/silicon_dfpt>` —
-        and with :doc:`automated Wannierization <tutorials/zno>`, for :doc:`magnetic systems
-        <tutorials/magnetic_solids>`, or with :doc:`spin-orbit coupling
-        <tutorials/spin_orbit>`
+        Band structures of solids, with screening parameters from :doc:`finite
+        differences <tutorials/band_structures/silicon_finite_differences/index>` or
+        :doc:`linear response <tutorials/band_structures/silicon_linear_response/index>`
+        — and with :doc:`automated Wannierization
+        <tutorials/band_structures/zno/index>`, for :doc:`magnetic systems
+        <tutorials/band_structures/magnetic/index>`, or with :doc:`spin-orbit coupling
+        <tutorials/band_structures/spin_orbit/index>`
 
     .. container:: capability-cell
 
@@ -58,15 +61,16 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
             :alt: Predicted against calculated orbital energies, and their error
                 distribution
 
-        Screening parameters via :doc:`machine learning <tutorials/machine_learning>`
+        Screening parameters via :doc:`machine learning
+        <tutorials/screening_via_ml/index>`
 
     .. container:: capability-cell
 
         .. image:: _static/capabilities/dielectric.svg
             :alt: Placeholder tile for dielectric constants
 
-        :doc:`Dielectric constants <tutorials/dielectric>`, which a Koopmans calculation
-        on a solid needs
+        :doc:`Dielectric constants <tutorials/dielectric_constants/index>`, which a
+        Koopmans calculation on a solid needs
 
     .. container:: capability-cell planned
 

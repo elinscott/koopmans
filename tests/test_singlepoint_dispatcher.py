@@ -24,7 +24,7 @@ from koopmans.input_file.workflow import (
 @pytest.fixture
 def ozone_yaml(tutorials_dir: Path) -> Path:
     """Return the path to the ozone tutorial input file."""
-    return tutorials_dir / "ozone.yaml"
+    return tutorials_dir / "orbital_energies/ozone/ozone.yaml"
 
 
 @pytest.fixture

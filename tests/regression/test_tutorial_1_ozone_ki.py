@@ -1,6 +1,7 @@
 """Dispatcher + workgraph-shape regression test for tutorial_1 (ozone, KI-DSCF).
 
-Parses ``tutorials/ozone.yaml`` into a ``KoopmansInput``, calls
+Parses ``tutorials/orbital_energies/ozone/ozone.yaml`` into a
+``KoopmansInput``, calls
 ``build_workgraph`` to produce an ``aiida_workgraph.WorkGraph``, and
 snapshots the resulting graph structure (task names, task count, serialized
 task/port definitions with UUIDs scrubbed).
@@ -24,7 +25,7 @@ from koopmans.input_file import KoopmansInput, read_input_file
 @pytest.fixture
 def tutorial_1_ozone_input(tutorials_dir: Path) -> KoopmansInput:
     """Parse the ozone.yaml tutorial into a ``KoopmansInput``."""
-    return read_input_file(tutorials_dir / "ozone.yaml")
+    return read_input_file(tutorials_dir / "orbital_energies/ozone/ozone.yaml")
 
 
 def test_build_workgraph(

@@ -29,7 +29,7 @@ than that:
 - ``screening_method: dscf`` means that, for each orbital, the code performs constrained
   calculations with :math:`N`, :math:`N-1`, or :math:`N+1` electrons and compares the
   resulting energy differences against the orbital energies (see :doc:`the theory page
-  <../theory>`).
+  <../../../theory>`).
 - ``init_orbitals: kohn-sham`` uses the Kohn-Sham orbitals of the base functional as the
   variational orbitals — and for KI they also *remain* the variational orbitals, since
   KI leaves the orbitals of its base functional unchanged. This is common practice for
@@ -67,8 +67,8 @@ The ``calculator_parameters`` block holds the plane-wave settings:
  Running the calculation
 *************************
 
-Make sure you have :doc:`installed the engine <../installation>` (``koopmans install``;
-this workflow needs ``pw.x`` and ``kcp.x``), then run
+Make sure you have :doc:`installed the engine <../../../installation>` (``koopmans
+install``; this workflow needs ``pw.x`` and ``kcp.x``), then run
 
 .. code-block:: console
 
@@ -270,7 +270,7 @@ orbitals are less certain, so they are left out. The three KI values sit at the 
 the final KI output's ``Eigenvalues`` line, and the PBE ones in the corresponding line
 of the initialization output. Plotting one against the other:
 
-.. figure:: ../_static/tutorials/ozone_spectrum.svg
+.. figure:: ozone_spectrum.svg
     :width: 420
     :align: center
 
@@ -317,7 +317,8 @@ orbital, here ranging from 0.66 to 0.78 — each one computed, not fitted.
     constrained :math:`N \pm 1` calculation needs a supercell large enough that the
     added electron or hole does not overlap its own periodic images, so each calculation
     in the loop is itself far more expensive. That is what makes ΔSCF impractical for
-    solids, and why the :doc:`silicon tutorial <silicon_dfpt>` computes the screening
+    solids, and why the :doc:`silicon tutorial
+    <../../band_structures/silicon_linear_response/index>` computes the screening
     parameters from linear response (DFPT) instead.
 
 *************
@@ -349,8 +350,8 @@ array.
 ``run`` blocks until the workflow finishes. For a calculation long enough that this is
 inconvenient, ``submit`` returns an integer id immediately and leaves the workflow
 running in the background, and ``outputs(pk)`` reads the finished result back by that id
-— in this python session or a later one. See :doc:`../python_api` for the three verbs in
-full.
+— in this python session or a later one. See :doc:`../../../python_api` for the three
+verbs in full.
 
 .. admonition:: Coming from the ASE-based koopmans 1.x?
 
@@ -368,11 +369,12 @@ full.
  Further reading
 *****************
 
-- :doc:`The theory page <../theory>` explains the functionals and the role of the
+- :doc:`The theory page <../../../theory>` explains the functionals and the role of the
   screening parameters.
 - The `2023 koopmans paper <https://doi.org/10.1021/acs.jctc.3c00652>`_ derives the ΔSCF
   screening procedure in full and benchmarks it against experiment.
-- The :doc:`next tutorial <magnetic_molecules>` treats molecules whose ground state is
+- The :doc:`next tutorial <../magnetic/index>` treats molecules whose ground state is
   spin-polarized.
-- The :doc:`silicon tutorial <silicon_dfpt>` computes the screening parameters from
-  linear response — the route that makes crystals affordable.
+- The :doc:`silicon tutorial <../../band_structures/silicon_linear_response/index>`
+  computes the screening parameters from linear response — the route that makes crystals
+  affordable.
