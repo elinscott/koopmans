@@ -770,15 +770,15 @@ raw:
             child_default_link_limit: 1
             is_metadata: true
             required: false
-        ml_compare:
-          default: false
+        ml_model:
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
-        ml_model:
+        ml_test:
+          default: false
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -1634,7 +1634,7 @@ raw:
         gamma_only: false
         init_orbitals: kohn-sham
         initial_alpha: 0.6
-        ml_compare: false
+        ml_test: false
         nbnd: 8
         nspin: 2
         orbital_groups_self_hartree_tol: 0.001
@@ -1944,15 +1944,15 @@ raw:
                 child_default_link_limit: 1
                 is_metadata: true
                 required: false
-            ml_compare:
-              default: false
+            ml_model:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
-            ml_model:
+            ml_test:
+              default: false
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
