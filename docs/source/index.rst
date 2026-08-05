@@ -100,6 +100,7 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
     theory
     input_file
     cli
+    python_api
 
 **********
  Citation

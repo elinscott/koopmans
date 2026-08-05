@@ -6,6 +6,7 @@ or RabbitMQ broker if available.
 
 from __future__ import annotations
 
+import atexit
 import logging
 from pathlib import Path
 
@@ -14,6 +15,8 @@ import click
 logger = logging.getLogger(__name__)
 
 PROFILE_NAME = "koopmans"
+
+_CLOSE_HOOK_REGISTERED = False
 
 
 def profile_exists() -> bool:
@@ -114,6 +117,37 @@ def load_koopmans_profile() -> None:
         )
 
     load_profile(PROFILE_NAME)
+    close_engine_at_exit()
+
+
+def close_engine_at_exit() -> None:
+    """Close the loaded profile's engine connections when the interpreter exits.
+
+    Registers a single hook however often it is called. The hook must run
+    while the logging machinery is still standing, so it closes the broker
+    before garbage collection reaches it.
+    """
+    global _CLOSE_HOOK_REGISTERED
+
+    if _CLOSE_HOOK_REGISTERED:
+        return
+
+    atexit.register(close_engine)
+    _CLOSE_HOOK_REGISTERED = True
+
+
+def close_engine() -> None:
+    """Close the loaded profile's broker, storage and runner.
+
+    A closed resource is reopened on next use, so this is safe to call on a
+    profile that is still in use.
+    """
+    from aiida.manage import get_manager
+
+    try:
+        get_manager().reset_profile()
+    except Exception:
+        logger.debug("Could not close the AiiDA engine.", exc_info=True)
 
 
 def koopmans_dir() -> Path:

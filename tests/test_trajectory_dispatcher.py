@@ -700,3 +700,69 @@ class TestModelNodeRoute:
 
         with pytest.raises(ValueError, match="integer PK or string UUID"):
             MLConfig.model_validate({"mode": "predict", "model": bad})
+
+
+class TestFrozenWindowThreading:
+    """The input file's disentanglement window reaches the Wannier-init route.
+
+    Regression for koopmans#94: the water empty block must build the
+    legacy pool-and-freeze shape — bands 5-N read with two Wannier
+    functions and ``dis_froz_max`` carried — not an unfrozen
+    disentanglement (which moves the folded LUMO ~0.9 eV) and not a
+    silent drop of the keyword.
+    """
+
+    def _dscf_task(
+        self,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        write_multiframe_xyz: Callable[..., Path],
+        *,
+        pw_nbnd: int,
+    ) -> Any:
+        """Build the water trajectory and return its DSCF task."""
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["calculator_parameters"]["pw"] = {"system": {"nbnd": pw_nbnd}}
+        wg = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        return next(t for t in wg.tasks if t.name == "dscf_snapshot_1")
+
+    def test_water_empty_block_pools_and_freezes(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """With nscf headroom the empty block reads the pool and keeps the window."""
+        dscf = self._dscf_task(tmp_path, trajectory_codes, write_multiframe_xyz, pw_nbnd=12)
+        blocks = dscf.inputs.blocks.value
+        empty = next(b for b in blocks if not b["filled"])
+        assert empty["num_wann"] == 2
+        assert empty["num_bands"] == 8
+        assert list(empty["exclude_bands"]) == [1, 2, 3, 4]
+        overrides = dscf.inputs.wannier_overrides["wannier90"].value
+        assert overrides["dis_froz_max"] == 1.0
+
+    def test_water_empty_block_isolated_without_headroom(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """Nscf nbnd equal to the Wannier manifold selects the isolated shape."""
+        dscf = self._dscf_task(tmp_path, trajectory_codes, write_multiframe_xyz, pw_nbnd=6)
+        blocks = dscf.inputs.blocks.value
+        empty = next(b for b in blocks if not b["filled"])
+        assert empty["num_wann"] == 2
+        assert empty["num_bands"] == 2
+        assert list(empty["exclude_bands"]) == [1, 2, 3, 4]
