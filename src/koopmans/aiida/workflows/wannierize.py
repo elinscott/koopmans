@@ -102,21 +102,71 @@ def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
         )
 
 
+def _kpoint_sampling(
+    koopmans_input: KoopmansInput,
+) -> tuple[orm.KpointsData, orm.KpointsData, list[int]]:
+    """Return the scf mesh, the explicit nscf/wannier90 k-list and its dimensions.
+
+    wannier90 and pw2wannier90 need eigenstates on the full explicit k-list
+    (wannier90 ``kmesh.pl`` ordering, no symmetry reduction) and cannot
+    re-derive the Monkhorst-Pack dimensions from it, so the mesh is expanded
+    here and the grid carried alongside. The scf takes the mesh itself and
+    may reduce it by symmetry.
+    """
+    from aiida_wannier90_workflows.utils.kpoints import get_explicit_kpoints
+
+    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+
+    mesh = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
+    mp_grid = [int(x) for x in mesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
+    return mesh, get_explicit_kpoints(mesh), mp_grid
+
+
+def _external_projector_kwargs(
+    koopmans_input: KoopmansInput, structure: orm.StructureData
+) -> dict[str, Any]:
+    """Return the external-projector inputs an automatic Wannierization needs.
+
+    Empty unless ``pw2wannier90.atom_proj_ext`` asks for the projector
+    functions to come from ``pw2wannier90.atom_proj_dir`` rather than from
+    the pseudopotentials.
+    """
+    pw2w_params = koopmans_input.calculator_parameters.pw2wannier90
+    if not pw2w_params.atom_proj_ext:
+        return {}
+    external_projectors, projector_path = load_external_projectors(
+        structure, pw2w_params.atom_proj_dir
+    )
+    return {
+        "external_projectors_path": projector_path,
+        "external_projectors": external_projectors,
+    }
+
+
 def build_wannierize_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
 ) -> WorkGraph:
     """Build a workgraph for Wannierization.
 
+    Two routes, both sampling the Brillouin zone on ``kpoints.grid``:
+
+    * ``workflow.auto_projections`` alone Wannierizes the whole manifold in
+      one ``Wannier90WorkChain``, which reads twice as many bands as it
+      Wannierizes and disentangles them against the pseudo-atomic
+      projections.
+    * Explicit projections or ``block_wannierization_threshold`` route to
+      :func:`_build_wannierize_blocks_workgraph`, one Wannierization per
+      block off a shared scf + nscf. Its automatic block reads exactly its
+      projector count, so nothing disentangles there — a split needs each
+      group's gauge to come from the parent's alone.
+
     Args:
         koopmans_input: The parsed koopmans input.
         codes: Dictionary of loaded codes.
 
     Returns:
-        A WorkGraph wrapping a single ``Wannier90WorkChain`` over the whole
-        manifold, or :func:`_build_wannierize_blocks_workgraph` when explicit
-        projections or ``block_wannierization_threshold`` ask for one
-        Wannierization per block.
+        The assembled WorkGraph.
     """
     from aiida_koopmans.workgraphs.wannier90 import Wannierize
     from aiida_wannier90_workflows.common.types import WannierProjectionType
@@ -142,15 +192,11 @@ def build_wannierize_workgraph(
     # The automatically derived projections are the pseudopotentials' atomic
     # orbitals (upstream's ATOMIC_PROJECTORS_QE mechanism) unless external
     # projector files supply the projector functions instead.
-    pw2w_params = koopmans_input.calculator_parameters.pw2wannier90
-    extra_kwargs: dict[str, Any] = {}
-    if pw2w_params.atom_proj_ext:
-        external_projectors, projector_path = load_external_projectors(
-            structure, pw2w_params.atom_proj_dir
-        )
+    extra_kwargs: dict[str, Any] = _external_projector_kwargs(koopmans_input, structure)
+    if extra_kwargs:
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
-        extra_kwargs["external_projectors_path"] = projector_path
-        extra_kwargs["external_projectors"] = external_projectors
+
+    scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input)
 
     return Wannierize.build(
         codes=codes,
@@ -159,6 +205,9 @@ def build_wannierize_workgraph(
         pseudo_family=pseudo_family,
         print_summary=False,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
+        scf_kpoints=scf_kpoints,
+        kpoints=kpoints,
+        mp_grid=mp_grid,
         **extra_kwargs,
     )
 
@@ -190,11 +239,9 @@ def _build_wannierize_blocks_workgraph(
     Current scope: ``spin = 'none'``.
     """
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeBlocks
-    from aiida_wannier90_workflows.utils.kpoints import get_explicit_kpoints
 
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
-        kpoints_input_to_kpoints_mesh,
         kpoints_input_to_kpoints_path,
     )
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
@@ -241,17 +288,13 @@ def _build_wannierize_blocks_workgraph(
             structure, projections, nbnd, num_occ_bands, SpinChannel.NONE
         )
     elif workflow.auto_projections:
-        external_projectors = None
-        if calc_params.pw2wannier90.atom_proj_ext:
-            external_projectors, projector_path = load_external_projectors(
-                structure, calc_params.pw2wannier90.atom_proj_dir
-            )
-            external_kwargs = {
-                "external_projectors_path": projector_path,
-                "external_projectors": external_projectors,
-            }
+        external_kwargs = _external_projector_kwargs(koopmans_input, structure)
         blocks, nbnd = create_automatic_blocks(
-            structure, pseudos, external_projectors, nbnd, num_occ_bands
+            structure,
+            pseudos,
+            external_kwargs.get("external_projectors"),
+            nbnd,
+            num_occ_bands,
         )
     else:
         raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
@@ -278,13 +321,7 @@ def _build_wannierize_blocks_workgraph(
     if w90_user:
         wannier_overrides["wannier90"] = w90_user
 
-    # wannier90 / pw2wannier90 need eigenstates on the full explicit k-list
-    # (wannier90 kmesh.pl ordering, no symmetry reduction) and cannot
-    # re-derive the Monkhorst-Pack dimensions from it, so expand the mesh
-    # here and carry the grid separately. The scf takes the mesh itself and
-    # may reduce it by symmetry.
-    kmesh = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
-    mp_grid = [int(x) for x in kmesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
+    scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input)
 
     # Without a threshold the graph splits nothing, and WannierizeBlocks
     # rejects the split-only inputs rather than ignore them.
@@ -300,9 +337,9 @@ def _build_wannierize_blocks_workgraph(
         codes=codes,
         structure=structure,
         blocks=blocks,
-        kpoints=get_explicit_kpoints(kmesh),
+        kpoints=kpoints,
         mp_grid=mp_grid,
-        scf_kpoints=kmesh,
+        scf_kpoints=scf_kpoints,
         **split_kwargs,
         pseudo_family=pseudo_family,
         overrides=wannier_overrides,

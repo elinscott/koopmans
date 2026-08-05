@@ -684,6 +684,73 @@ def _build_plain(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     return build_wannierize_workgraph(inp, codes)
 
 
+#: The mesh every input in this module asks for, and the k-point count a
+#: full (symmetry-unreduced) expansion of it has.
+_GRID = [2, 2, 2]
+_NUM_KPOINTS = 8
+
+
+def _assert_scf_mesh(kpoints: Any) -> None:
+    """Assert an scf k-point input is the requested mesh, not a distance."""
+    assert kpoints is not None, "the scf fell back to the protocol kpoints_distance"
+    assert [int(x) for x in kpoints.get_kpoints_mesh()[0]] == _GRID
+
+
+class TestKpointMesh:
+    """Every route samples the Brillouin zone on the mesh the input asks for.
+
+    The input's ``kpoints.grid`` is the only statement of the sampling, so
+    the scf, the nscf and wannier90's ``mp_grid`` must all follow it rather
+    than a protocol ``kpoints_distance``. The three routes reach wannier90
+    through different builders, so each is checked separately.
+    """
+
+    def test_automatic_projections_honour_the_grid(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The whole-manifold route wires the grid into scf, nscf and the ``.win``.
+
+        This route hands the manifold to ``Wannier90WorkChain``, which
+        derives all three from its protocol unless the mesh is supplied;
+        a 2x2x2 input then silently ran on the protocol's much denser mesh.
+        """
+        wg = _build_plain(_si_auto_dict(), split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+
+        _assert_scf_mesh(w90_task.inputs["scf"]["kpoints"].value)
+        assert w90_task.inputs["scf"]["kpoints_distance"].value is None
+
+        # nscf and wannier90 share one explicit list, so their k-ordering
+        # cannot drift.
+        nscf_kpoints = w90_task.inputs["nscf"]["kpoints"].value
+        w90_kpoints = w90_task.inputs["wannier90"]["wannier90"]["kpoints"].value
+        assert len(nscf_kpoints.get_kpoints()) == _NUM_KPOINTS
+        assert nscf_kpoints.uuid == w90_kpoints.uuid
+
+        w90_params = w90_task.inputs["wannier90"]["wannier90"]["parameters"].value.get_dict()
+        assert w90_params["mp_grid"] == _GRID
+
+    def test_explicit_projections_honour_the_grid(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The block route takes the same grid for its shared scf and nscf."""
+        wg = _build_plain(_si_split_dict(), split_codes)
+        scf_nscf = wg.tasks["scf_nscf"]
+        _assert_scf_mesh(scf_nscf.inputs["scf_kpoints"].value)
+        assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
+        assert wg.tasks["wannierize_block_1"].inputs["mp_grid"].value == _GRID
+
+    def test_split_route_honours_the_grid(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Setting the threshold does not change which mesh the run samples."""
+        wg = _build(_si_split_dict(), split_codes)
+        scf_nscf = wg.tasks["scf_nscf"]
+        _assert_scf_mesh(scf_nscf.inputs["scf_kpoints"].value)
+        assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
+        assert wg.tasks["wannierize_split_block_1"].inputs["mp_grid"].value == _GRID
+
+
 class TestPlainRoute:
     """Routing and gating without ``block_wannierization_threshold``."""
 
@@ -890,4 +957,4 @@ class TestGraphBuild:
         scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
         assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
         # The nscf keeps the unreduced expansion of the same grid.
-        assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 8
+        assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
