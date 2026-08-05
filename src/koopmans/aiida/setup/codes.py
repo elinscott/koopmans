@@ -251,10 +251,12 @@ def collect_mpi_evidence(executable_path: str) -> BinaryProbe:
     if not os.path.isfile(executable_path):
         return BinaryProbe("", {})
 
-    probe = BinaryProbe(
-        dynamic_symbols=_run_probe(["nm", "-D"], executable_path),
-        library_symbols=_closure_symbols(executable_path),
-    )
+    symbols = _run_probe(["nm", "-D"], executable_path)
+    if calls_mpi_init(symbols) is not None:
+        # The strongest evidence is already in; the closure need not be walked.
+        return BinaryProbe(symbols, {})
+
+    probe = BinaryProbe(symbols, _closure_symbols(executable_path))
     if declares_mpi(probe):
         # The cheap probes already decided; skip reading the whole binary.
         return probe
