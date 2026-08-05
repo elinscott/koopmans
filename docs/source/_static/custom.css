@@ -89,38 +89,52 @@ section:has(> .landing-logo) > h1 {
     font-style: italic;
 }
 
-/* Tutorial questions are the theme's own note admonition, made collapsible.
-   The dropdown borrows `admonition note` and `admonition-title`, so the band
-   colour, the body tint and the text colours are all the theme's. What is left
-   here undoes the card sphinx-design layers underneath, which the borrowed
-   classes do not outrank: a card draws a border, pads its header and body on
-   its own terms, and lays the header out as an inline-flex box that shrinks to
-   its text instead of spanning the width. */
-.rst-content .question-box.sd-card,
-.rst-content .question-box:not([open]).sd-card {
-    border: none;
-    border-radius: 0;
+/* Tutorial questions are a plain admonition, so the theme lays out the band,
+   the body tint and the title exactly as it does for a note. Only the hue and
+   the icon are ours; the answer folds away behind a dropdown in the body. */
+:root {
+    --question-band: #9b59b6;
+    --question-tint: #f7f1fa;
+    --question-text: #7d3c98;
 }
 
-.rst-content .question-box > .admonition-title,
-.rst-content .question-box:not([open]) > .admonition-title {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 6px 12px;
+.rst-content .question.admonition {
+    background: var(--question-tint);
+}
+
+.rst-content .question > .admonition-title {
+    background: var(--question-band);
+}
+
+/* Question mark, in place of the exclamation mark the theme prefixes an
+   admonition with. */
+.rst-content .question > .admonition-title::before {
+    content: "\f059";
+}
+
+/* The answer toggle carries no card chrome of its own: inside the box, the
+   summary line alone marks it as clickable. */
+.rst-content .question .sd-dropdown {
+    margin: 0;
+    border: none;
+    background: transparent;
+}
+
+/* sphinx-design's spacing utility (`sd-mb-3`) is !important, so nothing short
+   of !important closes the gap it leaves at the foot of the box. */
+.rst-content .question .sd-dropdown:last-child {
+    margin-bottom: 0 !important;
+}
+
+.rst-content .question .sd-summary-title {
+    padding: 0;
+    color: var(--question-text);
+    background: transparent;
+    border: none;
     font-size: inherit;
     font-weight: 700;
-    border: none;
-    border-radius: 0;
 }
 
-/* The ❔ stands in for the exclamation mark the theme prefixes a note with. */
-.rst-content .question-box > .admonition-title::before {
-    content: none;
-    margin-right: 0;
-}
-
-/* The container's own 12px padding spaces the body, as it does in a note. */
-.rst-content .question-box > .sd-card-body {
-    padding: 0;
+.rst-content .question .sd-summary-content.sd-card-body {
+    padding: 12px 0 0;
 }

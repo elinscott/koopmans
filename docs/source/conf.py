@@ -16,6 +16,7 @@ import sys
 from datetime import date
 
 sys.path.insert(0, os.path.abspath("../../src"))
+sys.path.insert(0, os.path.abspath("_ext"))
 
 # -- Project information -----------------------------------------------------
 
@@ -77,6 +78,7 @@ extensions = [
     "sphinx_automodapi.smart_resolver",
     "sphinxcontrib.autodoc_pydantic",
     "sphinx_design",
+    "question",
     # 'texext',
 ]
 

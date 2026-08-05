@@ -42,16 +42,15 @@ than that:
 The ``atoms`` block describes the cell and the atoms in it, much like a Quantum ESPRESSO
 input file. The positions are Cartesian, in the units the block declares.
 
-.. dropdown:: ❔ Question — Why is the simulation cell so much larger than the molecule itself?
-    :class-container: admonition note question-box
-    :class-title: admonition-title
+.. question:: Why is the simulation cell so much larger than the molecule itself?
 
     The cell is a box of vacuum that keeps the molecule's periodic images apart — a
     plane-wave code works in a supercell even when the system is treated as
-    non-periodic. The box is especially generous here because the screening calculations
-    later on give the molecule a net charge, and charged images interact through the
-    long-range Coulomb tail; on top of the vacuum, the code applies a counter-charge
-    correction that compensates the residual interaction between images.
+    non-periodic. The box is especially generous here because the screening
+    calculations later on give the molecule a net charge, and charged images interact
+    through the long-range Coulomb tail; on top of the vacuum, the code applies a
+    counter-charge correction that compensates the residual interaction between
+    images.
 
 The ``calculator_parameters`` block holds the plane-wave settings:
 
@@ -114,17 +113,16 @@ calculation, a dummy spin-resolved calculation that lays out the restart files, 
 final spin-resolved calculation that restarts from the spin-unpolarized density
 duplicated into both spin channels.
 
-.. dropdown:: ❔ Question — Why the detour, instead of one spin-resolved calculation from scratch?
-    :class-container: admonition note question-box
-    :class-title: admonition-title
+.. question:: Why the detour, instead of one spin-resolved calculation from scratch?
 
     For ozone — a closed-shell molecule — a direct spin-resolved calculation would in
-    fact converge to the correct spin-symmetric solution. The detour has two virtues all
-    the same. In harder systems, a spin-resolved calculation started from scratch can
-    collapse into a spurious broken-symmetry solution with :math:`n^\uparrow(\mathbf{r})
-    \neq n^\downarrow(\mathbf{r})`; handing it an already-converged symmetric density
-    avoids that. And it is cheaper: most of the self-consistency cycles happen in the
-    spin-unpolarized problem, which has half the wavefunctions.
+    fact converge to the correct spin-symmetric solution. The detour has two virtues
+    all the same. In harder systems, a spin-resolved calculation started from scratch
+    can collapse into a spurious broken-symmetry solution with
+    :math:`n^\uparrow(\mathbf{r}) \neq n^\downarrow(\mathbf{r})`; handing it an
+    already-converged symmetric density avoids that. And it is cheaper: most of the
+    self-consistency cycles happen in the spin-unpolarized problem, which has half
+    the wavefunctions.
 
 From this point on the density never changes: KI, by construction, returns the same
 density as its base functional. (This is not true of KIPZ.)
@@ -223,9 +221,7 @@ affinity (EA) is the negative of the LUMO energy. Open
 Eigenvalue`` and ``LUMO Eigenvalue`` lines — and, for the PBE comparison, find the same
 lines in the initialization output, ``ozone/04-dft_init_nspin2/outputs/aiida.cpo``.
 
-.. dropdown:: ❔ Question — What do you find?
-    :class-container: admonition note question-box
-    :class-title: admonition-title
+.. question:: What do you find?
 
     Near the bottom of the final KI output:
 
@@ -286,19 +282,15 @@ The screening parameters behind this result are recorded in the final calculatio
 input: ``ozone/06-RunFinalKI/inputs/file_alpharef.txt`` lists one :math:`\alpha_i` per
 orbital, here ranging from 0.66 to 0.78 — each one computed, not fitted.
 
-.. dropdown:: ❔ Question — Why one screening parameter per orbital, rather than a single α?
-    :class-container: admonition note question-box
-    :class-title: admonition-title
+.. question:: Why one screening parameter per orbital, rather than a single α?
 
-    A single :math:`\alpha` fitted to the HOMO would enforce the Koopmans condition on
-    the HOMO alone — the ionization potential would come out the same by construction,
-    but every other level would suffer. In particular the electron affinity worsens
-    noticeably, because an :math:`\alpha` tuned for the HOMO cannot simultaneously
-    describe the LUMO. Screening is an orbital-by-orbital affair.
+    A single :math:`\alpha` fitted to the HOMO would enforce the Koopmans condition
+    on the HOMO alone — the ionization potential would come out the same by
+    construction, but every other level would suffer. In particular the electron
+    affinity worsens noticeably, because an :math:`\alpha` tuned for the HOMO cannot
+    simultaneously describe the LUMO. Screening is an orbital-by-orbital affair.
 
-.. dropdown:: ❔ Question — What happens if you increase ``alpha_numsteps`` to 2 and rerun?
-    :class-container: admonition note question-box
-    :class-title: admonition-title
+.. question:: What happens if you increase ``alpha_numsteps`` to 2 and rerun?
 
     With ``alpha_numsteps: 1`` the screening parameters are computed once from the
     starting guess and never checked for self-consistency. With a second step, the
@@ -307,17 +299,15 @@ orbital, here ranging from 0.66 to 0.78 — each one computed, not fitted.
     convergence threshold (``alpha_conv_thr``). You should find that the parameters
     barely move — the first pass already brought them close to self-consistency.
 
-.. dropdown:: ❔ Question — How does the cost of all this scale with system size?
-    :class-container: admonition note question-box
-    :class-title: admonition-title
+.. question:: How does the cost of all this scale with system size?
 
-    Each screening iteration runs roughly one constrained calculation per orbital, so a
-    ΔSCF Koopmans calculation costs about :math:`N_\text{orb}` times a single DFT
+    Each screening iteration runs roughly one constrained calculation per orbital, so
+    a ΔSCF Koopmans calculation costs about :math:`N_\text{orb}` times a single DFT
     calculation — multiplied by ``alpha_numsteps``. Crystals are worse still: every
     constrained :math:`N \pm 1` calculation needs a supercell large enough that the
-    added electron or hole does not overlap its own periodic images, so each calculation
-    in the loop is itself far more expensive. That is what makes ΔSCF impractical for
-    solids, and why the :doc:`silicon tutorial
+    added electron or hole does not overlap its own periodic images, so each
+    calculation in the loop is itself far more expensive. That is what makes ΔSCF
+    impractical for solids, and why the :doc:`silicon tutorial
     <../../band_structures/silicon_linear_response/index>` computes the screening
     parameters from linear response (DFPT) instead.
 

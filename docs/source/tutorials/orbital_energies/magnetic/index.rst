@@ -19,12 +19,10 @@ file for molecular oxygen, and see whether the IP and EA compare as well to expe
 O₂ is a linear molecule with a bond length of 1.21 Å, and — unlike ozone — it is
 paramagnetic, so its two spin channels differ.
 
-.. dropdown:: ❔ Question — Do the IP and EA of O₂ compare as well to experiment?
-    :class-container: admonition note question-box
-    :class-title: admonition-title
+.. question:: Do the IP and EA of O₂ compare as well to experiment?
 
-    Set ``spin: collinear`` in the ``workflow`` block, add ``tot_magnetization: 2`` and
-    lower ``nbnd`` to ``8`` in ``calculator_parameters``, and update the atoms. A
+    Set ``spin: collinear`` in the ``workflow`` block, add ``tot_magnetization: 2``
+    and lower ``nbnd`` to ``8`` in ``calculator_parameters``, and update the atoms. A
     complete input file — which also runs two screening iterations and lets
     near-degenerate orbitals share a screening parameter — is :download:`o2.yaml
     <o2.yaml>`. Running it gives an IP of 12.35 eV and an EA of
