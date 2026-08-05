@@ -90,15 +90,15 @@ it reads
            Compute Orbital Screening Parameters                              finished
              Compute Alpha Orb 1                                             finished
                DFT N-1                                                       finished
-             Compute Alpha Orb 10                                            finished
-               DFT N+1 Dummy                                                 finished
-               PZ Print                                                      finished
-               DFT N+1                                                       finished
              Compute Alpha Orb 2                                             finished
                DFT N-1                                                       finished
              ...
              Compute Alpha Orb 9                                             finished
                DFT N-1                                                       finished
+             Compute Alpha Orb 10                                            finished
+               DFT N+1 Dummy                                                 finished
+               PZ Print                                                      finished
+               DFT N+1                                                       finished
        Run Final KI                                                          finished
          KI Final                                                            finished
 
@@ -163,43 +163,48 @@ to mirror the workflow outline above:
 .. code-block:: text
 
     ozone
-    ├── 01-resolve_pseudo_family_task
-    ├── 02-count_electrons_task
-    ├── 03-dft_init_nspin1
-    │   └── 01-dft_init-KcpCalculation
-    │       ├── inputs
-    │       └── outputs
-    ├── 04-dft_init_nspin2_dummy
-    ├── 05-convert_spin1_to_spin2
-    ├── 06-dft_init_nspin2
-    ├── 07-ComputeScreeningParameters
-    │   ├── 01-generate_alphas
-    │   └── 02-ScreeningIteration
-    │       ├── 01-ki_trial-KcpCalculation
-    │       ├── 02-extract_self_hartree_from_kcp
-    │       ├── 03-assign_orbital_groups
-    │       ├── 04-compute_orbital_screening_parameters
-    │       │   ├── 01-compute_alpha_orb_1
-    │       │   │   ├── 01-dft_n_minus_1-KcpCalculation
-    │       │   │   └── 02-compute_alpha_from_dscf
-    │       │   ├── 02-compute_alpha_orb_10
-    │       │   │   ├── 01-dft_n_plus_1_dummy-KcpCalculation
-    │       │   │   ├── 02-pz_print-KcpCalculation
-    │       │   │   ├── 03-dft_n_plus_1-KcpCalculation
-    │       │   │   └── 04-compute_alpha_from_dscf
-    │       │   └── ...
-    │       └── 05-max_alpha_error
-    └── 08-RunFinalKI
-        └── 01-ki_final-KcpCalculation
-            ├── inputs
-            └── outputs
+    ├── 01-count_electrons_task
+    │   └── inputs
+    ├── 02-dft_init_nspin1
+    │   ├── inputs
+    │   └── outputs
+    ├── 03-dft_init_nspin2_dummy
+    │   ├── inputs
+    │   └── outputs
+    ├── 04-dft_init_nspin2
+    │   ├── inputs
+    │   └── outputs
+    ├── 05-ComputeScreeningParameters
+    │   └── 01-ScreeningIteration
+    │       ├── 01-ki_trial
+    │       │   ├── inputs
+    │       │   └── outputs
+    │       └── 02-compute_orbital_screening_parameters
+    │           ├── 01-compute_alpha_orb_1
+    │           │   ├── 01-dft_n_minus_1
+    │           │   └── 02-compute_alpha_from_dscf
+    │           ├── ...
+    │           └── 10-compute_alpha_orb_10
+    │               ├── 01-dft_n_plus_1_dummy
+    │               ├── 02-pz_print
+    │               ├── 03-dft_n_plus_1
+    │               └── 04-compute_alpha_from_dscf
+    ├── 06-RunFinalKI
+    │   ├── inputs
+    │   └── outputs
+    └── README
 
-Each ``KcpCalculation`` directory is one ``kcp.x`` run, with the exact input file the
-engine generated (``aiida.cpi``) plus its pseudopotentials in ``inputs/``, and
-everything the calculation wrote (``aiida.cpo`` and more) in ``outputs/``. The
-directories without an ``inputs``/``outputs`` pair are small bookkeeping steps that run
-between the Quantum ESPRESSO calculations — counting electrons, generating the guess for
-the screening parameters, and so on.
+One directory per step, numbered in the order the steps ran. A step that is a Quantum
+ESPRESSO calculation holds the exact input file the engine generated (``aiida.cpi``)
+plus its pseudopotentials in ``inputs/``, and everything the calculation wrote
+(``aiida.cpo`` and more) in ``outputs/``. A step that is a piece of python — counting
+the electrons, turning the trial energies into a screening parameter — has an
+``inputs/`` and no ``outputs/``; steps that write no files at all do not appear.
+
+Files shared between steps are stored once and referenced from everywhere else by a
+relative symlink: each calculation's copy of the pseudopotential is a link back to the
+first step that staged it. The ``README`` in the directory root says which copying tools
+preserve those links — most do, but ``rsync -r`` without ``-a`` silently drops them.
 
 .. note::
 
@@ -214,10 +219,9 @@ the screening parameters, and so on.
 
 The ionization potential (IP) is the negative of the HOMO energy, and the electron
 affinity (EA) is the negative of the LUMO energy. Open
-``ozone/08-RunFinalKI/01-ki_final-KcpCalculation/outputs/aiida.cpo`` and search near the
-bottom for the ``HOMO Eigenvalue`` and ``LUMO Eigenvalue`` lines — and, for the PBE
-comparison, find the same lines in the initialization output,
-``ozone/06-dft_init_nspin2/01-dft_init-KcpCalculation/outputs/aiida.cpo``.
+``ozone/06-RunFinalKI/outputs/aiida.cpo`` and search near the bottom for the ``HOMO
+Eigenvalue`` and ``LUMO Eigenvalue`` lines — and, for the PBE comparison, find the same
+lines in the initialization output, ``ozone/04-dft_init_nspin2/outputs/aiida.cpo``.
 
 .. dropdown:: ❔ Question — What do you find?
     :class-container: admonition note question-box
@@ -279,8 +283,8 @@ KI lands within a quarter of an electronvolt of experiment for all three orbital
 misses by more than four.
 
 The screening parameters behind this result are recorded in the final calculation's
-input: ``inputs/file_alpharef.txt`` lists one :math:`\alpha_i` per orbital, here ranging
-from 0.66 to 0.78 — each one computed, not fitted.
+input: ``ozone/06-RunFinalKI/inputs/file_alpharef.txt`` lists one :math:`\alpha_i` per
+orbital, here ranging from 0.66 to 0.78 — each one computed, not fitted.
 
 .. dropdown:: ❔ Question — Why one screening parameter per orbital, rather than a single α?
     :class-container: admonition note question-box

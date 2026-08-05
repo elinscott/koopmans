@@ -12,8 +12,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-PBE_OUTPUT = Path("ozone/06-dft_init_nspin2/01-dft_init-KcpCalculation/outputs/aiida.cpo")
-KI_OUTPUT = Path("ozone/08-RunFinalKI/01-ki_final-KcpCalculation/outputs/aiida.cpo")
+PBE_OUTPUT = Path("ozone/04-dft_init_nspin2/outputs/aiida.cpo")
+KI_OUTPUT = Path("ozone/06-RunFinalKI/outputs/aiida.cpo")
 
 # Experimental binding energies (eV) of the three outermost occupied orbitals
 # of ozone, ordered from the most tightly bound to the HOMO, from gas-phase
