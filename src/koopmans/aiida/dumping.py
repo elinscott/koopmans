@@ -176,6 +176,12 @@ def _link_duplicate_files(root_path: Path) -> int:
     now points at the ``outputs`` it came from. Links are relative, so
     the tree survives being moved.
 
+    An empty file is left alone, and never serves as a target. A
+    successful run leaves an empty ``_scheduler-stderr.txt`` under every
+    calculation; linking them together saves nothing and asserts a
+    relationship between unrelated steps that the reader then has to
+    puzzle out.
+
     A ``source_file`` links only to another ``source_file``: one task run
     once per orbital dumps its code under each, and those copies collapse
     like any other, but no data file is ever made to depend on a folder
@@ -191,7 +197,8 @@ def _link_duplicate_files(root_path: Path) -> int:
     """
     groups: dict[tuple[bool, str], list[Path]] = defaultdict(list)
     for path, key in _content_keys(root_path).items():
-        groups[(path.name == _TASK_SOURCE_FILE, key)].append(path)
+        if path.stat().st_size:
+            groups[(path.name == _TASK_SOURCE_FILE, key)].append(path)
 
     created = 0
     for paths in groups.values():

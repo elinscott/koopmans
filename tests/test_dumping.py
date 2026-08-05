@@ -315,6 +315,41 @@ class TestLinkDuplicateFiles:
         assert real.read_text() == "payload"
         assert link.read_text() == "payload"
 
+    def test_empty_files_are_never_linked(self, tmp_path: Path) -> None:
+        """A successful run leaves an empty scheduler log under every step.
+
+        They are byte-identical to one another, so the rule would tie
+        every step to one arbitrary sibling for no bytes saved.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("01-scf/outputs/_scheduler-stderr.txt", ""),
+                ("02-nscf/outputs/_scheduler-stderr.txt", ""),
+                ("03-bands/outputs/_scheduler-stderr.txt", ""),
+            ],
+        )
+
+        assert _link_duplicate_files(tmp_path) == 0
+
+        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
+
+    def test_the_smallest_real_payload_still_links(self, tmp_path: Path) -> None:
+        """Only length zero is exempt, so a 95-byte input still collapses.
+
+        That is the smallest duplicated file either tutorial dump holds;
+        exempting it would be exempting payload.
+        """
+        content = "x" * 95
+        _make_tree(
+            tmp_path,
+            [("01-scf/outputs/aiida.in", content), ("02-nscf/inputs/aiida.in", content)],
+        )
+
+        assert _link_duplicate_files(tmp_path) == 1
+
+        assert (tmp_path / "02-nscf/inputs/aiida.in").read_text() == content
+
     def test_a_unique_file_is_left_alone(self, tmp_path: Path) -> None:
         """Only repeated bytes are replaced."""
         _make_tree(tmp_path, [("01-scf/outputs/aiida.out", "one of a kind")])
