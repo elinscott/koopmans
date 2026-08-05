@@ -1,6 +1,6 @@
-#############
- From python
-#############
+#######################
+ Calling within python
+#######################
 
 Everything ``koopmans run`` does is available from python, for scripting
 parameter sweeps or driving calculations from a notebook. The same input

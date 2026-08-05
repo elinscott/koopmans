@@ -2,13 +2,11 @@
  Orbital energies
 ##################
 
-Ionization potentials, electron affinities and the binding energies a gas-phase
-photoemission experiment measures, for a molecule in a box. The screening parameters
-come from total-energy differences.
+How to calculate the ionization potentials, electron affinities and the binding energies
+that a gas-phase photoemission experiment measures.
 
 .. toctree::
     :maxdepth: 1
 
-    water/index
     ozone/index
     magnetic/index

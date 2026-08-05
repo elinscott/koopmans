@@ -12,21 +12,21 @@ workflow:
 atoms:
   cell_parameters:
     vectors:                      # a box of vacuum around the molecule
-      - [14.1738, 0.0, 0.0]
-      - [0.0, 12.0, 0.0]
-      - [0.0, 0.0, 12.66]
+      - [8.1738, 0.0, 0.0]
+      - [0.0, 6.0, 0.0]
+      - [0.0, 0.0, 6.66]
     units: angstrom
     periodic: false               # an isolated molecule, not a crystal
   atomic_positions:
     units: angstrom
     positions:                    # bent, with 1.27 Å bonds and a 117° angle
-      - [O, 7.0869, 6.0, 5.89]
-      - [O, 8.1738, 6.0, 6.55]
-      - [O, 6.0, 6.0, 6.55]
+      - [O, 4.0869, 3.0, 2.89]
+      - [O, 5.1738, 3.0, 3.55]
+      - [O, 3.0, 3.0, 3.55]
 
 calculator_parameters:
-  ecutwfc: 65.0                   # wavefunction cutoff (Ry)
+  ecutwfc: 50.0                   # wavefunction cutoff (Ry)
   nbnd: 10                        # 9 filled orbitals, plus 1 empty for the LUMO
   kcp:
     system:
-      ecutrho: 260.0              # charge-density cutoff (Ry)
+      ecutrho: 200.0              # charge-density cutoff (Ry)

@@ -11,21 +11,21 @@ workflow:
 atoms:
   cell_parameters:
     vectors:
-      - [14.1738, 0.0, 0.0]
-      - [0.0, 12.0, 0.0]
-      - [0.0, 0.0, 12.66]
+      - [8.1738, 0.0, 0.0]
+      - [0.0, 6.0, 0.0]
+      - [0.0, 0.0, 6.66]
     units: angstrom
     periodic: false
   atomic_positions:
     units: angstrom
     positions:
-      - [O, 7.0869, 6.0, 5.89]
-      - [O, 8.1738, 6.0, 6.55]
-      - [O, 6.0, 6.0, 6.55]
+      - [O, 4.0869, 3.0, 2.89]
+      - [O, 5.1738, 3.0, 3.55]
+      - [O, 3.0, 3.0, 3.55]
 
 calculator_parameters:
-  ecutwfc: 65.0
+  ecutwfc: 50.0
   nbnd: 10
   kcp:
     system:
-      ecutrho: 260.0
+      ecutrho: 200.0

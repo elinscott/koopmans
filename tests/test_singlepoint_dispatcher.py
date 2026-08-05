@@ -81,9 +81,9 @@ class TestOzoneInputParse:
         assert all(atom[0] == "O" for atom in positions)
 
         expected = [
-            ("O", 7.0869, 6.0, 5.89),
-            ("O", 8.1738, 6.0, 6.55),
-            ("O", 6.0, 6.0, 6.55),
+            ("O", 4.0869, 3.0, 2.89),
+            ("O", 5.1738, 3.0, 3.55),
+            ("O", 3.0, 3.0, 3.55),
         ]
         for got, want in zip(positions, expected, strict=True):
             assert got[0] == want[0]
@@ -101,13 +101,13 @@ class TestKcpDscfInputs:
     """Unit tests for ``kcp_dscf_inputs``."""
 
     def test_ozone_default(self, ozone_input: KoopmansInput) -> None:
-        """Ozone input should yield (65.0, 260.0, 10, 2)."""
-        assert _scalars(kcp_dscf_inputs(ozone_input)) == (65.0, 260.0, 10, 2)
+        """Ozone input should yield (50.0, 200.0, 10, 2)."""
+        assert _scalars(kcp_dscf_inputs(ozone_input)) == (50.0, 200.0, 10, 2)
 
     def test_ecutrho_defaults_to_four_times_ecutwfc(self, ozone_input: KoopmansInput) -> None:
-        """With ecutrho unset, it should default to 4 * ecutwfc (4 * 65 = 260)."""
+        """With ecutrho unset, it should default to 4 * ecutwfc (4 * 50 = 200)."""
         inp = _copy_with_calc_overrides(ozone_input, **{"kcp.system.ecutrho": 0.0})
-        assert _scalars(kcp_dscf_inputs(inp)) == (65.0, 260.0, 10, 2)
+        assert _scalars(kcp_dscf_inputs(inp)) == (50.0, 200.0, 10, 2)
 
     def test_ecutrho_default_with_custom_ecutwfc(self, ozone_input: KoopmansInput) -> None:
         """With ecutwfc=30 and no ecutrho, ecutrho should fall back to 120.0."""

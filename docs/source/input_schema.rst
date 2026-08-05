@@ -1,6 +1,6 @@
-#################
-Input File Format
-#################
+############
+Input format
+############
 
 Koopmans input files define the structure, workflow settings, k-points, and calculator
 parameters for a calculation. They can be written in either ``json`` or ``yaml`` format as per the following example:

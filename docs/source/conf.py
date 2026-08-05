@@ -49,6 +49,15 @@ if os.environ.get("READTHEDOCS", "") == "True":
         html_context = {}
     html_context["READTHEDOCS"] = True
 
+    # Warn readers of the published documentation that it is unfinished. Read
+    # the Docs' own notifications carry fixed wording, so this one is ours,
+    # prepended to every page. A local build shows the pages without it.
+    rst_prolog = """
+.. attention::
+
+    These pages are under construction — come back soon!
+"""
+
 
 # -- General configuration ---------------------------------------------------
 
@@ -78,6 +87,7 @@ extensions = [
     "sphinx_automodapi.smart_resolver",
     "sphinxcontrib.autodoc_pydantic",
     "sphinx_design",
+    "sphinx_copybutton",
     "question",
     # 'texext',
 ]
@@ -138,6 +148,13 @@ html_theme_options = {"logo_only": True}
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
+
+# Copy buttons on code blocks. A console block is copied without its `$ `
+# prompts, and without the output lines that carry no prompt; a block with no
+# prompt at all is copied whole.
+copybutton_prompt_text = r"\$ "
+copybutton_prompt_is_regexp = True
+copybutton_line_continuation_character = "\\"
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.

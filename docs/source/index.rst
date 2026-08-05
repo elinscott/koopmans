@@ -25,7 +25,7 @@ everything for you.
     $ koopmans run silicon.json
 
 New here? :doc:`Install the code <installation>`, then run :doc:`your first calculation
-<tutorials/orbital_energies/water/index>`.
+<my_first_calculation>`.
 
 ************************
  What you can calculate
@@ -92,19 +92,31 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
     :name: start
     :hidden:
 
+    theory
     installation
-    tutorials/index
+    my_first_calculation
 
 .. toctree::
     :maxdepth: 2
-    :caption: Reference
-    :name: reference
+    :caption: User guide
+    :name: user_guide
     :hidden:
 
-    theory
-    input_file
+    input_schema
     cli
-    python_api
+    api
+
+
+.. toctree::
+    :maxdepth: 2
+    :caption: Tutorials
+    :name: tutorials
+    :hidden:
+
+    tutorials/orbital_energies/index
+    tutorials/band_structures/index
+    tutorials/screening_via_ml/index
+    tutorials/dielectric_constants/index
 
 **********
  Citation

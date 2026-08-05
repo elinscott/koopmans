@@ -5,10 +5,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # Pseudopotentials are shipped byte-for-byte as their distributor wrote
+      # them, so they are not reformatted.
       - id: trailing-whitespace
-        exclude: ^tests/.*/fixtures/
+        exclude: ^(tests/.*/fixtures/|.*\.upf$)
       - id: end-of-file-fixer
-        exclude: ^tests/.*/fixtures/
+        exclude: ^(tests/.*/fixtures/|.*\.upf$)
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
