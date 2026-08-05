@@ -13,8 +13,10 @@ Mirrors the layout used by the sibling ``aiida-koopmans2/tests/``.
 from __future__ import annotations
 
 from tests.fixtures import (  # noqa: F401
+    binary_probe,
     clear_database,
     clear_database_after_test,
+    code_without_mpi_flag,
     fake_pseudodojo_lda_family,
     fake_sg15_cutoffs_family,
     fake_sg15_fr_cutoffs_family,

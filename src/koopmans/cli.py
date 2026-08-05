@@ -115,7 +115,13 @@ cache_option = click.option(
 
 
 def _validate_code_labels(labels: tuple[str, ...], param_hint: str) -> set[str]:
-    """Return the given code labels, rejecting any koopmans does not register."""
+    """Return the given code labels, rejecting any koopmans does not register.
+
+    ``--code`` names a path for a label and is silently ignored when the label
+    is unknown, because a user may point at an executable koopmans does not
+    yet register; ``--serial``/``--parallel`` only change how a registered
+    code runs, so an unknown label there can only be a typo.
+    """
     from koopmans.aiida.setup.codes import code_specs
 
     known = code_specs()
@@ -126,6 +132,15 @@ def _validate_code_labels(labels: tuple[str, ...], param_hint: str) -> set[str]:
             param_hint=param_hint,
         )
     return set(labels)
+
+
+def _reject_parallel_on_serial_codes(labels: set[str]) -> None:
+    """Reject ``--parallel`` for a code that must never run under mpirun."""
+    from koopmans.aiida.setup.codes import SERIAL_CODES, parallel_override_error
+
+    for label in sorted(labels):
+        if label in SERIAL_CODES:
+            raise click.BadParameter(parallel_override_error(label), param_hint="--parallel")
 
 
 @cli.command()
@@ -163,6 +178,14 @@ def _validate_code_labels(labels: tuple[str, ...], param_hint: str) -> set[str]:
     help="Register a code to run under mpirun, overriding what its binary declares.",
 )
 @click.option(
+    "--migrate/--no-migrate",
+    default=True,
+    help=(
+        "Replace already-registered codes that run the wrong way. Replacing a code "
+        "orphans the results cached against it; --no-migrate leaves them as they are."
+    ),
+)
+@click.option(
     "--max-procs",
     type=int,
     default=None,
@@ -178,6 +201,7 @@ def install(
     code_overrides: tuple[str, ...],
     serial_labels: tuple[str, ...],
     parallel_labels: tuple[str, ...],
+    migrate: bool,
     max_procs: int | None,
     cache: bool,
 ) -> None:
@@ -198,6 +222,10 @@ def install(
     binary. Use --serial/--parallel to overrule that, e.g.:
 
         koopmans install --parallel wannier90
+
+    Rerunning this command also replaces codes registered earlier that run the
+    wrong way, which orphans the results cached against them; --no-migrate
+    leaves them alone.
     """
     # Parse code overrides into a dict
     explicit_codes: dict[str, str] = {}
@@ -219,6 +247,7 @@ def install(
         raise click.BadParameter(
             f"Cannot be both serial and parallel: {', '.join(both)}", param_hint="--serial"
         )
+    _reject_parallel_on_serial_codes(parallel)
 
     click.echo("Setting up koopmans AiiDA backend...")
     click.echo("=" * 60)
@@ -241,6 +270,7 @@ def install(
         explicit_codes=explicit_codes,
         serial_labels=sorted(serial),
         parallel_labels=sorted(parallel),
+        migrate=migrate,
     )
 
     # Clean up any input_tmp.in files created by QE executables during version detection

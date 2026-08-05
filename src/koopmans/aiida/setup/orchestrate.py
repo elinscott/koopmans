@@ -40,11 +40,13 @@ def setup_computers(
     explicit_codes: dict[str, str] | None = None,
     serial_labels: Sequence[str] = (),
     parallel_labels: Sequence[str] = (),
+    migrate: bool = True,
 ) -> None:
     """Detect and set up computers and codes for koopmans.
 
     1. Creates a localhost computer if it doesn't exist.
-    2. Corrects the MPI setting of any code already registered with the wrong one.
+    2. Replaces any already-registered code that runs the wrong way, unless
+       ``migrate`` is false.
     3. Scans PATH for Quantum ESPRESSO executables.
     4. Registers found executables as AiiDA codes.
     """
@@ -65,8 +67,11 @@ def setup_computers(
     # Codes registered before their binary was inspected carry whatever flag
     # they were given; the node is immutable, so correcting it means replacing
     # it. Codes about to be re-registered below are skipped.
-    migrations = migrate_code_mpi_flags(existing_codes, computer, serial_labels, parallel_labels)
-    print_mpi_migrations(migrations)
+    if migrate:
+        migrations = migrate_code_mpi_flags(
+            existing_codes, computer, serial_labels, parallel_labels
+        )
+        print_mpi_migrations(migrations)
 
     if existing_codes:
         click.echo(f"\n{len(existing_codes)} code(s) already registered, skipping:")

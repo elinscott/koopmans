@@ -77,24 +77,30 @@ processes may run at once across all concurrent calculations.
 
 Not every Quantum ESPRESSO build is compiled with MPI, and running a serial build under
 ``mpirun`` starts several copies of it in one directory, where they overwrite each
-other's files. ``koopmans install`` therefore inspects each executable it registers and
-reports what it decided:
+other's files. ``koopmans install`` therefore looks for a call to ``MPI_Init`` in each
+executable it registers, and in the shared libraries that executable links, and reports
+what it decided:
 
 .. code-block:: text
 
     MPI:
-      pw         parallel  (links libmpi.so.40)
-      wannier90  serial    (no MPI symbols, libraries or strings in the binary)
+      pw         parallel  (links libqe_modules.so.7, which calls mpi_init_)
+      wannier90  serial    (no MPI_Init call in the binary or the libraries it links)
 
-A build whose MPI support cannot be detected is registered serial, which is slower but
-always correct. If the guess is wrong for one of your executables, overrule it:
+Merely linking an MPI runtime does not count: a build produced by ``mpif90`` records
+``libmpi`` whether or not any MPI call survives compilation. An executable in which no
+MPI call can be found is registered serial, which is slower but always correct. If the
+answer is wrong for one of your executables, overrule it:
 
 .. code-block:: console
 
     $ koopmans install --parallel wannier90
+    $ koopmans install --serial pw
 
 Rerunning ``koopmans install`` also re-inspects codes registered earlier and replaces any
-whose setting no longer matches its executable, reporting each replacement.
+that runs the wrong way. A replacement code node is a new node, so calculations cached
+against the old one are no longer reused and will run again; the install reports which
+codes it replaced, and ``--no-migrate`` skips the step entirely.
 
 To check on the engine at any point:
 

@@ -65,6 +65,95 @@ def write_multiframe_xyz() -> Callable[..., Path]:
 
 
 # ----------------------------------------------------------------------
+# Recorded binary-inspection evidence (MPI capability detection)
+# ----------------------------------------------------------------------
+# Transcribed from ``nm -D`` and ``ldd`` run on a Debian box carrying an
+# OpenMPI cmake build of Quantum ESPRESSO 7.4, a serial wannier90 build, and
+# an Intel-MPI wannier90.x under /usr/local/bin.
+
+# ``nm -D`` on an Intel-MPI pw.x, which calls MPI from the executable itself.
+NM_CALLS_MPI_INIT = """\
+                 U mpi_abort_
+                 U mpi_allreduce_
+                 U mpi_init_
+                 U mpi_initialized_
+"""
+
+# ``nm -D`` on the GNU cmake build of pw.x. The MPI Fortran common blocks are
+# copy-relocated into the executable (type B, so defined, not undefined) but
+# no MPI call is: those live in libqe_modules.
+NM_NO_MPI_CALL = """\
+0000000000004380 B mpi_fortran_argvs_null_
+00000000000043a0 B mpi_fortran_bottom_
+                 U _gfortran_set_args
+"""
+
+# ``nm -D`` on a serial wannier90.x: no MPI entry at all.
+NM_SERIAL = """\
+0000000000004140 B __command_line_options_MOD_command_line
+                 U _gfortran_st_write
+"""
+
+# ``nm -D`` on a program that asks whether MPI is running without starting it.
+# ``MPI_Init`` is a substring of every one of these names.
+NM_MPI_INITIALIZED_ONLY = """\
+                 U mpi_initialized_
+                 U MPI_Initialized
+"""
+
+# The libraries of a QE binary, keyed by soname: the MPI calls are in
+# libqe_modules, and the OpenMPI Fortran bindings carry undefined PMPI_Init
+# entries of their own.
+LIBS_QE = {
+    "libqe_pw.so.7": NM_SERIAL,
+    "libqe_modules.so.7": "                 U mpi_init_\n                 U mpi_initialized_\n",
+    "libmpi_mpifh.so.40": "                 U PMPI_Init\n                 U PMPI_Init_thread\n",
+}
+
+# The libraries of a serial program linked with ``-lmpi``: the runtime is
+# there, but nothing outside it calls MPI.
+LIBS_SERIAL_LINKING_MPI = {
+    "libmpi.so.40": "0000000000080bb0 T MPI_Init\n",
+    "libmpi_mpifh.so.40": "                 U PMPI_Init\n                 U PMPI_Init_thread\n",
+    "libopen-pal.so.40": NM_SERIAL,
+    "libc.so.6": NM_SERIAL,
+}
+
+# The libraries of a serial program linked against a parallel build of HDF5.
+# HDF5's own MPI calls are indistinguishable from the program's, so this is
+# read as parallel — the documented residual false positive.
+LIBS_PARALLEL_HDF5 = {
+    "libhdf5.so.1000": "                 U MPI_Init\n                 U MPI_Initialized\n",
+    "libc.so.6": NM_SERIAL,
+}
+
+# The libraries of a genuinely serial wannier90.x.
+LIBS_SERIAL = {
+    "libwannier90.so.4": NM_SERIAL,
+    "libopenblas.so.0": NM_SERIAL,
+}
+
+
+@pytest.fixture
+def binary_probe() -> Callable[..., Any]:
+    """Return a factory building a ``BinaryProbe`` from recorded probe output.
+
+    The factory signature is ``(dynamic_symbols="", library_symbols=None,
+    raw_strings="") -> BinaryProbe``.
+    """
+    from koopmans.aiida.setup.codes import BinaryProbe
+
+    def _build(
+        dynamic_symbols: str = "",
+        library_symbols: dict[str, str] | None = None,
+        raw_strings: str = "",
+    ) -> Any:
+        return BinaryProbe(dynamic_symbols, library_symbols or {}, raw_strings)
+
+    return _build
+
+
+# ----------------------------------------------------------------------
 # Broken-upstream-fixture overrides
 # ----------------------------------------------------------------------
 # The deprecated ``aiida.manage.tests.pytest_fixtures`` chain calls a
@@ -106,6 +195,29 @@ def stub_executable(tmp_path: Path) -> Callable[[str], Path]:
         return path
 
     return _write
+
+
+@pytest.fixture
+def code_without_mpi_flag(stub_executable: Callable[[str], Path]) -> Callable[..., Any]:
+    """Return a factory storing a code whose ``with_mpi`` was never set.
+
+    The factory signature is ``(label, plugin, computer) -> InstalledCode``.
+    It models a code registered before koopmans inspected binaries: aiida-core
+    then takes the ``withmpi`` default of whichever CalcJob is submitted.
+    """
+
+    def _store(label: str, plugin: str | None, computer: Any) -> Any:
+        from aiida.orm import InstalledCode
+
+        return InstalledCode(
+            label=label,
+            computer=computer,
+            filepath_executable=str(stub_executable(f"{label}.x")),
+            default_calc_job_plugin=plugin,
+            with_mpi=None,
+        ).store()
+
+    return _store
 
 
 @pytest.fixture
