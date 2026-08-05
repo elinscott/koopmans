@@ -62,10 +62,11 @@ SERIAL_CODES: dict[str, str] = {
 # MPI_Init. Fortran bindings lower-case and suffix the name.
 MPI_INIT_SYMBOLS = ("MPI_Init", "mpi_init_", "MPI_Init_thread")
 
-# Sonames of the MPI runtimes. Matched against the soname alone, never the
-# resolved path: an OpenBLAS or ScaLAPACK build installed under an
-# ``openmpi/`` directory carries "mpi" in its path without being one.
-MPI_LIBRARY_PREFIXES = ("libmpi", "libmpich")
+# Soname prefix of the MPI runtimes: OpenMPI's libmpi / libmpi_mpifh, MPICH's
+# libmpi / libmpich, Intel MPI's libmpi / libmpifort. Matched against the
+# soname alone, never the resolved path — a ScaLAPACK or OpenBLAS build
+# installed under an ``openmpi/`` directory spells "mpi" without being one.
+MPI_LIBRARY_PREFIXES = ("libmpi",)
 
 
 class MpiDecision(NamedTuple):
