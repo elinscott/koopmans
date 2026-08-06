@@ -47,7 +47,7 @@ def setup_computers(
     1. Creates a localhost computer if it doesn't exist.
     2. Replaces any already-registered code that runs the wrong way, unless
        ``migrate`` is false.
-    3. Scans PATH for Quantum ESPRESSO executables.
+    3. Scans PATH for the executables koopmans runs.
     4. Registers found executables as AiiDA codes.
     """
     from .codes import code_specs

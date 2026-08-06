@@ -2,16 +2,16 @@
  Installation
 ##############
 
-Installing ``koopmans`` takes three steps: Quantum ESPRESSO, the Python package, and
-then one command that sets up the engine that runs your calculations.
+Installing ``koopmans`` takes three steps: the electronic-structure codes, the Python
+package, and then one command that sets up the engine that runs your calculations.
 
-******************
- Quantum ESPRESSO
-******************
+********************************
+ The electronic-structure codes
+********************************
 
 ``koopmans`` does not do any of the electronic-structure work itself. It writes the
-inputs, runs `Quantum ESPRESSO <https://www.quantum-espresso.org/>`_ and reads the
-outputs back. You need a Quantum ESPRESSO installation whose executables are on your
+inputs, runs `Quantum ESPRESSO <https://www.quantum-espresso.org/>`_ and `Wannier90
+<https://wannier.org/>`_, and reads the outputs back. Their executables must be on your
 ``PATH`` before you set up the engine.
 
 Which executables you need depends on what you want to calculate:
@@ -62,10 +62,9 @@ repeated calculation is not run twice. Set it up once, with
     $ koopmans install
 
 This creates the database that records your calculations, installs and starts the job
-scheduler, finds the Quantum ESPRESSO executables on your ``PATH`` and registers them,
-and starts the background engine. It reports which executables it found; if one you need
-is missing, put it on your ``PATH`` and run the command again, or point at it
-explicitly:
+scheduler, finds those executables on your ``PATH`` and registers them, and starts the
+background engine. It reports which executables it found; if one you need is missing,
+put it on your ``PATH`` and run the command again, or point at it explicitly:
 
 .. code-block:: console
 
@@ -75,11 +74,11 @@ By default each calculation is given as many MPI processes as your machine has p
 cores. Use ``--procs-per-calc`` to change that, and ``--max-procs`` to cap how many
 processes may run at once across all concurrent calculations.
 
-Not every Quantum ESPRESSO build is compiled with MPI, and running a serial build under
-``mpirun`` starts several copies of it in one directory, where they overwrite each
-other's files. ``koopmans install`` therefore looks for a call to ``MPI_Init`` in each
-executable it registers, and in the shared libraries that executable links, and reports
-what it decided:
+Not every executable is compiled with MPI, and running a serial build under ``mpirun``
+starts several copies of it in one directory, where they overwrite each other's files.
+``koopmans install`` therefore looks for a call to ``MPI_Init`` in each executable it
+registers, and in the shared libraries that executable links, and reports what it
+decided:
 
 .. code-block:: text
 

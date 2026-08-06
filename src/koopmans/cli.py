@@ -209,7 +209,7 @@ def install(
     1. Creates an AiiDA profile with SQLite storage (or PostgreSQL with --use-postgres)
     2. Downloads the bundled HyperQueue binary and starts the HQ server + worker
     3. Configures the localhost computer (HyperQueue scheduler)
-    4. Detects and registers Quantum ESPRESSO executables on PATH
+    4. Detects and registers the executables koopmans runs on PATH
     5. Starts the AiiDA daemon with caching enabled
 
     Use --code to specify a custom executable path for a code, e.g.:

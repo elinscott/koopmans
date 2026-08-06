@@ -1,6 +1,6 @@
 """Code (AiiDA executable) registration helpers.
 
-Scans PATH for Quantum ESPRESSO executables, registers each one against
+Scans PATH for the executables koopmans runs, registers each one against
 the localhost Computer with the appropriate plugin entry point.
 """
 
@@ -321,7 +321,7 @@ def find_executable(name: str) -> str | None:
 
 
 def get_executable_version(path: str) -> str | None:
-    """Try to get the version of a Quantum ESPRESSO executable."""
+    """Try to get the version of an executable."""
     import os
     import re
 
