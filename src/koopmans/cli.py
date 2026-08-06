@@ -382,7 +382,7 @@ def hq_start(max_procs: int | None) -> None:
     """Start the HyperQueue worker.
 
     Brings the HyperQueue server up first if it is down. Does nothing if a
-    worker is already running; use ``restart`` to change its CPU pool.
+    worker is already running; use 'restart' to change its CPU pool.
     """
     if is_hq_worker_running():
         click.echo("HyperQueue worker is already running.")
@@ -402,7 +402,7 @@ def hq_stop() -> None:
     """Stop the HyperQueue worker.
 
     Leaves the HyperQueue server up, so queued and running jobs are not lost.
-    ``koopmans backend uninstall`` removes the server as well.
+    'koopmans backend uninstall' removes the server as well.
     """
     if not is_hq_worker_running():
         click.echo("HyperQueue worker is not running.")
