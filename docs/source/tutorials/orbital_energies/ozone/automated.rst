@@ -2,10 +2,7 @@
 Doing everything automatically
 ##############################
 
-The :doc:`previous part <manually>` computed one screening parameter, for one orbital, in
-three calculations run by hand. This part computes one for every orbital of the same
-molecule, and both the ionization potential and the electron affinity that follow from
-them, in a single command — the same physics, with the bookkeeping handed over.
+The :doc:`previous part <manually>` computed one screening parameter via three calculations run by hand. This part computes one for every orbital of the same molecule, and both the ionization potential and the electron affinity that follow from them, in a single command.
 
 ****************
  The input file
@@ -223,32 +220,36 @@ lines in the initialization output, ``ozone/04-dft_init_nspin2/outputs/aiida.cpo
 
         HOMO Eigenvalue (eV)
 
-        -12.5234
+        -12.4945
 
         LUMO Eigenvalue (eV)
 
-        -1.8221
+        -1.7184
 
-        Electronic Gap (eV) =    10.7013
+        Electronic Gap (eV) =    10.7761
 
 
         Eigenvalues (eV), kp =   1 , spin =  1
 
-        -40.1865  -32.9126  -24.2279  -19.6844  -19.4901  -19.2698  -13.6039  -12.7621  -12.5234
+        -40.3490  -33.0412  -24.3772  -19.7139  -19.5385  -19.2977  -13.5960  -12.7467  -12.4945
 
         Empty States Eigenvalues (eV), kp =   1 , spin =  1
 
-        -1.8221
+        -1.7184
 
-    The initialization output puts the PBE HOMO at −7.9550 eV and the PBE LUMO at
-    −6.1684 eV.
+    The initialization output puts the PBE HOMO at −7.9229 eV and the PBE LUMO at
+    −6.1058 eV.
 
-The KI ionization potential is therefore 12.52 eV. This compares extremely well with the
+The KI ionization potential is therefore 12.49 eV. This compares extremely well with the
 `experimental value
 <https://webbook.nist.gov/cgi/cbook.cgi?ID=C10028156&Mask=20#Ion-Energetics>`_ of ~12.5
-eV, and is a dramatic improvement on PBE, whose HOMO would put it at 7.96 eV — more than
-4.5 eV too small. Likewise the KI electron affinity is 1.82 eV (experiment: ~2.1 eV),
-where PBE would have given 6.17 eV.
+eV, and is a dramatic improvement on PBE, whose HOMO would put it at 7.92 eV — more than
+4.5 eV too small. Likewise the KI electron affinity is 1.72 eV (experiment: ~2.1 eV),
+where PBE would have given 6.11 eV.
+
+It is also, to the precision quoted, the 12.49 eV the :doc:`previous part <manually>`
+obtained by hand — as it should be, since the screening parameter that part computed for
+the HOMO enforces the same Koopmans condition on the same orbital.
 
 The comparison need not stop at the frontier orbitals: KI predicts a binding energy —
 minus the orbital energy — for *every* occupied orbital, and gas-phase photoemission
@@ -268,12 +269,12 @@ of the initialization output. Plotting one against the other:
     experiment. Generated from the ``ozone/`` output directory with
     :download:`plot_ozone_spectrum.py <plot_ozone_spectrum.py>`.
 
-KI lands within a quarter of an electronvolt of experiment for all three orbitals; PBE
-misses by more than four.
+KI lands within about a quarter of an electronvolt of experiment for all three orbitals;
+PBE misses by more than four.
 
 The screening parameters behind this result are recorded in the final calculation's
 input: ``ozone/06-RunFinalKI/inputs/file_alpharef.txt`` lists one :math:`\alpha_i` per
-orbital, here ranging from 0.66 to 0.78 — each one computed, not fitted.
+orbital, here ranging from 0.66 to 0.79 — each one computed, not fitted.
 
 .. question:: Why one screening parameter per orbital, rather than a single α?
 
@@ -321,8 +322,8 @@ each, and the results come back as a dict instead of as output files to search:
     homo = results["parameters"]["homo_energy"]
     lumo = results["parameters"]["lumo_energy"]
 
-    print(f"IP = {-homo:.2f} eV")  # IP = 12.52 eV
-    print(f"EA = {-lumo:.2f} eV")  # EA = 1.82 eV
+    print(f"IP = {-homo:.2f} eV")  # IP = 12.49 eV
+    print(f"EA = {-lumo:.2f} eV")  # EA = 1.72 eV
 
 Energies are in eV, and the ionization potential and electron affinity are the negated
 HOMO and LUMO energies as before — the same two numbers read out of ``aiida.cpo`` above.
