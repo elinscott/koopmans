@@ -86,9 +86,9 @@ more detail on how to specify code-specific parameters.
 
 .. warning::
 
-    This step needs the engine, which :doc:`installing <../../../installation>` sets up
-    for you (``koopmans install``). Of the Quantum ESPRESSO codes, this workflow needs
-    only ``kcp.x``.
+    Make sure you have installed ``koopmans``: see :doc:`here <../../../installation>` for more details.
+
+    Of all the ``Quantum ESPRESSO`` codes, this workflow only needs ``kcp.x``.
 
 Run the calculation with
 
