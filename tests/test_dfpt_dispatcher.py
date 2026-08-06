@@ -157,7 +157,7 @@ class TestCollinear:
 class TestMultiBlockZnO:
     """The ZnO tutorial shape: four occupied blocks + one disentangled empty block.
 
-    Mirrors ``docs/source/tutorials/band_structures/zno/zno.json`` in the
+    Mirrors ``docs/source/tutorials/band_structures/zno/zno.yaml`` in the
     ``KoopmansInput`` schema with the band path dropped, exercising the multi-block manifold routing
     only. Fake PseudoDojo pseudos: Zn z=20, O z=6 → nelec 52, nocc 26.
     """
