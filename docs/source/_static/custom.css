@@ -113,3 +113,10 @@ section:has(> .landing-logo) > h1 {
 .rst-content .question .sd-summary-content.sd-card-body {
     padding: 12px 0 0;
 }
+
+/* A display equation too wide for the column scrolls within its own block,
+   rather than widening the page. */
+.rst-content div.math {
+    overflow-x: auto;
+    overflow-y: hidden;
+}

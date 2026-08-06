@@ -92,9 +92,17 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
     :name: start
     :hidden:
 
-    theory
     installation
     my_first_calculation
+
+.. toctree::
+    :maxdepth: 2
+    :caption: Background
+    :name: background
+    :hidden:
+
+    theory
+    references
 
 .. toctree::
     :maxdepth: 2
@@ -122,11 +130,8 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
  Citation
 **********
 
-If you use this code, please cite E. B. Linscott, N. Colonna, R. De Gennaro, N. L.
-Nguyen, G. Borghi, A. Ferretti, I. Dabo and N. Marzari, *koopmans: An Open-Source
-Package for Accurately and Efficiently Predicting Spectral Properties with Koopmans
-Functionals*, J. Chem. Theory Comput. **19**, 7097 (2023), `doi:10.1021/acs.jctc.3c00652
-<https://doi.org/10.1021/acs.jctc.3c00652>`_.
+If you use this code, please cite :cite:`Linscott2023`. The :doc:`references page
+<references>` lists the papers behind the functionals themselves.
 
 ********************
  Indices and Tables

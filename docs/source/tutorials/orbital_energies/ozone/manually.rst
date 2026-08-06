@@ -1,36 +1,28 @@
-###################
- Doing it by hand
-###################
+###########################
+ Doing everything manually
+###########################
 
-A Koopmans calculation is a set of ordinary Quantum ESPRESSO calculations, plus the
-bookkeeping that turns their total energies into screening parameters. This part does
-that bookkeeping by hand: you launch three ``kcp.x`` calculations yourself, read four
-numbers out of their output files, and compute the screening parameter of ozone's HOMO
-with a formula you can write on the back of an envelope. Nothing here needs the
-``koopmans`` package — only a Quantum ESPRESSO installation.
+A Koopmans calculation is a set of Quantum ESPRESSO calculations with quite a bit of
+bookkeeping to link them all together. In this tutorial you will go through that process
+manually, to get a sense of what is going on under the hood of ``koopmans``.
 
-The reward for the effort is that the :doc:`next part <automated>`, where a single
-command runs the whole thing, holds no mysteries.
-
-*******************
+***************
  What you need
-*******************
+***************
 
-``kcp.x`` on your ``PATH`` — see the :doc:`installation page <../../../installation>`
-for how to get one. The engine is not involved here, so ``koopmans install`` is not
-required.
+Make sure the Quantum ESPRESSO executable ``kcp.x`` is on your ``PATH`` — see the
+:doc:`installation page <../../../installation>` for more details.
 
-Make an empty directory and download into it:
+Download :download:`ozone_manually.zip` and unpack it into an empty directory. It holds
+the three ``kcp.x`` input files you will run
 
-- :download:`ozone_dft.in` — the neutral, :math:`N`-electron DFT calculation
-- :download:`ozone_dft_n-1.in` — the constrained :math:`N-1`-electron DFT calculation
-- :download:`ozone_ki.in` — the trial KI calculation
-- :download:`get_alpha.sh` — a script that applies the screening formula, for checking
-  your own arithmetic
+- ``ozone_dft.in``, the neutral :math:`N`-electron DFT calculation
+- ``ozone_dft_n-1.in``, the constrained :math:`N-1`-electron DFT calculation
+- ``ozone_ki.in``, the trial KI calculation
 
-The calculations read a pseudopotential from a ``pseudopotentials/`` subdirectory:
-download :download:`O_ONCV_PBE-1.2.upf <pseudopotentials/O_ONCV_PBE-1.2.upf>` and put it
-there.
+along with ``get_alpha.sh``, a script that applies the screening formula so you can
+check your own arithmetic, and the oxygen pseudopotential the calculations read from
+``pseudopotentials/``.
 
 .. note::
 
@@ -49,14 +41,9 @@ Run the DFT calculation for the neutral molecule:
 
     $ mpirun kcp.x -in ozone_dft.in | tee ozone_dft.out
 
-Here is the input in full:
-
-.. literalinclude:: ozone_dft.in
-    :language: fortran
-
-The molecule has 18 valence electrons (``nelec = 18``), split evenly between the two
-spin channels, and ``nbnd = 10`` asks for one empty orbital on top of the nine filled
-ones.
+The molecule has 18 valence electrons (see ``nelec = 18`` in the input file), split
+evenly between the two spin channels, and ``nbnd = 10`` asks for one empty orbital on
+top of the nine filled ones.
 
 .. question:: What does ``do_orbdep = .false.`` mean, and why start with such a calculation?
 
@@ -79,6 +66,13 @@ the files the KI calculation will read as its starting variational orbitals:
     $ cp TMP/kc_90.save/K00001/evc_empty1.dat TMP/kc_90.save/K00001/evc0_empty1.dat
     $ cp TMP/kc_90.save/K00001/evc_empty2.dat TMP/kc_90.save/K00001/evc0_empty2.dat
 
+.. important::
+
+    Do not skip this step. ``kcp.x`` reads its variational orbitals from the ``evc0``
+    files and its Kohn-Sham orbitals from the ``evc`` ones; without the copy, the KI
+    calculation starts from whatever the ``evc0`` files happen to contain, and it will
+    run to completion and give you a wrong screening parameter rather than complain.
+
 *************************************
  The constrained :math:`N-1` run
 *************************************
@@ -100,7 +94,7 @@ scratch, and its ``&SYSTEM`` block gains three lines:
     f_cutoff     = 1e-05
 
 ``f_cutoff`` is the occupation imposed on the variational orbital numbered
-``fixed_band``.
+``fixed_band`` — here 10\ :sup:`-5`, which is zero for all practical purposes.
 
 .. question:: What is this calculation doing?
 
@@ -110,14 +104,15 @@ scratch, and its ``&SYSTEM`` block gains three lines:
     the density free to relax around it.
 
 The difference between the two total energies is a ΔSCF estimate of the ionization
-potential. Both are printed in the output as ``total energy =``, in Hartree.
+potential. Both are printed in the output as ``total energy = ...``, in Hartree.
 
 .. question:: What ionization potential do the two runs give?
 
     .. math::
 
-        E^\text{DFT}[N] - E^\text{DFT}[N-1] = (-47.5296) - (-47.0705)\ \text{Ha}
-        = -0.4591\ \text{Ha} \approx -12.49\ \text{eV},
+        E^\text{DFT}[N] - E^\text{DFT}[N-1] &= (-47.5296) - (-47.0705)\ \text{Ha} \\
+        &= -0.4591\ \text{Ha} \\
+        &\approx -12.49\ \text{eV},
 
     so the ΔSCF ionization potential is 12.49 eV. Experiment puts it at `about 12.5 eV
     <https://webbook.nist.gov/cgi/cbook.cgi?ID=C10028156&Mask=20#Ion-Energetics>`_.
@@ -170,7 +165,8 @@ then run it:
 ***************************
 
 The optimal :math:`\alpha` is the one that makes the HOMO energy agree with the
-total-energy difference you already computed — the Koopmans condition,
+total-energy difference you already computed — the Koopmans condition
+:cite:`Borghi2014,Nguyen2018`,
 
 .. math::
 
@@ -204,20 +200,21 @@ there.
 
     .. math::
 
-        \alpha_\text{opt} = \alpha_0 \frac{\big(E^\text{DFT}[N] -
-        E^\text{DFT}[N-1]\big) - \varepsilon^\text{DFT}_\text{HOMO}}
-        {\varepsilon^\text{KI}_\text{HOMO}(\alpha_0) -
-        \varepsilon^\text{DFT}_\text{HOMO}}.
+        \alpha_\text{opt} = \alpha_0 \frac{\big(E^\text{DFT}[N] - E^\text{DFT}[N-1]\big)
+        - \varepsilon^\text{DFT}_\text{HOMO}} {\varepsilon^\text{KI}_\text{HOMO}(\alpha_0)
+        - \varepsilon^\text{DFT}_\text{HOMO}}.
 
 .. question:: Put the numbers in. What is :math:`\alpha_\text{opt}` for ozone's HOMO?
 
     .. math::
 
-        \alpha_\text{opt} = 0.7 \times \frac{(-12.49) - (-7.92)}{(-12.00) - (-7.92)} =
-        0.7 \times \frac{-4.57}{-4.08} \approx 0.78.
+        \alpha_\text{opt} &= 0.7 \times \frac{(-12.49) - (-7.92)}{(-12.00) - (-7.92)} \\
+        &= 0.7 \times \frac{-4.57}{-4.08} \\
+        &\approx 0.78.
 
-Check your arithmetic against the script, which reads the same four numbers out of the
-three output files:
+Check your arithmetic against the script, which reads the two total energies and the two
+HOMO eigenvalues out of the three output files, and the trial :math:`\alpha_0` out of
+``ozone_ki.in``:
 
 .. code-block:: console
 
@@ -227,12 +224,13 @@ three output files:
  The final KI calculation
 ***************************
 
-Copy ``ozone_ki.in`` to ``ozone_ki_opt.in`` and make two changes. Point the restart
-units at the trial run's output and write to a fresh one:
+Copy ``ozone_ki.in`` to ``ozone_ki_opt.in`` and make two changes. Send the output to a
+fresh restart unit, so that this run does not overwrite the trial's (``ndr`` stays at
+90: like the trial, this calculation starts from the DFT orbitals, not from the trial
+KI's):
 
 .. code-block:: fortran
 
-    ndr = 90
     ndw = 92
 
 and put your screening parameter in place of the trial value:
@@ -273,7 +271,7 @@ which means one constrained calculation per orbital rather than one in total.
     In practice self-consistency is rarely needed for KI, and orbitals related by
     symmetry can share a screening parameter, which brings the count back down.
 
-Twelve calculations, each restarting from the right predecessor, with occupations
+All of those calculations, each restarting from the right predecessor, with occupations
 constrained orbital by orbital and the screening formula applied to every result: that
-is the bookkeeping the ``koopmans`` package exists to do. The :doc:`next part
-<automated>` runs exactly this calculation, in one command.
+is the bookkeeping the ``koopmans`` package takes care of. The :doc:`next part
+<automated>` runs this same calculation, in one command.

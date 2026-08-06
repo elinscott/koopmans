@@ -17,7 +17,7 @@ KI_OUTPUT = Path("ozone/06-RunFinalKI/outputs/aiida.cpo")
 
 # Experimental binding energies (eV) of the three outermost occupied orbitals
 # of ozone, ordered from the most tightly bound to the HOMO, from gas-phase
-# photoemission: Mocellin et al., Chem. Phys. Lett. 375, 76 (2003),
+# photoemission: Wiesner et al., Chem. Phys. Lett. 375, 76 (2003),
 # doi:10.1016/S0009-2614(03)00818-2. Deeper orbitals are excluded from the
 # comparison: their experimental assignments are not as clean.
 EXPERIMENT = [13.54, 13.00, 12.73]

@@ -910,3 +910,8 @@ scratch/
 # docs tree has that shape, so the prose, input files and figures stay tracked.
 docs/source/tutorials/**/[0-9][0-9]*-*/
 docs/source/tutorials/**/README
+
+# Tutorial input archives are packed from the tracked input files at build time
+# (see TUTORIAL_ARCHIVES in docs/source/conf.py), so the archive can never fall
+# out of step with the files a tutorial shows.
+docs/source/tutorials/**/*.zip

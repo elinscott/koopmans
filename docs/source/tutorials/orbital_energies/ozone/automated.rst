@@ -1,8 +1,8 @@
-###########################
- Letting koopmans do it
-###########################
+##############################
+Doing everything automatically
+##############################
 
-The :doc:`previous part <by_hand>` computed one screening parameter, for one orbital, in
+The :doc:`previous part <manually>` computed one screening parameter, for one orbital, in
 three calculations run by hand. This part computes one for every orbital of the same
 molecule, and both the ionization potential and the electron affinity that follow from
 them, in a single command — the same physics, with the bookkeeping handed over.
@@ -254,8 +254,7 @@ The comparison need not stop at the frontier orbitals: KI predicts a binding ene
 minus the orbital energy — for *every* occupied orbital, and gas-phase photoemission
 measures them. The fair comparison is against the three outermost occupied orbitals,
 whose experimental binding energies are cleanly resolved — 12.73, 13.00 and 13.54 eV
-(`Mocellin et al., Chem. Phys. Lett. 375, 76 (2003)
-<https://doi.org/10.1016/S0009-2614(03)00818-2>`_); the assignments of the deeper
+:cite:`Wiesner2003`; the assignments of the deeper
 orbitals are less certain, so they are left out. The three KI values sit at the end of
 the final KI output's ``Eigenvalues`` line, and the PBE ones in the corresponding line
 of the initialization output. Plotting one against the other:
@@ -334,7 +333,7 @@ array.
 ``run`` blocks until the workflow finishes. For a calculation long enough that this is
 inconvenient, ``submit`` returns an integer id immediately and leaves the workflow
 running in the background, and ``outputs(pk)`` reads the finished result back by that id
-— in this python session or a later one. See :doc:`../../../python_api` for the three
+— in this python session or a later one. See :doc:`../../../api` for the three
 verbs in full.
 
 .. admonition:: Coming from the ASE-based koopmans 1.x?
@@ -355,8 +354,8 @@ verbs in full.
 
 - :doc:`The theory page <../../../theory>` explains the functionals and the role of the
   screening parameters.
-- The `2023 koopmans paper <https://doi.org/10.1021/acs.jctc.3c00652>`_ derives the ΔSCF
-  screening procedure in full and benchmarks it against experiment.
+- The koopmans paper :cite:`Linscott2023` derives the ΔSCF screening procedure in full
+  and benchmarks it against experiment.
 - The :doc:`next tutorial <../magnetic/index>` treats molecules whose ground state is
   spin-polarized.
 - The :doc:`silicon tutorial <../../band_structures/silicon_linear_response/index>`
