@@ -73,7 +73,3 @@ calculator_parameters:
       - [{site: Zn, ang_mtm: "l=0"}]                          # Zn 4s, the empty block
     dis_froz_max: 14.5            # frozen window, applied to the empty block only
     dis_win_max: 17.0             # disentanglement window, likewise
-
-parallelization:
-  pw: {npool: 4}                  # split the k-points over four pools
-  kcw: {npool: 4}
