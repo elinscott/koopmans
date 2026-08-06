@@ -69,7 +69,7 @@ input file. The positions are Cartesian, in the units the block declares.
     apply a counter-charge correction that compensates the residual interaction between
     images, and these corrections have less to do the further apart the images are.
 
-The ``calculator_parameters`` block holds the plane-wave settings.
+The ``calculator_parameters`` block holds other calculator settings.
 
 .. literalinclude:: ozone.yaml
     :language: yaml
@@ -77,7 +77,8 @@ The ``calculator_parameters`` block holds the plane-wave settings.
     :end-at: nbnd
 
 adds one empty orbital to the nine that ozone's 18 valence electrons fill, which we need
-because the electron affinity is the energy of the LUMO.
+because the electron affinity is the energy of the LUMO. In later tutorials we will go into
+more detail on how to specify code-specific parameters.
 
 *************************
  Running the calculation
