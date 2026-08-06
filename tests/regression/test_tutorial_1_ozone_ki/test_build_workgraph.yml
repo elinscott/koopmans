@@ -75,6 +75,7 @@ raw:
       - graph_inputs
       - graph_inputs
       - graph_inputs
+      - graph_inputs
       - resolve_pseudo_family_task
       RunFinalKI:
       - ComputeScreeningParameters
@@ -84,6 +85,7 @@ raw:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
+      - graph_inputs
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -106,6 +108,7 @@ raw:
       - graph_inputs
       - graph_inputs
       - graph_inputs
+      - graph_inputs
       - resolve_pseudo_family_task
       dft_init_nspin2:
       - convert_spin1_to_spin2
@@ -117,11 +120,13 @@ raw:
       - graph_inputs
       - graph_inputs
       - graph_inputs
+      - graph_inputs
       - resolve_pseudo_family_task
       dft_init_nspin2_dummy:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
+      - graph_inputs
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -192,6 +197,8 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - RunFinalKI
       - RunFinalKI
       - RunFinalKI
       - RunFinalKI
@@ -206,11 +213,14 @@ raw:
       - dft_init_nspin1
       - dft_init_nspin1
       - dft_init_nspin1
+      - dft_init_nspin1
       - dft_init_nspin2
       - dft_init_nspin2
       - dft_init_nspin2
       - dft_init_nspin2
       - dft_init_nspin2
+      - dft_init_nspin2
+      - dft_init_nspin2_dummy
       - dft_init_nspin2_dummy
       - dft_init_nspin2_dummy
       - dft_init_nspin2_dummy
@@ -345,6 +355,10 @@ raw:
     from_task: graph_inputs
     to_socket: nbnd
     to_task: dft_init_nspin1
+  - from_socket: parallelization
+    from_task: graph_inputs
+    to_socket: parallelization
+    to_task: dft_init_nspin1
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
@@ -380,6 +394,10 @@ raw:
   - from_socket: nbnd
     from_task: graph_inputs
     to_socket: nbnd
+    to_task: dft_init_nspin2_dummy
+  - from_socket: parallelization
+    from_task: graph_inputs
+    to_socket: parallelization
     to_task: dft_init_nspin2_dummy
   - from_socket: remote_folder
     from_task: dft_init_nspin1
@@ -428,6 +446,10 @@ raw:
   - from_socket: remote_folder
     from_task: convert_spin1_to_spin2
     to_socket: parent_folder
+    to_task: dft_init_nspin2
+  - from_socket: parallelization
+    from_task: graph_inputs
+    to_socket: parallelization
     to_task: dft_init_nspin2
   - from_socket: code
     from_task: graph_inputs
@@ -493,6 +515,10 @@ raw:
     from_task: dft_init_nspin2
     to_socket: dft_remote
     to_task: ComputeScreeningParameters
+  - from_socket: parallelization
+    from_task: graph_inputs
+    to_socket: parallelization
+    to_task: ComputeScreeningParameters
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
@@ -552,6 +578,10 @@ raw:
   - from_socket: trial_remote
     from_task: ComputeScreeningParameters
     to_socket: parent_folder
+    to_task: RunFinalKI
+  - from_socket: parallelization
+    from_task: graph_inputs
+    to_socket: parallelization
     to_task: RunFinalKI
   - from_socket: parameters
     from_task: RunFinalKI
@@ -1912,6 +1942,11 @@ raw:
         ml_test: false
         nbnd: 10
         nspin: 2
+        parallelization:
+          kcp:
+            ntasks: 1
+          pw:
+            ntasks: 1
         pseudo_family: SG15/1.2/PBE/SR
         spin_polarized: false
         structure:

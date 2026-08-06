@@ -277,7 +277,7 @@ class TestTrajectoryDispatcher:
         xyz = write_multiframe_xyz(tmp_path, 3)
         koopmans_input = KoopmansInput.model_validate(_trajectory_input_dict(str(xyz)))
 
-        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes, {})
 
         names = set(workgraph.get_task_names())
         assert {f"dscf_snapshot_{i}" for i in range(1, 4)} <= names
@@ -299,7 +299,7 @@ class TestTrajectoryDispatcher:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="trajectory"):
-            build_singlepoint_workgraph(koopmans_input, trajectory_codes)
+            build_singlepoint_workgraph(koopmans_input, trajectory_codes, {})
 
     def test_external_projectors_rejected(
         self,
@@ -315,7 +315,7 @@ class TestTrajectoryDispatcher:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="not wired into the trajectory route"):
-            build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
 
 
 def _wannier_trajectory_input_dict(snapshots: str) -> dict[str, Any]:
@@ -364,7 +364,7 @@ class TestOrbitalDensityDescriptor:
         d["ml"]["descriptor"] = "power_spectrum"
         koopmans_input = KoopmansInput.model_validate(d)
 
-        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes, {})
 
         names = set(workgraph.get_task_names())
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
@@ -386,7 +386,7 @@ class TestOrbitalDensityDescriptor:
         xyz = write_multiframe_xyz(tmp_path, 2)
         koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
 
-        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes, {})
 
         names = set(workgraph.get_task_names())
         assert not any(name.startswith("descriptors_") for name in names), names
@@ -410,7 +410,7 @@ class TestOrbitalDensityDescriptor:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="init_orbitals"):
-            build_trajectory_workgraph(koopmans_input, trajectory_codes)
+            build_trajectory_workgraph(koopmans_input, trajectory_codes, {})
 
     def test_basis_settings_reach_the_namelist(self) -> None:
         """The ``ml`` radial-basis settings become decompose namelist keys.
@@ -482,11 +482,13 @@ class TestPredictMode:
 
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {}
-        ab_initio = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        ab_initio = build_trajectory_workgraph(
+            KoopmansInput.model_validate(d), trajectory_codes, {}
+        )
 
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"}
-        predict = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        predict = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes, {})
 
         def _dscf(workgraph: Any) -> Any:
             names = set(workgraph.get_task_names())
@@ -517,7 +519,9 @@ class TestPredictMode:
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="requires a trained model"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(
+                KoopmansInput.model_validate(d), codes={}, parallelization={}
+            )
 
     def test_predict_rejects_power_spectrum(
         self,
@@ -532,7 +536,9 @@ class TestPredictMode:
         d["ml"] = {"mode": "predict", "descriptor": "power_spectrum"}
 
         with pytest.raises(NotImplementedError, match="self_hartree"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(
+                KoopmansInput.model_validate(d), codes={}, parallelization={}
+            )
 
     def test_predict_rejects_alpha_numsteps(
         self,
@@ -547,7 +553,9 @@ class TestPredictMode:
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="alpha_numsteps cannot take effect"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(
+                KoopmansInput.model_validate(d), codes={}, parallelization={}
+            )
 
     def test_non_trajectory_task_rejects_ml_block(
         self,
@@ -592,7 +600,7 @@ class TestModelNodeRoute:
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = ml_block
-        return build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        return build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes, {})
 
     @staticmethod
     def _dscf_model_value(workgraph: Any) -> Any:
@@ -684,7 +692,9 @@ class TestModelNodeRoute:
         d["ml"] = {"mode": "predict", "model": wrong.pk, "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="must name the stored trained-model Dict"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(
+                KoopmansInput.model_validate(d), codes={}, parallelization={}
+            )
 
     def test_model_and_model_file_are_exclusive(self) -> None:
         """Naming both model sources fails at schema validation."""
@@ -726,7 +736,7 @@ class TestFrozenWindowThreading:
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _wannier_trajectory_input_dict(str(xyz))
         d["calculator_parameters"]["pw"] = {"system": {"nbnd": pw_nbnd}}
-        wg = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        wg = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes, {})
         return next(t for t in wg.tasks if t.name == "dscf_snapshot_1")
 
     def test_water_empty_block_pools_and_freezes(

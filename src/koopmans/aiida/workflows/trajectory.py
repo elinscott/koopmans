@@ -8,7 +8,7 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_code
+from koopmans.aiida.workflows import complete_rank_counts, load_code
 from koopmans.aiida.workflows.dscf import (
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
@@ -19,6 +19,7 @@ from koopmans.input_file.workflow import CalculateScreeningMethod, VariationalOr
 
 if TYPE_CHECKING:
     from aiida import orm
+    from aiida_koopmans.parallelization import ParallelizationDict
     from aiida_koopmans.workgraphs import Codes
     from aiida_workgraph import WorkGraph
 
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 def build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
+    parallelization: ParallelizationDict,
 ) -> WorkGraph:
     """Build a workgraph for a trajectory (machine-learning) task.
 
@@ -95,15 +97,21 @@ def build_trajectory_workgraph(
         extra_kwargs = dscf_wannier_init_inputs(
             koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
         )
+        # The Wannier route loads four more codes; complete their rank counts
+        # too, so the fold steps carry a stored count like everything else.
+        parallelization = complete_rank_counts(parallelization, extra_kwargs["codes"])
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
+        parallelization = complete_rank_counts(
+            parallelization, {"pw2wannier90": extra_kwargs["pw2wannier90_code"]}
+        )
 
     return TrajectoryWorkflow.build(
         code=codes["kcp"],
         snapshots=snapshots,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        parallelization=parallelization or None,
         **inputs,
         **extra_kwargs,
         ml_mode=ml_mode,

@@ -55,7 +55,9 @@ def _si_dfpt_dict(**workflow_updates: Any) -> dict[str, Any]:
 
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return build_singlepoint_dfpt_workgraph(inp, codes=codes)
+    return build_singlepoint_dfpt_workgraph(
+        inp, codes=codes, parallelization=inp.parallelization.as_mapping()
+    )
 
 
 @pytest.fixture

@@ -422,8 +422,13 @@ def localhost_code(localhost_computer: Any) -> Any:
     from aiida.common.exceptions import NotExistent
     from aiida.orm import InstalledCode, load_code
 
-    def factory(label: str, entry_point: str) -> Any:
-        """Return the ``<label>@localhost`` code, creating it if absent."""
+    def factory(label: str, entry_point: str, with_mpi: bool | None = None) -> Any:
+        """Return the ``<label>@localhost`` code, creating it if absent.
+
+        ``with_mpi`` stamps the node the way ``koopmans install``'s binary
+        probe does; left unset, the code behaves like one registered before
+        the probe existed.
+        """
         try:
             return load_code(f"{label}@{localhost_computer.label}")
         except NotExistent:
@@ -432,9 +437,51 @@ def localhost_code(localhost_computer: Any) -> Any:
                 computer=localhost_computer,
                 default_calc_job_plugin=entry_point,
                 filepath_executable="/bin/true",
+                with_mpi=with_mpi,
             ).store()
 
     return factory
+
+
+@pytest.fixture
+def localhost_default_ranks(localhost_computer: Any) -> Iterator[Callable[[int | None], None]]:
+    """Return a setter for the localhost computer's default MPI ranks.
+
+    Computers are mutable and shared across a session's tests, so the previous
+    default is put back afterwards.
+    """
+    previous = localhost_computer.get_default_mpiprocs_per_machine()
+
+    def _set(nprocs: int | None) -> None:
+        """Set the computer's ``default_mpiprocs_per_machine``."""
+        localhost_computer.set_default_mpiprocs_per_machine(nprocs)
+
+    yield _set
+    localhost_computer.set_default_mpiprocs_per_machine(previous)
+
+
+@pytest.fixture
+def hyperqueue_localhost_unpatched(localhost_computer: Any, monkeypatch: Any) -> Iterator[Any]:
+    """Put the localhost computer on hyperqueue, with the upstream resource class.
+
+    ``aiida_koopmans`` flips ``HyperQueueJobResource.accepts_default_mpiprocs_per_machine``
+    to ``True`` when it is imported, and aiida-core then fills a missing
+    ``num_mpiprocs_per_machine`` in while validating a builder. A daemon worker
+    that never imported the plugin sees the upstream ``False`` and fills in
+    nothing, so an implicit rank count survives into the stored inputs. Putting
+    the test process in that state is what makes such a count visible.
+    """
+    from aiida_hyperqueue.scheduler import HyperQueueJobResource
+
+    monkeypatch.setattr(
+        HyperQueueJobResource,
+        "accepts_default_mpiprocs_per_machine",
+        classmethod(lambda cls: False),
+    )
+    previous = localhost_computer.scheduler_type
+    localhost_computer.scheduler_type = "hyperqueue"
+    yield localhost_computer
+    localhost_computer.scheduler_type = previous
 
 
 @pytest.fixture

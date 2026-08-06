@@ -51,6 +51,7 @@ raw:
       - graph_inputs
       - graph_inputs
       - graph_inputs
+      - graph_inputs
       - resolve_pseudo_family_task
       RunFinalKI:
       - ComputeScreeningParameters
@@ -60,6 +61,7 @@ raw:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
+      - graph_inputs
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -78,6 +80,7 @@ raw:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
+      - graph_inputs
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -142,6 +145,8 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
+      - ComputeScreeningParameters
+      - RunFinalKI
       - RunFinalKI
       - RunFinalKI
       - RunFinalKI
@@ -153,6 +158,7 @@ raw:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
+      - dft_init
       - dft_init
       - dft_init
       - dft_init
@@ -289,6 +295,10 @@ raw:
     from_task: graph_inputs
     to_socket: tot_magnetization
     to_task: dft_init
+  - from_socket: parallelization
+    from_task: graph_inputs
+    to_socket: parallelization
+    to_task: dft_init
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
@@ -361,6 +371,10 @@ raw:
     from_task: dft_init
     to_socket: dft_remote
     to_task: ComputeScreeningParameters
+  - from_socket: parallelization
+    from_task: graph_inputs
+    to_socket: parallelization
+    to_task: ComputeScreeningParameters
   - from_socket: code
     from_task: graph_inputs
     to_socket: code
@@ -424,6 +438,10 @@ raw:
   - from_socket: trial_remote
     from_task: ComputeScreeningParameters
     to_socket: parent_folder
+    to_task: RunFinalKI
+  - from_socket: parallelization
+    from_task: graph_inputs
+    to_socket: parallelization
     to_task: RunFinalKI
   - from_socket: parameters
     from_task: RunFinalKI
@@ -1638,6 +1656,11 @@ raw:
         nbnd: 8
         nspin: 2
         orbital_groups_self_hartree_tol: 0.001
+        parallelization:
+          kcp:
+            ntasks: 1
+          pw:
+            ntasks: 1
         pseudo_family: SG15/1.2/PBE/SR
         spin_polarized: true
         structure:

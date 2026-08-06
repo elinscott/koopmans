@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import load_code
+from koopmans.aiida.workflows import complete_rank_counts, load_code
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -26,6 +26,7 @@ from koopmans.input_file.workflow import (
 
 if TYPE_CHECKING:
     from aiida import orm
+    from aiida_koopmans.parallelization import ParallelizationDict
     from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 def build_singlepoint_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
+    parallelization: ParallelizationDict,
 ) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
 
@@ -58,7 +60,7 @@ def build_singlepoint_workgraph(
     # the alpha_guess path inside the DFPT builder (screen step skipped),
     # not a reason to fall through to the kcp.x/DSCF branch.
     if workflow.screening_method == CalculateScreeningMethod.DFPT:
-        return build_singlepoint_dfpt_workgraph(koopmans_input, codes)
+        return build_singlepoint_dfpt_workgraph(koopmans_input, codes, parallelization)
 
     require_supported_correction(workflow.correction)
 
@@ -79,11 +81,14 @@ def build_singlepoint_workgraph(
         VariationalOrbitalType.PROJWFS,
     ):
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
+        # The Wannier route loads four more codes; complete their rank counts
+        # too, so the fold steps carry a stored count like everything else.
+        parallelization = complete_rank_counts(parallelization, extra_kwargs["codes"])
 
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
         structure=structure,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        parallelization=parallelization or None,
         **inputs,
         **extra_kwargs,
     )

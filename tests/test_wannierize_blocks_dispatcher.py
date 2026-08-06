@@ -80,13 +80,13 @@ def split_codes(
 
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return _build_wannierize_blocks_workgraph(inp, codes)
+    return _build_wannierize_blocks_workgraph(inp, codes, inp.parallelization.as_mapping())
 
 
 def _build_via_route(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     """Build through the route selection, which is where the guards live."""
     inp = KoopmansInput.model_validate(d)
-    return build_wannierize_workgraph(inp, codes)
+    return build_wannierize_workgraph(inp, codes, inp.parallelization.as_mapping())
 
 
 @pytest.fixture
@@ -663,7 +663,7 @@ class TestExternalProjectors:
         d = _si_external_dict(si_external_projector_dir)
         del d["workflow"]["block_wannierization_threshold"]
         inp = KoopmansInput.model_validate(d)
-        wg = build_wannierize_workgraph(inp, split_codes)
+        wg = build_wannierize_workgraph(inp, split_codes, {})
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         p2w = w90_task.inputs["pw2wannier90"]["pw2wannier90"]
         inputpp = p2w["parameters"].value.get_dict()["INPUTPP"]
@@ -681,7 +681,7 @@ def _build_plain(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     """Build through the route selection with the threshold dropped."""
     del d["workflow"]["block_wannierization_threshold"]
     inp = KoopmansInput.model_validate(d)
-    return build_wannierize_workgraph(inp, codes)
+    return build_wannierize_workgraph(inp, codes, inp.parallelization.as_mapping())
 
 
 #: The mesh every input in this module asks for, and the k-point count a

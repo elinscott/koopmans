@@ -18,6 +18,7 @@ from koopmans.aiida.workflows.projectors import load_external_projectors
 
 if TYPE_CHECKING:
     from aiida import orm
+    from aiida_koopmans.parallelization import ParallelizationDict
     from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
@@ -146,6 +147,7 @@ def _external_projector_kwargs(
 def build_wannierize_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
+    parallelization: ParallelizationDict,
 ) -> WorkGraph:
     """Build a workgraph for Wannierization.
 
@@ -164,6 +166,7 @@ def build_wannierize_workgraph(
     Args:
         koopmans_input: The parsed koopmans input.
         codes: Dictionary of loaded codes.
+        parallelization: The per-code mapping, rank counts already completed.
 
     Returns:
         The assembled WorkGraph.
@@ -179,15 +182,17 @@ def build_wannierize_workgraph(
         )
 
     if koopmans_input.workflow.block_wannierization_threshold is not None:
-        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
+        return _build_wannierize_blocks_workgraph(koopmans_input, codes, parallelization)
 
     _validate_projection_sources(koopmans_input)
     if _keywords_setting_projections(koopmans_input):
-        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
+        return _build_wannierize_blocks_workgraph(koopmans_input, codes, parallelization)
     if not koopmans_input.workflow.auto_projections:
         raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
-    structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
+    structure, pseudo_family, overrides = prepare_common_inputs(
+        koopmans_input, ["scf", "nscf"], parallelization
+    )
 
     # The automatically derived projections are the pseudopotentials' atomic
     # orbitals (upstream's ATOMIC_PROJECTORS_QE mechanism) unless external
@@ -204,7 +209,7 @@ def build_wannierize_workgraph(
         overrides=overrides,
         pseudo_family=pseudo_family,
         print_summary=False,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        parallelization=parallelization or None,
         scf_kpoints=scf_kpoints,
         kpoints=kpoints,
         mp_grid=mp_grid,
@@ -215,6 +220,7 @@ def build_wannierize_workgraph(
 def _build_wannierize_blocks_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
+    parallelization: ParallelizationDict,
 ) -> WorkGraph:
     """Build the Wannierization workgraph that Wannierizes block by block.
 
@@ -343,7 +349,7 @@ def _build_wannierize_blocks_workgraph(
         **split_kwargs,
         pseudo_family=pseudo_family,
         overrides=wannier_overrides,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        parallelization=parallelization or None,
         **external_kwargs,
     )
 

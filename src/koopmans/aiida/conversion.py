@@ -28,13 +28,14 @@ def _convert_paths_to_strings(obj: Any) -> Any:
 
 
 if TYPE_CHECKING:
+    from aiida_koopmans.parallelization import CodeParallelization
+
     from koopmans.input_file import AtomsInput, KoopmansInput, KpointsInput
     from koopmans.input_file.cell_parameters import (
         CellParametersViaAlat,
         CellParametersViaIbrav,
         CellParametersViaVectors,
     )
-    from koopmans.input_file.parallelization import CodeParallelization
 
 # Quantum ESPRESSO's own value, so that converted quantities match QE output
 BOHR_TO_ANGSTROM: float = CONSTANTS.bohr_to_ang
@@ -62,21 +63,23 @@ def code_parallelization(
     therefore rides the threaded mapping alone (via ``as_mapping``).
 
     Args:
-        config: The per-code parallelization settings, or ``None``.
+        config: One code's entry of the per-code mapping, or ``None``.
 
     Returns:
         A ``(options, settings)`` tuple of dicts, either of which may be empty.
     """
     options: dict[str, Any] = {}
     settings: dict[str, Any] = {}
-    if config is None:
+    if not config:
         return options, settings
-    if config.ntasks is not None:
-        options["resources"] = {"num_machines": 1, "num_mpiprocs_per_machine": config.ntasks}
+    ntasks = config.get("ntasks")
+    npool = config.get("npool")
+    if ntasks is not None:
+        options["resources"] = {"num_machines": 1, "num_mpiprocs_per_machine": int(ntasks)}
     cmdline: list[str] = []
-    if config.npool is not None:
-        cmdline += ["-npool", str(config.npool)]
-    if config.pd:
+    if npool is not None:
+        cmdline += ["-npool", str(int(npool))]
+    if config.get("pd"):
         cmdline += ["-pd", "true"]
     if cmdline:
         settings["cmdline"] = cmdline

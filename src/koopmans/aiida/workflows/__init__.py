@@ -6,7 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from aiida import orm
 from aiida_koopmans.ml import MLMode
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from aiida_koopmans.ml import ModelMismatchError
-    from aiida_koopmans.parallelization import ParallelizationError
+    from aiida_koopmans.parallelization import ParallelizationDict, ParallelizationError
     from aiida_koopmans.projections import (
         BlockBoundaryError,
         BlockDisentanglementError,
@@ -113,9 +113,73 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     return codes
 
 
+def default_rank_count(name: str, code: orm.AbstractCode) -> int | None:
+    """Return the MPI ranks ``code`` takes when the input file names no ``ntasks``.
+
+    One rank for a code that does not run under MPI, and the code's computer's
+    ``default_mpiprocs_per_machine`` otherwise. ``None`` means nothing declares
+    a count: a computer with no default leaves the rank count to the scheduler,
+    as it does today.
+
+    A code named in :data:`~koopmans.aiida.setup.codes.SERIAL_CODES` takes one
+    rank whatever its node says. That list states a property of the program —
+    merge_evc.x concatenates, wann2kcp.x races on its scratch — so it holds
+    even for a node registered before ``koopmans install`` learned to stamp
+    ``with_mpi``, which is how those nodes look in older profiles.
+    """
+    from koopmans.aiida.setup.codes import SERIAL_CODES, effective_with_mpi
+
+    if name in SERIAL_CODES or effective_with_mpi(code) is False:
+        return 1
+    computer = getattr(code, "computer", None)
+    if computer is None:
+        return None
+    ranks = computer.get_default_mpiprocs_per_machine()
+    return int(ranks) if ranks is not None else None
+
+
+def complete_rank_counts(parallelization: ParallelizationDict, codes: Codes) -> ParallelizationDict:
+    """Return ``parallelization`` with an explicit ``ntasks`` for every loaded code.
+
+    An entry with no ``ntasks`` reaches the scheduler as a rank count nothing
+    stores, resolved at submission against the computer's mutable default; two
+    calculations with identical stored inputs can then run on different numbers
+    of ranks. Filling the count in makes it an input of the workgraph.
+
+    Only codes in ``codes`` are completed, and only those the ``parallelization``
+    block names (:data:`~aiida_koopmans.parallelization.CODE_NAMES`) — an entry
+    for any other key is rejected downstream. An ``ntasks`` the input file set
+    is left as it is, so this never overrides the user.
+
+    Args:
+        parallelization: The per-code mapping, as ``ParallelizationInput.as_mapping``
+            returns it.
+        codes: The codes loaded for this task, keyed by the same code names.
+
+    Returns:
+        A new mapping; the argument is not modified.
+    """
+    from aiida_koopmans.parallelization import CODE_NAMES
+
+    completed: dict[str, dict[str, Any]] = {
+        name: dict(entry) for name, entry in parallelization.items()
+    }
+    for name, code in codes.items():
+        if name not in CODE_NAMES:
+            continue
+        entry = completed.setdefault(name, {})
+        if entry.get("ntasks") is not None:
+            continue
+        ranks = default_rank_count(name, code)
+        if ranks is not None:
+            entry["ntasks"] = ranks
+    return cast("ParallelizationDict", {name: entry for name, entry in completed.items() if entry})
+
+
 def prepare_common_inputs(
     koopmans_input: KoopmansInput,
     override_keys: list[str],
+    parallelization: ParallelizationDict,
 ) -> tuple[orm.StructureData, str, dict[str, Any]]:
     """Prepare the common inputs shared by all workgraph builders.
 
@@ -126,6 +190,8 @@ def prepare_common_inputs(
     Args:
         koopmans_input: The parsed koopmans input.
         override_keys: Sub-workflow keys to include in overrides (e.g. ["scf", "bands"]).
+        parallelization: The per-code mapping, rank counts already completed by
+            :func:`complete_rank_counts`.
 
     Returns:
         Tuple of (structure, pseudo_family, overrides).
@@ -146,7 +212,7 @@ def prepare_common_inputs(
     # steps; the full per-code mapping is threaded to every graph builder too,
     # so pw.x steps assembled inside the graphs (e.g. the dielectric scf) pick
     # up the same directive.
-    options, settings = code_parallelization(koopmans_input.parallelization.pw)
+    options, settings = code_parallelization(parallelization.get("pw"))
     if settings:
         pw_overrides["settings"] = settings
     if options:
@@ -330,6 +396,11 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # Load required codes
     codes = load_codes_for_task(koopmans_input.workflow)
 
+    # Both halves of the rank count meet only here: what the input file asked
+    # for, and what each loaded code's computer offers when it asked for
+    # nothing. Routes that load further codes complete those the same way.
+    parallelization = complete_rank_counts(koopmans_input.parallelization.as_mapping(), codes)
+
     # Build the workgraph based on task. An error raised inside the plugin
     # speaks its vocabulary (derived blocks, `num_bands`), which the user
     # never wrote; attach the input-file advice at this boundary.
@@ -337,23 +408,23 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         if task == Task.DFT_BANDS:
             from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
 
-            return build_dft_bands_workgraph(koopmans_input, codes)
+            return build_dft_bands_workgraph(koopmans_input, codes, parallelization)
         elif task == Task.WANNIERIZE:
             from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
 
-            return build_wannierize_workgraph(koopmans_input, codes)
+            return build_wannierize_workgraph(koopmans_input, codes, parallelization)
         elif task == Task.SINGLEPOINT:
             from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
 
-            return build_singlepoint_workgraph(koopmans_input, codes)
+            return build_singlepoint_workgraph(koopmans_input, codes, parallelization)
         elif task == Task.TRAJECTORY:
             from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
-            return build_trajectory_workgraph(koopmans_input, codes)
+            return build_trajectory_workgraph(koopmans_input, codes, parallelization)
         elif task == Task.DFT_EPS:
             from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
 
-            return build_dft_eps_workgraph(koopmans_input, codes)
+            return build_dft_eps_workgraph(koopmans_input, codes, parallelization)
         else:
             raise ValueError(
                 f"Task '{task.value}' is not yet implemented. "

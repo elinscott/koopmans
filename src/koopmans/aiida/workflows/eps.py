@@ -8,6 +8,7 @@ from koopmans.aiida.workflows import prepare_common_inputs
 
 if TYPE_CHECKING:
     from aiida import orm
+    from aiida_koopmans.parallelization import ParallelizationDict
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 def build_dft_eps_workgraph(
     koopmans_input: KoopmansInput,
     codes: dict[str, orm.AbstractCode],
+    parallelization: ParallelizationDict,
 ) -> WorkGraph:
     """Build a workgraph for the dielectric-constant (ph.x) task.
 
@@ -28,6 +30,7 @@ def build_dft_eps_workgraph(
     Args:
         koopmans_input: The parsed koopmans input.
         codes: Dictionary of loaded codes.
+        parallelization: The per-code mapping, rank counts already completed.
 
     Returns:
         A WorkGraph chaining PwBaseWorkChain into PhBaseWorkChain.
@@ -36,7 +39,9 @@ def build_dft_eps_workgraph(
 
     from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
 
-    structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf"])
+    structure, pseudo_family, overrides = prepare_common_inputs(
+        koopmans_input, ["scf"], parallelization
+    )
     overrides["scf"]["pw"]["parameters"].get("SYSTEM", {}).pop("nbnd", None)
 
     return DielectricTask.build(
@@ -45,6 +50,6 @@ def build_dft_eps_workgraph(
         structure=structure,
         pseudo_family=pseudo_family,
         overrides=overrides,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        parallelization=parallelization or None,
         scf_kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
     )

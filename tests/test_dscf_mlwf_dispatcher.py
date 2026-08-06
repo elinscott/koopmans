@@ -83,7 +83,9 @@ def _si_collinear_dscf_dict() -> dict[str, Any]:
 
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return build_singlepoint_workgraph(inp, codes=codes)
+    return build_singlepoint_workgraph(
+        inp, codes=codes, parallelization=inp.parallelization.as_mapping()
+    )
 
 
 def _dscf_blocks(
