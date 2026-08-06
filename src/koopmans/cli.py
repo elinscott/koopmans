@@ -422,6 +422,7 @@ def hq_start(max_procs: int | None) -> None:
             "Failed to start the HyperQueue worker; inspect the log under "
             "${AIIDA_CONFIG}/koopmans/hq.worker.log for details."
         )
+    click.echo("HyperQueue worker started.")
     print_hq_status()
 
 

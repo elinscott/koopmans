@@ -440,6 +440,29 @@ class TestWorkerCommands:
         assert result.exit_code == 0, result.output
         assert ["worker", "start", "--cpus", "7"] in fake_hq.commands
 
+    def test_start_against_a_live_server_with_no_worker(self, fake_hq: FakeHq) -> None:
+        """The state a worker leaves behind when it ends: server up, no worker.
+
+        Starting must add a worker to the running server rather than restarting
+        the server — which would discard its queue — and must say what it did.
+        """
+        result = self._invoke(["backend", "hq", "start", "--max-procs", "12"])
+
+        assert result.exit_code == 0, result.output
+        assert ["worker", "start", "--cpus", "12"] in fake_hq.commands
+        assert not [c for c in fake_hq.commands if c[:2] == ["server", "start"]]
+        assert "HyperQueue worker started." in result.output
+        assert "pool of 12 CPU(s)" in result.output
+
+    def test_status_with_no_worker_names_the_command_that_fixes_it(self, fake_hq: FakeHq) -> None:
+        """Zero workers is a state to report, not an error to raise."""
+        result = self._invoke(["backend", "hq", "status"])
+
+        assert result.exit_code == 0, result.output
+        assert "HyperQueue server is running." in result.output
+        assert "No HyperQueue worker is running." in result.output
+        assert "koopmans backend hq start" in result.output
+
     def test_stop_asks_hq_rather_than_signalling_a_pid(
         self, fake_hq: FakeHq, tmp_path: Path
     ) -> None:
