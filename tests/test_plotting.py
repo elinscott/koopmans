@@ -24,9 +24,11 @@ from koopmans.plotting import (
     BandSeries,
     EnergyZero,
     NoEnergyZeroError,
+    PathMismatchError,
     PlottingError,
     apply_energy_zero,
     apply_labels,
+    check_paths_agree,
     describe_energy_zero,
     draw_band_structures,
     path_distances,
@@ -38,6 +40,8 @@ from koopmans.plotting import (
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
 PW_BASE = "aiida.workflows:quantumespresso.pw.base"
 KCW_HAM = "aiida.calculations:koopmans.kcw_ham"
+W90_BASE = "aiida.workflows:wannier90_workflows.base.wannier90"
+W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
 
 #: A cubic cell, so that reciprocal-space distances are easy to reason about.
 CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
@@ -576,6 +580,74 @@ class TestRenderer:
 
         assert [len(line.get_xdata()) for line in band_lines(axes)] == [3, 3]
 
+    def test_ticks_sit_at_their_k_points_distance(self) -> None:
+        """A tick lands where its k-point does, not at its index.
+
+        The 4 Angstrom cubic cell puts X at pi/4; an index-based x axis would
+        put it at 2 and still carry the right name.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")])
+
+        assert list(axes.get_xticks()) == pytest.approx([0.0, np.pi / 4])
+
+    def test_the_axis_spans_the_path_and_no_more(self) -> None:
+        """Without limits the axes pad the path with empty margins."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")])
+
+        assert axes.get_xlim() == pytest.approx((0.0, np.pi / 4))
+
+    def test_a_jump_joins_two_names_on_one_tick(self) -> None:
+        """The two sides of a discontinuity share a position, so they share a tick."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [broken_path()])
+
+        assert [text.get_text() for text in axes.get_xticklabels()] == ["\u0393", "X|L", "\u0393"]
+
+    def test_the_title_keeps_the_captions_own_casing(self) -> None:
+        """Only the first character is raised.
+
+        ``str.capitalize`` lowercases everything after it, which turns the KI
+        series into "ki" and eV into "ev" on every figure.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(
+            axes,
+            [series("KI")],
+            caption="energies relative to the valence band edge of 'KI' at 6.2452 eV",
+        )
+
+        assert axes.get_title() == (
+            "Energies relative to the valence band edge of 'KI' at 6.2452 eV"
+        )
+
+    def test_a_series_without_a_cell_shares_the_axis(self) -> None:
+        """One reciprocal basis measures every curve on the figure.
+
+        Measuring a cell-less series in crystal coordinates would squeeze it
+        into the left fraction of the axes while its neighbour spans them,
+        with both curves belonging to the same path.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT"), series("KI", cell=None)])
+
+        spans = [list(line.get_xdata()) for line in band_lines(axes)]
+        assert spans[0] == pytest.approx(spans[-1])
+
+    def test_the_ticks_come_from_a_series_that_has_them(self) -> None:
+        """A series naming no special points does not cost the figure its axis."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("KI", path_labels=[], cell=None), series("DFT")])
+
+        assert [text.get_text() for text in axes.get_xticklabels()] == ["\u0393", "X"]
+
 
 # ----------------------------------------------------------------------
 # The command
@@ -677,3 +749,151 @@ class TestCommand:
 
         assert result.exit_code == 1
         assert "is not a koopmans run directory" in result.output
+
+
+# ----------------------------------------------------------------------
+# Occupations that are not exactly 0 or 2
+# ----------------------------------------------------------------------
+
+#: A three-k-point, three-band semiconductor as a smeared run reports it: a
+#: deep valence band, the valence band edge at -0.35 eV, and a conduction band
+#: whose occupations are small but not zero. The numbers are Marzari-Vanderbilt
+#: cold smearing (QE's ``wgauss(x, -1)``) at ``degauss = 0.27 eV`` with the
+#: Fermi level mid-gap, which is why the peak occupation exceeds 2.
+SMEARED_ENERGIES = [[-6.0, -0.85, 0.85], [-6.0, -0.6, 0.6], [-6.0, -0.35, 0.35]]
+SMEARED_OCCUPATIONS = [
+    [2.0, 2.00151, 3.29678e-07],
+    [2.0, 2.04821, 0.000184042],
+    [2.0, 2.15916, 0.0190239],
+]
+
+
+class TestValenceBandEdge:
+    """Which states count as occupied."""
+
+    def test_smeared_tails_are_not_occupied(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The edge is the top of the valence band, not the top of the plot.
+
+        Every conduction state here carries a small positive occupation, so a
+        threshold of "greater than zero" would return +0.85 eV — 1.2 eV out,
+        and the whole figure with it. Only a threshold relative to the peak
+        occupation, which smearing pushes above 2, picks the right state.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+        chain = make_process(PW_BANDS, caller=root, link_label="bands")
+        attach(
+            chain,
+            "band_structure",
+            make_bands(
+                [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0]],
+                SMEARED_ENERGIES,
+                cell=CUBIC,
+                labels=[(0, "G"), (2, "X")],
+                occupations=SMEARED_OCCUPATIONS,
+            ),
+        )
+        folder = write_run_folder(tmp_path, "si_lda", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert found[0].vbm == pytest.approx(-0.35)
+
+
+# ----------------------------------------------------------------------
+# Which step owns a band structure
+# ----------------------------------------------------------------------
+
+
+class TestProducerOwnership:
+    """A step that declares a band structure owns everything below it."""
+
+    def test_a_standalone_base_wannierization_is_plotted(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The Wannier row of the table is reachable on its own."""
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        base = make_process(W90_BASE, caller=root, link_label="wannier90")
+        attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_the_optimize_scan_yields_one_series(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Only the optimize workchain's own output counts, not its trials.
+
+        The scan reruns the plain wannierization once per trial frozen window.
+        Descending into them puts every discarded trial on the axes beside the
+        result, with nothing on the figure saying which is which.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        optimize = make_process(W90_OPTIMIZE, caller=root, link_label="wannier90")
+        attach(
+            optimize,
+            "wannier90_plot__interpolated_bands",
+            make_bands([[0.0, 0.0, 0.0]], [[-4.0]]),
+        )
+        for trial in ("wannier90_1", "wannier90_2", "wannier90_3"):
+            base = make_process(W90_BASE, caller=optimize, link_label=trial)
+            attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+        assert found[0].energies == [[-4.0]]
+
+
+# ----------------------------------------------------------------------
+# Series that do not belong on one axes
+# ----------------------------------------------------------------------
+
+
+class TestPathAgreement:
+    """Two runs share an axis only if they share a path."""
+
+    def test_different_paths_are_refused(self) -> None:
+        """A figure that looks right and is not is worse than an error."""
+        dft = series(
+            "DFT",
+            kpoints=[[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            path_labels=[(0, "G"), (2, "X")],
+        )
+        ki = series(
+            "KI",
+            kpoints=[[0.0, 0.0, 0.0], [0.25, 0.25, 0.25], [0.5, 0.5, 0.5]],
+            path_labels=[(0, "G"), (2, "L")],
+        )
+
+        with pytest.raises(PathMismatchError) as excinfo:
+            check_paths_agree([dft, ki])
+
+        message = str(excinfo.value)
+        assert "X (0.5, 0, 0)" in message
+        assert "L (0.5, 0.5, 0.5)" in message
+
+    def test_the_same_path_at_a_different_density_is_accepted(self) -> None:
+        """A run may sample the path more finely than the one beside it."""
+        coarse = series("DFT")
+        fine = series(
+            "KI",
+            kpoints=[[0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [0.3, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            energies=[[-5.0, 5.0]] * 4,
+            path_labels=[(0, "G"), (3, "X")],
+        )
+
+        check_paths_agree([coarse, fine])
+
+    def test_the_same_point_spelled_differently_is_accepted(self) -> None:
+        """Seekpath writes ``GAMMA`` where an input file writes ``G``."""
+        check_paths_agree([series("DFT"), series("KI", path_labels=[(0, "GAMMA"), (2, "X")])])
+
+    def test_a_series_without_special_points_is_refused(self) -> None:
+        """Nothing says the unlabelled one ran along the same path."""
+        with pytest.raises(PathMismatchError, match="no high-symmetry points"):
+            check_paths_agree([series("DFT"), series("KI", path_labels=[])])
+
+    def test_one_series_is_always_agreeable(self) -> None:
+        """A single band structure has nothing to disagree with."""
+        check_paths_agree([series("KI", path_labels=[])])

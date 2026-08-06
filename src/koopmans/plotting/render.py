@@ -70,24 +70,39 @@ def _jumps(series: BandSeries) -> np.ndarray:
     return np.asarray(labelled[:-1] & labelled[1:], dtype=bool)
 
 
-def path_distances(series: BandSeries) -> np.ndarray:
+def path_distances(series: BandSeries, cell: list[list[float]] | None = None) -> np.ndarray:
     """Return the cumulative distance along the path of each k-point.
 
-    Distance is measured in the reciprocal basis the series' cell defines;
-    without a cell the crystal coordinates stand in, which distorts the
-    relative lengths of the path's segments. A jump contributes no distance.
+    Distance is measured in the reciprocal basis ``cell`` defines, defaulting
+    to the series' own; with no cell at all the crystal coordinates stand in,
+    which distorts the relative lengths of the path's segments. A jump
+    contributes no distance.
     """
-    kpoints = np.asarray(series.kpoints, dtype=float)
+    kpoints = np.asarray(series.kpoints, dtype=np.float64)
     if len(kpoints) == 0:
         return np.zeros(0)
-    if series.cell is None:
+    frame = series.cell if cell is None else cell
+    if frame is None:
         cartesian = kpoints
     else:
-        reciprocal = 2 * np.pi * np.linalg.inv(np.asarray(series.cell, dtype=float)).T
+        reciprocal = 2 * np.pi * np.linalg.inv(np.asarray(frame, dtype=np.float64)).T
         cartesian = kpoints @ reciprocal
     steps = np.linalg.norm(np.diff(cartesian, axis=0), axis=1)
     steps[_jumps(series)] = 0.0
     return np.concatenate(([0.0], np.cumsum(steps)))
+
+
+def _shared_cell(series: Sequence[BandSeries]) -> list[list[float]] | None:
+    """Return the cell every series' path axis is measured in.
+
+    Series on one figure run along one path, so one reciprocal basis measures
+    them all. Taking the first cell available puts a series that carries none
+    on the same x scale as the rest instead of on crystal coordinates.
+    """
+    for item in series:
+        if item.cell is not None:
+            return item.cell
+    return None
 
 
 def _segments(series: BandSeries) -> list[slice]:
@@ -97,13 +112,24 @@ def _segments(series: BandSeries) -> list[slice]:
     return [slice(start, stop) for start, stop in pairwise(bounds)]
 
 
-def _ticks(series: BandSeries) -> tuple[list[float], list[str]]:
+def _tick_source(series: Sequence[BandSeries]) -> BandSeries:
+    """Return the series the axis takes its ticks from.
+
+    The first one that names any high-symmetry points, so that a series
+    carrying none does not cost the figure its axis.
+    """
+    return next((item for item in series if item.path_labels), series[0])
+
+
+def _ticks(
+    series: BandSeries, cell: list[list[float]] | None = None
+) -> tuple[list[float], list[str]]:
     """Return the axis tick positions and names of one series' path.
 
     Two special points at the same position — the two sides of a jump — share
     one tick, named ``"X|Y"``.
     """
-    distances = path_distances(series)
+    distances = path_distances(series, cell)
     positions: list[float] = []
     names: list[str] = []
     for index, name in sorted(series.path_labels):
@@ -125,15 +151,17 @@ def draw_band_structures(
 ) -> None:
     """Draw every series onto one set of axes, shifted by its own ``zero``.
 
-    The path axis, its ticks and its limits come from the first series; a jump
-    breaks the curves rather than joining them across the gap.
+    Every series is measured in one reciprocal basis, and the ticks come from
+    the first series that names any high-symmetry points; a jump breaks the
+    curves rather than joining them across the gap.
 
     :param axes: where to draw.
     :param series: the curves, each already carrying the figure's ``zero``.
     :param caption: a sentence stating what the figure's zero is.
     """
+    cell = _shared_cell(series)
     for index, item in enumerate(series):
-        distances = path_distances(item)
+        distances = path_distances(item, cell)
         energies = np.asarray(item.energies, dtype=np.float64) - item.zero
         color = f"C{index % 10}"
         drawn = False
@@ -148,7 +176,7 @@ def draw_band_structures(
                 )
                 drawn = True
 
-    positions, names = _ticks(series[0])
+    positions, names = _ticks(_tick_source(series), cell)
     if positions:
         axes.set_xticks(positions)
         axes.set_xticklabels(names)
@@ -158,7 +186,9 @@ def draw_band_structures(
 
     axes.set_ylabel(f"Energy ({series[0].units})")
     if caption is not None:
-        axes.set_title(caption.capitalize(), fontsize="small")
+        # Only the first character changes: ``str.capitalize`` would lowercase
+        # the rest, turning "KI" into "ki" and "eV" into "ev".
+        axes.set_title(caption[:1].upper() + caption[1:], fontsize="small")
     axes.legend(frameon=False, fontsize="small")
 
 

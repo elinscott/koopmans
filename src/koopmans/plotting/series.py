@@ -17,8 +17,10 @@ __all__ = [
     "BandSeries",
     "EnergyZero",
     "NoEnergyZeroError",
+    "PathMismatchError",
     "apply_energy_zero",
     "apply_labels",
+    "check_paths_agree",
     "describe_energy_zero",
     "write_series_json",
 ]
@@ -34,6 +36,10 @@ class EnergyZero(StrEnum):
 
 class NoEnergyZeroError(Exception):
     """No series on the axes reports the requested reference energy."""
+
+
+class PathMismatchError(Exception):
+    """The series were computed along different k-point paths."""
 
 
 @dataclass
@@ -65,6 +71,61 @@ class BandSeries:
         if kind == EnergyZero.FERMI:
             return self.fermi
         return 0.0
+
+
+#: How far apart two crystal coordinates may be and still name the same point.
+PATH_TOLERANCE = 1e-4
+
+
+def _special_points(item: BandSeries) -> list[tuple[str, tuple[float, ...]]]:
+    """Return the series' high-symmetry points and their coordinates, in order."""
+    return [
+        (name, tuple(item.kpoints[index]))
+        for index, name in sorted(item.path_labels)
+        if 0 <= index < len(item.kpoints)
+    ]
+
+
+def _describe_path(item: BandSeries) -> str:
+    """Return the series' path as its named corners, for an error message."""
+    points = _special_points(item)
+    if not points:
+        return "no high-symmetry points"
+    return " -> ".join(
+        f"{name} ({', '.join(format(x, '.4g') for x in coordinates)})"
+        for name, coordinates in points
+    )
+
+
+def check_paths_agree(series: Sequence[BandSeries], tolerance: float = PATH_TOLERANCE) -> None:
+    """Reject series computed along different k-point paths.
+
+    Only the high-symmetry points are compared, by coordinate rather than by
+    name, so two runs may sample one path at different densities and may spell
+    its corners differently. Series that do not share a path share one x axis
+    all the same, and the figure looks right while it is not.
+
+    :raises PathMismatchError: if any series' corners differ from the first's.
+    """
+    if len(series) < 2:
+        return
+    reference, *rest = series
+    expected = _special_points(reference)
+    for item in rest:
+        found = _special_points(item)
+        if len(found) == len(expected) and all(
+            abs(x - y) <= tolerance
+            for (_, first), (_, second) in zip(expected, found, strict=True)
+            for x, y in zip(first, second, strict=True)
+        ):
+            continue
+        raise PathMismatchError(
+            f"'{reference.label}' and '{item.label}' were computed along different "
+            "k-point paths, so they cannot share one axis:\n"
+            f"  {reference.label}: {_describe_path(reference)}\n"
+            f"  {item.label}: {_describe_path(item)}\n"
+            "Plot them separately, or give both runs the same `kpoints: {path: ...}`."
+        )
 
 
 def apply_labels(series: Sequence[BandSeries], labels: Sequence[str]) -> None:

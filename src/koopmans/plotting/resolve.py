@@ -98,6 +98,9 @@ class BandProducer:
     eigenvalues split-mode wannierization detects its band groups on, and an
     interpolated path are all the same shape of data; only the step that
     produced a socket says which it is.
+
+    ``socket`` is a dotted output path, so a workflow that publishes its result
+    under a namespace can name it.
     """
 
     process_type: str
@@ -105,6 +108,20 @@ class BandProducer:
     series: str
     references: References
 
+
+#: The optimize workchain's own wannierization outputs, and the series each
+#: names. Its scan reruns the plain wannierization once per trial frozen
+#: window, so only these namespaces say which one it chose; at most one of the
+#: ``optimal``/``plot`` pair carries interpolated bands, because
+#: ``separate_plotting`` moves the plotting keywords out of the optimal run.
+_OPTIMIZE_OUTPUTS = (
+    ("wannier90_optimal", "Wannier interpolation"),
+    ("wannier90_plot", "Wannier interpolation"),
+    ("wannier90_optimal_up", "Wannier interpolation (up)"),
+    ("wannier90_plot_up", "Wannier interpolation (up)"),
+    ("wannier90_optimal_down", "Wannier interpolation (down)"),
+    ("wannier90_plot_down", "Wannier interpolation (down)"),
+)
 
 BAND_PRODUCERS: tuple[BandProducer, ...] = (
     BandProducer(
@@ -125,9 +142,18 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         series="Wannier interpolation",
         references=_no_references,
     ),
+    *(
+        BandProducer(
+            process_type="aiida.workflows:wannier90_workflows.optimize",
+            socket=f"{namespace}.interpolated_bands",
+            series=name,
+            references=_no_references,
+        )
+        for namespace, name in _OPTIMIZE_OUTPUTS
+    ),
 )
 
-_PRODUCERS_BY_TYPE = {producer.process_type: producer for producer in BAND_PRODUCERS}
+_PRODUCER_TYPES = frozenset(producer.process_type for producer in BAND_PRODUCERS)
 
 #: Why a route can finish and still have no band structure to draw, keyed by
 #: the name of the workgraph the run built.
@@ -283,26 +309,54 @@ def _series_from_bands(
     ]
 
 
+def _output_at(node: orm.ProcessNode, socket: str) -> orm.BandsData | None:
+    """Return the band structure ``node`` publishes at a dotted socket path.
+
+    ``None`` when the socket is absent, or holds something that is not a band
+    structure.
+    """
+    from aiida import orm
+
+    found: Any = node.outputs
+    for part in socket.split("."):
+        found = getattr(found, part, None)
+        if found is None:
+            return None
+    return found if isinstance(found, orm.BandsData) else None
+
+
+def _producing_steps(root: orm.ProcessNode) -> list[orm.ProcessNode]:
+    """Return the run's declared band-structure steps, in run order.
+
+    A step that declares a band structure owns everything below it, so the
+    walk stops there: the optimize workchain reruns the plain wannierization
+    once per trial frozen window, and only its own outputs name the one it
+    chose.
+    """
+    found: list[orm.ProcessNode] = []
+    frontier = [root]
+    while frontier:
+        step = frontier.pop()
+        if step.process_type in _PRODUCER_TYPES:
+            found.append(step)
+        else:
+            frontier += step.called
+    return sorted(found, key=lambda step: (step.ctime, step.pk))
+
+
 def _series_from_node(node: orm.ProcessNode) -> list[BandSeries]:
     """Return every declared band structure a run produced, in run order."""
-    steps = sorted(
-        (
-            step
-            for step in [node, *node.called_descendants]
-            if step.process_type in _PRODUCERS_BY_TYPE
-        ),
-        key=lambda step: (step.ctime, step.pk),
-    )
-
     matches = []
-    for step in steps:
-        producer = _PRODUCERS_BY_TYPE[str(step.process_type)]
-        bands = getattr(step.outputs, producer.socket, None)
-        if bands is not None:
-            matches.append((step, producer, bands))
+    for step in _producing_steps(node):
+        for producer in BAND_PRODUCERS:
+            if producer.process_type != step.process_type:
+                continue
+            bands = _output_at(step, producer.socket)
+            if bands is not None:
+                matches.append((step, producer, bands))
 
-    # One step per producer needs no disambiguation; several — a per-spin or
-    # per-block fan-out — are told apart by the name each step runs under.
+    # One step per series name needs no disambiguation; several — a per-spin
+    # or per-block fan-out — are told apart by the name each step runs under.
     counts: dict[str, int] = {}
     for _, producer, _ in matches:
         counts[producer.series] = counts.get(producer.series, 0) + 1
@@ -316,6 +370,12 @@ def _series_from_node(node: orm.ProcessNode) -> list[BandSeries]:
     return series
 
 
+def _plotted_sockets() -> str:
+    """Return the declared output names, once each, in table order."""
+    names = dict.fromkeys(producer.socket.rsplit(".", 1)[-1] for producer in BAND_PRODUCERS)
+    return ", ".join(names)
+
+
 def _nothing_plottable(folders: Sequence[Path], nodes: Sequence[orm.ProcessNode]) -> PlottingError:
     """Return the error naming each route that ran and why it drew a blank."""
     lines = [f"No band structure to plot in {', '.join(str(folder) for folder in folders)}."]
@@ -323,9 +383,7 @@ def _nothing_plottable(folders: Sequence[Path], nodes: Sequence[orm.ProcessNode]
         route = _route_name(node)
         reason = _EMPTY_REASONS.get(
             route,
-            "no step of it produced one of the outputs koopmans plots ("
-            + ", ".join(f"{p.series}: {p.socket}" for p in BAND_PRODUCERS)
-            + ")",
+            f"no step of it produced one of the outputs koopmans plots ({_plotted_sockets()})",
         )
         lines.append(f"  {folder} ran {route}, and {reason}.")
     return PlottingError("\n".join(lines))

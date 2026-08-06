@@ -471,9 +471,11 @@ def bandstructure(
     """
     from koopmans.plotting import (
         NoEnergyZeroError,
+        PathMismatchError,
         PlottingError,
         apply_energy_zero,
         apply_labels,
+        check_paths_agree,
         describe_energy_zero,
         render_band_structures,
         resolve_band_series,
@@ -486,8 +488,9 @@ def bandstructure(
     try:
         series, warnings = resolve_band_series(folders)
         apply_labels(series, labels)
+        check_paths_agree(series)
         value, reference = apply_energy_zero(series, kind)
-    except (PlottingError, NoEnergyZeroError, ValueError) as exc:
+    except (PlottingError, PathMismatchError, NoEnergyZeroError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     for warning in warnings:
