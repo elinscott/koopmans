@@ -27,6 +27,3 @@ atoms:
 calculator_parameters:
   ecutwfc: 50.0                   # wavefunction cutoff (Ry)
   nbnd: 10                        # 9 filled orbitals, plus 1 empty for the LUMO
-  kcp:
-    system:
-      ecutrho: 200.0              # charge-density cutoff (Ry)

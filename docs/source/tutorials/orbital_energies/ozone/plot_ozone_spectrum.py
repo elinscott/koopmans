@@ -1,19 +1,12 @@
 """Plot the KI and PBE binding energies of ozone against photoemission.
 
-Run this script in the directory that contains the ``ozone/`` output directory produced
-by ``koopmans run ozone.yaml``. It writes ``ozone_spectrum.svg``.
+Run this from the directory holding the ``ozone/`` output directory that
+``koopmans run ozone.yaml`` wrote. It writes ``ozone_spectrum.svg``.
 """
 
-import re
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
-PBE_OUTPUT = Path("ozone/04-dft_init_nspin2/outputs/aiida.cpo")
-KI_OUTPUT = Path("ozone/06-RunFinalKI/outputs/aiida.cpo")
 
 # Experimental binding energies (eV) of the three outermost occupied orbitals
 # of ozone, ordered from the most tightly bound to the HOMO, from gas-phase
@@ -22,40 +15,51 @@ KI_OUTPUT = Path("ozone/06-RunFinalKI/outputs/aiida.cpo")
 # comparison: their experimental assignments are not as clean.
 EXPERIMENT = [13.54, 13.00, 12.73]
 
+# The output of the final KI calculation, and of the last of the three
+# initialization steps -- the spin-resolved PBE calculation whose eigenvalues
+# are the PBE ones to compare against.
+OUTPUTS = {
+    "KI": Path("ozone/06-RunFinalKI/outputs/aiida.cpo"),
+    "PBE": Path("ozone/04-dft_init_nspin2/outputs/aiida.cpo"),
+}
 
-def read_filled_eigenvalues(output_file: Path) -> list[float]:
-    """Return the filled-orbital energies in eV from a kcp.x output file."""
-    text = output_file.read_text()
-    return _section(text, r"^ *Eigenvalues \(eV\), kp = +1 , spin = +1 *$")
+HEADER = "Eigenvalues (eV), kp =   1 , spin =  1"
 
 
-def _section(text: str, header_pattern: str) -> list[float]:
-    """Return the floats listed under the last occurrence of a section header."""
-    lines = text.splitlines()
-    headers = [i for i, line in enumerate(lines) if re.match(header_pattern, line)]
+def filled_eigenvalues(output_file: Path) -> list[float]:
+    """Return the filled orbital energies of the first spin channel, in eV.
+
+    ``kcp.x`` prints them under an ``Eigenvalues`` header, and the empty
+    states separately under one of their own, so the block that follows the
+    last such header is the filled manifold.
+    """
+    if not output_file.is_file():
+        raise SystemExit(f"No such file: {output_file}. Run `koopmans run ozone.yaml` first.")
+
+    lines = output_file.read_text().splitlines()
+    headers = [i for i, line in enumerate(lines) if line.strip() == HEADER]
     if not headers:
-        raise ValueError(f"No line matching {header_pattern!r} found")
-    values: list[float] = []
+        raise SystemExit(f"{output_file} has no `{HEADER}` line; did the calculation finish?")
+
+    energies: list[float] = []
     for line in lines[headers[-1] + 1 :]:
-        if not line.strip():
-            if values:
-                break
-            continue
-        values.extend(float(v) for v in line.split())
-    return values
+        if line.strip():
+            energies.extend(float(value) for value in line.split())
+        elif energies:
+            break
+    return energies
 
 
 def main() -> None:
     """Read the two output files and write ozone_spectrum.svg."""
     fig, ax = plt.subplots(figsize=(4.5, 4.5))
-
-    for output_file, label in [(KI_OUTPUT, "KI"), (PBE_OUTPUT, "PBE")]:
+    for label, output_file in OUTPUTS.items():
         # The last three filled eigenvalues, in the same most-bound-to-HOMO
         # order as the experimental values; binding energy = -eigenvalue.
-        binding_energies = [-e for e in read_filled_eigenvalues(output_file)[-3:]]
-        ax.scatter(binding_energies, EXPERIMENT, label=label)
+        energies = filled_eigenvalues(output_file)
+        ax.scatter([-e for e in energies[-3:]], EXPERIMENT, label=label)
 
-    lims = [7, 15]
+    lims = (7, 15)
     ax.plot(lims, lims, "k--", linewidth=0.8)
     ax.set_xlim(lims)
     ax.set_ylim(lims)

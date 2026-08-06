@@ -2,7 +2,7 @@
  Doing everything manually
 ###########################
 
-A Koopmans calculation is a set of Quantum ESPRESSO calculations with quite a bit of
+A Koopmans calculation is a set of ``Quantum ESPRESSO`` calculations with quite a bit of
 bookkeeping to link them all together. In this tutorial you will go through that process
 manually, to get a sense of what is going on under the hood of ``koopmans``.
 
@@ -10,7 +10,7 @@ manually, to get a sense of what is going on under the hood of ``koopmans``.
  What you need
 ***************
 
-Make sure the Quantum ESPRESSO executable ``kcp.x`` is on your ``PATH`` — see the
+Make sure the ``Quantum ESPRESSO`` executable ``kcp.x`` is on your ``PATH`` — see the
 :doc:`installation page <../../../installation>` for more details.
 
 Download :download:`ozone_manually.zip` and unpack it into an empty directory. It holds
@@ -23,6 +23,12 @@ the three ``kcp.x`` input files you will run
 along with ``get_alpha.sh``, a script that applies the screening formula so you can
 check your own arithmetic, and the oxygen pseudopotential the calculations read from
 ``pseudopotentials/``.
+
+.. warning::
+
+    The cell and cutoffs in these files are deliberately rough, so that each run
+    finishes in minutes. They are not converged! Use them to learn the procedure, not as
+    something to copy-paste for production work.
 
 .. note::
 
@@ -114,8 +120,10 @@ potential. Both are printed in the output as ``total energy = ...``, in Hartree.
         &= -0.4591\ \text{Ha} \\
         &\approx -12.49\ \text{eV},
 
-    so the ΔSCF ionization potential is 12.49 eV. Experiment puts it at `about 12.5 eV
-    <https://webbook.nist.gov/cgi/cbook.cgi?ID=C10028156&Mask=20#Ion-Energetics>`_.
+    so the ΔSCF ionization potential is 12.49 eV. Both calculations are at the neutral
+    molecule's geometry, so this is a vertical ionization potential, and vertical
+    photoemission puts it at 12.73 eV :cite:`Wiesner2003` — a fifth of an electronvolt
+    away.
 
     Total-energy differences are a good estimate of the ionization potential even in
     plain DFT. Orbital energies are not: the PBE HOMO of this same calculation sits at
