@@ -370,6 +370,40 @@ class TestOrbitalDensityDescriptor:
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
         assert not any("extract_snapshot_dataset" in name for name in names), names
 
+    def test_collinear_rejects_power_spectrum(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        installed_decompose_code: Any,
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """The same input on ``spin: collinear`` is refused, not fanned out.
+
+        Same discriminator as the route above, run with the one setting
+        changed: the descriptor is closed-shell only, so the user hears it
+        at build time rather than from a count mismatch mid-trajectory.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        o_sp3 = [{"site": "O", "ang_mtm": "sp3"}]
+        h_s = [{"site": "H", "ang_mtm": "s"}]
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["ml"]["descriptor"] = "power_spectrum"
+        d["workflow"]["spin"] = "collinear"
+        d["calculator_parameters"]["tot_magnetization"] = 0
+        d["calculator_parameters"]["wannier90"] = {
+            "up": {"projections": [o_sp3, h_s], "dis_froz_max": 1.0},
+            "down": {"projections": [o_sp3, h_s], "dis_froz_max": 1.0},
+        }
+
+        with pytest.raises(NotImplementedError, match="spin='collinear'"):
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+
     def test_self_hartree_keeps_direct_read(
         self,
         aiida_profile_clean: Any,
