@@ -628,6 +628,26 @@ raw:
                 kind: enum
                 path: aiida_koopmans.functionals.Correction
             required: true
+        decompose_parameters:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        descriptor:
+          default: self_hartree
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida_koopmans.ml.MLDescriptor
+              structured_type:
+                kind: enum
+                path: aiida_koopmans.ml.MLDescriptor
+            required: true
         ecutrho:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1130,6 +1150,15 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: true
+        pw2wannier90_code:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+            required: false
         spin_polarized:
           default: false
           dynamic: false
@@ -1628,6 +1657,7 @@ raw:
         code:
           __aiida_code__: kcp@localhost
         correction: ki
+        descriptor: self_hartree
         ecutrho: 160.0
         ecutwfc: 40.0
         fix_spin_contamination: false
@@ -1801,6 +1831,26 @@ raw:
                   structured_type:
                     kind: enum
                     path: aiida_koopmans.functionals.Correction
+                required: true
+            decompose_parameters:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            descriptor:
+              default: self_hartree
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida_koopmans.ml.MLDescriptor
+                  structured_type:
+                    kind: enum
+                    path: aiida_koopmans.ml.MLDescriptor
                 required: true
             ecutrho:
               dynamic: false
@@ -2304,6 +2354,15 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: true
+            pw2wannier90_code:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                required: false
             spin_polarized:
               default: false
               dynamic: false

@@ -284,7 +284,7 @@ class TestDispatchTranslation:
             """Run the real stamp check on a model it must reject."""
             predict_alpha_screening._callable(
                 model={"descriptor": "power_spectrum"},
-                descriptors=[],
+                descriptor_rows={},
                 orbitals=[],
                 correction="ki",
                 init_orbitals="mlwfs",
