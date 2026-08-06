@@ -182,7 +182,10 @@ class StepKpointsInput(BaseModel):
     """Monkhorst-Pack dimensions of the mesh this step samples."""
 
     offset: tuple[KpointOffset, KpointOffset, KpointOffset] | None = None
-    """Per-axis fraction of a grid step to shift this step's mesh by."""
+    """Per-axis fraction of a grid step to shift this step's mesh by.
+
+    Available on the ``scf`` entry alone.
+    """
 
     grid_spacing: float | None = Field(default=None, gt=0.0)
     """Largest spacing between neighbouring k-points, in inverse angstrom.
@@ -216,16 +219,28 @@ class KpointsOverridesInput(BaseModel):
     """The mesh the ground-state calculation converges the density on."""
 
     nscf: StepKpointsInput | None = None
-    """The mesh the Wannier functions are built from."""
+    """The Gamma-centred mesh the Wannier functions are built from."""
 
     @model_validator(mode="after")
-    def _nscf_states_its_dimensions(self) -> KpointsOverridesInput:
-        """Require an explicit nscf grid: it is wannier90's ``mp_grid``."""
-        if self.nscf is not None and self.nscf.grid_spacing is not None:
+    def _nscf_states_a_mesh_koopmans_builds(self) -> KpointsOverridesInput:
+        """Restrict the nscf entry to the meshes the Wannierization runs on.
+
+        The nscf mesh is wannier90's ``mp_grid``, which a spacing does not
+        state, and koopmans builds it Gamma-centred.
+        """
+        if self.nscf is None:
+            return self
+        if self.nscf.grid_spacing is not None:
             raise ValueError(
                 "`nscf.grid_spacing` cannot be used: the nscf mesh dimensions are "
                 "wannier90's `mp_grid`, which a spacing does not state. Give "
                 "`nscf.grid` instead."
+            )
+        if self.nscf.offset is not None:
+            raise ValueError(
+                "`nscf.offset` is not supported: the nscf mesh koopmans builds is "
+                "Gamma-centred. An offset belongs on the `scf` entry, and the "
+                "top-level `kpoints.offset` already applies to the scf."
             )
         return self
 

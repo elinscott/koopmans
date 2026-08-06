@@ -423,6 +423,29 @@ class TestDftBandsScfMesh:
         scf = wg.tasks["PwBandsWorkChain"].inputs["scf"]
         assert list(scf["kpoints"].value.get_kpoints_mesh()[0]) == [4, 4, 4]
 
+    def test_the_scf_entry_shifts_the_scf_mesh(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The shift an scf converges faster on reaches the mesh it samples.
+
+        This is where the nscf entry's rejection sends the reader, so the
+        offset has to arrive on the step it names.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                kpoints={"grid": [2, 2, 2], "overrides": {"scf": {"offset": [0.5, 0.5, 0.5]}}},
+            )
+        )
+        wg = build_workgraph(inp)
+        scf = wg.tasks["PwBandsWorkChain"].inputs["scf"]
+        grid, offset = scf["kpoints"].value.get_kpoints_mesh()
+        assert list(grid) == [2, 2, 2]
+        assert list(offset) == [0.5, 0.5, 0.5]
+
     def test_a_grid_spacing_reaches_the_scf_as_a_distance(
         self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:

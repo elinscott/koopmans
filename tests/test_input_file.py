@@ -391,6 +391,32 @@ class TestPerStepKpoints:
                 _si_input_with_kpoints(grid=[2, 2, 2], overrides={"nscf": {"grid_spacing": 0.15}})
             )
 
+    def test_the_nscf_mesh_cannot_be_shifted(self) -> None:
+        """Reject a shift the nscf mesh, built Gamma-centred, would never carry.
+
+        Every route expands it with ``get_explicit_kpoints``, which returns
+        the unshifted k-list, so accepting the keyword would leave the input
+        file describing a calculation that never runs.
+        """
+        with pytest.raises(ValueError, match=r"`nscf\.offset` is not supported"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(
+                    grid=[2, 2, 2], overrides={"nscf": {"offset": [0.5, 0.5, 0.5]}}
+                )
+            )
+
+    def test_the_scf_mesh_can_still_be_shifted(self) -> None:
+        """The rejection is the nscf entry's, not the attribute's.
+
+        An scf converges faster on a shifted mesh, and that mesh reaches
+        Quantum ESPRESSO as written.
+        """
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(grid=[2, 2, 2], overrides={"scf": {"offset": [0.5, 0.5, 0.5]}})
+        )
+        assert inp.kpoints.overrides.scf is not None
+        assert inp.kpoints.overrides.scf.offset == (0.5, 0.5, 0.5)
+
     def test_gamma_only_has_no_steps_to_override(self) -> None:
         """Every step of a gamma-only calculation samples the same one point."""
         with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
