@@ -496,6 +496,33 @@ class TestPruneWorkflowMetadata:
 
         assert (tmp_path / "01-step" / _NODE_METADATA_FILE).is_file()
 
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(b"---\nNode data:\n  label: 'dft_ini", id="truncated-mid-write"),
+            pytest.param(b"---\nNode data:\n\tlabel: dft_init\n", id="indented-with-a-tab"),
+            pytest.param(b"\xff\xfe\x00\x01", id="not-text-at-all"),
+        ],
+    )
+    def test_a_file_that_cannot_be_read_is_kept_and_the_sweep_goes_on(
+        self, tmp_path: Path, content: bytes
+    ) -> None:
+        """A file this cannot parse costs its own folder's listing, nothing else.
+
+        A dump interrupted part-way through writing one leaves exactly
+        this. The passes that make the tree readable — the tidying, the
+        ``README``, the ``model.json`` — all run after this one, so a
+        file that stopped it would cost the reader the whole tree.
+        """
+        _make_tree(tmp_path, [_metadata("01-scf_nscf", _WORKFLOW_NODE_TYPE)])
+        (tmp_path / "02-dft_init").mkdir()
+        (tmp_path / "02-dft_init" / _NODE_METADATA_FILE).write_bytes(content)
+
+        _prune_workflow_metadata(tmp_path)
+
+        assert (tmp_path / "02-dft_init" / _NODE_METADATA_FILE).is_file()
+        assert not (tmp_path / "01-scf_nscf" / _NODE_METADATA_FILE).exists()
+
 
 class TestRenumberStepFolders:
     """Pruning leaves holes in the numbering; renumbering closes them."""

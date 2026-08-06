@@ -418,12 +418,16 @@ def _describes_a_workflow(metadata_path: Path) -> bool:
     Reads the node's own ``node_type``, which every dumped process
     records: ``process.workflow.…`` for a workgraph or a WorkChain,
     ``process.calculation.…`` for a CalcJob or a python task. Only that
-    prefix answers yes, so a file this cannot read is kept rather than
-    deleted on a guess.
+    prefix answers yes, and a file that cannot be read at all —
+    unparseable, not text, unreadable — answers no, so it is kept rather
+    than deleted on a guess.
     """
     import yaml
 
-    parsed = yaml.safe_load(metadata_path.read_text())
+    try:
+        parsed = yaml.safe_load(metadata_path.read_text())
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return False
     node_data = parsed.get("Node data", {}) if isinstance(parsed, dict) else {}
     node_type = node_data.get("node_type") if isinstance(node_data, dict) else None
     return isinstance(node_type, str) and node_type.startswith("process.workflow.")
