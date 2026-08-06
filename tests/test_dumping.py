@@ -543,17 +543,18 @@ class TestPruneWorkflowMetadata:
         run after this pass, so a file that stopped it would cost the
         reader everything.
 
-        The unreadable file is numbered first so that the sweep meets it
-        before the file it goes on to delete.
+        The file the sweep must still delete sits below the one it
+        cannot read: ``rglob`` yields a folder's own matches before
+        descending into it, while the order of two sibling folders is
+        the filesystem's.
         """
-        (tmp_path / "01-dft_init").mkdir()
-        (tmp_path / "01-dft_init" / _NODE_METADATA_FILE).write_bytes(content)
-        _make_tree(tmp_path, [_metadata("02-scf_nscf", _WORKFLOW_NODE_TYPE)])
+        _make_tree(tmp_path, [_metadata("01-scf_nscf/01-scf", _WORKFLOW_NODE_TYPE)])
+        (tmp_path / "01-scf_nscf" / _NODE_METADATA_FILE).write_bytes(content)
 
         _prune_workflow_metadata(tmp_path)
 
-        assert (tmp_path / "01-dft_init" / _NODE_METADATA_FILE).is_file()
-        assert not (tmp_path / "02-scf_nscf" / _NODE_METADATA_FILE).exists()
+        assert (tmp_path / "01-scf_nscf" / _NODE_METADATA_FILE).is_file()
+        assert not (tmp_path / "01-scf_nscf" / "01-scf" / _NODE_METADATA_FILE).exists()
 
 
 class TestRenumberStepFolders:
