@@ -117,6 +117,34 @@ for any other reason, start it again with
 and stop it with ``koopmans backend daemon stop``. ``koopmans backend uninstall``
 removes the whole setup, database included.
 
+*******************
+ Pseudopotentials
+*******************
+
+You do not have to install pseudopotentials up front. The ``pseudo_library`` keyword of
+your input file names a family, and ``koopmans`` downloads that family the first time it
+is needed. It can fetch `PseudoDojo <http://www.pseudo-dojo.org/>`_, `SSSP
+<https://www.materialscloud.org/discover/sssp/table/efficiency>`_ and `SG15
+<http://www.quantum-simulation.org/potentials/sg15_oncv/>`_ families, named like
+
+- ``PseudoDojo/0.4/LDA/SR/standard/upf``
+- ``SSSP/1.3/PBEsol/efficiency``
+- ``SG15/1.2/PBE/SR``
+
+A family that you install yourself works just as well, under whatever label you give it:
+``koopmans`` downloads a family only when no installed one carries the label you asked
+for. This is the route for pseudopotentials it cannot fetch — the full-relativistic LDA
+sets that spin-orbit calculations need, for instance. Point ``aiida-pseudo`` at a
+directory holding one file per element:
+
+.. code-block:: console
+
+    $ aiida-pseudo install family <directory> my-lda-fr -F pseudo.family.cutoffs
+    $ aiida-pseudo family cutoffs set my-lda-fr <cutoffs.json>
+
+Both commands are needed: the calculations take ``ecutwfc`` and ``ecutrho`` from the
+family's recommended cutoffs. Then set ``pseudo_library`` to ``my-lda-fr``.
+
 ****************************
  Installing for development
 ****************************

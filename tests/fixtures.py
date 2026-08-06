@@ -577,6 +577,12 @@ def fake_sg15_fr_cutoffs_family(aiida_profile: Any) -> Any:
 
 
 @pytest.fixture
+def fake_custom_label_family(aiida_profile: Any) -> Any:
+    """Install a fake family under a label matching none of the download formats."""
+    return _install_fake_family("my-gaas-fr", {"Ga": 13.0, "As": 5.0}, cutoffs=True, has_so=True)
+
+
+@pytest.fixture
 def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
     """Install a minimal fake ``PseudoDojo/0.4/LDA/SR/standard/upf`` family.
 
