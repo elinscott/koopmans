@@ -365,6 +365,59 @@ class TestWorkerDetection:
         assert (server_dir / "access.json").exists()
 
 
+class TestPoolDefault:
+    """``worker_cpus`` resolves the pool the docstring promises."""
+
+    @staticmethod
+    def test_env_var_sets_the_pool(fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``KOOPMANS_MAX_PROCS`` applies when no count is passed."""
+        from koopmans.aiida.setup.hq import worker_cpus
+
+        monkeypatch.setenv("KOOPMANS_MAX_PROCS", "9")
+
+        assert worker_cpus() == 9
+        assert worker_cpus(3) == 3
+
+    @staticmethod
+    def test_unparseable_env_var_falls_back_to_the_core_count(
+        fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A junk ``KOOPMANS_MAX_PROCS`` is ignored, not propagated as a crash."""
+        from koopmans.aiida.setup.cores import detect_num_cores
+        from koopmans.aiida.setup.hq import worker_cpus
+
+        monkeypatch.setenv("KOOPMANS_MAX_PROCS", "lots")
+
+        assert worker_cpus() == detect_num_cores()
+
+
+class TestWorkerListParsing:
+    """Output koopmans cannot read means "no worker", never a traceback."""
+
+    @staticmethod
+    def test_non_json_output_yields_no_workers(
+        fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A future ``hq`` that stops emitting JSON must not crash the CLI."""
+        from koopmans.aiida.setup.hq import running_hq_workers
+
+        (tmp_path / "workers.json").write_text("not json at all")
+
+        assert running_hq_workers() == []
+
+    @staticmethod
+    def test_an_entry_without_a_cpu_count_is_skipped(fake_hq: FakeHq, tmp_path: Path) -> None:
+        """One unreadable entry does not hide the workers alongside it."""
+        from koopmans.aiida.setup.hq import running_hq_workers
+
+        fake_hq.set_workers(24)
+        listed = json.loads((tmp_path / "workers.json").read_text())
+        listed.append({"id": 99, "configuration": {"resources": {"resources": []}}})
+        (tmp_path / "workers.json").write_text(json.dumps(listed))
+
+        assert [(w.id, w.cpus) for w in running_hq_workers()] == [(1, 24)]
+
+
 class TestWorkerCommands:
     """``koopmans backend hq`` drives the worker after installation."""
 
