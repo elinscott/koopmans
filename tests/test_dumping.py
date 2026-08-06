@@ -10,14 +10,21 @@ from typing import Any, ClassVar
 import pytest
 
 from koopmans.aiida.dumping import (
+    _NODE_METADATA_FILE,
     _hoist_lone_calculations,
     _link_duplicate_files,
     _prune_source_only_step_folders,
+    _prune_workflow_metadata,
     _renumber_step_folders,
     _simplify_folder_names,
     _strip_process_label_suffixes,
     _tidy_dumped_tree,
 )
+
+# The two ``node_type`` values a dumped step folder can carry: a python
+# task or a CalcJob on one side, a workgraph or a WorkChain on the other.
+_CALCULATION_NODE_TYPE = "process.calculation.calcfunction.CalcFunctionNode."
+_WORKFLOW_NODE_TYPE = "process.workflow.workgraph.WorkGraphNode."
 
 
 def _make_tree(root: Path, layout: Sequence[str | tuple[str, str]]) -> None:
@@ -68,18 +75,30 @@ def _render(root: Path) -> str:
     return "\n".join(lines)
 
 
-def _calculation(name: str) -> list[str]:
+def _metadata(name: str, node_type: str = _CALCULATION_NODE_TYPE) -> tuple[str, str]:
+    """Return the ``aiida_node_metadata.yaml`` entry of the folder ``name``.
+
+    Every dumped process folder carries one. The label makes each file's
+    bytes its own, as a real dump's pk and uuid do, so that the symlink
+    pass has nothing to collapse.
+    """
+    path = f"{name}/{_NODE_METADATA_FILE}" if name else _NODE_METADATA_FILE
+    return (path, f"---\nNode data:\n  label: {name}\n  node_type: {node_type}\n")
+
+
+def _calculation(name: str) -> list[str | tuple[str, str]]:
     """Return the layout entries of a calculation folder called ``name``."""
-    return [f"{name}/inputs/aiida.cpi", f"{name}/outputs/aiida.cpo"]
+    return [_metadata(name), f"{name}/inputs/aiida.cpi", f"{name}/outputs/aiida.cpo"]
 
 
-def _bookkeeping(name: str) -> list[str]:
+def _bookkeeping(name: str) -> list[str | tuple[str, str]]:
     """Return the layout entries of a python step that dumped only its source.
 
     Its ``source_file`` is the task's own code, which the installed
-    package holds, so nothing goes with the folder.
+    package holds, and its metadata file names the node; neither is
+    output, so nothing goes with the folder.
     """
-    return [f"{name}/inputs/source_file"]
+    return [_metadata(name), f"{name}/inputs/source_file"]
 
 
 def _lambdas(name: str, content: str = "trial-hamiltonian") -> list[tuple[str, str]]:
@@ -92,6 +111,7 @@ def _lambdas(name: str, content: str = "trial-hamiltonian") -> list[tuple[str, s
     too.
     """
     return [
+        _metadata(name),
         (f"{name}/inputs/source_file", "def compute_alpha_from_dscf():\n    return alpha\n"),
         (f"{name}/inputs/function_inputs/trial_lambdas/lambdas.npy", content),
     ]
@@ -160,6 +180,18 @@ class TestPruneSourceOnlyStepFolders:
         _prune_source_only_step_folders(tmp_path)
 
         assert _folders(tmp_path) == ["02-dft_init", "02-dft_init/inputs", "02-dft_init/outputs"]
+
+    def test_a_metadata_file_does_not_keep_a_calculation_free_step(self, tmp_path: Path) -> None:
+        """The metadata file names the folder's node; it is not output.
+
+        Every dumped step carries one, so counting it as content would
+        stop the pass removing anything at all.
+        """
+        _make_tree(tmp_path, [_metadata("01-assign_orbital_groups")])
+
+        _prune_source_only_step_folders(tmp_path)
+
+        assert _folders(tmp_path) == []
 
     def test_an_empty_step_folder_goes(self, tmp_path: Path) -> None:
         """A step AiiDA dumped nothing at all for is the same case."""
@@ -423,6 +455,46 @@ class TestLinkDuplicateFiles:
         assert not payload.is_symlink()
         assert not source.is_symlink()
         assert payload.read_text() == source.read_text() == shared
+
+
+class TestPruneWorkflowMetadata:
+    """Which folders keep the file naming the node they came from."""
+
+    def test_a_calculation_keeps_its_metadata(self, tmp_path: Path) -> None:
+        """That file is the way back from a step's files to its node."""
+        _make_tree(tmp_path, _calculation("01-scf"))
+
+        _prune_workflow_metadata(tmp_path)
+
+        assert (tmp_path / "01-scf" / _NODE_METADATA_FILE).is_file()
+
+    def test_a_workflow_layer_loses_its_metadata(self, tmp_path: Path) -> None:
+        """A workgraph folder runs nothing of its own; its children do."""
+        _make_tree(tmp_path, [_metadata("01-scf_nscf", _WORKFLOW_NODE_TYPE)])
+
+        _prune_workflow_metadata(tmp_path)
+
+        assert not (tmp_path / "01-scf_nscf" / _NODE_METADATA_FILE).exists()
+
+    def test_the_root_keeps_its_own(self, tmp_path: Path) -> None:
+        """The root is a workgraph too, and its pk names the whole run."""
+        _make_tree(tmp_path, [_metadata("", _WORKFLOW_NODE_TYPE)])
+
+        _prune_workflow_metadata(tmp_path)
+
+        assert (tmp_path / _NODE_METADATA_FILE).is_file()
+
+    def test_a_file_of_an_unrecognized_shape_is_kept(self, tmp_path: Path) -> None:
+        """Only an explicit workflow ``node_type`` deletes the file.
+
+        A format this cannot read is kept, so an aiida-core change costs
+        the reader a folder listing rather than the node it names.
+        """
+        _make_tree(tmp_path, [("01-step/" + _NODE_METADATA_FILE, "---\nsomething: else\n")])
+
+        _prune_workflow_metadata(tmp_path)
+
+        assert (tmp_path / "01-step" / _NODE_METADATA_FILE).is_file()
 
 
 class TestRenumberStepFolders:
@@ -708,6 +780,9 @@ class TestTidyDumpedTree:
     ORBITALS = f"{SCREENING}/04-compute_orbital_screening_parameters"
 
     OZONE_DUMP: ClassVar[list[str | tuple[str, str]]] = [
+        # What the sweep before the tidying leaves: every calculation's
+        # metadata file, and the root workgraph's own.
+        _metadata("", _WORKFLOW_NODE_TYPE),
         "01-resolve_pseudo_family_task/",
         *_bookkeeping("02-count_electrons_task"),
         *_calculation("03-dft_init_nspin1/01-dft_init-KcpCalculation"),
@@ -738,16 +813,19 @@ class TestTidyDumpedTree:
     TIDIED = """\
         ozone
         ├── 01-dft_init_nspin1
+        │   ├── aiida_node_metadata.yaml
         │   ├── inputs
         │   │   └── aiida.cpi
         │   └── outputs
         │       └── aiida.cpo
         ├── 02-dft_init_nspin2_dummy
+        │   ├── aiida_node_metadata.yaml
         │   ├── inputs
         │   │   └── aiida.cpi
         │   └── outputs
         │       └── aiida.cpo
         ├── 03-dft_init_nspin2
+        │   ├── aiida_node_metadata.yaml
         │   ├── inputs
         │   │   └── aiida.cpi
         │   └── outputs
@@ -755,6 +833,7 @@ class TestTidyDumpedTree:
         ├── 04-ComputeScreeningParameters
         │   └── 01-ScreeningIteration
         │       ├── 01-ki_trial
+        │       │   ├── aiida_node_metadata.yaml
         │       │   ├── inputs
         │       │   │   └── aiida.cpi
         │       │   └── outputs
@@ -762,11 +841,13 @@ class TestTidyDumpedTree:
         │       └── 02-compute_orbital_screening_parameters
         │           ├── 01-compute_alpha_orb_1
         │           │   ├── 01-dft_n_minus_1
+        │           │   │   ├── aiida_node_metadata.yaml
         │           │   │   ├── inputs
         │           │   │   │   └── aiida.cpi
         │           │   │   └── outputs
         │           │   │       └── aiida.cpo
         │           │   └── 02-compute_alpha_from_dscf
+        │           │       ├── aiida_node_metadata.yaml
         │           │       └── inputs
         │           │           ├── function_inputs
         │           │           │   └── trial_lambdas
@@ -774,11 +855,13 @@ class TestTidyDumpedTree:
         │           │           └── source_file
         │           ├── 02-compute_alpha_orb_2
         │           │   ├── 01-dft_n_minus_1
+        │           │   │   ├── aiida_node_metadata.yaml
         │           │   │   ├── inputs
         │           │   │   │   └── aiida.cpi
         │           │   │   └── outputs
         │           │   │       └── aiida.cpo
         │           │   └── 02-compute_alpha_from_dscf
+        │           │       ├── aiida_node_metadata.yaml
         │           │       └── inputs
         │           │           ├── function_inputs
         │           │           │   └── trial_lambdas
@@ -786,32 +869,38 @@ class TestTidyDumpedTree:
         │           │           └── source_file -> (link)
         │           └── 03-compute_alpha_orb_10
         │               ├── 01-dft_n_plus_1_dummy
+        │               │   ├── aiida_node_metadata.yaml
         │               │   ├── inputs
         │               │   │   └── aiida.cpi
         │               │   └── outputs
         │               │       └── aiida.cpo
         │               ├── 02-pz_print
+        │               │   ├── aiida_node_metadata.yaml
         │               │   ├── inputs
         │               │   │   └── aiida.cpi
         │               │   └── outputs
         │               │       └── aiida.cpo
         │               ├── 03-dft_n_plus_1
+        │               │   ├── aiida_node_metadata.yaml
         │               │   ├── inputs
         │               │   │   └── aiida.cpi
         │               │   └── outputs
         │               │       └── aiida.cpo
         │               └── 04-compute_alpha_from_dscf
+        │                   ├── aiida_node_metadata.yaml
         │                   └── inputs
         │                       ├── function_inputs
         │                       │   └── trial_lambdas
         │                       │       └── lambdas.npy -> (link)
         │                       └── source_file -> (link)
         ├── 05-RunFinalKI
+        │   ├── aiida_node_metadata.yaml
         │   ├── inputs
         │   │   └── aiida.cpi
         │   └── outputs
         │       └── aiida.cpo
-        └── README"""
+        ├── README
+        └── aiida_node_metadata.yaml"""
 
     def test_the_ozone_dump_tidies_to_the_documented_tree(self, tmp_path: Path) -> None:
         """Every pass is visible in the result, and they compose in one order.
@@ -923,3 +1012,114 @@ class TestDumpModelJson:
         _dump_model_json(workgraph_node, tmp_path)
 
         assert not (tmp_path / "model.json").exists()
+
+
+class TestDumpedNodeMetadata:
+    """What a real dump leaves behind for finding a step's node again."""
+
+    @staticmethod
+    def _dump_a_run(output_path: Path) -> tuple[Path, Any]:
+        """Dump a workgraph of one bookkeeping task and one that keeps a file.
+
+        Returns the dumped tree and the root workgraph node. The graph is
+        the smallest one carrying both cases the sweep separates: a step
+        whose only trace is its own source, and one whose output reaches
+        disk.
+        """
+        from aiida import orm
+        from aiida_workgraph import WorkGraph, task
+
+        from koopmans.aiida.dumping import dump_workgraph
+
+        @task  # type: ignore[untyped-decorator]
+        def count_electrons(charge: int) -> int:
+            return 8 - charge
+
+        @task  # type: ignore[untyped-decorator]
+        def write_note(text: str) -> orm.SinglefileData:
+            import io
+
+            return orm.SinglefileData(io.BytesIO(text.encode()), filename="note.txt")
+
+        @task.graph  # type: ignore[untyped-decorator]
+        def run(text: str) -> orm.SinglefileData:
+            count_electrons(charge=0)
+            note: orm.SinglefileData = write_note(text=text).result
+            return note
+
+        wg = WorkGraph("dump_metadata")
+        wg.add_task(run, name="run", text="hello")
+        wg.run()
+
+        return dump_workgraph(wg.process, output_path), wg.process
+
+    def test_the_root_names_the_process_the_run_was(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """The one pk a reader needs to query the whole run is on disk."""
+        import yaml
+
+        dumped, process = self._dump_a_run(tmp_path / "dump")
+
+        metadata = yaml.safe_load((dumped / _NODE_METADATA_FILE).read_text())
+        assert metadata["Node data"]["pk"] == process.pk
+        assert metadata["Node data"]["uuid"] == process.uuid
+
+    def test_a_calculation_keeps_the_file_naming_its_node(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """The step whose output survives carries the pk that produced it."""
+        import yaml
+        from aiida import orm
+
+        dumped, _ = self._dump_a_run(tmp_path / "dump")
+
+        metadata = yaml.safe_load((dumped / "01-run" / _NODE_METADATA_FILE).read_text())
+        assert (dumped / "01-run/outputs/result/note.txt").read_text() == "hello"
+        assert orm.load_node(metadata["Node data"]["pk"]).uuid == metadata["Node data"]["uuid"]
+
+    def test_no_step_below_the_root_carries_a_workflow_node_metadata(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """Only the root workgraph keeps its own; the layers inside do not."""
+        import yaml
+
+        dumped, _ = self._dump_a_run(tmp_path / "dump")
+
+        below = [p for p in dumped.rglob(_NODE_METADATA_FILE) if p.parent != dumped]
+        assert below
+        for path in below:
+            node_type = yaml.safe_load(path.read_text())["Node data"]["node_type"]
+            assert node_type.startswith("process.calculation."), path
+
+    def test_the_metadata_carries_no_node_attributes(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """``include_attributes=False`` keeps the file to the node's identity.
+
+        A workgraph's attributes hold the serialized graph, which grows
+        with the graph; without them every file stays well under a
+        kilobyte.
+        """
+        import yaml
+
+        dumped, _ = self._dump_a_run(tmp_path / "dump")
+
+        written = list(dumped.rglob(_NODE_METADATA_FILE))
+        assert written
+        for path in written:
+            assert "Node attributes" not in yaml.safe_load(path.read_text())
+            assert path.stat().st_size < 1024, path
+
+    def test_a_step_that_ran_no_calculation_is_still_pruned(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """The bookkeeping task's metadata file does not keep its folder.
+
+        ``count_electrons`` leaves nothing but its own source, so the
+        tree that reaches the reader holds one step, not two.
+        """
+        dumped, _ = self._dump_a_run(tmp_path / "dump")
+
+        assert not any(p.name.endswith("count_electrons") for p in dumped.rglob("*"))
+        assert [p.name for p in dumped.iterdir() if p.is_dir()] == ["01-run"]
