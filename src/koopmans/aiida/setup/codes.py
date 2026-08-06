@@ -74,6 +74,18 @@ MPI_INIT_NAMES = frozenset({"mpi_init", "mpi_init_thread"})
 # alone, never the resolved path: a ScaLAPACK or OpenBLAS build installed
 # under an ``openmpi/`` directory spells "mpi" without being one.
 #
+# ``libmpi`` carries the tuple, and it is a convention rather than a guess: an
+# implementation that wants ``-lmpi`` to work installs a ``libmpi*``. That
+# covers OpenMPI's libmpi_mpifh, MPICH's and Intel MPI's libmpifort and Cray
+# MPICH's libmpi_gnu_*; the remaining entries name the libraries that break the
+# convention.
+#
+# A runtime this list misses is the one way the probe can call a serial program
+# parallel: the library is walked, its undefined MPI_Init counts as the
+# program's, and the code is registered under mpirun. ``koopmans install``
+# prints the evidence behind every verdict, and ``--serial <code>`` overrules
+# one that is wrong.
+#
 # The prefix also matches libraries that are not the runtime: mpiP's
 # ``libmpiP.so`` and mpiFileUtils' ``libmpifileutils.so``. A program whose only
 # MPI_Init call reaches through one of those is read as serial and runs on one
