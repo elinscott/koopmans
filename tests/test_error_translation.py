@@ -288,6 +288,7 @@ class TestDispatchTranslation:
                 orbitals=[],
                 correction="ki",
                 init_orbitals="mlwfs",
+                descriptor="self_hartree",
             )
 
         monkeypatch.setattr(ml_module.TrajectoryWorkflow, "build", build_with_bad_model)
