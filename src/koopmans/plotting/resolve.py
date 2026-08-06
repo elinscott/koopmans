@@ -65,8 +65,14 @@ def _output_dict(node: orm.ProcessNode, socket: str) -> dict[str, Any]:
 def _pw_bands_references(
     node: orm.ProcessNode, bands: orm.BandsData
 ) -> tuple[float | None, float | None]:
-    """Return the valence band edge and Fermi level of a pw.x bands run."""
+    """Return the valence band edge and Fermi level of a pw.x bands run.
+
+    The bands step reports a Fermi level only when it inherited one; the scf
+    that preceded it always does.
+    """
     fermi = _output_dict(node, "band_parameters").get("fermi_energy")
+    if fermi is None:
+        fermi = _output_dict(node, "scf_parameters").get("fermi_energy")
     return _vbm_from_occupations(bands), fermi
 
 

@@ -355,6 +355,23 @@ class TestResolver:
         assert found[0].cell == CUBIC
         assert found[0].path_labels == [(0, "G"), (1, "X")]
 
+    def test_fermi_falls_back_to_the_scf(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A bands step that inherited no Fermi level takes the scf's.
+
+        A pw.x run along a k-path need not report one of its own, so
+        ``--zero fermi`` would otherwise have nothing to subtract for the one
+        route that always produces a band structure.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+        chain = make_process(PW_BANDS, caller=root, link_label="bands")
+        attach(chain, "band_structure", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        attach(chain, "scf_parameters", orm.Dict({"fermi_energy": 6.31}))  # type: ignore[no-untyped-call]
+        folder = write_run_folder(tmp_path, "si_lda", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert found[0].fermi == pytest.approx(6.31)
+
     def test_scf_bands_are_not_plottable(self, aiida_profile: Any, tmp_path: Path) -> None:
         """An scf ``output_band`` is eigenvalues on a mesh and is left out.
 
