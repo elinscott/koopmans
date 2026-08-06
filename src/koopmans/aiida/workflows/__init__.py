@@ -17,6 +17,7 @@ from koopmans.aiida.conversion import (
     code_parallelization,
     input_to_pw_parameters,
 )
+from koopmans.input_file.parallelization import POOL_SUPPORTING_CODES
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from aiida_koopmans.ml import ModelMismatchError
-    from aiida_koopmans.parallelization import ParallelizationError
+    from aiida_koopmans.parallelization import ParallelizationDict, ParallelizationError
     from aiida_koopmans.projections import (
         BlockBoundaryError,
         BlockDisentanglementError,
@@ -111,6 +112,60 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
             pass
 
     return codes
+
+
+def _divisors(number: int) -> list[int]:
+    """Return every positive divisor of ``number``, ascending."""
+    return [candidate for candidate in range(1, number + 1) if number % candidate == 0]
+
+
+def check_pools_divide_ranks(parallelization: ParallelizationDict, codes: Codes) -> None:
+    """Raise if a code's ``npool`` does not divide the MPI ranks it will run on.
+
+    Quantum ESPRESSO splits a run's ranks into ``npool`` equal k-point pools,
+    so the rank count must be a multiple of ``npool``. The rank count is
+    ``ntasks`` where the input sets it, and the code's computer's default
+    otherwise.
+
+    Checks only codes that accept ``-npool`` (:data:`POOL_SUPPORTING_CODES`)
+    and that ``codes`` holds, so an entry for a code this task never runs is
+    left alone. A rank count nothing determines — a code whose computer
+    carries no default — is left to Quantum ESPRESSO.
+
+    Args:
+        parallelization: The per-code mapping, as ``ParallelizationInput.as_mapping``
+            returns it.
+        codes: The codes loaded for this task, keyed by the same code names.
+
+    Raises:
+        ValueError: If a code's ``npool`` does not divide its rank count.
+    """
+    for name, config in parallelization.items():
+        npool = config.get("npool")
+        if npool is None or name not in POOL_SUPPORTING_CODES or name not in codes:
+            continue
+
+        ntasks = config.get("ntasks")
+        if ntasks is not None:
+            ranks: int | None = ntasks
+            ranks_come_from = f"`parallelization.{name}.ntasks` asks for {ranks} MPI ranks"
+        else:
+            computer = getattr(codes[name], "computer", None)
+            ranks = computer.get_default_mpiprocs_per_machine() if computer is not None else None
+            ranks_come_from = (
+                f"`parallelization.{name}` sets no `ntasks`, so {name} takes this "
+                f"computer's default of {ranks} MPI ranks"
+            )
+        if ranks is None or ranks % npool == 0:
+            continue
+
+        raise ValueError(
+            f"{ranks_come_from}, and `parallelization.{name}.npool` is {npool}, which "
+            f"does not divide {ranks}. Quantum ESPRESSO splits a run's ranks into "
+            f"equal k-point pools, so {name} would abort at startup. Set `npool` to "
+            f"one of {_divisors(ranks)}, or set `parallelization.{name}.ntasks` to a "
+            f"multiple of {npool}."
+        )
 
 
 def prepare_common_inputs(
@@ -329,6 +384,10 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     # Load required codes
     codes = load_codes_for_task(koopmans_input.workflow)
+
+    # Both halves of the check meet only here: the requested pools come from
+    # the input file, the rank count from each loaded code's computer.
+    check_pools_divide_ranks(koopmans_input.parallelization.as_mapping(), codes)
 
     # Build the workgraph based on task. An error raised inside the plugin
     # speaks its vocabulary (derived blocks, `num_bands`), which the user
