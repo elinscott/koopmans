@@ -84,8 +84,13 @@ more detail on how to specify code-specific parameters.
  Running the calculation
 *************************
 
-Make sure you have :doc:`installed the engine <../../../installation>` (``koopmans
-install``; this workflow only needs ``kcp.x``), then run
+.. warning::
+
+    This step needs the engine, which :doc:`installing <../../../installation>` sets up
+    for you (``koopmans install``). Of the Quantum ESPRESSO codes, this workflow needs
+    only ``kcp.x``.
+
+Run the calculation with
 
 .. code-block:: console
 
@@ -283,7 +288,7 @@ eV, which KI undershoots by 0.4 eV and PBE overshoots by four.
     Tables of ozone's properties usually quote an `ionization energy
     <https://webbook.nist.gov/cgi/cbook.cgi?ID=C10028156&Mask=20#Ion-Energetics>`_ of
     12.52 eV. That is the *adiabatic* value, which lets the ion relax into its own
-    geometry and so comes out lower. Orbital energies belong against the vertical one.
+    geometry and so comes out lower. Orbital energies correspond to vertical ones.
 
 Photoemission resolves more than the frontier orbital, and KI predicts a binding energy
 for every occupied one. The three outermost are cleanly assigned — 12.73, 13.00 and

@@ -10,8 +10,11 @@ manually, to get a sense of what is going on under the hood of ``koopmans``.
  What you need
 ***************
 
-Make sure the ``Quantum ESPRESSO`` executable ``kcp.x`` is on your ``PATH`` — see the
-:doc:`installation page <../../../installation>` for more details.
+.. warning::
+
+    The ``Quantum ESPRESSO`` executable ``kcp.x`` must be on your ``PATH`` before you
+    start — see the :doc:`installation page <../../../installation>`. Nothing else here
+    needs ``koopmans`` itself.
 
 Download :download:`ozone_manually.zip` and unpack it into an empty directory. It holds
 the three ``kcp.x`` input files you will run
