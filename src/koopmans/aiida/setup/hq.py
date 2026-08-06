@@ -17,7 +17,10 @@ is opt-in via env vars:
 * ``KOOPMANS_MAX_PROCS`` — the worker's advertised CPU pool. Same as
   ``--max-procs`` on ``koopmans install`` and ``koopmans backend hq
   start``. Defaults to the box's physical core count.
-* ``KOOPMANS_HQ_PORT`` — override the HQ server's default port.
+* ``KOOPMANS_HQ_PORT`` — override the HQ server's default port. Does not
+  work on the pinned HQ v0.19.0: :func:`start_hq_server` passes ``--port``,
+  which that version does not accept (it takes ``--client-port`` and
+  ``--worker-port``), so setting this stops the server from starting.
 
 Whether a server or worker is running is answered by asking HQ, not by
 reading the pidfiles :func:`_spawn_hq_process` writes: a process koopmans
@@ -433,13 +436,19 @@ def stop_hq_worker() -> bool:
 def restart_hq_worker(cpus: int | None = None) -> bool:
     """Stop the running worker, then start one advertising ``cpus`` CPUs.
 
-    The server is left up: it holds the queue and the job records the AiiDA
-    daemon is waiting on.
+    Without ``cpus``, the replacement keeps the pool the stopped worker had,
+    so a restart resizes nothing that was not asked for. Starts the server
+    too if it is down, since a worker cannot register without one.
     """
+    if cpus is None:
+        running = running_hq_workers()
+        if len(running) == 1:
+            cpus = running[0].cpus
+
     if not stop_hq_worker():
         logger.warning("HQ worker failed to stop.")
         return False
-    return start_hq_worker(wait=True, cpus=cpus)
+    return ensure_hq_running(cpus=cpus)
 
 
 def ensure_hq_running(cpus: int | None = None) -> bool:

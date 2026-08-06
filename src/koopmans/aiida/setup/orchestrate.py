@@ -26,6 +26,7 @@ from .computer import (
 )
 from .daemon import is_daemon_running, stop_daemon
 from .hq import (
+    hq_binary,
     is_hq_server_running,
     is_hq_worker_running,
     running_hq_workers,
@@ -101,6 +102,7 @@ def verify_installation() -> dict[str, bool]:
         "computer.thread_pin": False,
         "pw.x": False,
         "daemon": False,
+        "hq.binary": False,
         "hq.server": False,
         "hq.worker": False,
     }
@@ -113,8 +115,12 @@ def verify_installation() -> dict[str, bool]:
         load_koopmans_profile()
         status["computer"] = computer_exists()
         status["daemon"] = is_daemon_running()
-        status["hq.server"] = is_hq_server_running()
-        status["hq.worker"] = is_hq_worker_running()
+        # Both HQ rows are answered by running ``hq``, so without the binary
+        # they report absence when the truth is that nothing was asked.
+        status["hq.binary"] = hq_binary() is not None
+        if status["hq.binary"]:
+            status["hq.server"] = is_hq_server_running()
+            status["hq.worker"] = is_hq_worker_running()
 
         if status["computer"]:
             status["pw.x"] = code_exists(f"pw@{COMPUTER_LABEL}")

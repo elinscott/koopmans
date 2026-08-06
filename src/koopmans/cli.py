@@ -124,7 +124,7 @@ cache_option = click.option(
 
 max_procs_option = click.option(
     "--max-procs",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
     help=(
         "Total MPI ranks allowed concurrently across all running calcs. "
@@ -430,9 +430,13 @@ def hq_start(max_procs: int | None) -> None:
 def hq_stop() -> None:
     """Stop the HyperQueue worker.
 
-    Leaves the HyperQueue server up, so queued and running jobs are not lost.
+    Leaves the HyperQueue server up, so the queue is not discarded.
     'koopmans backend uninstall' removes the server as well.
+
+    Check 'hq job summary' first if work is in flight: a task whose worker
+    disappears may be retried on the next one, in the same directory.
     """
+    _require_hq_binary()
     if not is_hq_worker_running():
         click.echo("HyperQueue worker is not running.")
         return
@@ -446,7 +450,12 @@ def hq_stop() -> None:
 @hq.command(name="restart")
 @max_procs_option
 def hq_restart(max_procs: int | None) -> None:
-    """Restart the HyperQueue worker, optionally resizing its CPU pool."""
+    """Restart the HyperQueue worker, optionally resizing its CPU pool.
+
+    Without --max-procs the replacement keeps the pool it had. Starts the
+    HyperQueue server too if it is down. The caution under 'stop' about work
+    in flight applies here as well.
+    """
     _require_hq_binary()
     _require_one_worker("restart")
     click.echo("Restarting HyperQueue worker...")
@@ -461,6 +470,7 @@ def hq_restart(max_procs: int | None) -> None:
 @hq.command(name="status")
 def hq_status() -> None:
     """Show the state of the HyperQueue server and worker."""
+    _require_hq_binary()
     print_hq_status()
 
 

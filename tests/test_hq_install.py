@@ -203,10 +203,30 @@ with open(os.environ["KOOPMANS_TEST_HQ_LOG"], "a") as log:
     log.write(json.dumps(args) + "\\n")
 
 workers_path = os.environ["KOOPMANS_TEST_HQ_WORKERS"]
+server_path = os.environ["KOOPMANS_TEST_HQ_SERVER"]
 verb = [arg for arg in args if not arg.startswith("-")][:2]
 
+
+def server_up():
+    with open(server_path) as handle:
+        return handle.read().strip() == "1"
+
+
 if verb == ["server", "info"]:
-    sys.exit(0 if os.environ.get("KOOPMANS_TEST_HQ_SERVER", "1") == "1" else 1)
+    sys.exit(0 if server_up() else 1)
+if verb[:1] == ["server"] and verb[1:2] in (["start"], ["stop"]):
+    # Workers do not outlive their server: HQ's default on_server_lost is stop.
+    with open(server_path, "w") as handle:
+        handle.write("1" if verb[1] == "start" else "0")
+    with open(workers_path, "w") as handle:
+        json.dump([], handle)
+    sys.exit(0)
+
+# Every worker subcommand needs a live server, as the real hq does.
+if verb[:1] == ["worker"] and not server_up():
+    sys.stderr.write("No running instance of HQ found\\n")
+    sys.exit(1)
+
 if verb == ["worker", "list"]:
     with open(workers_path) as handle:
         sys.stdout.write(handle.read())
@@ -219,7 +239,7 @@ elif verb == ["worker", "start"]:
         workers = json.load(handle)
     workers.append(
         {
-            "id": len(workers) + 1,
+            "id": max([w["id"] for w in workers], default=0) + 1,
             "configuration": {
                 "resources": {
                     "resources": [
@@ -238,10 +258,25 @@ sys.exit(0)
 class FakeHq:
     """A stub ``hq`` binary plus the state the tests read back from it."""
 
-    def __init__(self, log: Path, workers: Path) -> None:
-        """Record where the stub logs its argv and stores its worker list."""
+    def __init__(self, log: Path, workers: Path, server: Path) -> None:
+        """Record where the stub logs its argv and keeps its server state."""
         self._log = log
         self._workers = workers
+        self._server = server
+
+    def stop_server(self) -> None:
+        """Make the stub behave as a machine whose HQ server is down."""
+        self._server.write_text("0")
+
+    @property
+    def worker_pools(self) -> list[int]:
+        """CPU pool of each worker the stub currently reports."""
+        return [
+            r["end"] - r["start"] + 1
+            for w in json.loads(self._workers.read_text())
+            for r in w["configuration"]["resources"]["resources"]
+            if r["name"] == "cpus"
+        ]
 
     @property
     def commands(self) -> list[list[str]]:
@@ -298,11 +333,16 @@ def fake_hq(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeHq:
 
     workers = tmp_path / "workers.json"
     workers.write_text("[]")
+    server = tmp_path / "server-up"
+    server.write_text("1")
     monkeypatch.setenv("KOOPMANS_TEST_HQ_WORKERS", str(workers))
+    monkeypatch.setenv("KOOPMANS_TEST_HQ_SERVER", str(server))
     monkeypatch.setenv("KOOPMANS_TEST_HQ_LOG", str(tmp_path / "argv.log"))
     monkeypatch.delenv("KOOPMANS_MAX_PROCS", raising=False)
+    # The poll loops sleep in real time; the stub responds instantly.
+    monkeypatch.setattr(hq_mod.time, "sleep", lambda _seconds: None)
 
-    return FakeHq(log=tmp_path / "argv.log", workers=workers)
+    return FakeHq(log=tmp_path / "argv.log", workers=workers, server=server)
 
 
 class TestWorkerDetection:
@@ -535,6 +575,71 @@ class TestWorkerCommands:
 
         assert result.exit_code != 0
         assert not [c for c in fake_hq.commands if c[1:2] in (["stop"], ["start"])]
+
+    def test_bare_restart_keeps_the_pool_it_had(
+        self, fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Restarting without --max-procs must not resize the pool.
+
+        The default would be the core count, so a bare restart of a worker
+        sized by hand used to shrink it and report that as success.
+        """
+        from koopmans.aiida.setup import hq as hq_mod
+
+        monkeypatch.setattr(hq_mod, "detect_num_cores", lambda: 14)
+        fake_hq.set_workers(24)
+
+        result = self._invoke(["backend", "hq", "restart"])
+
+        assert result.exit_code == 0, result.output
+        assert ["worker", "start", "--cpus", "24"] in fake_hq.commands
+        assert fake_hq.worker_pools == [24]
+
+    def test_restart_starts_the_server_when_it_is_down(self, fake_hq: FakeHq) -> None:
+        """After a reboot the server is gone too, and restart must handle that.
+
+        ``start`` brought the server up and ``restart`` did not, so the same
+        machine state made one command work and the other time out.
+        """
+        fake_hq.stop_server()
+
+        result = self._invoke(["backend", "hq", "restart", "--max-procs", "12"])
+
+        assert result.exit_code == 0, result.output
+        assert ["server", "start"] in fake_hq.commands
+        assert fake_hq.worker_pools == [12]
+
+    def test_zero_procs_is_rejected_before_the_worker_is_stopped(self, fake_hq: FakeHq) -> None:
+        """``--max-procs 0`` must not take the machine down to nothing.
+
+        Real ``hq worker start --cpus 0`` panics, so a zero that reaches HQ
+        stops the running worker and leaves none behind.
+        """
+        fake_hq.set_workers(24)
+
+        result = self._invoke(["backend", "hq", "restart", "--max-procs", "0"])
+
+        assert result.exit_code != 0
+        assert not [c for c in fake_hq.commands if c[:2] == ["worker", "stop"]]
+        assert fake_hq.worker_pools == [24]
+
+    def test_stop_and_status_without_a_binary_name_the_installer(
+        self, fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Never report absence when the truth is that nothing was asked.
+
+        Both commands answer by running ``hq``. Without it they used to say
+        the worker or server was not running while one was.
+        """
+        fake_hq.set_workers(24)
+        monkeypatch.delenv("KOOPMANS_HQ_BINARY")
+        monkeypatch.setattr("shutil.which", lambda name: None)
+
+        for command in (["backend", "hq", "stop"], ["backend", "hq", "status"]):
+            result = self._invoke(command)
+            assert result.exit_code != 0, command
+            assert "Run 'koopmans install'" in result.output, command
+            assert "not running" not in result.output, command
 
     def test_status_reports_the_pool_and_the_default_calc_size(
         self, fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch

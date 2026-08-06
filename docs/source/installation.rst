@@ -131,10 +131,17 @@ without reinstalling, restart the worker with a new size:
 
 .. code-block:: console
 
-    $ koopmans backend hq restart --max-procs 12
+    $ koopmans backend hq restart --max-procs 28
 
-``koopmans backend hq stop`` stops the worker but leaves the scheduler running, so
-queued and running jobs survive. ``koopmans backend uninstall`` removes the whole
+Keep the pool at least as large as the ranks one calculation is given — the second
+number above. A calculation asking for more ranks than the pool holds can never be
+scheduled, so it waits indefinitely rather than failing. To make each calculation
+smaller instead, rerun ``koopmans install --procs-per-calc``.
+
+``koopmans backend hq stop`` stops the worker but leaves the scheduler running, so the
+queue is not discarded. Check ``hq job summary`` before stopping a worker with work in
+flight: a task whose worker disappears may be retried on the next one, in the same
+directory as the interrupted run. ``koopmans backend uninstall`` removes the whole
 setup, database included.
 
 ****************************
