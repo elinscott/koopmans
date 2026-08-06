@@ -307,6 +307,10 @@ def _strip_process_label_suffixes(path: Path) -> None:
 def _hoist_lone_calculations(path: Path) -> None:
     """Lift a lone calculation's contents into the step folder holding it.
 
+    Hoists only when that calculation is everything the folder holds, so
+    a folder that also keeps a metadata file of its own — the root does —
+    keeps the calculation's folder and the step name on it.
+
     Descends top-down and stops at the folder it hoists into, so a chain
     of single-child steps collapses by one layer only and every step name
     on the way survives.
@@ -417,8 +421,8 @@ def _describes_a_workflow(metadata_path: Path) -> bool:
 
     Reads the node's own ``node_type``, which every dumped process
     records: ``process.workflow.…`` for a workgraph or a WorkChain,
-    ``process.calculation.…`` for a CalcJob or a python task. Only that
-    prefix answers yes, and a file that cannot be read at all —
+    ``process.calculation.…`` for a CalcJob or a python task. Nothing
+    else in the file decides, and a file that cannot be read at all —
     unparseable, not text, unreadable — answers no, so it is kept rather
     than deleted on a guess.
     """

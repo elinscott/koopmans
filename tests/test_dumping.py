@@ -496,6 +496,31 @@ class TestPruneWorkflowMetadata:
 
         assert (tmp_path / "01-step" / _NODE_METADATA_FILE).is_file()
 
+    def test_a_workflow_node_type_named_elsewhere_in_the_file_decides_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """``Node data.node_type`` alone says what the folder came from.
+
+        The other fields are free text — a label, a description someone
+        wrote — so matching on the text of the file rather than on that
+        one key would delete a calculation's file for quoting a workflow.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                (
+                    f"01-scf/{_NODE_METADATA_FILE}",
+                    "---\nNode data:\n"
+                    f"  description: rerun of the {_WORKFLOW_NODE_TYPE} that stopped\n"
+                    f"  node_type: {_CALCULATION_NODE_TYPE}\n",
+                )
+            ],
+        )
+
+        _prune_workflow_metadata(tmp_path)
+
+        assert (tmp_path / "01-scf" / _NODE_METADATA_FILE).is_file()
+
     @pytest.mark.parametrize(
         "content",
         [
@@ -786,6 +811,20 @@ class TestHoistLoneCalculations:
 
         assert sorted(p.name for p in (tmp_path / "01-step").iterdir()) == ["01-scf", "notes.txt"]
 
+    def test_a_lone_top_level_calculation_keeps_its_folder(self, tmp_path: Path) -> None:
+        """The root's own metadata file is one of those other entries.
+
+        Hoisting into the root would write the calculation's file over
+        the root's, so the pk naming the whole run would name one step of
+        it, and the step's name would go with the folder.
+        """
+        _make_tree(tmp_path, [_metadata("", _WORKFLOW_NODE_TYPE), *_calculation("01-write_note")])
+
+        _hoist_lone_calculations(tmp_path)
+
+        assert (tmp_path / "01-write_note/outputs/aiida.cpo").is_file()
+        assert _WORKFLOW_NODE_TYPE in (tmp_path / _NODE_METADATA_FILE).read_text()
+
     def test_a_chain_of_single_child_steps_collapses_by_one_layer(self, tmp_path: Path) -> None:
         """Every step name on the way to the calculation survives."""
         _make_tree(tmp_path, _calculation("01-outer/01-inner/01-dft_n_minus_1"))
@@ -1046,12 +1085,13 @@ class TestDumpedNodeMetadata:
 
     @staticmethod
     def _dump_a_run(output_path: Path) -> tuple[Path, Any]:
-        """Dump a workgraph of one bookkeeping task and one that keeps a file.
+        """Dump a workgraph of three tasks, two of which leave a file behind.
 
         Returns the dumped tree and the root workgraph node. The graph is
-        the smallest one carrying both cases the sweep separates: a step
-        whose only trace is its own source, and one whose output reaches
-        disk.
+        the smallest one carrying every case the metadata sweep tells
+        apart: a step whose only trace is its own source, a step whose
+        lone calculation is hoisted into it, and a second calculation to
+        tell the first one's file from.
         """
         from aiida import orm
         from aiida_workgraph import WorkGraph, task
@@ -1065,10 +1105,17 @@ class TestDumpedNodeMetadata:
 
         @task  # type: ignore[untyped-decorator]
         def write_note(text: str) -> orm.SinglefileData:
-            """Return ``text`` as the one file this run puts on disk."""
+            """Return ``text`` as a file this run puts on disk."""
             import io
 
             return orm.SinglefileData(io.BytesIO(text.encode()), filename="note.txt")
+
+        @task  # type: ignore[untyped-decorator]
+        def write_summary(text: str) -> orm.SinglefileData:
+            """Return ``text`` as the other file this run puts on disk."""
+            import io
+
+            return orm.SinglefileData(io.BytesIO(text.encode()), filename="summary.txt")
 
         @task.graph  # type: ignore[untyped-decorator]
         def run(text: str) -> orm.SinglefileData:
@@ -1079,6 +1126,7 @@ class TestDumpedNodeMetadata:
 
         wg = WorkGraph("dump_metadata")
         wg.add_task(run, name="run", text="hello")
+        wg.add_task(write_summary, name="write_summary", text="three orbitals screened")
         wg.run()
 
         return dump_workgraph(wg.process, output_path), wg.process
@@ -1095,18 +1143,32 @@ class TestDumpedNodeMetadata:
         assert metadata["Node data"]["pk"] == process.pk
         assert metadata["Node data"]["uuid"] == process.uuid
 
-    def test_a_calculation_keeps_the_file_naming_its_node(
+    def test_each_calculation_keeps_the_file_naming_its_own_node(
         self, aiida_profile_clean: object, tmp_path: Path
     ) -> None:
-        """The step whose output survives carries the pk that produced it."""
+        """A step's file names the process that ran there, not a sibling's.
+
+        The pk a folder carries is the way from its files back to the
+        database, so it has to be that folder's own. ``01-run`` names the
+        calculation hoisted into it rather than the workflow layer the
+        folder was.
+        """
         import yaml
         from aiida import orm
 
         dumped, _ = self._dump_a_run(tmp_path / "dump")
 
-        metadata = yaml.safe_load((dumped / "01-run" / _NODE_METADATA_FILE).read_text())
+        named = {}
+        for path in dumped.rglob(_NODE_METADATA_FILE):
+            if path.parent == dumped:
+                continue
+            recorded = yaml.safe_load(path.read_text())["Node data"]
+            node = orm.load_node(recorded["pk"])
+            assert node.uuid == recorded["uuid"]
+            named[str(path.parent.relative_to(dumped))] = node.process_label
+
+        assert named == {"01-run": "write_note", "02-write_summary": "write_summary"}
         assert (dumped / "01-run/outputs/result/note.txt").read_text() == "hello"
-        assert orm.load_node(metadata["Node data"]["pk"]).uuid == metadata["Node data"]["uuid"]
 
     def test_no_step_below_the_root_carries_a_workflow_node_metadata(
         self, aiida_profile_clean: object, tmp_path: Path
@@ -1147,9 +1209,13 @@ class TestDumpedNodeMetadata:
         """The bookkeeping task's metadata file does not keep its folder.
 
         ``count_electrons`` leaves nothing but its own source, so the
-        tree that reaches the reader holds one step, not two.
+        tree that reaches the reader holds the two steps that wrote a
+        file, not three.
         """
         dumped, _ = self._dump_a_run(tmp_path / "dump")
 
         assert not any(p.name.endswith("count_electrons") for p in dumped.rglob("*"))
-        assert [p.name for p in dumped.iterdir() if p.is_dir()] == ["01-run"]
+        assert sorted(p.name for p in dumped.iterdir() if p.is_dir()) == [
+            "01-run",
+            "02-write_summary",
+        ]
