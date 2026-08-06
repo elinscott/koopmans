@@ -13,13 +13,16 @@ from koopmans.input_file import (
 )
 from koopmans.input_file.workflow import Task
 
+# The silicon tutorial input file, relative to the tutorials directory.
+SI_JSON = "band_structures/silicon_finite_differences/si.json"
+
 
 class TestInputFileParsing:
     """Test input file parsing."""
 
     def test_parse_si_tutorial(self, tutorials_dir: Path) -> None:
         """Test that the silicon tutorial input file parses successfully."""
-        input_file = tutorials_dir / "si.json"
+        input_file = tutorials_dir / SI_JSON
         assert input_file.exists(), f"Tutorial file not found: {input_file}"
 
         koopmans_input = read_input_file(input_file)
@@ -32,7 +35,7 @@ class TestInputFileParsing:
 
     def test_parse_si_tutorial_via_classmethod(self, tutorials_dir: Path) -> None:
         """Test parsing via the KoopmansInput.from_file classmethod."""
-        input_file = tutorials_dir / "si.json"
+        input_file = tutorials_dir / SI_JSON
 
         koopmans_input = KoopmansInput.from_file(input_file)
 
@@ -53,12 +56,12 @@ class TestInputFileVersioning:
 
     def test_missing_version_treated_as_version_1(self, tutorials_dir: Path) -> None:
         """Test that a file without a `version` key parses as the current version."""
-        koopmans_input = read_input_file(tutorials_dir / "si.json")
+        koopmans_input = read_input_file(tutorials_dir / SI_JSON)
         assert koopmans_input.version == INPUT_FILE_FORMAT_VERSION
 
     def test_explicit_current_version(self, tutorials_dir: Path, tmp_path: Path) -> None:
         """Test that a file with an explicit current `version` parses."""
-        input_dict = json.loads((tutorials_dir / "si.json").read_text())
+        input_dict = json.loads((tutorials_dir / SI_JSON).read_text())
         input_dict["version"] = INPUT_FILE_FORMAT_VERSION
         input_file = tmp_path / "si.json"
         input_file.write_text(json.dumps(input_dict))
@@ -68,7 +71,7 @@ class TestInputFileVersioning:
 
     def test_future_version_raises(self, tutorials_dir: Path, tmp_path: Path) -> None:
         """Test that a file from a newer format version raises a clear error."""
-        input_dict = json.loads((tutorials_dir / "si.json").read_text())
+        input_dict = json.loads((tutorials_dir / SI_JSON).read_text())
         input_dict["version"] = INPUT_FILE_FORMAT_VERSION + 1
         input_file = tmp_path / "si.json"
         input_file.write_text(json.dumps(input_dict))

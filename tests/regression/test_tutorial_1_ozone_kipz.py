@@ -1,7 +1,7 @@
 """Dispatcher smoke test for tutorial_1 / ozone driven by the KIPZ correction.
 
-Parses ``tutorials/ozone_kipz.json`` into a ``KoopmansInput`` and verifies
-that the dispatcher accepts ``correction=kipz`` and emits the same
+Takes the ozone tutorial's own input, swaps its correction for KIPZ, and
+verifies that the dispatcher accepts ``correction=kipz`` and emits the same
 top-level shape as the KI build (the KI vs KIPZ difference lives inside
 the ``ComputeScreeningParameters`` sub-graph, in the parameter dicts of
 the alpha-step builders — covered by ``aiida-koopmans2/tests/test_kcp_workgraph.py``).
@@ -21,12 +21,21 @@ import pytest
 
 from koopmans.aiida.workflows import build_workgraph
 from koopmans.input_file import KoopmansInput, read_input_file
+from koopmans.input_file.workflow import Correction
 
 
 @pytest.fixture
 def tutorial_1_ozone_kipz_input(tutorials_dir: Path) -> KoopmansInput:
-    """Parse the ozone_kipz.json tutorial into a ``KoopmansInput``."""
-    return read_input_file(tutorials_dir / "ozone_kipz.json")
+    """Return the ozone tutorial's input, with KIPZ in place of KI.
+
+    The tutorial ships one input file; the correction is the only thing
+    this test needs to differ, so it is swapped here rather than kept as a
+    second copy of the same calculation.
+    """
+    inp = read_input_file(tutorials_dir / "orbital_energies/ozone/ozone.yaml")
+    dumped = inp.model_dump()
+    dumped["workflow"]["correction"] = Correction.KIPZ
+    return KoopmansInput.model_validate(dumped)
 
 
 def test_dispatcher_accepts_kipz_correction(

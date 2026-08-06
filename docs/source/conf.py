@@ -13,9 +13,18 @@ root, use ``os.path.abspath`` to make it absolute, like shown here.
 import os
 import re
 import sys
+import zipfile
+from calendar import month_name
 from datetime import date
+from pathlib import Path
+
+import pybtex.plugin
+from pybtex.style.formatting.plain import Style as PlainStyle
+from pybtex.style.formatting.unsrt import Style as UnsrtStyle
+from pybtex.style.sorting import BaseSortingStyle
 
 sys.path.insert(0, os.path.abspath("../../src"))
+sys.path.insert(0, os.path.abspath("_ext"))
 
 # -- Project information -----------------------------------------------------
 
@@ -48,6 +57,15 @@ if os.environ.get("READTHEDOCS", "") == "True":
         html_context = {}
     html_context["READTHEDOCS"] = True
 
+    # Warn readers of the published documentation that it is unfinished. Read
+    # the Docs' own notifications carry fixed wording, so this one is ours,
+    # prepended to every page. A local build shows the pages without it.
+    rst_prolog = """
+.. attention::
+
+    These pages are under construction — come back soon!
+"""
+
 
 # -- General configuration ---------------------------------------------------
 
@@ -76,8 +94,15 @@ extensions = [
     "sphinx_automodapi.automodapi",
     "sphinx_automodapi.smart_resolver",
     "sphinxcontrib.autodoc_pydantic",
+    "sphinx_design",
+    "sphinx_copybutton",
+    "sphinxcontrib.bibtex",
+    "question",
     # 'texext',
 ]
+
+bibtex_bibfiles = ["_static/references.bib"]
+bibtex_default_style = "plainabbrev"
 
 
 extensions.append("sphinx_click.ext")
@@ -135,6 +160,13 @@ html_theme_options = {"logo_only": True}
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
+
+# Copy buttons on code blocks. A console block is copied without its `$ `
+# prompts, and without the output lines that carry no prompt; a block with no
+# prompt at all is copied whole.
+copybutton_prompt_text = r"\$ "
+copybutton_prompt_is_regexp = True
+copybutton_line_continuation_character = "\\"
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.
@@ -270,3 +302,75 @@ todo_emit_warnings = True
 
 # Output SVG inheritance diagrams
 graphviz_output_format = "svg"
+
+
+# -- Bibliography styles ------------------------------------------------------
+
+
+class ChronoSortingStyle(BaseSortingStyle):
+    """Sort bibliography entries by date."""
+
+    def sort(self, entries):
+        """Return the entries oldest first."""
+
+        def get_date(entry):
+            month_lookup = list(month_name)
+            year = int(entry.fields["year"])
+            default_month = month_lookup[0]
+            month = month_lookup.index(entry.fields.get("month", default_month))
+            return date(year, month, 1)
+
+        return sorted(entries, key=get_date)
+
+
+class ChronoStyle(UnsrtStyle):
+    """Format a bibliography in date order, with abbreviated author names."""
+
+    def __init__(self, *args, **kwargs):
+        """Sort by date and abbreviate author names."""
+        kwargs.update(sorting_style=ChronoSortingStyle, abbreviate_names=True)
+        super().__init__(*args, **kwargs)
+
+
+class AbbrevPlainStyle(PlainStyle):
+    """Format a bibliography alphabetically, with abbreviated author names."""
+
+    def __init__(self, *args, **kwargs):
+        """Abbreviate author names."""
+        kwargs.update(abbreviate_names=True)
+        super().__init__(*args, **kwargs)
+
+
+pybtex.plugin.register_plugin("pybtex.style.formatting", "chrono", ChronoStyle)
+pybtex.plugin.register_plugin("pybtex.style.formatting", "plainabbrev", AbbrevPlainStyle)
+
+
+# -- Tutorial input archives --------------------------------------------------
+
+# A tutorial that needs several input files in a particular layout ships them as
+# one archive, built here from the files the tutorial itself includes, so that
+# the archive and the page can never disagree. Each entry maps an archive to its
+# members, both named relative to the directory holding the tutorial.
+TUTORIAL_ARCHIVES = {
+    "tutorials/orbital_energies/ozone/ozone_manually.zip": [
+        "ozone_dft.in",
+        "ozone_dft_n-1.in",
+        "ozone_ki.in",
+        "get_alpha.sh",
+        "pseudopotentials/O_ONCV_PBE-1.2.upf",
+    ],
+}
+
+
+def build_tutorial_archives(app):
+    """Pack each tutorial's input files into the archive its page offers."""
+    for archive, members in TUTORIAL_ARCHIVES.items():
+        target = Path(app.srcdir) / archive
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as handle:
+            for member in members:
+                handle.write(target.parent / member, member)
+
+
+def setup(app):
+    """Register the documentation's own build steps."""
+    app.connect("builder-inited", build_tutorial_archives)

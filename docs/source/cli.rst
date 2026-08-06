@@ -1,6 +1,6 @@
-########################
- Command Line Interface
-########################
+###############################
+ Running from the command line
+###############################
 
 koopmans automatically installs the command ``koopmans``. See ``koopmans --help`` for
 usage details.

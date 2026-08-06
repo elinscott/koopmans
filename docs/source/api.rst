@@ -1,6 +1,6 @@
-#############
- From python
-#############
+#######################
+ Calling within python
+#######################
 
 Everything ``koopmans run`` does is available from python, for scripting
 parameter sweeps or driving calculations from a notebook. The same input
@@ -22,7 +22,7 @@ plain python or numpy one — energies in eV:
 
    from koopmans import read_input_file, run
 
-   results = run(read_input_file("ozone.json"))
+   results = run(read_input_file("ozone.yaml"))
 
    print(f"IP = {-results['parameters']['homo_energy']:.2f} eV")
    print(f"EA = {-results['parameters']['lumo_energy']:.2f} eV")

@@ -1,6 +1,7 @@
 """Dispatcher + workgraph-shape regression test for O2 (genuinely open-shell, KI-DSCF).
 
-Parses ``tutorials/o2.json`` into a ``KoopmansInput``, calls
+Parses ``tutorials/orbital_energies/magnetic/o2.yaml`` into a
+``KoopmansInput``, calls
 ``build_workgraph`` to produce an ``aiida_workgraph.WorkGraph``, and
 snapshots the resulting graph structure (task names, task count, serialized
 task/port definitions with UUIDs scrubbed).
@@ -35,8 +36,8 @@ from koopmans.input_file import KoopmansInput, read_input_file
 
 @pytest.fixture
 def o2_input(tutorials_dir: Path) -> KoopmansInput:
-    """Parse the o2.json tutorial into a ``KoopmansInput``."""
-    return read_input_file(tutorials_dir / "o2.json")
+    """Parse the o2.yaml tutorial into a ``KoopmansInput``."""
+    return read_input_file(tutorials_dir / "orbital_energies/magnetic/o2.yaml")
 
 
 def test_build_workgraph(

@@ -25,7 +25,7 @@ everything for you.
     $ koopmans run silicon.json
 
 New here? :doc:`Install the code <installation>`, then run :doc:`your first calculation
-<tutorials/water>`.
+<my_first_calculation>`.
 
 ************************
  What you can calculate
@@ -35,22 +35,27 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
     .. container:: capability-cell
 
-        .. image:: _static/capabilities/molecular_orbital_energies.svg
-            :alt: Placeholder tile for the orbital energies of molecules
+        .. image:: tutorials/orbital_energies/ozone/ozone_spectrum.svg
+            :alt: Calculated against experimental binding energies for ozone, with the
+                KI points close to the line of perfect agreement and the PBE ones far
+                from it
 
-        Orbital energies for :doc:`paramagnetic <tutorials/ozone>` and :doc:`magnetic
-        <tutorials/magnetic_molecules>` molecules
+        Orbital energies for :doc:`paramagnetic
+        <tutorials/orbital_energies/ozone/index>` and :doc:`magnetic
+        <tutorials/orbital_energies/magnetic/index>` molecules
 
     .. container:: capability-cell
 
         .. image:: _static/capabilities/zno_bands.png
             :alt: The LDA and Koopmans band structures of ZnO, with the band gap marked
 
-        Band structures of solids, with screening parameters from :doc:`finite differences
-        <tutorials/silicon_supercell>` or :doc:`linear response <tutorials/silicon_dfpt>` —
-        and with :doc:`automated Wannierization <tutorials/zno>`, for :doc:`magnetic systems
-        <tutorials/magnetic_solids>`, or with :doc:`spin-orbit coupling
-        <tutorials/spin_orbit>`
+        Band structures of solids, with screening parameters from :doc:`finite
+        differences <tutorials/band_structures/silicon_finite_differences/index>` or
+        :doc:`linear response <tutorials/band_structures/silicon_linear_response/index>`
+        — and with :doc:`automated Wannierization
+        <tutorials/band_structures/zno/index>`, for :doc:`magnetic systems
+        <tutorials/band_structures/magnetic/index>`, or with :doc:`spin-orbit coupling
+        <tutorials/band_structures/spin_orbit/index>`
 
     .. container:: capability-cell
 
@@ -58,15 +63,16 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
             :alt: Predicted against calculated orbital energies, and their error
                 distribution
 
-        Screening parameters via :doc:`machine learning <tutorials/machine_learning>`
+        Screening parameters via :doc:`machine learning
+        <tutorials/screening_via_ml/index>`
 
     .. container:: capability-cell
 
         .. image:: _static/capabilities/dielectric.svg
             :alt: Placeholder tile for dielectric constants
 
-        :doc:`Dielectric constants <tutorials/dielectric>`, which a Koopmans calculation
-        on a solid needs
+        :doc:`Dielectric constants <tutorials/dielectric_constants/index>`, which a
+        Koopmans calculation on a solid needs
 
     .. container:: capability-cell planned
 
@@ -89,28 +95,45 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
     :hidden:
 
     installation
-    tutorials/index
+    my_first_calculation
 
 .. toctree::
     :maxdepth: 2
-    :caption: Reference
-    :name: reference
+    :caption: Background
+    :name: background
     :hidden:
 
     theory
-    input_file
+    references
+
+.. toctree::
+    :maxdepth: 2
+    :caption: User guide
+    :name: user_guide
+    :hidden:
+
+    input_schema
     cli
-    python_api
+    api
+
+
+.. toctree::
+    :maxdepth: 2
+    :caption: Tutorials
+    :name: tutorials
+    :hidden:
+
+    tutorials/orbital_energies/index
+    tutorials/band_structures/index
+    tutorials/screening_via_ml/index
+    tutorials/dielectric_constants/index
 
 **********
  Citation
 **********
 
-If you use this code, please cite E. B. Linscott, N. Colonna, R. De Gennaro, N. L.
-Nguyen, G. Borghi, A. Ferretti, I. Dabo and N. Marzari, *koopmans: An Open-Source
-Package for Accurately and Efficiently Predicting Spectral Properties with Koopmans
-Functionals*, J. Chem. Theory Comput. **19**, 7097 (2023), `doi:10.1021/acs.jctc.3c00652
-<https://doi.org/10.1021/acs.jctc.3c00652>`_.
+If you use this code, please cite :cite:`Linscott2023`. The :doc:`references page
+<references>` lists the papers behind the functionals themselves.
 
 ********************
  Indices and Tables

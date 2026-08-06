@@ -22,15 +22,15 @@ from koopmans.input_file.workflow import (
 
 
 @pytest.fixture
-def ozone_json(tutorials_dir: Path) -> Path:
-    """Return the path to the ozone tutorial JSON."""
-    return tutorials_dir / "ozone.json"
+def ozone_yaml(tutorials_dir: Path) -> Path:
+    """Return the path to the ozone tutorial input file."""
+    return tutorials_dir / "orbital_energies/ozone/ozone.yaml"
 
 
 @pytest.fixture
-def ozone_input(ozone_json: Path) -> KoopmansInput:
+def ozone_input(ozone_yaml: Path) -> KoopmansInput:
     """Return a freshly parsed ozone ``KoopmansInput``."""
-    return read_input_file(ozone_json)
+    return read_input_file(ozone_yaml)
 
 
 def _copy_with_calc_overrides(inp: KoopmansInput, **calc_param_updates: object) -> KoopmansInput:
@@ -55,10 +55,10 @@ class TestOzoneInputParse:
     """Parsing checks for the ozone tutorial JSON."""
 
     def test_ozone_parses_with_expected_workflow_fields(
-        self, ozone_json: Path, ozone_input: KoopmansInput
+        self, ozone_yaml: Path, ozone_input: KoopmansInput
     ) -> None:
         """The ozone tutorial should parse with the expected workflow fields."""
-        assert ozone_json.exists(), f"Tutorial file not found: {ozone_json}"
+        assert ozone_yaml.exists(), f"Tutorial file not found: {ozone_yaml}"
 
         assert isinstance(ozone_input, KoopmansInput)
         assert ozone_input.workflow.task == Task.SINGLEPOINT
@@ -81,9 +81,9 @@ class TestOzoneInputParse:
         assert all(atom[0] == "O" for atom in positions)
 
         expected = [
-            ("O", 7.0869, 6.0, 5.89),
-            ("O", 8.1738, 6.0, 6.55),
-            ("O", 6.0, 6.0, 6.55),
+            ("O", 4.0869, 3.0, 2.89),
+            ("O", 5.1738, 3.0, 3.55),
+            ("O", 3.0, 3.0, 3.55),
         ]
         for got, want in zip(positions, expected, strict=True):
             assert got[0] == want[0]
@@ -101,13 +101,13 @@ class TestKcpDscfInputs:
     """Unit tests for ``kcp_dscf_inputs``."""
 
     def test_ozone_default(self, ozone_input: KoopmansInput) -> None:
-        """Ozone input should yield (65.0, 260.0, 10, 2)."""
-        assert _scalars(kcp_dscf_inputs(ozone_input)) == (65.0, 260.0, 10, 2)
+        """Ozone input should yield (50.0, 200.0, 10, 2)."""
+        assert _scalars(kcp_dscf_inputs(ozone_input)) == (50.0, 200.0, 10, 2)
 
     def test_ecutrho_defaults_to_four_times_ecutwfc(self, ozone_input: KoopmansInput) -> None:
-        """With ecutrho unset, it should default to 4 * ecutwfc (4 * 65 = 260)."""
+        """With ecutrho unset, it should default to 4 * ecutwfc (4 * 50 = 200)."""
         inp = _copy_with_calc_overrides(ozone_input, **{"kcp.system.ecutrho": 0.0})
-        assert _scalars(kcp_dscf_inputs(inp)) == (65.0, 260.0, 10, 2)
+        assert _scalars(kcp_dscf_inputs(inp)) == (50.0, 200.0, 10, 2)
 
     def test_ecutrho_default_with_custom_ecutwfc(self, ozone_input: KoopmansInput) -> None:
         """With ecutwfc=30 and no ecutrho, ecutrho should fall back to 120.0."""

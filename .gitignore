@@ -902,6 +902,16 @@ FodyWeavers.xsd
 scratch/
 .claude/settings.local.json
 
-# Dumped AiiDA calculation trees produced when running the tutorials —
-# only the tutorial input .json files belong in the repo.
-docs/source/tutorials/*/
+# Dumped AiiDA calculation trees produced when running the tutorials. `koopmans
+# run` writes one beside its input file, in a directory named after it, so a
+# dump lands inside the tutorial's own source directory. Match the dump by its
+# contents rather than its name: it holds numbered step directories and, when
+# it deduplicates files, a README explaining the symlinks. Nothing else in the
+# docs tree has that shape, so the prose, input files and figures stay tracked.
+docs/source/tutorials/**/[0-9][0-9]*-*/
+docs/source/tutorials/**/README
+
+# Tutorial input archives are packed from the tracked input files at build time
+# (see TUTORIAL_ARCHIVES in docs/source/conf.py), so the archive can never fall
+# out of step with the files a tutorial shows.
+docs/source/tutorials/**/*.zip

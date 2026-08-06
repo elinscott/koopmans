@@ -2,31 +2,6 @@
     max-width: none;
 }
 
-/* Site-wide notice at the top of the content column, stuck there while the page
-   scrolls. Negative side margins bleed it across the column's own padding. */
-.site-banner {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    margin: -1.618em -3.236em 1.618em;
-    padding: 0.8em 1em;
-    text-align: center;
-    font-size: 95%;
-    font-weight: bold;
-    letter-spacing: 0.01em;
-    color: #3d2c07;
-    background-color: #f5c451;
-    border-bottom: 3px solid #d99a2b;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-}
-
-@media screen and (max-width: 768px) {
-    .site-banner {
-        margin-left: -1.618em;
-        margin-right: -1.618em;
-    }
-}
-
 /* The landing page leads with the wordmark, so the page title it duplicates is
    hidden. Browsers without :has() simply show both. */
 .landing-logo {
@@ -87,4 +62,61 @@ section:has(> .landing-logo) > h1 {
 .capability-cell em {
     color: #999;
     font-style: italic;
+}
+
+/* Tutorial questions are a plain admonition, so the theme lays out the band,
+   the body tint and the title exactly as it does for a note. Only the hue and
+   the icon are ours; the answer folds away behind a dropdown in the body. */
+:root {
+    --question-band: #9b59b6;
+    --question-tint: #f7f1fa;
+    --question-text: #7d3c98;
+}
+
+.rst-content .question.admonition {
+    background: var(--question-tint);
+}
+
+.rst-content .question > .admonition-title {
+    background: var(--question-band);
+}
+
+/* Question mark, in place of the exclamation mark the theme prefixes an
+   admonition with. */
+.rst-content .question > .admonition-title::before {
+    content: "\f059";
+}
+
+/* The answer toggle carries no card chrome of its own: inside the box, the
+   summary line alone marks it as clickable. */
+.rst-content .question .sd-dropdown {
+    margin: 0;
+    border: none;
+    background: transparent;
+}
+
+/* sphinx-design's spacing utility (`sd-mb-3`) is !important, so nothing short
+   of !important closes the gap it leaves at the foot of the box. */
+.rst-content .question .sd-dropdown:last-child {
+    margin-bottom: 0 !important;
+}
+
+.rst-content .question .sd-summary-title {
+    padding: 0;
+    color: var(--question-text);
+    background: transparent;
+    border: none;
+    font-size: inherit;
+    font-weight: 700;
+}
+
+.rst-content .question .sd-summary-content.sd-card-body {
+    padding: 12px 0 0;
+}
+
+/* A display equation too wide for the column scrolls within its own block,
+   rather than widening the page. */
+.rst-content div.math {
+    overflow-x: auto;
+    overflow-y: hidden;
 }

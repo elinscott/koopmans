@@ -1903,8 +1903,8 @@ raw:
         code:
           __aiida_code__: kcp@localhost
         correction: ki
-        ecutrho: 260.0
-        ecutwfc: 65.0
+        ecutrho: 200.0
+        ecutwfc: 50.0
         fix_spin_contamination: false
         gamma_only: false
         init_orbitals: kohn-sham

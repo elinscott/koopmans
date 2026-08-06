@@ -47,51 +47,42 @@ number keeps a record of the calculation that produced it.
 Write an input file describing the system and what to do with it. This one asks
 for the KI ionization potential and electron affinity of an ozone molecule:
 
-```json
-{
-  "workflow": {
-    "task": "singlepoint",
-    "correction": "ki",
-    "screening_method": "dscf",
-    "init_orbitals": "kohn-sham",
-    "alpha_numsteps": 1,
-    "pseudo_library": "SG15/1.2/PBE/SR"
-  },
-  "atoms": {
-    "cell_parameters": {
-      "vectors": [
-        [14.1738, 0.0, 0.0],
-        [0.0, 12.0, 0.0],
-        [0.0, 0.0, 12.66]
-      ],
-      "units": "angstrom",
-      "periodic": false
-    },
-    "atomic_positions": {
-      "units": "angstrom",
-      "positions": [
-        ["O", 7.0869, 6.0, 5.89],
-        ["O", 8.1738, 6.0, 6.55],
-        ["O", 6.0, 6.0, 6.55]
-      ]
-    }
-  },
-  "calculator_parameters": {
-    "ecutwfc": 65.0,
-    "nbnd": 10,
-    "kcp": {
-      "system": {
-        "ecutrho": 260.0
-      }
-    }
-  }
-}
+```yaml
+workflow:
+  task: singlepoint
+  correction: ki
+  screening_method: dscf
+  init_orbitals: kohn-sham
+  alpha_numsteps: 1
+  pseudo_library: SG15/1.2/PBE/SR
+
+atoms:
+  cell_parameters:
+    vectors:
+      - [14.1738, 0.0, 0.0]
+      - [0.0, 12.0, 0.0]
+      - [0.0, 0.0, 12.66]
+    units: angstrom
+    periodic: false
+  atomic_positions:
+    units: angstrom
+    positions:
+      - [O, 7.0869, 6.0, 5.89]
+      - [O, 8.1738, 6.0, 6.55]
+      - [O, 6.0, 6.0, 6.55]
+
+calculator_parameters:
+  ecutwfc: 65.0
+  nbnd: 10
+  kcp:
+    system:
+      ecutrho: 260.0
 ```
 
 Run it:
 
 ```console
-$ koopmans run ozone.json
+$ koopmans run ozone.yaml
 ```
 
 The individual calculations are dispatched as the workflow works out what it
