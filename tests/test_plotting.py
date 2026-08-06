@@ -658,8 +658,8 @@ class TestCommand:
         assert "2 series" in result.output
         assert "'si_lda: DFT'" in result.output
         payload = json.loads((tmp_path / "si_bands.json").read_text())
-        # The second run keeps its own 5.4 eV edge and is shifted by the
-        # first's 6.2452 eV: the 0.85 eV band-edge difference stays on the plot.
+        # Both records carry the first run's edge, so the second's own
+        # 5.4 eV edge is still 0.845 eV below zero on the drawn axes.
         assert [record["zero"] for record in payload["series"]] == [
             pytest.approx(6.2452),
             pytest.approx(6.2452),
