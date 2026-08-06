@@ -494,6 +494,57 @@ class TestStepKpointsMesh:
         assert list(mesh_offset) == offset
 
 
+class TestGridSpacingReachesTheBuilder:
+    """The last hop a per-step spacing takes, which no graph socket shows.
+
+    ``pin_step_kpoints`` writes the spacing into a step's override
+    namespace, and on the routes whose steps are nested inside a
+    ``@task.graph`` the socket is as far as a built graph can be read. What
+    happens after is ``PwBaseWorkChain.get_builder_from_protocol``'s, so it
+    is driven here directly.
+    """
+
+    @staticmethod
+    def _builder(code: Any, **overrides: Any) -> Any:
+        from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
+
+        from koopmans.aiida.conversion import atoms_input_to_structure
+        from koopmans.input_file import KoopmansInput
+
+        structure = atoms_input_to_structure(
+            KoopmansInput.model_validate(_pw_input(pseudo_library="SG15/1.0/PBE/SR")).atoms
+        )
+        return PwBaseWorkChain.get_builder_from_protocol(
+            code=code,
+            structure=structure,
+            overrides={"pseudo_family": "SG15/1.0/PBE/SR", **overrides},
+        )
+
+    def test_the_override_displaces_the_protocol_distance(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The workchain's own ``kpoints_distance`` ends up at the requested value."""
+        builder = self._builder(installed_pw_code, kpoints_distance=0.11)
+        assert "kpoints" not in builder
+        assert float(builder.kpoints_distance) == pytest.approx(0.11)
+
+    def test_a_mesh_beside_the_distance_wins(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Why ``pin_step_kpoints`` returns no mesh when it writes a spacing.
+
+        Handing over both would leave the spacing inert without saying so,
+        which is the failure the whole block exists to prevent.
+        """
+        from aiida import orm
+
+        mesh = orm.KpointsData()
+        mesh.set_kpoints_mesh([2, 2, 2])  # type: ignore[no-untyped-call]
+        builder = self._builder(installed_pw_code, kpoints=mesh, kpoints_distance=0.11)
+        assert builder.kpoints.uuid == mesh.uuid
+        assert "kpoints_distance" not in builder
+
+
 class TestKpointsOffsetConversion:
     """Every offset the schema admits reaches Quantum ESPRESSO as written."""
 

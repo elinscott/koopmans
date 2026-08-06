@@ -786,3 +786,35 @@ class TestPerStepKpointMeshRejected:
 
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             build_trajectory_workgraph(koopmans_input, codes={})
+
+    def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:
+        """A route reached whatever the method must not name one back at the reader.
+
+        ``screening_method`` does not select this route — every trajectory
+        runs kcp.x — so quoting ``'dscf'`` would tell someone who wrote
+        ``'dfpt'`` to set what they did not set.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["calculate_alpha"] = False
+        d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(ValueError) as excinfo:
+            build_trajectory_workgraph(koopmans_input, codes={})
+        assert "screening_method" not in str(excinfo.value)
+
+    def test_an_unsupported_screening_method_is_reported_first(self, tmp_path: Path) -> None:
+        """The mesh is the reader's second problem when the method is the first."""
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["calculate_alpha"] = True
+        d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="only supports DSCF screening"):
+            build_trajectory_workgraph(koopmans_input, codes={})

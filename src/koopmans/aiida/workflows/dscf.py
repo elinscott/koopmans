@@ -33,15 +33,28 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-#: Why the kcp.x routes take one mesh throughout. Their supercell is the one
-#: ``kpoints.grid`` describes, and the ground state they recompute in it has
-#: to be the ground state the Wannier functions came from.
+#: Why no kcp.x route carries a second mesh: ``MlwfInitialization`` takes one
+#: ``kpoints``, which its scf samples and its supercell is folded from, and the
+#: molecular route runs no pw.x step at all. A scope boundary, not physics.
+_KCP_TAKES_ONE_MESH = (
+    "`kpoints.overrides.{step}` cannot take effect on the kcp.x route: every step it "
+    "runs samples the one mesh `kpoints.grid` describes, which is also the supercell "
+    "its kcp.x steps fold to, and no step there takes a mesh of its own. Set "
+    "`kpoints.grid`.{alternative}"
+)
+
 KPOINT_OVERRIDES_ON_DSCF = {
-    step: f"`kpoints.overrides.{step}` cannot take effect with "
-    "`screening_method = 'dscf'`: its kcp.x steps recompute the ground state in the "
-    "supercell that `kpoints.grid` describes, so every step of the route samples that "
-    "one mesh. Set `kpoints.grid`, or screen with `screening_method = 'dfpt'`."
+    step: _KCP_TAKES_ONE_MESH.format(
+        step=step,
+        alternative=" Screening with `screening_method = 'dfpt'` gives the scf a mesh of its own.",
+    )
     for step in ("scf", "nscf")
+}
+
+#: The same rejection without the DFPT alternative, which the trajectory task
+#: does not offer.
+KPOINT_OVERRIDES_ON_TRAJECTORY = {
+    step: _KCP_TAKES_ONE_MESH.format(step=step, alternative="") for step in ("scf", "nscf")
 }
 
 

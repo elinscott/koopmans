@@ -398,6 +398,37 @@ class TestPerStepKpoints:
                 _si_input_with_kpoints(gamma_only=True, overrides={"scf": {"grid": [4, 4, 4]}})
             )
 
+    def test_gamma_only_rejects_a_mesh_built_as_a_model(self) -> None:
+        """The rejection belongs to the field, not to one way of reaching it.
+
+        A check that reads the raw input dict passes anything already
+        validated straight through, so a gamma-only input assembled in code
+        would carry a per-step mesh no route can honour.
+        """
+        from koopmans.input_file import (
+            GammaOnlyKpointsInput,
+            KpointsOverridesInput,
+            StepKpointsInput,
+        )
+
+        with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
+            GammaOnlyKpointsInput(
+                overrides=KpointsOverridesInput(scf=StepKpointsInput(grid=(4, 4, 4)))
+            )
+
+    @pytest.mark.parametrize("overrides", ["scf", [{"grid": [4, 4, 4]}], 4])
+    def test_an_overrides_block_that_is_not_a_mapping_is_a_parse_error(
+        self, overrides: object, tmp_path: Path
+    ) -> None:
+        """Reported with the file's other errors rather than as a traceback."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with_kpoints(grid=[2, 2, 2], overrides=overrides))
+        )
+
+        with pytest.raises(ValueError, match=r"overrides.*valid dictionary"):
+            read_input_file(input_file)
+
 
 class TestPathDensityRename:
     """``density`` sat beside ``grid`` and read as the density of a mesh."""

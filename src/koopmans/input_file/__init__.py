@@ -245,6 +245,20 @@ class GammaOnlyKpointsInput(BaseModel):
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, which a gamma-only calculation cannot have."""
 
+    @field_validator("overrides")
+    @classmethod
+    def check_no_step_is_given_a_mesh(
+        cls, overrides: KpointsOverridesInput
+    ) -> KpointsOverridesInput:
+        """Reject a per-step mesh: every step of a gamma-only run samples Gamma."""
+        for step in type(overrides).model_fields:
+            if getattr(overrides, step) is not None:
+                raise ValueError(
+                    f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
+                    "every step samples Gamma alone. Give a `grid` instead of `gamma_only`."
+                )
+        return overrides
+
 
 class GridKpointsInput(BaseModel):
     """K-points configuration for calculations with explicit grid."""
@@ -338,29 +352,18 @@ class KoopmansInput(BaseModel):
 
     @field_validator("kpoints", mode="before")
     @classmethod
-    def check_kpoints_keywords(cls, kpoints: Any) -> Any:
-        """Reject the k-point keywords the two members of the union share.
+    def check_density_was_renamed(cls, kpoints: Any) -> Any:
+        """Reject the former ``density`` spelling of ``path_density``.
 
         ``KpointsInput`` is an untagged union, so a check inside either
-        member is reported against both and drags the member's name into
-        every one of its error messages. Both checks below name a single
-        keyword, so they belong where the field does.
+        member is reported against both. This one names a keyword the two
+        share, so it belongs where the field does.
         """
-        if not isinstance(kpoints, dict):
-            return kpoints
-        if "density" in kpoints:
+        if isinstance(kpoints, dict) and "density" in kpoints:
             raise ValueError(
                 "`density` has been renamed `path_density`: it counts k-points per "
                 "unit length along `path`, and sitting beside `grid` it reads like "
                 "the density of a mesh. Rename it."
-            )
-        overrides = kpoints.get("overrides") or {}
-        steps = sorted(step for step, entry in overrides.items() if entry is not None)
-        if kpoints.get("gamma_only") and steps:
-            step = steps[0]
-            raise ValueError(
-                f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
-                "every step samples Gamma alone. Give a `grid` instead of `gamma_only`."
             )
         return kpoints
 

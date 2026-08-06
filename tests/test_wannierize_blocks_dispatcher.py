@@ -793,6 +793,25 @@ class TestPerStepKpointMesh:
         # The scf still samples the top-level grid, which the entry did not touch.
         _assert_scf_mesh(scf_nscf.inputs["scf_kpoints"].value)
 
+    def test_the_whole_manifold_route_follows_the_nscf_entry(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The other wannierize route derives all three meshes from one builder.
+
+        ``Wannier90WorkChain.get_builder_from_protocol`` produces the scf
+        mesh, the nscf k-list and the ``.win`` ``mp_grid`` together, so the
+        nscf entry has to displace two of them and leave the third alone.
+        """
+        d = _si_auto_dict()
+        d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
+        wg = _build_plain(d, split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+
+        assert len(w90_task.inputs["nscf"]["kpoints"].value.get_kpoints()) == 27
+        w90_params = w90_task.inputs["wannier90"]["wannier90"]["parameters"].value.get_dict()
+        assert w90_params["mp_grid"] == [3, 3, 3]
+        _assert_scf_mesh(w90_task.inputs["scf"]["kpoints"].value)
+
     def test_a_block_route_scf_grid_spacing_reaches_its_scf(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:

@@ -10,7 +10,7 @@ from aiida_quantumespresso.common.types import SpinType
 from koopmans.aiida.conversion import atoms_input_to_structures
 from koopmans.aiida.workflows import load_code, reject_kpoint_overrides
 from koopmans.aiida.workflows.dscf import (
-    KPOINT_OVERRIDES_ON_DSCF,
+    KPOINT_OVERRIDES_ON_TRAJECTORY,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
     require_supported_correction,
@@ -65,13 +65,17 @@ def build_trajectory_workgraph(
     workflow = koopmans_input.workflow
 
     reject_unwired_external_projectors(koopmans_input, "trajectory")
-    reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
 
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(
             "The trajectory task only supports DSCF screening (kcp.x); DFPT screening "
             "is not yet implemented for trajectories."
         )
+
+    # After the screening-method guard: whichever method the input asks for,
+    # this route runs kcp.x, and the reader has to hear about the method they
+    # asked for before they hear about the mesh.
+    reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_TRAJECTORY)
 
     require_supported_correction(workflow.correction)
 
