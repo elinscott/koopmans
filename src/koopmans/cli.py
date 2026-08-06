@@ -25,6 +25,7 @@ from koopmans.aiida.setup.codes import list_codes
 from koopmans.aiida.setup.daemon import is_daemon_running, start_daemon, stop_daemon
 from koopmans.aiida.setup.hq import (
     ensure_hq_running,
+    hq_binary,
     install_hq_binary,
     is_hq_worker_running,
     restart_hq_worker,
@@ -376,6 +377,15 @@ def hq() -> None:
     """Manage the HyperQueue worker that runs your calculations."""
 
 
+def _require_hq_binary() -> None:
+    """Abort with an install pointer if no ``hq`` binary is available."""
+    if hq_binary() is None:
+        raise click.ClickException(
+            "No HyperQueue binary found. Run 'koopmans install' to download it, "
+            "or point KOOPMANS_HQ_BINARY at one you already have."
+        )
+
+
 @hq.command(name="start")
 @max_procs_option
 def hq_start(max_procs: int | None) -> None:
@@ -384,6 +394,7 @@ def hq_start(max_procs: int | None) -> None:
     Brings the HyperQueue server up first if it is down. Does nothing if a
     worker is already running; use 'restart' to change its CPU pool.
     """
+    _require_hq_binary()
     if is_hq_worker_running():
         click.echo("HyperQueue worker is already running.")
         print_hq_status()
@@ -417,6 +428,7 @@ def hq_stop() -> None:
 @max_procs_option
 def hq_restart(max_procs: int | None) -> None:
     """Restart the HyperQueue worker, optionally resizing its CPU pool."""
+    _require_hq_binary()
     click.echo("Restarting HyperQueue worker...")
     if not restart_hq_worker(cpus=max_procs):
         raise click.ClickException(

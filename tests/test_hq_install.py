@@ -409,6 +409,18 @@ class TestWorkerCommands:
         assert self._invoke(["backend", "hq", "restart"]).exit_code == 0
         assert not [c for c in fake_hq.commands if c[:2] == ["server", "stop"]]
 
+    def test_start_without_a_binary_points_at_the_installer(
+        self, fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no ``hq`` to run, say so rather than blaming an empty log."""
+        monkeypatch.delenv("KOOPMANS_HQ_BINARY")
+        monkeypatch.setattr("shutil.which", lambda name: None)
+
+        result = self._invoke(["backend", "hq", "start"])
+
+        assert result.exit_code != 0
+        assert "Run 'koopmans install'" in result.output
+
     def test_status_reports_the_pool_and_the_default_calc_size(
         self, fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
     ) -> None:
