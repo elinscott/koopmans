@@ -1,0 +1,51 @@
+# Score a trained model against fifteen configurations it has not seen: their
+# screening parameters are computed from scratch and compared with the
+# model's predictions.
+
+workflow:
+  task: trajectory                # one Koopmans calculation per configuration
+  correction: ki
+  screening_method: dscf          # screening from total-energy differences
+  init_orbitals: mlwfs            # maximally localized Wannier functions
+  alpha_numsteps: 1               # one pass of the screening-parameter loop
+  pseudo_library: SG15/1.0/PBE/SR
+  mp_correction: true             # Makov-Payne correction for the charged cells
+  eps_inf: 1.72                   # the dielectric constant that correction needs
+  calculate_bands: false
+
+ml:
+  mode: test                      # compute the screening parameters and predict them
+  model_file: train/model.json    # the model the training run wrote
+  descriptor: self_hartree        # what the model sees of each orbital
+  estimator: ridge_regression     # what it fits
+  occ_and_emp_together: false     # one model for filled orbitals, one for empty
+
+atoms:
+  snapshots: testing_snapshots.xyz  # a multi-frame xyz, one frame per configuration
+  cell_parameters:
+    vectors:
+      - [6.8929, 0.0, 0.0]
+      - [0.0, 6.8929, 0.0]
+      - [0.0, 0.0, 6.8929]
+    units: angstrom
+    periodic: true
+
+kpoints:
+  gamma_only: false               # a 1x1x1 mesh, which the Wannierization needs
+  grid: [1, 1, 1]
+
+calculator_parameters:
+  ecutwfc: 50.0                   # wavefunction cutoff (Ry)
+  pw:
+    system:
+      nbnd: 12                    # bands to Wannierize from
+  kcp:
+    system:
+      nbnd: 6                     # 4 filled orbitals, plus 2 empty
+  wannier90:
+    projections:                  # one block of filled orbitals, one of empty
+      - - site: O
+          ang_mtm: sp3
+      - - site: H
+          ang_mtm: s
+    dis_froz_max: 1.0
