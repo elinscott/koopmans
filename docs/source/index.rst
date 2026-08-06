@@ -35,8 +35,10 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
     .. container:: capability-cell
 
-        .. image:: _static/capabilities/molecular_orbital_energies.svg
-            :alt: Placeholder tile for the orbital energies of molecules
+        .. image:: tutorials/orbital_energies/ozone/ozone_spectrum.svg
+            :alt: Calculated against experimental binding energies for ozone, with the
+                KI points close to the line of perfect agreement and the PBE ones far
+                from it
 
         Orbital energies for :doc:`paramagnetic
         <tutorials/orbital_energies/ozone/index>` and :doc:`magnetic
