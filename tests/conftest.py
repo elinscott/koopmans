@@ -17,6 +17,7 @@ from tests.fixtures import (  # noqa: F401
     clear_database,
     clear_database_after_test,
     code_without_mpi_flag,
+    compiled_binaries,
     fake_pseudodojo_lda_family,
     fake_sg15_cutoffs_family,
     fake_sg15_fr_cutoffs_family,

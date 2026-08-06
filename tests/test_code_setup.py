@@ -31,15 +31,6 @@ LDD_OUTPUT = """\
 \t/lib64/ld-linux-x86-64.so.2 (0x000077c2942c1000)
 """
 
-# The executables this developer's box carries, and the verdict each must
-# get. Every path is skipped when absent, so the check is a no-op on CI.
-REAL_BINARIES = {
-    "/usr/local/bin/wannier90.x": False,
-    "/home/linsco_e/code/wannier90/build/wannier90.x": False,
-    "/home/linsco_e/code/q-e/build/bin/kcw.x": True,
-    "/home/linsco_e/code/q-e/build/bin/pw.x": True,
-}
-
 
 def _workflows_source() -> str:
     """Concatenate the workflows package's module sources for call-site scans."""
@@ -313,19 +304,54 @@ class TestRuntimeExclusionEndToEnd:
         assert decision.with_mpi is False, decision.reason
 
 
-class TestRealBinaries:
-    """The decision made about the executables actually installed on this box."""
+class TestCompiledBinaries:
+    """The whole probe over real ELF files, built from C by the fixture.
 
-    @pytest.mark.parametrize(("path", "expected"), sorted(REAL_BINARIES.items()))
-    def test_installed_binary_gets_the_expected_verdict(self, path: str, expected: bool) -> None:
-        """Each reference build is judged the way its source says it behaves."""
+    Every other probe test replaces ``_run_probe``, so these are the only
+    ones in which ``nm``, ``ldd`` and ``strings`` actually run: they pin the
+    command lines and the output formats the parsers read.
+    """
+
+    def test_a_binary_with_no_mpi_call_is_serial(self, compiled_binaries: dict[str, Path]) -> None:
+        """A binary that mentions MPI nowhere is registered serial."""
         from koopmans.aiida.setup.codes import decide_with_mpi
 
-        if not Path(path).is_file():
-            pytest.skip(f"{path} is not installed here")
+        decision = decide_with_mpi("probe", str(compiled_binaries["serial.x"]))
+        assert decision.with_mpi is False, decision.reason
 
-        decision = decide_with_mpi("probe", path)
-        assert decision.with_mpi is expected, decision.reason
+    def test_a_binary_that_calls_mpi_init_is_parallel(
+        self, compiled_binaries: dict[str, Path]
+    ) -> None:
+        """An undefined MPI_Init in the executable's own symbols is enough."""
+        from koopmans.aiida.setup.codes import decide_with_mpi
+
+        decision = decide_with_mpi("probe", str(compiled_binaries["calls_mpi.x"]))
+        assert decision.with_mpi is True, decision.reason
+        assert decision.reason == "calls MPI_Init"
+
+    def test_a_linked_library_that_calls_mpi_init_is_parallel(
+        self, compiled_binaries: dict[str, Path]
+    ) -> None:
+        """The closure walk finds MPI_Init in a library, as it must for pw.x."""
+        from koopmans.aiida.setup.codes import decide_with_mpi
+
+        decision = decide_with_mpi("probe", str(compiled_binaries["library_calls_mpi.x"]))
+        assert decision.with_mpi is True, decision.reason
+        assert decision.reason == "links libworker.so, which calls MPI_Init"
+
+    def test_linking_only_the_mpi_runtime_is_serial(
+        self, compiled_binaries: dict[str, Path]
+    ) -> None:
+        """A binary whose only MPI_Init caller is an MPI library stays serial.
+
+        This is the wannier90.x case: the runtime is linked, its Fortran
+        bindings do call MPI_Init, and the program itself does not. Without
+        the runtime exclusion the walk reaches libmpi_mpifh and says parallel.
+        """
+        from koopmans.aiida.setup.codes import decide_with_mpi
+
+        decision = decide_with_mpi("probe", str(compiled_binaries["runtime_only.x"]))
+        assert decision.with_mpi is False, decision.reason
 
 
 class TestMpiDecision:

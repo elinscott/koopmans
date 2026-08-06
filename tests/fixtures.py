@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import io
 import re
+import shutil
+import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -252,6 +254,80 @@ def replay_probes(monkeypatch: Any, stub_executable: Callable[[str], Path]) -> C
         return executable
 
     return _install
+
+
+# ----------------------------------------------------------------------
+# Compiled probe corpus
+# ----------------------------------------------------------------------
+# Sources for four ELF binaries, one per way the MPI probe can decide. They
+# call ``MPI_Init`` without any MPI implementation: a stub ``libmpi.so.40``
+# defines the symbol, which is all the linker and the probe ask for. None of
+# them includes a header, so they compile ``-ffreestanding``.
+
+PROBE_SOURCES: dict[str, str] = {
+    # The MPI runtime: defines MPI_Init.
+    "libmpi.so.40": "int MPI_Init(int *argc, char ***argv) { return argc == 0 && argv == 0; }\n",
+    # The runtime's Fortran bindings: an MPI library that itself calls
+    # MPI_Init, as OpenMPI's libmpi_mpifh does.
+    "libmpi_mpifh.so.40": (
+        "int MPI_Init(int *, char ***);\nint fortran_binding(void) { return MPI_Init(0, 0); }\n"
+    ),
+    # A library that is not part of the runtime and calls MPI_Init, as
+    # Quantum ESPRESSO's libqe_modules does.
+    "libworker.so": (
+        "int MPI_Init(int *, char ***);\nint worker(void) { return MPI_Init(0, 0); }\n"
+    ),
+    "serial.x": "int main(void) { return 0; }\n",
+    "calls_mpi.x": ("int MPI_Init(int *, char ***);\nint main(void) { return MPI_Init(0, 0); }\n"),
+    "library_calls_mpi.x": "int worker(void);\nint main(void) { return worker(); }\n",
+    "runtime_only.x": (
+        "int fortran_binding(void);\nint main(void) { return fortran_binding(); }\n"
+    ),
+}
+
+# What each binary links, in link order.
+PROBE_LINKS: dict[str, tuple[str, ...]] = {
+    "libmpi_mpifh.so.40": ("libmpi.so.40",),
+    "libworker.so": ("libmpi.so.40",),
+    "calls_mpi.x": ("libmpi.so.40",),
+    "library_calls_mpi.x": ("libworker.so", "libmpi.so.40"),
+    "runtime_only.x": ("libmpi_mpifh.so.40",),
+}
+
+
+@pytest.fixture(scope="session")
+def compiled_binaries(tmp_path_factory: Any) -> dict[str, Path]:
+    """Return ELF binaries built from C, keyed by the verdict each must get.
+
+    Keys are ``serial.x`` (no MPI anywhere), ``calls_mpi.x`` (the executable
+    calls MPI_Init), ``library_calls_mpi.x`` (a library it links does) and
+    ``runtime_only.x`` (the only caller is the MPI runtime). Skips when the
+    toolchain to build or inspect them is missing.
+    """
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    if compiler is None:
+        pytest.skip("no C compiler to build the probe binaries")
+    for tool in ("nm", "ldd", "strings"):
+        if shutil.which(tool) is None:
+            pytest.skip(f"{tool} is not installed")
+
+    directory = tmp_path_factory.mktemp("mpi-probe-binaries")
+    built = {}
+    for name, source in PROBE_SOURCES.items():
+        source_path = directory / f"{name.partition('.')[0]}.c"
+        source_path.write_text(source)
+        output = directory / name
+        command = [compiler, "-ffreestanding"]
+        if name.endswith(".so") or ".so." in name:
+            command += ["-shared", "-fPIC"]
+        command += ["-o", str(output), str(source_path), f"-L{directory}"]
+        command += [f"-l:{library}" for library in PROBE_LINKS.get(name, ())]
+        command += [f"-Wl,-rpath,{directory}"]
+        result = subprocess.run(command, capture_output=True, text=True)  # noqa: S603
+        if result.returncode != 0:
+            raise RuntimeError(f"could not build {name}: {result.stderr.strip()}")
+        built[name] = output
+    return built
 
 
 # ----------------------------------------------------------------------
