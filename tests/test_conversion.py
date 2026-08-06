@@ -14,6 +14,7 @@ from koopmans.aiida.conversion import (
     input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
+from tests.fixtures import silicon_pw_input as _pw_input
 
 SI_ALAT_BOHR = 10.2622
 
@@ -358,29 +359,6 @@ class TestDispatcherThreadsParallelization:
 
         build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()), {"pw": object()})
         assert captured["parallelization"] is None
-
-
-def _pw_input(
-    *,
-    pseudo_library: str = "SG15/1.2/PBE/SR",
-    parallelization: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Return a minimal silicon dft_bands input dict for the wiring tests."""
-    d: dict[str, Any] = {
-        "workflow": {"task": "dft_bands", "pseudo_library": pseudo_library},
-        "atoms": {
-            "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
-            "atomic_positions": {
-                "units": "crystal",
-                "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
-            },
-        },
-        "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
-        "calculator_parameters": {"ecutwfc": 20.0},
-    }
-    if parallelization is not None:
-        d["parallelization"] = parallelization
-    return d
 
 
 class TestDftBandsScfMesh:

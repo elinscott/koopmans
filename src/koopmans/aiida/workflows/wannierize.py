@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import prepare_common_inputs
+from koopmans.aiida.workflows import prepare_common_inputs, pw_pseudo_overrides
 from koopmans.aiida.workflows.blocks import (
     create_automatic_blocks,
     create_explicit_blocks,
@@ -307,9 +307,16 @@ def _build_wannierize_blocks_workgraph(
     scf_parameters.get("SYSTEM", {}).pop("nbnd", None)
     nscf_parameters = copy.deepcopy(parameters)
     nscf_parameters.setdefault("SYSTEM", {})["nbnd"] = nbnd
+    pinned = pw_pseudo_overrides(pseudo_family, structure, parameters)
     wannier_overrides: WannierizeOverrides = {
-        "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": scf_parameters}},
-        "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": nscf_parameters}},
+        "scf": {
+            "pseudo_family": pseudo_family,
+            "pw": {"parameters": scf_parameters, **pinned},
+        },
+        "nscf": {
+            "pseudo_family": pseudo_family,
+            "pw": {"parameters": nscf_parameters, **pinned},
+        },
     }
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)

@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import load_code
+from koopmans.aiida.workflows import load_code, pw_pseudo_overrides
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -184,9 +184,10 @@ def dscf_wannier_init_inputs(
         validate_blocks_separate_occ_and_emp(blocks, nocc)
         validate_blocks_cover_all_occ_bands(blocks, nocc)
 
+    pinned = pw_pseudo_overrides(pseudo_family, structure, parameters)
     wannier_overrides: WannierizeOverrides = {
-        "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
-        "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
+        "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters, **pinned}},
+        "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters, **pinned}},
     }
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)

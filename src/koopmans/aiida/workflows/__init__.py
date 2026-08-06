@@ -113,6 +113,39 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     return codes
 
 
+def pw_pseudo_overrides(
+    pseudo_family: str,
+    structure: orm.StructureData,
+    parameters: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the ``pw`` override entries that pin a cutoff-less family's pseudos.
+
+    Empty for a family that publishes recommended cutoffs. Otherwise the
+    family's pseudos, which aiida-quantumespresso's protocol builder accepts
+    only when ``parameters['SYSTEM']`` also carries ``ecutwfc`` and ``ecutrho``.
+
+    Raises:
+        ValueError: If the family publishes no cutoffs and either is absent.
+    """
+    from koopmans.aiida.conversion import get_pseudos_from_family
+    from koopmans.aiida.setup.pseudos import pseudo_family_has_cutoffs
+
+    if pseudo_family_has_cutoffs(pseudo_family):
+        return {}
+
+    system = parameters.get("SYSTEM", {})
+    missing = [key for key in ("ecutwfc", "ecutrho") if key not in system]
+    if missing:
+        raise ValueError(
+            f"The pseudopotential family `{pseudo_family}` publishes no recommended "
+            f"cutoffs, so {' and '.join(f'`{key}`' for key in missing)} must come from "
+            "the input file: set `calculator_parameters.pw.system.ecutwfc` and "
+            "`calculator_parameters.pw.system.ecutrho`."
+        )
+
+    return {"pseudos": get_pseudos_from_family(pseudo_family, structure)}
+
+
 def prepare_common_inputs(
     koopmans_input: KoopmansInput,
     override_keys: list[str],
@@ -121,7 +154,9 @@ def prepare_common_inputs(
 
     Converts the koopmans input into a structure, ensures the pseudo family is
     installed, and builds an overrides dict with a PW parameters entry for each
-    of the requested sub-workflow keys.
+    of the requested sub-workflow keys. A family publishing no recommended
+    cutoffs also has its pseudos pinned in that entry
+    (:func:`pw_pseudo_overrides`).
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -139,6 +174,8 @@ def prepare_common_inputs(
     ensure_pseudo_family_installed(pseudo_family)
 
     pw_overrides: dict[str, Any] = {"parameters": parameters}
+    pw_overrides.update(pw_pseudo_overrides(pseudo_family, structure, parameters))
+
     # The pw entry carries the pw.x parallelization directive: -npool rides
     # settings.cmdline; ntasks rides metadata.options.resources — both survive
     # get_builder_from_protocol's override merge (verified by eager build).
