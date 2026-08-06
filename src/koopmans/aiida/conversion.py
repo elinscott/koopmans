@@ -465,6 +465,9 @@ def kpoints_input_to_kpoints_path(
     Bravais-lattice special points (the legacy ASE vocabulary); when no path
     is given one is generated automatically with seekpath.
 
+    The returned node carries the structure's cell and pbc alongside the
+    k-points and their labels.
+
     Args:
         kpoints: The kpoints input from KoopmansInput.
         structure: The structure to generate k-path for.
@@ -512,6 +515,10 @@ def kpoints_input_to_kpoints_path(
     kpoint_list, label_list = _calculate_kpoints_along_path(path, point_coords, kpoints.density)
 
     kpts = orm.KpointsData()
+    # The cell fixes the reciprocal basis the crystal coordinates below are
+    # expressed in, so anything given this node can measure distances along
+    # the path. Set before the k-points, which are validated against it.
+    kpts.set_cell_from_structure(structure)  # type: ignore[no-untyped-call]
     kpts.set_kpoints(kpoint_list)  # type: ignore[no-untyped-call]
     kpts.labels = label_list
 
