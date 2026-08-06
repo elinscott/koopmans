@@ -493,7 +493,7 @@ def bandstructure(
     for warning in warnings:
         click.echo(f"Warning: {warning}", err=True)
 
-    caption = describe_energy_zero(kind, value, reference, series[0].units)
+    caption = describe_energy_zero(kind, value, reference, (reference or series[0]).units)
 
     if data_path is not None:
         write_series_json(series, data_path)

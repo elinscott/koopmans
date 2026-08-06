@@ -224,7 +224,12 @@ def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
 
     from aiida import orm
 
-    failed = [child for child in node.called_descendants if child.is_failed]
+    failed = sorted(
+        (child for child in node.called_descendants if child.is_failed),
+        key=lambda child: (child.ctime, child.pk),
+    )
+    # The calculation that failed, rather than the chain of workflows that
+    # reported the failure upwards; the last one to start, when several did.
     calculations = [child for child in failed if isinstance(child, orm.CalcJobNode)]
     culprit = (calculations or failed or [node])[-1]
     detail = culprit.exit_message or f"exit status {culprit.exit_status}"
