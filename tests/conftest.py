@@ -13,8 +13,11 @@ Mirrors the layout used by the sibling ``aiida-koopmans2/tests/``.
 from __future__ import annotations
 
 from tests.fixtures import (  # noqa: F401
+    binary_probe,
     clear_database,
     clear_database_after_test,
+    code_without_mpi_flag,
+    compiled_binaries,
     fake_pseudodojo_lda_family,
     fake_sg15_cutoffs_family,
     fake_sg15_fr_cutoffs_family,
@@ -28,8 +31,10 @@ from tests.fixtures import (  # noqa: F401
     installed_wannier_codes,
     localhost_code,
     localhost_computer,
+    replay_probes,
     serialize_workgraph,
     si_external_projector_dir,
+    stub_executable,
     tutorials_dir,
     write_multiframe_xyz,
 )

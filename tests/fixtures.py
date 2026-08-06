@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import io
 import re
+import shutil
+import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -65,6 +67,270 @@ def write_multiframe_xyz() -> Callable[..., Path]:
 
 
 # ----------------------------------------------------------------------
+# Recorded binary-inspection evidence (MPI capability detection)
+# ----------------------------------------------------------------------
+# Transcribed from ``nm -D`` and ``ldd`` run on a Debian box carrying an
+# OpenMPI cmake build of Quantum ESPRESSO 7.4, a serial wannier90 build, and
+# an Intel-MPI wannier90.x under /usr/local/bin.
+
+# ``nm -D`` on an Intel-MPI pw.x, which calls MPI from the executable itself.
+NM_CALLS_MPI_INIT = """\
+                 U mpi_abort_
+                 U mpi_allreduce_
+                 U mpi_init_
+                 U mpi_initialized_
+"""
+
+# ``nm -D`` on the GNU cmake build of pw.x. The MPI Fortran common blocks are
+# copy-relocated into the executable (type B, so defined, not undefined) but
+# no MPI call is: those live in libqe_modules.
+NM_NO_MPI_CALL = """\
+0000000000004380 B mpi_fortran_argvs_null_
+00000000000043a0 B mpi_fortran_bottom_
+                 U _gfortran_set_args
+"""
+
+# ``nm -D`` on a serial wannier90.x: no MPI entry at all.
+NM_SERIAL = """\
+0000000000004140 B __command_line_options_MOD_command_line
+                 U _gfortran_st_write
+"""
+
+# ``nm -D`` on a program that asks whether MPI is running without starting it.
+# ``MPI_Init`` is a substring of every one of these names.
+NM_MPI_INITIALIZED_ONLY = """\
+                 U mpi_initialized_
+                 U MPI_Initialized
+"""
+
+# The libraries of a QE binary, keyed by soname: the MPI calls are in
+# libqe_modules, and the OpenMPI Fortran bindings carry undefined PMPI_Init
+# entries of their own.
+LIBS_QE = {
+    "libqe_pw.so.7": NM_SERIAL,
+    "libqe_modules.so.7": "                 U mpi_init_\n                 U mpi_initialized_\n",
+    "libmpi_mpifh.so.40": "                 U PMPI_Init\n                 U PMPI_Init_thread\n",
+}
+
+# The libraries of a serial program linked with ``-lmpi``: the runtime is
+# there, but nothing outside it calls MPI.
+LIBS_SERIAL_LINKING_MPI = {
+    "libmpi.so.40": "0000000000080bb0 T MPI_Init\n",
+    "libmpi_mpifh.so.40": "                 U PMPI_Init\n                 U PMPI_Init_thread\n",
+    "libopen-pal.so.40": NM_SERIAL,
+    "libc.so.6": NM_SERIAL,
+}
+
+# The libraries of a serial program linked against a parallel build of HDF5.
+# HDF5's own MPI calls are indistinguishable from the program's, so this is
+# read as parallel — the documented residual false positive.
+LIBS_PARALLEL_HDF5 = {
+    "libhdf5.so.1000": "                 U MPI_Init\n                 U MPI_Initialized\n",
+    "libc.so.6": NM_SERIAL,
+}
+
+# The libraries of a genuinely serial wannier90.x.
+LIBS_SERIAL = {
+    "libwannier90.so.4": NM_SERIAL,
+    "libopenblas.so.0": NM_SERIAL,
+}
+
+# ----------------------------------------------------------------------
+# A serial binary whose OpenMPI libraries the loader actually resolves
+# ----------------------------------------------------------------------
+# Recorded from ``int main(void) { return 0; }`` compiled through the OpenMPI
+# wrapper on a Debian box. The wrapper records libmpi_mpifh in DT_NEEDED, and
+# that library carries three undefined PMPI_Init entries — so anything that
+# walks it reads this program as parallel.
+#
+# The Intel-MPI wannier90.x under /usr/local/bin cannot stand in for this: its
+# libmpi.so.12 is unresolvable here, so ``linked_libraries`` drops it and the
+# binary reads serial whether or not the runtime is excluded.
+
+# ``ldd`` on that program: libmpi_mpifh and libmpi both resolve to real files.
+LDD_SERIAL_LINKING_OPENMPI = """\
+\tlinux-vdso.so.1 (0x00007ffcd5dac000)
+\tlibmpi_mpifh.so.40 => /lib/x86_64-linux-gnu/libmpi_mpifh.so.40 (0x00007b656e545000)
+\tlibmpi.so.40 => /lib/x86_64-linux-gnu/libmpi.so.40 (0x00007b656e40e000)
+\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007b656e000000)
+\tlibopen-pal.so.40 => /lib/x86_64-linux-gnu/libopen-pal.so.40 (0x00007b656e35b000)
+\tlibopen-rte.so.40 => /lib/x86_64-linux-gnu/libopen-rte.so.40 (0x00007b656e29c000)
+\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007b656df19000)
+\tlibhwloc.so.15 => /lib/x86_64-linux-gnu/libhwloc.so.15 (0x00007b656e240000)
+\t/lib64/ld-linux-x86-64.so.2 (0x00007b656e5cb000)
+\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007b656dec8000)
+"""
+
+# ``nm -D`` on that program: weak libc references and nothing else.
+NM_SERIAL_MPIF90 = """\
+                 w __cxa_finalize@GLIBC_2.2.5
+                 w __gmon_start__
+                 w _ITM_deregisterTMCloneTable
+                 w _ITM_registerTMCloneTable
+                 U __libc_start_main@GLIBC_2.34
+"""
+
+# ``nm -D`` on OpenMPI's Fortran bindings: the trap, since these are undefined.
+NM_LIBMPI_MPIFH = """\
+                 U PMPI_Init
+                 U PMPI_Initialized
+                 U PMPI_Init_thread
+"""
+
+# ``nm -D`` on the OpenMPI core, which defines MPI_Init rather than calling it.
+NM_LIBMPI = """\
+0000000000080bb0 T MPI_Init
+0000000000080d20 T MPI_Init_thread
+00000000000603e0 T ompi_init_preconnect_mpi
+"""
+
+# That program's whole closure, keyed by the path ``ldd`` resolved. Everything
+# outside the OpenMPI libraries is free of any MPI entry.
+SERIAL_OPENMPI_CLOSURE = {
+    "/lib/x86_64-linux-gnu/libmpi_mpifh.so.40": NM_LIBMPI_MPIFH,
+    "/lib/x86_64-linux-gnu/libmpi.so.40": NM_LIBMPI,
+    "/lib/x86_64-linux-gnu/libopen-pal.so.40": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libopen-rte.so.40": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libc.so.6": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libm.so.6": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libhwloc.so.15": NM_SERIAL,
+    "/lib64/ld-linux-x86-64.so.2": NM_SERIAL,
+    "/lib/x86_64-linux-gnu/libz.so.1": NM_SERIAL,
+}
+
+
+@pytest.fixture
+def binary_probe() -> Callable[..., Any]:
+    """Return a factory building a ``BinaryProbe`` from recorded probe output.
+
+    The factory signature is ``(dynamic_symbols="", library_symbols=None,
+    raw_strings="") -> BinaryProbe``.
+    """
+    from koopmans.aiida.setup.codes import BinaryProbe
+
+    def _build(
+        dynamic_symbols: str = "",
+        library_symbols: dict[str, str] | None = None,
+        raw_strings: str = "",
+    ) -> Any:
+        return BinaryProbe(dynamic_symbols, library_symbols or {}, raw_strings)
+
+    return _build
+
+
+@pytest.fixture
+def replay_probes(monkeypatch: Any, stub_executable: Callable[[str], Path]) -> Callable[..., Path]:
+    """Return a factory replaying recorded ``nm``/``ldd``/``strings`` output.
+
+    The factory signature is ``(dynamic_symbols, ldd_output="",
+    library_symbols=None, raw_strings="") -> Path``, where ``library_symbols``
+    is keyed by the path ``ldd`` resolved. It replaces
+    :func:`koopmans.aiida.setup.codes._run_probe` and returns a real file to
+    probe, so ``collect_mpi_evidence`` runs its whole pipeline — ldd parsing,
+    the runtime skip, the library walk — over the recording.
+    """
+
+    def _install(
+        dynamic_symbols: str,
+        ldd_output: str = "",
+        library_symbols: dict[str, str] | None = None,
+        raw_strings: str = "",
+    ) -> Path:
+        from koopmans.aiida.setup import codes
+
+        executable = stub_executable("recorded.x")
+        libraries = library_symbols or {}
+
+        def _replay(command: list[str], path: str) -> str:
+            if command[0] == "ldd":
+                return ldd_output
+            if command[0] == "strings":
+                return raw_strings
+            if path == str(executable):
+                return dynamic_symbols
+            return libraries.get(path, "")
+
+        monkeypatch.setattr(codes, "_run_probe", _replay)
+        return executable
+
+    return _install
+
+
+# ----------------------------------------------------------------------
+# Compiled probe corpus
+# ----------------------------------------------------------------------
+# Sources for four ELF binaries, one per way the MPI probe can decide. They
+# call ``MPI_Init`` without any MPI implementation: a stub ``libmpi.so.40``
+# defines the symbol, which is all the linker and the probe ask for. None of
+# them includes a header, so they compile ``-ffreestanding``.
+
+PROBE_SOURCES: dict[str, str] = {
+    # The MPI runtime: defines MPI_Init.
+    "libmpi.so.40": "int MPI_Init(int *argc, char ***argv) { return argc == 0 && argv == 0; }\n",
+    # The runtime's Fortran bindings: an MPI library that itself calls
+    # MPI_Init, as OpenMPI's libmpi_mpifh does.
+    "libmpi_mpifh.so.40": (
+        "int MPI_Init(int *, char ***);\nint fortran_binding(void) { return MPI_Init(0, 0); }\n"
+    ),
+    # A library that is not part of the runtime and calls MPI_Init, as
+    # Quantum ESPRESSO's libqe_modules does.
+    "libworker.so": (
+        "int MPI_Init(int *, char ***);\nint worker(void) { return MPI_Init(0, 0); }\n"
+    ),
+    "serial.x": "int main(void) { return 0; }\n",
+    "calls_mpi.x": ("int MPI_Init(int *, char ***);\nint main(void) { return MPI_Init(0, 0); }\n"),
+    "library_calls_mpi.x": "int worker(void);\nint main(void) { return worker(); }\n",
+    "runtime_only.x": (
+        "int fortran_binding(void);\nint main(void) { return fortran_binding(); }\n"
+    ),
+}
+
+# What each binary links, in link order.
+PROBE_LINKS: dict[str, tuple[str, ...]] = {
+    "libmpi_mpifh.so.40": ("libmpi.so.40",),
+    "libworker.so": ("libmpi.so.40",),
+    "calls_mpi.x": ("libmpi.so.40",),
+    "library_calls_mpi.x": ("libworker.so", "libmpi.so.40"),
+    "runtime_only.x": ("libmpi_mpifh.so.40",),
+}
+
+
+@pytest.fixture(scope="session")
+def compiled_binaries(tmp_path_factory: Any) -> dict[str, Path]:
+    """Return ELF binaries built from C, keyed by the verdict each must get.
+
+    Keys are ``serial.x`` (no MPI anywhere), ``calls_mpi.x`` (the executable
+    calls MPI_Init), ``library_calls_mpi.x`` (a library it links does) and
+    ``runtime_only.x`` (the only caller is the MPI runtime). Skips when the
+    toolchain to build or inspect them is missing.
+    """
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    if compiler is None:
+        pytest.skip("no C compiler to build the probe binaries")
+    for tool in ("nm", "ldd", "strings"):
+        if shutil.which(tool) is None:
+            pytest.skip(f"{tool} is not installed")
+
+    directory = tmp_path_factory.mktemp("mpi-probe-binaries")
+    built = {}
+    for name, source in PROBE_SOURCES.items():
+        source_path = directory / f"{name.partition('.')[0]}.c"
+        source_path.write_text(source)
+        output = directory / name
+        command = [compiler, "-ffreestanding"]
+        if name.endswith(".so") or ".so." in name:
+            command += ["-shared", "-fPIC"]
+        command += ["-o", str(output), str(source_path), f"-L{directory}"]
+        command += [f"-l:{library}" for library in PROBE_LINKS.get(name, ())]
+        command += [f"-Wl,-rpath,{directory}"]
+        result = subprocess.run(command, capture_output=True, text=True)  # noqa: S603
+        if result.returncode != 0:
+            raise RuntimeError(f"could not build {name}: {result.stderr.strip()}")
+        built[name] = output
+    return built
+
+
+# ----------------------------------------------------------------------
 # Broken-upstream-fixture overrides
 # ----------------------------------------------------------------------
 # The deprecated ``aiida.manage.tests.pytest_fixtures`` chain calls a
@@ -88,6 +354,47 @@ def clear_database(clear_database_after_test: Any) -> Iterator[None]:
 # ----------------------------------------------------------------------
 # Codes + pseudos for dispatcher tests that build (but do not run) workgraphs
 # ----------------------------------------------------------------------
+
+
+@pytest.fixture
+def stub_executable(tmp_path: Path) -> Callable[[str], Path]:
+    """Return a factory writing an executable shell script that carries no MPI evidence.
+
+    The factory signature is ``(name) -> Path``. A shell script has no dynamic
+    symbols and no linked libraries, so the MPI probe finds nothing and the
+    code registers serial.
+    """
+
+    def _write(name: str = "pw.x") -> Path:
+        path = tmp_path / name
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+        return path
+
+    return _write
+
+
+@pytest.fixture
+def code_without_mpi_flag(stub_executable: Callable[[str], Path]) -> Callable[..., Any]:
+    """Return a factory storing a code whose ``with_mpi`` was never set.
+
+    The factory signature is ``(label, plugin, computer) -> InstalledCode``.
+    It models a code registered before koopmans inspected binaries: aiida-core
+    then takes the ``withmpi`` default of whichever CalcJob is submitted.
+    """
+
+    def _store(label: str, plugin: str | None, computer: Any) -> Any:
+        from aiida.orm import InstalledCode
+
+        return InstalledCode(
+            label=label,
+            computer=computer,
+            filepath_executable=str(stub_executable(f"{label}.x")),
+            default_calc_job_plugin=plugin,
+            with_mpi=None,
+        ).store()
+
+    return _store
 
 
 @pytest.fixture

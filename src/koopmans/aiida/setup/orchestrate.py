@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 import click
@@ -11,6 +12,9 @@ import click
 from .codes import (
     code_exists,
     get_codes_to_register,
+    migrate_code_mpi_flags,
+    print_mpi_decisions,
+    print_mpi_migrations,
     print_setup_summary,
     scan_and_register_codes,
 )
@@ -34,12 +38,17 @@ logger = logging.getLogger(__name__)
 def setup_computers(
     nprocs: int | None = None,
     explicit_codes: dict[str, str] | None = None,
+    serial_labels: Sequence[str] = (),
+    parallel_labels: Sequence[str] = (),
+    migrate: bool = True,
 ) -> None:
     """Detect and set up computers and codes for koopmans.
 
     1. Creates a localhost computer if it doesn't exist.
-    2. Scans PATH for Quantum ESPRESSO executables.
-    3. Registers found executables as AiiDA codes.
+    2. Replaces any already-registered code that runs the wrong way, unless
+       ``migrate`` is false.
+    3. Scans PATH for the executables koopmans runs.
+    4. Registers found executables as AiiDA codes.
     """
     from .codes import code_specs
 
@@ -55,6 +64,15 @@ def setup_computers(
                 if label in existing_codes:
                     existing_codes.remove(label)
 
+    # A code node is immutable, so a code that runs the wrong way can only be
+    # corrected by replacing it. Codes about to be re-registered below are
+    # skipped.
+    if migrate:
+        migrations = migrate_code_mpi_flags(
+            existing_codes, computer, serial_labels, parallel_labels
+        )
+        print_mpi_migrations(migrations)
+
     if existing_codes:
         click.echo(f"\n{len(existing_codes)} code(s) already registered, skipping:")
         for code in existing_codes:
@@ -66,9 +84,12 @@ def setup_computers(
 
     click.echo(f"\nScanning for {len(codes_to_find)} missing executable(s)...")
 
-    found_codes, missing_codes = scan_and_register_codes(codes_to_find, computer, explicit_codes)
+    found_codes, missing_codes, decisions = scan_and_register_codes(
+        codes_to_find, computer, explicit_codes, serial_labels, parallel_labels
+    )
 
     print_setup_summary(existing_codes, found_codes, missing_codes)
+    print_mpi_decisions(decisions)
 
 
 def verify_installation() -> dict[str, bool]:
