@@ -64,7 +64,7 @@ class WorkflowConfig(BaseModel):
         default=True, description="whether or not to calculate the screening parameters ab-initio"
     )
     pseudo_library: str = Field(
-        description="the pseudopotential library to use (for valid options, run `koopmans pseudos list`)"
+        description="the pseudopotential library to use (for valid options, run `koopmans pseudos`)"
     )
     screening_method: CalculateScreeningMethod = Field(
         default=CalculateScreeningMethod.DSCF,

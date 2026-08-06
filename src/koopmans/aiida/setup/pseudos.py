@@ -57,6 +57,79 @@ def pseudo_family_has_cutoffs(pseudo_family: str) -> bool:
     return stringencies is not None and bool(stringencies())
 
 
+_LIBRARY_NOTES = {
+    "SG15": (
+        "SG15/1.0 carries only H and O; every other element is published at 1.2.",
+        "SG15 recommends no cutoffs, so set `ecutwfc` and `ecutrho` in your input file.",
+    ),
+}
+
+
+def available_pseudo_families() -> dict[str, list[str]]:
+    """Return every valid ``pseudo_library`` label, sorted, keyed by library.
+
+    ``aiida-pseudo`` publishes PseudoDojo's and SSSP's labels in exactly the
+    format the field takes, so those are asked rather than written down: the
+    valid families are not the cross-product of their options, and the set
+    grows whenever a library publishes a version. SG15 is not an
+    ``aiida-pseudo`` library, so its labels are enumerated here.
+
+    No profile is needed.
+    """
+    from aiida_pseudo.groups.family import PseudoDojoFamily, SsspFamily
+
+    return {
+        "PseudoDojo": sorted(PseudoDojoFamily.get_valid_labels()),
+        "SSSP": sorted(SsspFamily.get_valid_labels()),
+        "SG15": sorted(
+            f"SG15/{version}/PBE/{relativistic}"
+            for version in _SG15_SUPPORTED_VERSIONS
+            for relativistic in _SG15_SUPPORTED_RELATIVISTIC
+        ),
+    }
+
+
+def installed_pseudo_family_labels() -> set[str]:
+    """Return the labels of the families installed in the koopmans profile.
+
+    Empty when no profile exists yet.
+    """
+    from aiida import orm
+
+    from .profile import load_koopmans_profile, profile_exists
+
+    if not profile_exists():
+        return set()
+
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
+
+    load_koopmans_profile()
+    query = orm.QueryBuilder().append(PseudoPotentialFamily, project=["label"])
+    return {label for (label,) in query.all()}
+
+
+def list_pseudo_families() -> None:
+    """Print every value ``workflow.pseudo_library`` accepts, marking the installed ones."""
+    available = available_pseudo_families()
+    installed = installed_pseudo_family_labels()
+
+    width = max(len(label) for labels in available.values() for label in labels)
+    for library, labels in available.items():
+        click.echo(f"\n{library}")
+        for label in labels:
+            mark = "  [installed]" if label in installed else ""
+            click.echo(f"  {label.ljust(width)}{mark}".rstrip())
+        notes = _LIBRARY_NOTES.get(library)
+        if notes:
+            click.echo("")
+            for note in notes:
+                click.echo(f"  {note}")
+
+    click.echo("\nName one of these as `pseudo_library` in the input file's `workflow` block, and")
+    click.echo("koopmans installs it the first time it is used. To use pseudopotentials of your")
+    click.echo("own, run `aiida-pseudo install family <directory> <label>` and name that label.")
+
+
 def install_pseudo_family(pseudo_family: str) -> None:
     """Install a pseudopotential family. Parse the label and dispatch."""
     parts = pseudo_family.split("/")

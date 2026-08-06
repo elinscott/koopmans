@@ -57,7 +57,8 @@ number will refine them self-consistently.
     :end-at: pseudo_library
 
 determines that PBE will be the base functional that the KI correction is applied on top
-of.
+of. Run ``koopmans pseudos`` to see every library you can name here; koopmans installs
+the one you choose the first time it is used.
 
 The ``atoms`` block describes the cell and the atoms in it, much like a ``Quantum ESPRESSO``
 input file. The positions are Cartesian, in the units the block declares.
