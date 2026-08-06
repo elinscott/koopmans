@@ -751,6 +751,76 @@ class TestKpointMesh:
         assert wg.tasks["wannierize_split_block_1"].inputs["mp_grid"].value == _GRID
 
 
+class TestPerStepKpointMesh:
+    """``kpoints.overrides`` moves one step's mesh and leaves the others alone.
+
+    The scf only has to converge the density, while the nscf mesh is
+    wannier90's ``mp_grid`` — so a denser scf must not drag the
+    wannierization onto a mesh it cannot use, and vice versa.
+    """
+
+    def test_a_denser_scf_leaves_the_wannierization_alone(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The scf entry reaches the scf; nscf and ``mp_grid`` keep the top-level grid."""
+        d = _si_split_dict()
+        d["kpoints"]["overrides"] = {"scf": {"grid": [4, 4, 4]}}
+        wg = _build_plain(d, split_codes)
+        scf_nscf = wg.tasks["scf_nscf"]
+        assert [int(x) for x in scf_nscf.inputs["scf_kpoints"].value.get_kpoints_mesh()[0]] == [
+            4,
+            4,
+            4,
+        ]
+        assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
+        assert wg.tasks["wannierize_block_1"].inputs["mp_grid"].value == _GRID
+
+    def test_the_nscf_entry_sets_the_wannier_mesh(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A 3x3x3 nscf reaches both the nscf k-list and the ``.win`` ``mp_grid``.
+
+        The two have to move together: wannier90 reads the k-list against
+        the dimensions, and an ``mp_grid`` left on the old mesh describes a
+        different Brillouin-zone sampling from the one the nscf ran.
+        """
+        d = _si_split_dict()
+        d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
+        wg = _build_plain(d, split_codes)
+        scf_nscf = wg.tasks["scf_nscf"]
+        assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == 27
+        assert wg.tasks["wannierize_block_1"].inputs["mp_grid"].value == [3, 3, 3]
+        # The scf still samples the top-level grid, which the entry did not touch.
+        _assert_scf_mesh(scf_nscf.inputs["scf_kpoints"].value)
+
+    def test_a_block_route_scf_grid_spacing_reaches_its_scf(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The block route carries the spacing in the scf overrides, with no mesh."""
+        d = _si_split_dict()
+        d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
+        wg = _build_plain(d, split_codes)
+        scf_nscf = wg.tasks["scf_nscf"]
+        assert scf_nscf.inputs["scf_kpoints"].value is None
+        assert scf_nscf.inputs["overrides"].value["scf"]["kpoints_distance"] == pytest.approx(0.11)
+
+    def test_an_scf_grid_spacing_reaches_the_workchain(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The spacing arrives as the scf's own ``kpoints_distance``, with no mesh.
+
+        The whole-manifold route builds its scf inside
+        ``Wannier90WorkChain``, whose protocol supplies a distance of its
+        own — the input file's value has to be the one that survives.
+        """
+        d = _si_auto_dict()
+        d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
+        wg = _build_plain(d, split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        assert w90_task.inputs["scf"]["kpoints"].value is None
+        assert float(w90_task.inputs["scf"]["kpoints_distance"].value) == pytest.approx(0.11)
+
+
 class TestPlainRoute:
     """Routing and gating without ``block_wannierization_threshold``."""
 

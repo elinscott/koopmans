@@ -364,6 +364,7 @@ def _pw_input(
     *,
     pseudo_library: str = "SG15/1.2/PBE/SR",
     parallelization: dict[str, Any] | None = None,
+    kpoints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a minimal silicon dft_bands input dict for the wiring tests."""
     d: dict[str, Any] = {
@@ -375,7 +376,7 @@ def _pw_input(
                 "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
             },
         },
-        "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+        "kpoints": kpoints or {"grid": [2, 2, 2], "offset": [0, 0, 0]},
         "calculator_parameters": {"ecutwfc": 20.0},
     }
     if parallelization is not None:
@@ -404,6 +405,93 @@ class TestDftBandsScfMesh:
         assert list(scf["kpoints"].value.get_kpoints_mesh()[0]) == [2, 2, 2]
         assert scf["kpoints_distance"].value is None
         assert wg.tasks["PwBandsWorkChain"].inputs["bands"]["kpoints"].value is None
+
+    def test_the_scf_entry_moves_the_scf_mesh_alone(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The scf converges the density on its own mesh, denser than the rest."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                kpoints={"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}},
+            )
+        )
+        wg = build_workgraph(inp)
+        scf = wg.tasks["PwBandsWorkChain"].inputs["scf"]
+        assert list(scf["kpoints"].value.get_kpoints_mesh()[0]) == [4, 4, 4]
+
+    def test_a_grid_spacing_reaches_the_scf_as_a_distance(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """``grid_spacing`` leaves the dimensions to the cell, not to a protocol.
+
+        The value has to arrive as the workchain's own ``kpoints_distance``,
+        with no mesh alongside it: the two inputs exclude each other, and a
+        mesh would win.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                kpoints={"grid": [2, 2, 2], "overrides": {"scf": {"grid_spacing": 0.11}}},
+            )
+        )
+        wg = build_workgraph(inp)
+        scf = wg.tasks["PwBandsWorkChain"].inputs["scf"]
+        assert scf["kpoints"].value is None
+        assert float(scf["kpoints_distance"].value) == pytest.approx(0.11)
+
+    def test_an_nscf_entry_is_rejected(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """There is no nscf step here for the mesh to reach."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                kpoints={"grid": [2, 2, 2], "overrides": {"nscf": {"grid": [4, 4, 4]}}},
+            )
+        )
+        with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_bands"):
+            build_workgraph(inp)
+
+
+class TestStepKpointsMesh:
+    """A step's mesh is its own attributes laid over the top-level ones."""
+
+    @pytest.mark.parametrize(
+        ("override", "grid", "offset"),
+        [
+            (None, [2, 2, 2], [0.0, 0.5, 0.0]),
+            ({"grid": [4, 4, 4]}, [4, 4, 4], [0.0, 0.5, 0.0]),
+            ({"offset": [0.5, 0.5, 0.5]}, [2, 2, 2], [0.5, 0.5, 0.5]),
+            ({"grid": [4, 4, 4], "offset": [0.0, 0.0, 0.0]}, [4, 4, 4], [0.0, 0.0, 0.0]),
+        ],
+    )
+    def test_unset_attributes_come_from_the_top_level(
+        self,
+        aiida_profile: Any,
+        override: dict[str, Any] | None,
+        grid: list[int],
+        offset: list[float],
+    ) -> None:
+        """An entry states only what differs; the rest is the top-level mesh."""
+        from koopmans.aiida.conversion import step_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput.model_validate(
+            {"grid": [2, 2, 2], "offset": [0.0, 0.5, 0.0], "overrides": {"scf": override}}
+        )
+        mesh, mesh_offset = step_kpoints_mesh(kpoints, "scf").get_kpoints_mesh()  # type: ignore[no-untyped-call]
+        assert [int(x) for x in mesh] == grid
+        assert list(mesh_offset) == offset
 
 
 class TestKpointsOffsetConversion:

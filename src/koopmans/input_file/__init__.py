@@ -355,8 +355,9 @@ class KoopmansInput(BaseModel):
                 "the density of a mesh. Rename it."
             )
         overrides = kpoints.get("overrides") or {}
-        if kpoints.get("gamma_only") and overrides:
-            step = sorted(overrides)[0]
+        steps = sorted(step for step, entry in overrides.items() if entry is not None)
+        if kpoints.get("gamma_only") and steps:
+            step = steps[0]
             raise ValueError(
                 f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
                 "every step samples Gamma alone. Give a `grid` instead of `gamma_only`."
