@@ -274,4 +274,4 @@ which means one constrained calculation per orbital rather than one in total.
 All of those calculations, each restarting from the right predecessor, with occupations
 constrained orbital by orbital and the screening formula applied to every result: that
 is the bookkeeping the ``koopmans`` package takes care of. The :doc:`next part
-<automated>` runs this same calculation, in one command.
+<automatically>` runs this same calculation, in one command.

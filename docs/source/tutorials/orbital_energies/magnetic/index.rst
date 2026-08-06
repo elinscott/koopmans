@@ -14,8 +14,9 @@ total-energy differences.
     This tutorial has not been written yet. It is tracked by `issue #75
     <https://github.com/elinscott/koopmans/issues/75>`_.
 
-A challenge in the meantime: modify the :doc:`ozone tutorial's <../ozone/automated>` input
-file for molecular oxygen, and see whether the IP and EA compare as well to experiment.
+A challenge in the meantime: modify the :doc:`ozone tutorial's
+<../ozone/automatically>` input file for molecular oxygen, and see whether the IP and
+EA compare as well to experiment.
 O₂ is a linear molecule with a bond length of 1.21 Å, and — unlike ozone — it is
 paramagnetic, so its two spin channels differ.
 

@@ -14,8 +14,7 @@ is in full:
 .. literalinclude:: ozone.yaml
     :language: yaml
 
-The comments say what each keyword is; the ``workflow`` block is worth a little more
-than that:
+The ``workflow`` block is worth dwelling on in a little more detail:
 
 - ``screening_method: dscf`` means that, for each orbital, the code performs constrained
   calculations with :math:`N`, :math:`N-1`, or :math:`N+1` electrons and compares the
