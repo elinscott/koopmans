@@ -4,6 +4,11 @@ These tests exercise the koopmans-managed HQ binary install and the
 server/worker process helpers in :mod:`koopmans.aiida.setup.hq`. We
 mock the network download so the suite stays self-contained.
 
+The worker-lifecycle tests run against ``fake_hq``, a stub ``hq``
+executable in a tmp dir that records the argv koopmans builds and serves
+a canned ``worker list``. Nothing here touches the live HQ server or the
+``koopmans`` profile.
+
 The lifecycle test is gated on the actual ``hq`` binary being installed
 (via the bundled installer). It boots a real HQ server + worker, checks
 they appear in :func:`is_hq_server_running` / :func:`is_hq_worker_running`,
@@ -14,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import platform
 import tarfile
@@ -178,12 +184,275 @@ def test_hq_lifecycle_with_real_binary(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert hq_mod.start_hq_server(wait=True)
     try:
         assert hq_mod.is_hq_server_running()
-        assert hq_mod.start_hq_worker(wait=True, resources=1)
+        assert hq_mod.start_hq_worker(wait=True, cpus=1)
         assert hq_mod.is_hq_worker_running()
     finally:
         hq_mod.stop_hq()
     assert not hq_mod.is_hq_server_running()
     assert not hq_mod.is_hq_worker_running()
+
+
+FAKE_HQ = '''#!/usr/bin/env python3
+"""Stand-in for the ``hq`` binary: records its argv, serves a canned worker list."""
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+with open(os.environ["KOOPMANS_TEST_HQ_LOG"], "a") as log:
+    log.write(json.dumps(args) + "\\n")
+
+workers_path = os.environ["KOOPMANS_TEST_HQ_WORKERS"]
+verb = [arg for arg in args if not arg.startswith("-")][:2]
+
+if verb == ["server", "info"]:
+    sys.exit(0 if os.environ.get("KOOPMANS_TEST_HQ_SERVER", "1") == "1" else 1)
+if verb == ["worker", "list"]:
+    with open(workers_path) as handle:
+        sys.stdout.write(handle.read())
+elif verb == ["worker", "stop"]:
+    with open(workers_path, "w") as handle:
+        json.dump([], handle)
+elif verb == ["worker", "start"]:
+    cpus = int(args[args.index("--cpus") + 1])
+    with open(workers_path) as handle:
+        workers = json.load(handle)
+    workers.append(
+        {
+            "id": len(workers) + 1,
+            "configuration": {
+                "resources": {
+                    "resources": [
+                        {"kind": "range", "name": "cpus", "start": 0, "end": cpus - 1}
+                    ]
+                }
+            },
+        }
+    )
+    with open(workers_path, "w") as handle:
+        json.dump(workers, handle)
+sys.exit(0)
+'''
+
+
+class FakeHq:
+    """A stub ``hq`` binary plus the state the tests read back from it."""
+
+    def __init__(self, log: Path, workers: Path) -> None:
+        """Record where the stub logs its argv and stores its worker list."""
+        self._log = log
+        self._workers = workers
+
+    @property
+    def commands(self) -> list[list[str]]:
+        """Every argv the stub was invoked with, in order."""
+        if not self._log.exists():
+            return []
+        return [json.loads(line) for line in self._log.read_text().splitlines()]
+
+    def set_workers(self, *cpus: int) -> None:
+        """Make the stub report one running worker per given CPU pool."""
+        self._workers.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": index + 1,
+                        "configuration": {
+                            "resources": {
+                                "resources": [
+                                    {"kind": "sum", "name": "mem", "size": 1},
+                                    {
+                                        "kind": "range",
+                                        "name": "cpus",
+                                        "start": 0,
+                                        "end": pool - 1,
+                                    },
+                                ]
+                            }
+                        },
+                    }
+                    for index, pool in enumerate(cpus)
+                ]
+            )
+        )
+
+
+@pytest.fixture
+def fake_hq(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeHq:
+    """Point the HQ helpers at a stub binary and a tmp koopmans-managed dir.
+
+    The stub is a real executable reached through ``subprocess``, so the tests
+    exercise the argv koopmans builds and the JSON it parses back, not a
+    stand-in for :func:`~koopmans.aiida.setup.hq._run_hq`.
+    """
+    from koopmans.aiida.setup import hq as hq_mod
+    from koopmans.aiida.setup import profile as profile_mod
+
+    monkeypatch.setattr(profile_mod, "koopmans_dir", lambda: tmp_path)
+    monkeypatch.setattr(hq_mod, "koopmans_dir", lambda: tmp_path)
+
+    binary = tmp_path / "fake-hq"
+    binary.write_text(FAKE_HQ)
+    binary.chmod(0o755)
+    monkeypatch.setenv("KOOPMANS_HQ_BINARY", str(binary))
+
+    workers = tmp_path / "workers.json"
+    workers.write_text("[]")
+    monkeypatch.setenv("KOOPMANS_TEST_HQ_WORKERS", str(workers))
+    monkeypatch.setenv("KOOPMANS_TEST_HQ_LOG", str(tmp_path / "argv.log"))
+    monkeypatch.delenv("KOOPMANS_MAX_PROCS", raising=False)
+
+    return FakeHq(log=tmp_path / "argv.log", workers=workers)
+
+
+class TestWorkerDetection:
+    """Whether a worker is running is HQ's answer, not a pidfile's."""
+
+    @staticmethod
+    def test_worker_koopmans_did_not_spawn_is_reported_running(fake_hq: FakeHq) -> None:
+        """A hand-started worker has no pidfile, and must still be seen.
+
+        This is the reported bug: ``koopmans backend status`` printed
+        ``✗ hq.worker`` while a worker started with ``hq worker start --cpus 24``
+        had been up for hours running jobs.
+        """
+        from koopmans.aiida.setup.hq import is_hq_worker_running, running_hq_workers
+
+        fake_hq.set_workers(24)
+
+        assert is_hq_worker_running()
+        assert [(w.id, w.cpus) for w in running_hq_workers()] == [(1, 24)]
+
+    @staticmethod
+    def test_pidfile_without_a_worker_is_reported_not_running(
+        fake_hq: FakeHq, tmp_path: Path
+    ) -> None:
+        """A pidfile naming a live process does not make a worker exist.
+
+        The converse of the bug above, and what stops the fix from being "always
+        true": the pid here is this test process, which is certainly alive.
+        """
+        from koopmans.aiida.setup.hq import is_hq_worker_running
+
+        (tmp_path / "hq.worker.pid").write_text(f"{os.getpid()}\n")
+
+        assert not is_hq_worker_running()
+
+    @staticmethod
+    def test_server_koopmans_did_not_spawn_is_reported_running(fake_hq: FakeHq) -> None:
+        """A server with no pidfile is seen, so its state dir is not deleted.
+
+        ``start_hq_server`` clears the server dir whenever the server reads as
+        absent, which would take the state file out from under a live server.
+        """
+        from koopmans.aiida.setup.hq import is_hq_server_running
+
+        assert is_hq_server_running()
+
+
+class TestWorkerCommands:
+    """``koopmans backend hq`` drives the worker after installation."""
+
+    @staticmethod
+    def _invoke(args: list[str]) -> Any:
+        from click.testing import CliRunner
+
+        from koopmans import cli
+
+        return CliRunner().invoke(cli.cli, args)
+
+    def test_start_passes_its_cpu_count_through(self, fake_hq: FakeHq) -> None:
+        """``--max-procs 7`` reaches ``hq worker start --cpus 7``.
+
+        Establishes that the pool the user asks for is the pool the worker
+        advertises, rather than being defaulted away to the core count.
+        """
+        result = self._invoke(["backend", "hq", "start", "--max-procs", "7"])
+
+        assert result.exit_code == 0, result.output
+        assert ["worker", "start", "--cpus", "7"] in fake_hq.commands
+
+    def test_stop_asks_hq_rather_than_signalling_a_pid(
+        self, fake_hq: FakeHq, tmp_path: Path
+    ) -> None:
+        """A worker koopmans did not spawn is stopped, not just seen.
+
+        The pidfile here names a dead process, as it does whenever a
+        koopmans-spawned worker has been replaced by a hand-started one. Sending
+        that pid a signal would stop nothing.
+        """
+        from koopmans.aiida.setup.hq import is_hq_worker_running
+
+        fake_hq.set_workers(24)
+        (tmp_path / "hq.worker.pid").write_text("999999999\n")
+
+        result = self._invoke(["backend", "hq", "stop"])
+
+        assert result.exit_code == 0, result.output
+        assert ["worker", "stop", "all"] in fake_hq.commands
+        assert not is_hq_worker_running()
+
+    def test_restart_stops_before_it_starts(self, fake_hq: FakeHq) -> None:
+        """Restart resizes the pool, which needs the old worker gone first."""
+        fake_hq.set_workers(24)
+
+        result = self._invoke(["backend", "hq", "restart", "--max-procs", "12"])
+
+        assert result.exit_code == 0, result.output
+        issued = [c for c in fake_hq.commands if c[:1] == ["worker"] and c[1] != "list"]
+        assert issued == [["worker", "stop", "all"], ["worker", "start", "--cpus", "12"]]
+
+    def test_restart_leaves_the_server_up(self, fake_hq: FakeHq) -> None:
+        """Restarting the worker must not discard the queue the server holds."""
+        fake_hq.set_workers(24)
+
+        assert self._invoke(["backend", "hq", "restart"]).exit_code == 0
+        assert not [c for c in fake_hq.commands if c[:2] == ["server", "stop"]]
+
+    def test_status_reports_the_pool_and_the_default_calc_size(
+        self, fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Status shows both numbers, so a pool too small to schedule is visible.
+
+        A pool below the default MPI ranks per calculation leaves every
+        default-sized calculation queued forever rather than failing.
+        """
+        from koopmans.aiida.setup import orchestrate
+
+        fake_hq.set_workers(12)
+        monkeypatch.setattr(orchestrate, "_default_procs_per_calc", lambda: 14)
+
+        result = self._invoke(["backend", "hq", "status"])
+
+        assert result.exit_code == 0, result.output
+        assert "pool of 12 CPU(s)" in result.output
+        assert "14 MPI rank(s) by default" in result.output
+
+
+def test_install_sizes_the_pool_and_the_calc_separately(
+    fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--max-procs`` sets the worker pool; ``--procs-per-calc`` the calc size.
+
+    Pins the separation so a later edit cannot quietly route one flag into both:
+    the assertion fails if either number reaches the wrong consumer.
+    """
+    from click.testing import CliRunner
+
+    from koopmans import cli
+
+    recorded: dict[str, Any] = {}
+
+    monkeypatch.setattr(cli, "setup_profile", lambda **kwargs: None)
+    monkeypatch.setattr(cli, "install_hq_binary", lambda: None)
+    monkeypatch.setattr(cli, "_start_daemon_with_caching", lambda cache: None)
+    monkeypatch.setattr(cli, "setup_computers", lambda **kwargs: recorded.update(kwargs))
+
+    result = CliRunner().invoke(cli.cli, ["install", "--procs-per-calc", "4", "--max-procs", "12"])
+
+    assert result.exit_code == 0, result.output
+    assert recorded["nprocs"] == 4
+    assert ["worker", "start", "--cpus", "12"] in fake_hq.commands
 
 
 def test_get_localhost_computer_uses_hyperqueue(

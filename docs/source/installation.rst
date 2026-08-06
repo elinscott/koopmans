@@ -114,8 +114,28 @@ for any other reason, start it again with
 
     $ koopmans backend daemon start
 
-and stop it with ``koopmans backend daemon stop``. ``koopmans backend uninstall``
-removes the whole setup, database included.
+and stop it with ``koopmans backend daemon stop``.
+
+The scheduler that hands your calculations onto the machine's cores has its own worker
+process, managed the same way:
+
+.. code-block:: console
+
+    $ koopmans backend hq status
+    HyperQueue server is running.
+      worker 3: pool of 24 CPU(s)
+      each calculation is given 14 MPI rank(s) by default
+
+Start it with ``koopmans backend hq start`` if it is not running. To change the pool
+without reinstalling, restart the worker with a new size:
+
+.. code-block:: console
+
+    $ koopmans backend hq restart --max-procs 12
+
+``koopmans backend hq stop`` stops the worker but leaves the scheduler running, so
+queued and running jobs survive. ``koopmans backend uninstall`` removes the whole
+setup, database included.
 
 ****************************
  Installing for development

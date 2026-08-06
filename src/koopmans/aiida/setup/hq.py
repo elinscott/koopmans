@@ -7,16 +7,23 @@ core-aware. This replaces the ``core.direct`` fire-and-forget submission
 that would otherwise let the per-orbital DSCF fan-out oversubscribe the
 machine.
 
-The integration is invisible to end users by design. Customisation is
-opt-in via env vars (no CLI flags beyond ``koopmans install
---max-procs``):
+``koopmans install`` brings the pair up; ``koopmans backend hq
+start|stop|restart|status`` drives the worker afterwards, which is how
+you recover a worker that died or resize its CPU pool. Everything else
+is opt-in via env vars:
 
 * ``KOOPMANS_HQ_BINARY`` — absolute path to a pre-installed ``hq``
   binary; if set we skip the auto-download.
-* ``KOOPMANS_MAX_PROCS`` — integer cap on the worker's advertised CPU
-  pool. Same as ``koopmans install --max-procs``. Defaults to the box's
-  physical core count.
+* ``KOOPMANS_MAX_PROCS`` — the worker's advertised CPU pool. Same as
+  ``--max-procs`` on ``koopmans install`` and ``koopmans backend hq
+  start``. Defaults to the box's physical core count.
 * ``KOOPMANS_HQ_PORT`` — override the HQ server's default port.
+
+Whether a server or worker is running is answered by asking HQ, not by
+reading the pidfiles :func:`_spawn_hq_process` writes: a process koopmans
+did not spawn has no pidfile and must still be visible and stoppable.
+The pidfiles remain as the only way to signal a process once the HQ
+binary or the server is gone.
 
 HQ is required for the localhost backend — there is no ``core.direct``
 fallback. Install failure (unsupported platform, network error, checksum
@@ -26,6 +33,7 @@ error.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -33,6 +41,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 import click
 
@@ -201,34 +210,68 @@ def _hq_env() -> dict[str, str]:
     return env
 
 
-def is_hq_server_running() -> bool:
-    """Return True if the koopmans HQ server is running."""
-    pid = _read_pidfile(_hq_pidfile("server"))
-    if pid is None or not _process_alive(pid):
-        return False
+def _run_hq(args: list[str], timeout: int = 5) -> subprocess.CompletedProcess[str] | None:
+    """Run ``hq`` against the koopmans server dir, or None if it cannot run."""
     binary = hq_binary()
     if binary is None:
-        return False
+        return None
     try:
-        result = subprocess.run(  # noqa: S603 - binary path validated by hq_binary()
-            [str(binary), "server", "info"],
+        return subprocess.run(  # noqa: S603 - binary path validated by hq_binary()
+            [str(binary), *args],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=timeout,
             env=_hq_env(),
             check=False,
         )
     except (subprocess.SubprocessError, OSError):
-        return False
-    return result.returncode == 0
+        return None
+
+
+def is_hq_server_running() -> bool:
+    """Return True if a HQ server owns the koopmans server dir."""
+    result = _run_hq(["server", "info"])
+    return result is not None and result.returncode == 0
+
+
+class HqWorker(NamedTuple):
+    """A worker registered with the koopmans HQ server."""
+
+    id: int
+    cpus: int
+
+
+def running_hq_workers() -> list[HqWorker]:
+    """Return the workers currently running against the koopmans server dir.
+
+    Empty when the server is down, when ``hq`` is unavailable, or when its
+    output cannot be parsed — every caller treats those the same as "no
+    worker", and a worker that cannot be listed cannot be managed either.
+    """
+    result = _run_hq(["--output-mode=json", "worker", "list"])
+    if result is None or result.returncode != 0:
+        return []
+    try:
+        listed = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        logger.warning("could not parse `hq worker list` output as JSON")
+        return []
+
+    workers = []
+    for entry in listed:
+        try:
+            resources = entry["configuration"]["resources"]["resources"]
+            cpus = next(r for r in resources if r["name"] == "cpus")
+            # HQ reports the CPU pool as an inclusive index range.
+            workers.append(HqWorker(id=int(entry["id"]), cpus=cpus["end"] - cpus["start"] + 1))
+        except (KeyError, TypeError, ValueError, StopIteration):
+            logger.warning("skipping an `hq worker list` entry with no CPU count")
+    return workers
 
 
 def is_hq_worker_running() -> bool:
-    """Return True if the koopmans HQ worker is running."""
-    pid = _read_pidfile(_hq_pidfile("worker"))
-    if pid is None:
-        return False
-    return _process_alive(pid)
+    """Return True if any HQ worker is running against the koopmans server dir."""
+    return bool(running_hq_workers())
 
 
 def _spawn_hq_process(args: list[str], role: str) -> int:
@@ -284,7 +327,7 @@ def start_hq_server(wait: bool = True) -> bool:
     return False
 
 
-def stop_hq_server() -> bool:  # noqa: C901
+def stop_hq_server() -> bool:
     """Stop the HQ server (and any worker spawned against it)."""
     pid_path = _hq_pidfile("server")
     if not is_hq_server_running():
@@ -292,18 +335,8 @@ def stop_hq_server() -> bool:  # noqa: C901
             pid_path.unlink()
         return True
 
-    binary = hq_binary()
-    if binary is not None:
-        try:
-            subprocess.run(  # noqa: S603
-                [str(binary), "server", "stop"],
-                capture_output=True,
-                timeout=10,
-                env=_hq_env(),
-                check=False,
-            )
-        except (subprocess.SubprocessError, OSError) as exc:
-            logger.warning("hq server stop failed: %s", exc)
+    if _run_hq(["server", "stop"], timeout=10) is None:
+        logger.warning("could not run `hq server stop`")
 
     pid = _read_pidfile(pid_path)
     if pid is not None and _process_alive(pid):
@@ -324,13 +357,33 @@ def stop_hq_server() -> bool:  # noqa: C901
     return not is_hq_server_running()
 
 
-def start_hq_worker(wait: bool = True, resources: int | None = None) -> bool:  # noqa: C901
-    """Start the HQ worker process advertising ``resources`` CPUs.
+def worker_cpus(cpus: int | None = None) -> int:
+    """Return the CPU pool to advertise, resolving the default.
+
+    ``cpus`` wins; then ``KOOPMANS_MAX_PROCS``; then the box's physical core
+    count. This is the size of the machine, not the size of a calculation —
+    ``--procs-per-calc`` sets the latter on the localhost Computer.
+    """
+    if cpus is not None:
+        return cpus
+    env_override = os.environ.get("KOOPMANS_MAX_PROCS")
+    if env_override:
+        try:
+            return int(env_override)
+        except ValueError:
+            logger.warning("KOOPMANS_MAX_PROCS=%r is not an integer; ignoring", env_override)
+    return detect_num_cores()
+
+
+def start_hq_worker(wait: bool = True, cpus: int | None = None) -> bool:
+    """Start a HQ worker advertising ``cpus`` CPUs.
+
+    Does nothing if a worker is already running, whoever started it. Returns
+    False if the worker never registers with the server.
 
     Args:
         wait: poll until the worker registers with the server.
-        resources: CPU count to advertise. Defaults to ``KOOPMANS_MAX_PROCS``
-            env var, falling back to the box's physical core count.
+        cpus: CPU pool to advertise; see :func:`worker_cpus` for the default.
     """
     if is_hq_worker_running():
         return True
@@ -339,70 +392,56 @@ def start_hq_worker(wait: bool = True, resources: int | None = None) -> bool:  #
     if binary is None:
         return False
 
-    if resources is None:
-        env_override = os.environ.get("KOOPMANS_MAX_PROCS")
-        if env_override:
-            try:
-                resources = int(env_override)
-            except ValueError:
-                logger.warning(
-                    "KOOPMANS_MAX_PROCS=%r is not an integer; ignoring",
-                    env_override,
-                )
-                resources = None
-    if resources is None:
-        resources = detect_num_cores()
-
-    args = [str(binary), "worker", "start", "--cpus", str(resources)]
+    args = [str(binary), "worker", "start", "--cpus", str(worker_cpus(cpus))]
     _spawn_hq_process(args, role="worker")
 
     if not wait:
         return True
     for _ in range(60):
         if is_hq_worker_running():
-            try:
-                result = subprocess.run(  # noqa: S603
-                    [str(binary), "worker", "list", "--filter", "running"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    env=_hq_env(),
-                    check=False,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    return True
-            except (subprocess.SubprocessError, OSError):
-                pass
+            return True
         time.sleep(0.5)
-    return is_hq_worker_running()
+    return False
 
 
 def stop_hq_worker() -> bool:
-    """Stop the HQ worker process."""
+    """Stop every HQ worker running against the koopmans server dir.
+
+    Asks HQ rather than signalling a pid, so a worker koopmans did not spawn
+    is stopped too.
+    """
     pid_path = _hq_pidfile("worker")
     if not is_hq_worker_running():
         if pid_path.exists():
             pid_path.unlink()
         return True
 
-    pid = _read_pidfile(pid_path)
-    if pid is None:
-        return True
+    if _run_hq(["worker", "stop", "all"], timeout=10) is None:
+        logger.warning("could not run `hq worker stop`")
 
-    try:
-        os.kill(pid, 15)
-    except OSError:
-        pass
     for _ in range(20):
-        if not _process_alive(pid):
+        if not is_hq_worker_running():
             break
         time.sleep(0.25)
+
     if pid_path.exists():
         pid_path.unlink()
     return not is_hq_worker_running()
 
 
-def ensure_hq_running(resources: int | None = None) -> bool:
+def restart_hq_worker(cpus: int | None = None) -> bool:
+    """Stop the running worker, then start one advertising ``cpus`` CPUs.
+
+    The server is left up: it holds the queue and the job records the AiiDA
+    daemon is waiting on.
+    """
+    if not stop_hq_worker():
+        logger.warning("HQ worker failed to stop.")
+        return False
+    return start_hq_worker(wait=True, cpus=cpus)
+
+
+def ensure_hq_running(cpus: int | None = None) -> bool:
     """Ensure the HQ server + worker are up.
 
     Assumes :func:`install_hq_binary` has already placed a usable ``hq``
@@ -415,7 +454,7 @@ def ensure_hq_running(resources: int | None = None) -> bool:
     if not server_ok:
         logger.warning("HQ server failed to start.")
         return False
-    worker_ok = start_hq_worker(wait=True, resources=resources)
+    worker_ok = start_hq_worker(wait=True, cpus=cpus)
     if not worker_ok:
         logger.warning("HQ worker failed to start.")
         return False

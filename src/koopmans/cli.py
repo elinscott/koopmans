@@ -23,8 +23,15 @@ from koopmans.aiida.dumping import dump_workgraph, trained_model_output
 from koopmans.aiida.progress import run_with_progress
 from koopmans.aiida.setup.codes import list_codes
 from koopmans.aiida.setup.daemon import is_daemon_running, start_daemon, stop_daemon
-from koopmans.aiida.setup.hq import ensure_hq_running, install_hq_binary
+from koopmans.aiida.setup.hq import (
+    ensure_hq_running,
+    install_hq_binary,
+    is_hq_worker_running,
+    restart_hq_worker,
+    stop_hq_worker,
+)
 from koopmans.aiida.setup.orchestrate import (
+    print_hq_status,
     print_status,
     setup_computers,
     uninstall_backend,
@@ -113,6 +120,16 @@ cache_option = click.option(
     help="Enable AiiDA caching to reuse results from previous identical calculations.",
 )
 
+max_procs_option = click.option(
+    "--max-procs",
+    type=int,
+    default=None,
+    help=(
+        "Total MPI ranks allowed concurrently across all running calcs. "
+        "Default: physical core count."
+    ),
+)
+
 
 def _validate_code_labels(labels: tuple[str, ...], param_hint: str) -> set[str]:
     """Return the given code labels, rejecting any koopmans does not register.
@@ -183,15 +200,7 @@ def _reject_parallel_on_serial_codes(labels: set[str]) -> None:
         "orphans the results cached against it; --no-migrate leaves them as they are."
     ),
 )
-@click.option(
-    "--max-procs",
-    type=int,
-    default=None,
-    help=(
-        "Total MPI ranks allowed concurrently across all running calcs. "
-        "Default: physical core count."
-    ),
-)
+@max_procs_option
 @cache_option
 def install(
     use_postgres: bool,
@@ -257,7 +266,7 @@ def install(
     # which surfaces to the user as a clear install failure.
     click.echo("\nInstalling HyperQueue...")
     install_hq_binary()
-    if not ensure_hq_running(resources=max_procs):
+    if not ensure_hq_running(cpus=max_procs):
         raise click.ClickException(
             "Failed to start HyperQueue. The localhost backend requires HQ; "
             "inspect the log under ${AIIDA_CONFIG}/koopmans/ for details."
@@ -360,6 +369,67 @@ def daemon_status() -> None:
         click.echo("Daemon is running.")
     else:
         click.echo("Daemon is not running.")
+
+
+@backend.group()
+def hq() -> None:
+    """Manage the HyperQueue worker that runs your calculations."""
+
+
+@hq.command(name="start")
+@max_procs_option
+def hq_start(max_procs: int | None) -> None:
+    """Start the HyperQueue worker.
+
+    Brings the HyperQueue server up first if it is down. Does nothing if a
+    worker is already running; use ``restart`` to change its CPU pool.
+    """
+    if is_hq_worker_running():
+        click.echo("HyperQueue worker is already running.")
+        print_hq_status()
+        return
+    click.echo("Starting HyperQueue worker...")
+    if not ensure_hq_running(cpus=max_procs):
+        raise click.ClickException(
+            "Failed to start the HyperQueue worker; inspect the log under "
+            "${AIIDA_CONFIG}/koopmans/hq.worker.log for details."
+        )
+    print_hq_status()
+
+
+@hq.command(name="stop")
+def hq_stop() -> None:
+    """Stop the HyperQueue worker.
+
+    Leaves the HyperQueue server up, so queued and running jobs are not lost.
+    ``koopmans backend uninstall`` removes the server as well.
+    """
+    if not is_hq_worker_running():
+        click.echo("HyperQueue worker is not running.")
+        return
+    click.echo("Stopping HyperQueue worker...")
+    if not stop_hq_worker():
+        raise click.ClickException("Failed to stop the HyperQueue worker.")
+    click.echo("HyperQueue worker stopped.")
+
+
+@hq.command(name="restart")
+@max_procs_option
+def hq_restart(max_procs: int | None) -> None:
+    """Restart the HyperQueue worker, optionally resizing its CPU pool."""
+    click.echo("Restarting HyperQueue worker...")
+    if not restart_hq_worker(cpus=max_procs):
+        raise click.ClickException(
+            "Failed to restart the HyperQueue worker; inspect the log under "
+            "${AIIDA_CONFIG}/koopmans/hq.worker.log for details."
+        )
+    print_hq_status()
+
+
+@hq.command(name="status")
+def hq_status() -> None:
+    """Show the state of the HyperQueue server and worker."""
+    print_hq_status()
 
 
 @backend.command()
