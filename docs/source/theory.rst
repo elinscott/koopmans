@@ -25,13 +25,15 @@ experimental spectrum.
 
 The :math:`\alpha_i` are screening parameters, and they account for the relaxation of
 everything else in the system when the occupancy of orbital :math:`i` changes. They are
-computed from first principles, rather than being fitted to experiment or to some other level of theory. This is why a Koopmans
-calculation is a workflow rather than a single run: we need to determine the
-:math:`\alpha_i`, either from a series of constrained total-energy calculations
-:cite:`Nguyen2018`, or from linear response :cite:`Colonna2018,Colonna2019`. The
-tutorials show examples for both.
+computed from first principles, rather than being fitted to experiment or to some other
+level of theory. This is why a Koopmans calculation is a workflow rather than a single
+run: we need to determine the :math:`\alpha_i`, either from a series of constrained
+total-energy calculations :cite:`Nguyen2018`, or from linear response
+:cite:`Colonna2018,Colonna2019`. The tutorials show examples for both.
 
-The result is spectral accuracy comparable to many-body perturbation theory at a much lower computational cost, while staying within a functional formulation with a well-defined total energy.
+The result is spectral accuracy comparable to many-body perturbation theory at a much
+lower computational cost, while staying within a functional formulation with a
+well-defined total energy.
 
 **************
  Going deeper

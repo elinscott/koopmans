@@ -2,7 +2,10 @@
 Doing everything automatically
 ##############################
 
-The :doc:`previous part <manually>` computed one screening parameter via three calculations run by hand. This part computes one for every orbital of the same molecule, and both the ionization potential and the electron affinity that follow from them, in a single command.
+The :doc:`previous part <manually>` computed one screening parameter via three
+calculations run by hand. This part computes one for every orbital of the same molecule,
+and both the ionization potential and the electron affinity that follow from them, in a
+single command.
 
 ****************
  The input file
