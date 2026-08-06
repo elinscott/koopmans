@@ -1033,16 +1033,19 @@ class TestDumpedNodeMetadata:
 
         @task  # type: ignore[untyped-decorator]
         def count_electrons(charge: int) -> int:
+            """Return an electron count, leaving nothing on disk but this code."""
             return 8 - charge
 
         @task  # type: ignore[untyped-decorator]
         def write_note(text: str) -> orm.SinglefileData:
+            """Return ``text`` as the one file this run puts on disk."""
             import io
 
             return orm.SinglefileData(io.BytesIO(text.encode()), filename="note.txt")
 
         @task.graph  # type: ignore[untyped-decorator]
         def run(text: str) -> orm.SinglefileData:
+            """Run both tasks, so the dump holds one step of each kind."""
             count_electrons(charge=0)
             note: orm.SinglefileData = write_note(text=text).result
             return note
