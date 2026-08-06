@@ -29,6 +29,7 @@ from koopmans.aiida.setup.hq import (
     install_hq_binary,
     is_hq_worker_running,
     restart_hq_worker,
+    running_hq_workers,
     stop_hq_worker,
 )
 from koopmans.aiida.setup.orchestrate import (
@@ -386,6 +387,22 @@ def _require_hq_binary() -> None:
         )
 
 
+def _require_one_worker(action: str) -> None:
+    """Abort if more than one worker is running, since ``action`` would guess.
+
+    koopmans manages a single worker. Several means someone arranged them by
+    hand, and collapsing them would change the machine's capacity silently.
+    """
+    workers = running_hq_workers()
+    if len(workers) > 1:
+        listed = ", ".join(f"{w.id} ({w.cpus} CPUs)" for w in workers)
+        raise click.ClickException(
+            f"{len(workers)} HyperQueue workers are running: {listed}. koopmans "
+            f"manages one, and will not {action} several at once. Use 'hq worker "
+            f"stop <id>' to leave one running, then repeat this command."
+        )
+
+
 @hq.command(name="start")
 @max_procs_option
 def hq_start(max_procs: int | None) -> None:
@@ -418,6 +435,7 @@ def hq_stop() -> None:
     if not is_hq_worker_running():
         click.echo("HyperQueue worker is not running.")
         return
+    _require_one_worker("stop")
     click.echo("Stopping HyperQueue worker...")
     if not stop_hq_worker():
         raise click.ClickException("Failed to stop the HyperQueue worker.")
@@ -429,6 +447,7 @@ def hq_stop() -> None:
 def hq_restart(max_procs: int | None) -> None:
     """Restart the HyperQueue worker, optionally resizing its CPU pool."""
     _require_hq_binary()
+    _require_one_worker("restart")
     click.echo("Restarting HyperQueue worker...")
     if not restart_hq_worker(cpus=max_procs):
         raise click.ClickException(

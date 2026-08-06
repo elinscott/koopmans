@@ -408,7 +408,8 @@ def stop_hq_worker() -> bool:
     """Stop every HQ worker running against the koopmans server dir.
 
     Asks HQ rather than signalling a pid, so a worker koopmans did not spawn
-    is stopped too.
+    is stopped too. Callers that must not act on workers they did not put
+    there check :func:`running_hq_workers` first; teardown does not.
     """
     pid_path = _hq_pidfile("worker")
     if not is_hq_worker_running():

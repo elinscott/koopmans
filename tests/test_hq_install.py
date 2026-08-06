@@ -340,14 +340,29 @@ class TestWorkerDetection:
 
     @staticmethod
     def test_server_koopmans_did_not_spawn_is_reported_running(fake_hq: FakeHq) -> None:
-        """A server with no pidfile is seen, so its state dir is not deleted.
-
-        ``start_hq_server`` clears the server dir whenever the server reads as
-        absent, which would take the state file out from under a live server.
-        """
+        """A server with no pidfile is seen."""
         from koopmans.aiida.setup.hq import is_hq_server_running
 
         assert is_hq_server_running()
+
+    @staticmethod
+    def test_starting_a_running_server_leaves_its_state_dir_alone(
+        fake_hq: FakeHq, tmp_path: Path
+    ) -> None:
+        """``start_hq_server`` does not clear a live server's state dir.
+
+        It clears the dir whenever the server reads as absent, so a server with
+        no pidfile used to have its access files deleted underneath it. The
+        access files are what ``hq`` clients read to reach the server.
+        """
+        from koopmans.aiida.setup.hq import _hq_server_dir, start_hq_server
+
+        server_dir = _hq_server_dir()
+        server_dir.mkdir(parents=True)
+        (server_dir / "access.json").write_text("{}")
+
+        assert start_hq_server(wait=False)
+        assert (server_dir / "access.json").exists()
 
 
 class TestWorkerCommands:
@@ -420,6 +435,30 @@ class TestWorkerCommands:
 
         assert result.exit_code != 0
         assert "Run 'koopmans install'" in result.output
+
+    def test_stop_refuses_when_several_workers_are_running(self, fake_hq: FakeHq) -> None:
+        """With two workers, stopping is ambiguous, so say so and do nothing.
+
+        koopmans manages one worker; several mean someone arranged them by
+        hand. Stopping both would shrink the machine's capacity silently.
+        """
+        fake_hq.set_workers(24, 8)
+
+        result = self._invoke(["backend", "hq", "stop"])
+
+        assert result.exit_code != 0
+        assert "2 HyperQueue workers are running" in result.output
+        assert "1 (24 CPUs), 2 (8 CPUs)" in result.output
+        assert not [c for c in fake_hq.commands if c[:2] == ["worker", "stop"]]
+
+    def test_restart_refuses_when_several_workers_are_running(self, fake_hq: FakeHq) -> None:
+        """Restarting two workers into one would change the pool unasked."""
+        fake_hq.set_workers(24, 8)
+
+        result = self._invoke(["backend", "hq", "restart", "--max-procs", "12"])
+
+        assert result.exit_code != 0
+        assert not [c for c in fake_hq.commands if c[1:2] in (["stop"], ["start"])]
 
     def test_status_reports_the_pool_and_the_default_calc_size(
         self, fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
