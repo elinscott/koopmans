@@ -17,6 +17,7 @@ from koopmans.aiida.conversion import (
     code_parallelization,
     input_to_pw_parameters,
 )
+from koopmans.input_file.parallelization import POOL_SUPPORTING_CODES
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
@@ -174,6 +175,73 @@ def complete_rank_counts(parallelization: ParallelizationDict, codes: Codes) -> 
         if ranks is not None:
             entry["ntasks"] = ranks
     return cast("ParallelizationDict", {name: entry for name, entry in completed.items() if entry})
+
+
+def _divisors(number: int) -> list[int]:
+    """Return every positive divisor of ``number``, ascending."""
+    return [candidate for candidate in range(1, number + 1) if number % candidate == 0]
+
+
+def check_pools_divide_ranks(
+    parallelization: ParallelizationDict, requested: ParallelizationDict
+) -> None:
+    """Raise if a code's ``npool`` does not divide the MPI ranks it will run on.
+
+    Quantum ESPRESSO splits a run's ranks into ``npool`` equal k-point pools,
+    so the rank count must be a multiple of ``npool``.
+
+    Checks only codes that accept ``-npool`` (:data:`POOL_SUPPORTING_CODES`)
+    and that carry a rank count, which after :func:`complete_rank_counts` means
+    the codes this task loads — an entry for a code it never runs is left
+    alone.
+
+    Args:
+        parallelization: The completed per-code mapping, every loaded code
+            carrying the ``ntasks`` it will run with.
+        requested: What the input file named, which decides whether the message
+            points the reader at their own ``ntasks`` or at the computer's
+            default.
+
+    Raises:
+        ValueError: If a code's ``npool`` does not divide its rank count.
+    """
+    for name, config in parallelization.items():
+        npool = config.get("npool")
+        ranks = config.get("ntasks")
+        if npool is None or ranks is None or name not in POOL_SUPPORTING_CODES:
+            continue
+        if ranks % npool == 0:
+            continue
+
+        if requested.get(name, {}).get("ntasks") is not None:
+            ranks_come_from = f"`parallelization.{name}.ntasks` asks for {ranks} MPI ranks"
+        else:
+            ranks_come_from = (
+                f"`parallelization.{name}` sets no `ntasks`, so {name} takes this "
+                f"computer's default of {ranks} MPI ranks"
+            )
+
+        raise ValueError(
+            f"{ranks_come_from}, and `parallelization.{name}.npool` is {npool}, which "
+            f"does not divide {ranks}. Quantum ESPRESSO splits a run's ranks into "
+            f"equal k-point pools, so {name} would abort at startup. Set `npool` to "
+            f"one of {_divisors(ranks)}, or set `parallelization.{name}.ntasks` to a "
+            f"multiple of {npool}."
+        )
+
+
+def resolve_rank_counts(koopmans_input: KoopmansInput, codes: Codes) -> ParallelizationDict:
+    """Return the per-code mapping every loaded code's rank count is settled in.
+
+    Completes the counts (:func:`complete_rank_counts`) and rejects a pool count
+    that cannot divide one (:func:`check_pools_divide_ranks`). Call it wherever
+    ``codes`` grows: it derives everything from ``koopmans_input`` and ``codes``,
+    so calling it again with more codes settles those too.
+    """
+    requested = koopmans_input.parallelization.as_mapping()
+    completed = complete_rank_counts(requested, codes)
+    check_pools_divide_ranks(completed, requested)
+    return completed
 
 
 def prepare_common_inputs(
@@ -398,8 +466,8 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     # Both halves of the rank count meet only here: what the input file asked
     # for, and what each loaded code's computer offers when it asked for
-    # nothing. Routes that load further codes complete those the same way.
-    parallelization = complete_rank_counts(koopmans_input.parallelization.as_mapping(), codes)
+    # nothing. Routes that load further codes settle those the same way.
+    parallelization = resolve_rank_counts(koopmans_input, codes)
 
     # Build the workgraph based on task. An error raised inside the plugin
     # speaks its vocabulary (derived blocks, `num_bands`), which the user

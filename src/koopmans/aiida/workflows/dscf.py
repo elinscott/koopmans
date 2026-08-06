@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import complete_rank_counts, load_code
+from koopmans.aiida.workflows import load_code, resolve_rank_counts
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -81,9 +81,9 @@ def build_singlepoint_workgraph(
         VariationalOrbitalType.PROJWFS,
     ):
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
-        # The Wannier route loads four more codes; complete their rank counts
+        # The Wannier route loads four more codes; settle their rank counts
         # too, so the fold steps carry a stored count like everything else.
-        parallelization = complete_rank_counts(parallelization, extra_kwargs["codes"])
+        parallelization = resolve_rank_counts(koopmans_input, extra_kwargs["codes"])
 
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],

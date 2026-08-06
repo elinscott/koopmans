@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.workflows import complete_rank_counts, load_code, prepare_common_inputs
+from koopmans.aiida.workflows import load_code, prepare_common_inputs, resolve_rank_counts
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
 
@@ -132,9 +132,9 @@ def build_singlepoint_dfpt_workgraph(
     codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
     if eps_inf == "auto":
         codes.setdefault("ph", load_code("ph", "ph.x"))
-    # The codes loaded just above missed the dispatcher's completion pass;
-    # completing again is idempotent for the ones that did not.
-    parallelization = complete_rank_counts(parallelization, codes)
+    # The codes loaded just above missed the dispatcher's pass over the rank
+    # counts; settling again covers them and leaves the rest as they were.
+    parallelization = resolve_rank_counts(koopmans_input, codes)
 
     return SinglepointDFPTWorkflow.build(
         codes=codes,

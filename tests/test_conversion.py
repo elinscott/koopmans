@@ -311,6 +311,103 @@ class TestParallelizationWiring:
         assert builder.bands.pw.parameters.get_dict()["CONTROL"]["calculation"] == "bands"
 
 
+class TestPoolsDivideRanks:
+    """An ``npool`` that does not divide a code's ranks is rejected at build time."""
+
+    def test_commensurate_pair_builds(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Four pools over eight ranks divides, so the build runs to a WorkGraph."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                parallelization={"pw": {"ntasks": 8, "npool": 4}},
+            )
+        )
+        assert build_workgraph(inp).tasks["PwBandsWorkChain"] is not None
+
+    def test_ntasks_source_is_named(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """With ``ntasks`` written down, the message points back at that field."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                parallelization={"pw": {"ntasks": 14, "npool": 4}},
+            )
+        )
+        with pytest.raises(ValueError, match=r"`parallelization\.pw\.ntasks` asks for 14"):
+            build_workgraph(inp)
+
+    def test_computer_default_source_is_named(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        localhost_default_ranks: Any,
+        monkeypatch: Any,
+    ) -> None:
+        """Without ``ntasks`` the ranks come from the computer, and the message says so.
+
+        The case the ZnO run hit: the user wrote only ``npool``, so a number
+        they never typed decided the outcome, and the message has to name
+        where it came from. The build is stubbed at its entry point so the
+        test also pins *when* the rejection lands — nothing of the graph is
+        assembled, and no pseudopotential family is installed, before it.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.aiida.workflows import dft as dft_module
+        from koopmans.input_file import KoopmansInput
+
+        reached: list[str] = []
+
+        def record_and_stub(*args: Any, **kwargs: Any) -> tuple[None, str, dict[str, Any]]:
+            """Stand in for the real preparation, noting that it ran."""
+            reached.append("prepare_common_inputs")
+            return None, "fam", {}
+
+        monkeypatch.setattr(dft_module, "prepare_common_inputs", record_and_stub)
+        localhost_default_ranks(14)
+
+        inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"npool": 4}}))
+        with pytest.raises(ValueError) as excinfo:
+            build_workgraph(inp)
+
+        assert reached == []
+        message = str(excinfo.value)
+        assert "sets no `ntasks`" in message
+        assert "computer's default of 14 MPI ranks" in message
+        # The remedy is spelled in the two numbers the user can act on.
+        assert "[1, 2, 7, 14]" in message
+        assert "multiple of 4" in message
+
+    def test_code_without_pool_support_is_left_alone(self) -> None:
+        """A non-pool code is skipped even holding an incommensurate pair.
+
+        Bypasses the schema (which rejects ``npool`` for wannier90 outright)
+        to check that pool support is decided by ``POOL_SUPPORTING_CODES``
+        and not by the mere presence of an ``npool`` key.
+        """
+        from koopmans.aiida.workflows import check_pools_divide_ranks
+
+        check_pools_divide_ranks({"wannier90": {"ntasks": 14, "npool": 4}}, {})
+
+    def test_code_the_task_never_loads_is_left_alone(self) -> None:
+        """A code with no rank count is skipped: this task does not run it.
+
+        Only the codes a task loads leave the dispatcher with an ``ntasks``,
+        so an entry for any other code carries no number to check against.
+        """
+        from koopmans.aiida.workflows import check_pools_divide_ranks
+
+        check_pools_divide_ranks({"projwfc": {"npool": 4}}, {"projwfc": {"npool": 4}})
+
+
 class TestDispatcherThreadsParallelization:
     """The dispatcher forwards the per-code mapping to the workgraph builder."""
 
