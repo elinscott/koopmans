@@ -80,11 +80,12 @@ MPI_INIT_NAMES = frozenset({"mpi_init", "mpi_init_thread"})
 # MPICH's libmpi_gnu_*; the remaining entries name the libraries that break the
 # convention.
 #
-# A runtime this list misses is the one way the probe can call a serial program
-# parallel: the library is walked, its undefined MPI_Init counts as the
-# program's, and the code is registered under mpirun. ``koopmans install``
-# prints the evidence behind every verdict, and ``--serial <code>`` overrules
-# one that is wrong.
+# A runtime this list misses reads as a caller: the library is walked, its
+# undefined MPI_Init counts as the program's, and a serial code is registered
+# under mpirun. That is the same false positive :func:`mpi_evidence` documents
+# for parallel HDF5, and it has the same remedy — ``koopmans install`` prints
+# the evidence behind every verdict, and ``--serial <code>`` overrules one that
+# is wrong.
 #
 # The prefix also matches libraries that are not the runtime: mpiP's
 # ``libmpiP.so`` and mpiFileUtils' ``libmpifileutils.so``. A program whose only
