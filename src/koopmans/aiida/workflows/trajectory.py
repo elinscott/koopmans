@@ -8,8 +8,9 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_code
+from koopmans.aiida.workflows import load_code, reject_kpoint_overrides
 from koopmans.aiida.workflows.dscf import (
+    KPOINT_OVERRIDES_ON_DSCF,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
     require_supported_correction,
@@ -64,6 +65,7 @@ def build_trajectory_workgraph(
     workflow = koopmans_input.workflow
 
     reject_unwired_external_projectors(koopmans_input, "trajectory")
+    reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
 
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(

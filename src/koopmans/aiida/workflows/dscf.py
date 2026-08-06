@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import load_code
+from koopmans.aiida.workflows import load_code, reject_kpoint_overrides
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -31,6 +31,18 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
+
+
+#: Why the kcp.x routes take one mesh throughout. Their supercell is the one
+#: ``kpoints.grid`` describes, and the ground state they recompute in it has
+#: to be the ground state the Wannier functions came from.
+KPOINT_OVERRIDES_ON_DSCF = {
+    step: f"`kpoints.overrides.{step}` cannot take effect with "
+    "`screening_method = 'dscf'`: its kcp.x steps recompute the ground state in the "
+    "supercell that `kpoints.grid` describes, so every step of the route samples that "
+    "one mesh. Set `kpoints.grid`, or screen with `screening_method = 'dfpt'`."
+    for step in ("scf", "nscf")
+}
 
 
 def build_singlepoint_workgraph(
@@ -60,6 +72,7 @@ def build_singlepoint_workgraph(
     if workflow.screening_method == CalculateScreeningMethod.DFPT:
         return build_singlepoint_dfpt_workgraph(koopmans_input, codes)
 
+    reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
     require_supported_correction(workflow.correction)
 
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
