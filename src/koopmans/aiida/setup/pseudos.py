@@ -195,10 +195,9 @@ def _install_sssp_family(label: str, parts: list[str]) -> None:
 # SG15 ONCV is published as a single frozen tarball on quantum-simulation.org. It
 # bundles every version x relativistic variant in one flat archive; the label's
 # version/relativistic parts select which subset of UPFs to install. There is no
-# upstream ``aiida-pseudo`` installer for SG15, so we install a
-# ``CutoffsPseudoPotentialFamily`` directly. SG15 publishes no recommended
-# cutoffs, so the family carries none and the input file must set ``ecutwfc``
-# and ``ecutrho`` itself.
+# upstream ``aiida-pseudo`` installer for SG15, so we build the family ourselves.
+# SG15 publishes no recommended cutoffs, so it is a plain
+# ``PseudoPotentialFamily`` and ``ecutwfc``/``ecutrho`` come from the input file.
 _SG15_ARCHIVE_URL = (
     "http://www.quantum-simulation.org/potentials/sg15_oncv/sg15_oncv_upf_2020-02-06.tar.gz"
 )
@@ -216,7 +215,7 @@ def _install_sg15_family(label: str, parts: list[str]) -> None:
     import urllib.request
 
     from aiida_pseudo.data.pseudo import UpfData
-    from aiida_pseudo.groups.family import CutoffsPseudoPotentialFamily
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
 
     _, version, functional, relativistic = parts
 
@@ -274,6 +273,6 @@ def _install_sg15_family(label: str, parts: list[str]) -> None:
                 "The archive layout may have changed."
             )
 
-        family = CutoffsPseudoPotentialFamily.create_from_folder(flat, label, pseudo_type=UpfData)
+        family = PseudoPotentialFamily.create_from_folder(flat, label, pseudo_type=UpfData)
 
     click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")
