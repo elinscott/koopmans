@@ -321,7 +321,7 @@ class Wannier90InputParametersWithUpDown(RestrictedWannier90InputParameters):
 class CalculatorParametersInput(BaseModel):
     """Calculator-specific input parameters."""
 
-    ecutwfc: float | None = None
+    ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
     tot_magnetization: float | None = None
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
@@ -335,6 +335,38 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: UnfoldAndInterpolateConfig()
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
+
+    @model_validator(mode="after")
+    def check_cutoffs_agree(self) -> CalculatorParametersInput:
+        """Validate that the stated wavefunction cutoffs agree, and the density ones.
+
+        pw.x and kcp.x read their cutoffs from different keys, so two stated
+        values that differ put the two codes on different grids. A
+        ``kcp.system`` cutoff of zero is unset rather than a stated zero.
+
+        Raises:
+            ValueError: If two keys state the same cutoff at different values.
+        """
+        wavefunction = {
+            "calculator_parameters.ecutwfc": self.ecutwfc,
+            "calculator_parameters.pw.system.ecutwfc": self.pw.system.ecutwfc,
+            "calculator_parameters.kcp.system.ecutwfc": self.kcp.system.ecutwfc or None,
+        }
+        density = {
+            "calculator_parameters.pw.system.ecutrho": self.pw.system.ecutrho,
+            "calculator_parameters.kcp.system.ecutrho": self.kcp.system.ecutrho or None,
+        }
+
+        for cutoff, keys in (("wavefunction", wavefunction), ("density", density)):
+            stated = {key: value for key, value in keys.items() if value is not None}
+            if len(set(stated.values())) > 1:
+                listed = [f"`{key}` = {value:g} Ry" for key, value in stated.items()]
+                raise ValueError(
+                    f"{', '.join(listed[:-1])} and {listed[-1]} disagree. pw.x and kcp.x "
+                    f"must run on the same grid, so state one {cutoff} cutoff: give these "
+                    "keys the same value, or drop all but one of them."
+                )
+        return self
 
 
 class KoopmansInput(BaseModel):
@@ -440,6 +472,7 @@ CUSTOM_MESSAGES = {
     "type": 'is the wrong type (should be "{expected_type}", not "{given_type}")',
     "extra_forbidden": "is not a valid keyword.",
     "missing": "was not provided.",
+    "greater_than": "must be greater than {gt}.",
 }
 
 

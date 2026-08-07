@@ -41,6 +41,22 @@ def ensure_pseudo_family_installed(pseudo_family: str) -> None:
     logger.info("Successfully installed pseudo family '%s'", pseudo_family)
 
 
+def pseudo_family_has_cutoffs(pseudo_family: str) -> bool:
+    """Report whether an installed family publishes recommended cutoffs.
+
+    True only if the family defines at least one cutoff stringency; without one
+    ``get_recommended_cutoffs`` has nothing to return.
+
+    Raises:
+        NotExistent: If the family is not installed.
+    """
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
+
+    family = PseudoPotentialFamily.collection.get(label=pseudo_family)
+    stringencies = getattr(family, "get_cutoff_stringencies", None)
+    return stringencies is not None and bool(stringencies())
+
+
 def install_pseudo_family(pseudo_family: str) -> None:
     """Install a pseudopotential family. Parse the label and dispatch."""
     parts = pseudo_family.split("/")
