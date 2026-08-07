@@ -585,9 +585,10 @@ def _resolve_pw_cutoffs(system: dict[str, Any], kcp_ecutrho: float) -> None:
     """Complete the ``SYSTEM`` cutoff pair in place, from ``ecutwfc``.
 
     An unstated ``ecutrho`` becomes ``kcp_ecutrho``, or
-    ``NORM_CONSERVING_DUAL * ecutwfc`` when that is unset too. A pair whose
-    ratio is not :data:`NORM_CONSERVING_DUAL` passes through with a warning.
-    With neither cutoff stated the pair is left empty, for the pseudopotential
+    ``NORM_CONSERVING_DUAL * ecutwfc`` when that is unset too. Whatever its
+    source, an ``ecutrho`` that is not :data:`NORM_CONSERVING_DUAL` times
+    ``ecutwfc`` takes effect with a warning naming the key it came from. With
+    neither cutoff stated the pair is left empty, for the pseudopotential
     family to recommend.
 
     Raises:
@@ -595,6 +596,7 @@ def _resolve_pw_cutoffs(system: dict[str, Any], kcp_ecutrho: float) -> None:
     """
     ecutwfc = system.get("ecutwfc")
     ecutrho = system.get("ecutrho")
+    source = "calculator_parameters.pw.system.ecutrho"
 
     if ecutwfc is None:
         if ecutrho is not None:
@@ -607,19 +609,24 @@ def _resolve_pw_cutoffs(system: dict[str, Any], kcp_ecutrho: float) -> None:
         return
 
     if ecutrho is None:
-        # An explicit ``kcp.system.ecutrho`` keeps the pw.x runs on the grid of
-        # the CP supercell run the dft_init consistency checks compare against.
-        system["ecutrho"] = kcp_ecutrho if kcp_ecutrho else NORM_CONSERVING_DUAL * ecutwfc
-        return
+        if kcp_ecutrho:
+            # An explicit ``kcp.system.ecutrho`` keeps the pw.x runs on the grid
+            # of the CP supercell run the dft_init consistency checks compare
+            # against.
+            ecutrho = kcp_ecutrho
+            source = "calculator_parameters.kcp.system.ecutrho"
+        else:
+            ecutrho = NORM_CONSERVING_DUAL * ecutwfc
+        system["ecutrho"] = ecutrho
 
     if not math.isclose(ecutrho, NORM_CONSERVING_DUAL * ecutwfc):
         warnings.warn(
-            f"ecutrho = {ecutrho:g} Ry is {ecutrho / ecutwfc:g} times ecutwfc = "
+            f"`{source}` = {ecutrho:g} Ry is {ecutrho / ecutwfc:g} times ecutwfc = "
             f"{ecutwfc:g} Ry. koopmans runs norm-conserving pseudopotentials, for which "
             f"the two converge together at a ratio of {NORM_CONSERVING_DUAL:g}. Drop "
-            "`ecutrho` to take that ratio.",
+            f"`{source}` to take that ratio.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
 
