@@ -16,7 +16,7 @@ from koopmans.aiida.utils import suppress_aiida_logging
 if TYPE_CHECKING:
     from aiida import orm
 
-__all__ = ["dump_workgraph", "trained_model_output"]
+__all__ = ["NODE_METADATA_FILE", "dump_workgraph", "trained_model_output"]
 
 
 # AiiDA's dump names each child folder "<NN>-<link_label>", appends the
@@ -47,10 +47,10 @@ _TASK_SOURCE_FILE = "source_file"
 
 # aiida-core's record of which node a folder came from: pk, uuid, node
 # type and timestamps. It names the folder rather than adding to it.
-_NODE_METADATA_FILE = "aiida_node_metadata.yaml"
+NODE_METADATA_FILE = "aiida_node_metadata.yaml"
 
 # What a step folder can hold and still count as having produced nothing.
-_NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, _NODE_METADATA_FILE})
+_NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
 
 # The dump's own bookkeeping, which says nothing about the run.
 _DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safeguard")
@@ -448,7 +448,7 @@ def _prune_workflow_metadata(root_path: Path) -> None:
 
     :param root_path: Root of the dumped tree.
     """
-    for path in root_path.rglob(_NODE_METADATA_FILE):
+    for path in root_path.rglob(NODE_METADATA_FILE):
         if path.parent != root_path and _describes_a_workflow(path):
             path.unlink()
 

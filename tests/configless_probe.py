@@ -17,6 +17,7 @@ CONFIGLESS_MODULES = (
     "koopmans",
     "koopmans.input_file",
     "koopmans.aiida.workflows",
+    "koopmans.plotting",
 )
 
 
