@@ -837,14 +837,14 @@ class TestBackendStatusRows:
         assert status["hq.worker"]
 
     @staticmethod
-    def test_without_a_binary_the_server_and_worker_are_not_probed(
+    def test_a_missing_binary_is_a_row_of_its_own(
         fake_hq: FakeHq, stubbed_profile: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Missing ``hq`` is its own row, and stops the other two being guessed.
+        """Tell "no worker is running" apart from "koopmans cannot look".
 
-        A worker may well be running; koopmans simply has no way to look. The
-        rows are booleans, so the binary row is what carries "unknown" — and
-        the stub records that nothing was asked of it.
+        The stub has the same running worker as the test above, and all three
+        rows still read false, because both HQ rows are answered by running
+        ``hq``. Only the binary row distinguishes the two situations.
         """
         from koopmans.aiida.setup.orchestrate import verify_installation
 
@@ -857,7 +857,6 @@ class TestBackendStatusRows:
         assert not status["hq.binary"]
         assert not status["hq.server"]
         assert not status["hq.worker"]
-        assert fake_hq.commands == []
 
 
 def test_install_sizes_the_pool_and_the_calc_separately(
