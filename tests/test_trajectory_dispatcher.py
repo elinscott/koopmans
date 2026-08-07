@@ -845,7 +845,7 @@ class TestRankCounts:
         write_multiframe_xyz: Callable[..., Path],
         assert_ranks_settled_for_every_loaded_code: Any,
     ) -> None:
-        """The Wannier route's extra codes are settled after the dispatcher's pass.
+        """The Wannier route's extra codes carry a rank count of their own.
 
         merge_evc is deliberately absent: the ``parallelization`` block has no
         key for it, so its single rank stays its CalcJob's to declare.

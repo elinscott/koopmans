@@ -123,7 +123,7 @@ def dscf_codes(
     """Assemble the codes dict the dispatcher receives, plus fold-path dummies.
 
     Only ``pw`` and ``kcp`` are passed in (mirroring ``load_codes_for_task``);
-    the wannier / fold codes are looked up by label inside the builder, so the
+    the wannier / fold codes are looked up by name inside the route, so the
     fixtures merely register them.
     """
     return {"pw": installed_pw_code, "kcp": installed_kcp_code}
@@ -473,7 +473,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert extra["wannier_overrides"]["wannier90"] == {"num_iter": 17}
         # Projections are consumed by the block derivation, never leaked into
         # the flat keyword override.
@@ -494,7 +494,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_1", True),
             ("emp_1", False),
@@ -514,7 +514,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_up_1", True),
             ("emp_up_1", False),
@@ -546,7 +546,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
 
 
@@ -607,10 +607,10 @@ class TestRankCounts:
         fake_sg15_pseudo_family: Any,
         assert_ranks_settled_for_every_loaded_code: Any,
     ) -> None:
-        """The four codes the fold path loads are settled after the dispatcher's pass.
+        """The four codes the fold path loads carry a rank count of their own.
 
         wann2kcp gets one rank rather than the computer's four, so the
-        assertion also shows the serial rule surviving the second pass.
+        assertion also shows the serial rule reaching a route-loaded code.
         """
         from koopmans.aiida.workflows import build_workgraph
 

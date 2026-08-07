@@ -422,7 +422,7 @@ def localhost_code(localhost_computer: Any) -> Any:
     from aiida.common.exceptions import NotExistent
     from aiida.orm import InstalledCode, load_code
 
-    def factory(label: str, entry_point: str, with_mpi: bool | None = None) -> Any:
+    def get_or_create_code(label: str, entry_point: str, with_mpi: bool | None = None) -> Any:
         """Return the ``<label>@localhost`` code, creating it if absent.
 
         ``with_mpi`` stamps the node the way ``koopmans install``'s binary
@@ -440,7 +440,7 @@ def localhost_code(localhost_computer: Any) -> Any:
                 with_mpi=with_mpi,
             ).store()
 
-    return factory
+    return get_or_create_code
 
 
 @pytest.fixture

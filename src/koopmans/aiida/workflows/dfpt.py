@@ -7,10 +7,9 @@ from typing import TYPE_CHECKING, Any, cast
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
-    load_code,
+    load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
-    resolve_rank_counts,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
@@ -132,14 +131,9 @@ def build_singlepoint_dfpt_workgraph(
 
     # The wannierization steps need codes that load_codes_for_task only wires
     # for the WANNIERIZE task; load them here until it grows a DFPT branch.
-    codes = dict(codes)
-    codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
-    codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
-    if eps_inf == "auto":
-        codes.setdefault("ph", load_code("ph", "ph.x"))
-    # The codes loaded just above missed the dispatcher's pass over the rank
-    # counts; settling again covers them and leaves the rest as they were.
-    parallelization = resolve_rank_counts(koopmans_input, codes)
+    # 'auto' adds the ph.x dielectric chain in front of the kcw.x steps.
+    wanted = ["wannier90", "pw2wannier90"] + (["ph"] if eps_inf == "auto" else [])
+    codes, parallelization = load_codes(koopmans_input, codes, wanted)
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.

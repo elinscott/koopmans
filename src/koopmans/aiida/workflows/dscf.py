@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import load_code, reject_kpoint_overrides, resolve_rank_counts
+from koopmans.aiida.workflows import load_codes, reject_kpoint_overrides
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -33,6 +33,10 @@ if TYPE_CHECKING:
 
     from koopmans.input_file import KoopmansInput
 
+
+#: The codes the periodic mlwfs/projwfs initialisation runs on top of kcp.x:
+#: one wannierization, then the fold to the supercell.
+WANNIER_INIT_CODES = ["wannier90", "pw2wannier90", "wann2kcp", "merge_evc"]
 
 #: Why no kcp.x route carries a second mesh: ``MlwfInitialization`` takes one
 #: ``kpoints``, which its scf samples and its supercell is folded from, and the
@@ -106,10 +110,9 @@ def build_singlepoint_workgraph(
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
     ):
-        extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
-        # The Wannier route loads four more codes; settle their rank counts
-        # too, so the fold steps carry a stored count like everything else.
-        parallelization = resolve_rank_counts(koopmans_input, extra_kwargs["codes"])
+        extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
+        codes, parallelization = load_codes(koopmans_input, codes, WANNIER_INIT_CODES)
+        extra_kwargs["codes"] = dict(codes)
 
     return KoopmansDSCFWorkflow.build(
         code=codes["kcp"],
@@ -123,15 +126,15 @@ def build_singlepoint_workgraph(
 def dscf_wannier_init_inputs(
     koopmans_input: KoopmansInput,
     structure: orm.StructureData,
-    codes: dict[str, orm.AbstractCode],
     nbnd: int,
 ) -> dict[str, Any]:
     """Assemble the extra ``KoopmansDSCFWorkflow`` inputs for the Wannier route.
 
-    Covers the periodic mlwfs/projwfs initialisation: the wannierize +
-    fold-to-supercell codes, the projection blocks (primitive band indices;
-    per spin channel when ``spin='collinear'``), the k-mesh, and the
-    Makov-Payne knobs. The molecular/kohn-sham route needs none of this.
+    Covers the periodic mlwfs/projwfs initialisation: the projection blocks
+    (primitive band indices; per spin channel when ``spin='collinear'``), the
+    k-mesh, and the Makov-Payne knobs. The molecular/kohn-sham route needs
+    none of this. The caller adds the :data:`WANNIER_INIT_CODES` these inputs
+    run on.
     """
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -230,14 +233,7 @@ def dscf_wannier_init_inputs(
     if w90_user:
         wannier_overrides["wannier90"] = w90_user
 
-    wannier_codes = dict(codes)
-    wannier_codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
-    wannier_codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
-    wannier_codes.setdefault("wann2kcp", load_code("wann2kcp", "wann2kcp.x"))
-    wannier_codes.setdefault("merge_evc", load_code("merge_evc", "merge_evc.x"))
-
     return {
-        "codes": wannier_codes,
         "blocks": blocks,
         "kgrid": list(kpoints_input.grid),
         "kpoints": kpoints_input_to_kpoints_mesh(kpoints_input),

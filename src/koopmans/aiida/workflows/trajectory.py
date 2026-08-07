@@ -8,9 +8,10 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_code, reject_kpoint_overrides, resolve_rank_counts
+from koopmans.aiida.workflows import load_codes, reject_kpoint_overrides
 from koopmans.aiida.workflows.dscf import (
     KPOINT_OVERRIDES_ON_TRAJECTORY,
+    WANNIER_INIT_CODES,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
     require_supported_correction,
@@ -96,24 +97,21 @@ def build_trajectory_workgraph(
     inputs = kcp_dscf_inputs(koopmans_input)
 
     extra_kwargs: dict[str, Any] = {}
-    loaded_codes = dict(codes)
     if workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
     ):
         extra_kwargs = dscf_wannier_init_inputs(
-            koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
+            koopmans_input, next(iter(snapshots.values())), inputs["nbnd"]
         )
-        loaded_codes.update(extra_kwargs["codes"])
+        codes, parallelization = load_codes(koopmans_input, codes, WANNIER_INIT_CODES)
+        extra_kwargs["codes"] = dict(codes)
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
-        extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
+        # The descriptors come from a pw2wannier90.x decompose pass.
+        codes, parallelization = load_codes(koopmans_input, codes, ["pw2wannier90"])
+        extra_kwargs["pw2wannier90_code"] = codes["pw2wannier90"]
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
-        loaded_codes["pw2wannier90"] = extra_kwargs["pw2wannier90_code"]
-
-    # Both branches above load codes the dispatcher's pass over the rank counts
-    # never saw; settle them all against the codes this route actually runs.
-    parallelization = resolve_rank_counts(koopmans_input, loaded_codes)
 
     return TrajectoryWorkflow.build(
         code=codes["kcp"],

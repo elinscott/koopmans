@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -32,81 +31,38 @@ LDD_OUTPUT = """\
 """
 
 
-def _workflows_source() -> str:
-    """Concatenate the workflows package's module sources for call-site scans."""
-    import koopmans.aiida.workflows as workflows
-
-    return "".join(
-        path.read_text() for path in sorted(Path(workflows.__file__).parent.glob("*.py"))
-    )
-
-
 class TestExecutableCoverage:
     """Every code the dispatcher can load must be registrable."""
 
-    def test_dispatched_codes_have_executable_entries(self) -> None:
-        """Each ``load_code`` executable is a key in ``QE_EXECUTABLES``."""
-        from koopmans.aiida.setup.codes import QE_EXECUTABLES
+    def test_dispatchable_names_are_registered(self) -> None:
+        """The dispatcher's vocabulary is the labels the installer registers.
 
-        source = _workflows_source()
-        executables = set(re.findall(r'(?<!\.)\bload_code\(\s*"[^"]+"\s*,\s*"([^"]+)"', source))
-
-        assert executables, "regex matched no load_code call sites"
-        # Codes registered outside the QE install scan (their second argument
-        # is a human-readable name, not an executable on PATH).
-        non_qe = {name for name in executables if not name.endswith(".x")}
-        assert non_qe <= {"julia (Wannier.jl)"}, f"unexpected non-QE load sites: {non_qe}"
-        missing = (executables - non_qe) - set(QE_EXECUTABLES)
-        assert not missing, f"dispatcher loads {missing} with no QE_EXECUTABLES entry"
-
-    def test_dispatched_labels_are_registered(self) -> None:
-        """Each ``load_code`` label is a label the installer registers."""
-        from koopmans.aiida.setup.codes import code_specs
-
-        source = _workflows_source()
-        labels = set(re.findall(r'(?<!\.)\bload_code\(\s*"([^"]+)"\s*,\s*"[^"]+"', source))
-
-        assert labels, "regex matched no load_code call sites"
-        # ``wannierjl`` is registered by its own plugin helper, not the QE scan.
-        missing = labels - set(code_specs()) - {"wannierjl"}
-        assert not missing, f"dispatcher loads {missing} with no registration entry"
-
-    def test_no_non_literal_load_code_calls(self) -> None:
-        """Every ``load_code`` call passes two string literals.
-
-        The coverage test above only sees literal arguments; a call built
-        from variables would escape it and could load an unregistered code.
+        Every route names its codes through this vocabulary, so a name it
+        does not hold cannot reach a profile lookup at all.
         """
-        source = _workflows_source()
-        all_calls = len(re.findall(r"(?<!\.)\bload_code\((?!\s*self)", source))
-        literal_calls = len(re.findall(r'load_code\(\s*"[^"]+"\s*,\s*"[^"]+"', source))
-        definitions = len(re.findall(r"def load_code\(", source))
+        from koopmans.aiida.setup.codes import code_specs
+        from koopmans.aiida.workflows import code_executables
 
-        assert all_calls - definitions == literal_calls, (
-            "a load_code call site uses non-literal arguments and escapes "
-            "the executable-coverage test"
+        specs = code_specs()
+        # ``wannierjl`` is registered by its own plugin helper, not the QE scan.
+        assert set(code_executables()) == set(specs) | {"wannierjl"}
+        assert all(
+            executable == specs[name][0]
+            for name, executable in code_executables().items()
+            if name in specs
         )
 
-    def test_load_code_labels_match_executables(self) -> None:
-        """Each ``load_code`` pair matches how that label is registered.
+    def test_an_unregistered_name_is_rejected(self) -> None:
+        """Loading a name outside the vocabulary says so, rather than searching.
 
-        Registration pairs a label with an executable, so a call site that
-        names a different executable for a label would pass the coverage
-        test yet load a code built from the wrong binary.
+        Nothing but the dispatcher's own source names a code, so a name no
+        installer registers is a typo, and a profile lookup would report it as
+        a missing installation.
         """
-        from koopmans.aiida.setup.codes import code_specs
+        from koopmans.aiida.workflows import load_code
 
-        source = _workflows_source()
-        pairs = re.findall(r'(?<!\.)\bload_code\(\s*"([^"]+)"\s*,\s*"([^"]+)"', source)
-        specs = code_specs()
-
-        assert pairs, "regex matched no load_code call sites"
-        mismatched = [
-            (label, executable)
-            for label, executable in pairs
-            if executable.endswith(".x") and specs.get(label, (None,))[0] != executable
-        ]
-        assert not mismatched, f"label/executable mismatch at call sites: {mismatched}"
+        with pytest.raises(ValueError, match=r"'pw90' is not a code koopmans registers"):
+            load_code("pw90")
 
 
 class TestMpiSymbolNames:

@@ -403,8 +403,7 @@ class TestRankCounts:
         """The wannierization codes the route loads itself are settled too.
 
         ``load_codes_for_task`` wires wannier90 and pw2wannier90 for the
-        wannierize task only, so the DFPT route loads them after the
-        dispatcher has already settled the counts once.
+        wannierize task only, so the DFPT route is what loads them here.
         """
         from koopmans.aiida.workflows import build_workgraph
 

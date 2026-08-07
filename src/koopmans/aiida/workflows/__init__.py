@@ -42,11 +42,37 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
-    from koopmans.input_file.workflow import WorkflowConfig
 
 
-def load_code(name: str, executable: str) -> orm.AbstractCode:
+def code_executables() -> dict[str, str]:
+    """Return the executable behind every code name the dispatcher can load.
+
+    The names are the labels ``koopmans install`` registers, so a name outside
+    this mapping names a code no profile holds. ``wannierjl`` is the one entry
+    naming no binary on PATH: its julia executable is registered by
+    ``aiida_wannierjl.helpers.get_wannierjl_code``.
+    """
+    from koopmans.aiida.setup.codes import code_specs
+
+    return {label: executable for label, (executable, _) in code_specs().items()} | {
+        "wannierjl": "julia (Wannier.jl)"
+    }
+
+
+def executable_for(name: str) -> str:
+    """Return the executable ``name`` labels, or raise if no such code is registered."""
+    executables = code_executables()
+    if name not in executables:
+        raise ValueError(
+            f"'{name}' is not a code koopmans registers, so no profile can hold it. "
+            f"Name one of {sorted(executables)}."
+        )
+    return executables[name]
+
+
+def load_code(name: str) -> orm.AbstractCode:
     """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
+    executable = executable_for(name)
     try:
         return orm.load_code(f"{name}@localhost")
     except Exception as exc:
@@ -56,28 +82,74 @@ def load_code(name: str, executable: str) -> orm.AbstractCode:
         ) from exc
 
 
-def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
-    """Load the AiiDA codes required by the workflow described in ``workflow``.
+def load_codes(
+    koopmans_input: KoopmansInput,
+    codes: Codes,
+    names: list[str],
+    optional: list[str] | None = None,
+) -> tuple[Codes, ParallelizationDict]:
+    """Return ``codes`` plus the codes ``names`` asks for, and their rank counts.
+
+    Loading a code and settling how many MPI ranks it runs on are one act:
+    the mapping this returns covers every code in the result, so a caller
+    that loads more codes gets a mapping that covers those too. A name
+    already in ``codes`` keeps the code it is bound to.
+
+    Args:
+        koopmans_input: The parsed input, for the ``parallelization`` block.
+        codes: The codes loaded so far; not modified.
+        names: The code names to add.
+        optional: Names whose absence from the profile is not an error, for a
+            code a task runs only in some configurations.
+
+    Returns:
+        Tuple of (codes, per-code mapping with every rank count settled).
+
+    Raises:
+        ValueError: If a required code is not in the profile, or if a code's
+            ``npool`` does not divide the ranks it will run on.
+    """
+    optional_names = set(optional or ())
+    loaded: dict[str, orm.AbstractCode] = dict(codes)
+    for name in names:
+        # Before the profile is asked: an unregistered name is a bug here, not
+        # a code the user has yet to install, so ``optional`` never covers it.
+        executable_for(name)
+        if name in loaded:
+            continue
+        try:
+            loaded[name] = load_code(name)
+        except ValueError:
+            if name not in optional_names:
+                raise
+
+    requested = koopmans_input.parallelization.as_mapping()
+    completed = complete_rank_counts(requested, cast("Codes", loaded))
+    check_pools_divide_ranks(completed, requested)
+    return cast("Codes", loaded), completed
+
+
+def load_codes_for_task(koopmans_input: KoopmansInput) -> tuple[Codes, ParallelizationDict]:
+    """Load the codes the task in ``koopmans_input`` needs, and settle their ranks.
 
     Which codes are needed depends not only on ``task`` but also on the
     Koopmans correction (``ki`` vs ``none`` vs …) and the screening method
-    (``dscf`` needs kcp.x, ``dfpt`` would need kcw.x, etc.).
-
-    Args:
-        workflow: The ``WorkflowConfig`` block from a parsed ``KoopmansInput``.
+    (``dscf`` needs kcp.x, ``dfpt`` would need kcw.x, etc.). A route that
+    branches on more than this loads the rest itself, through
+    :func:`load_codes`.
 
     Returns:
-        Dictionary mapping code names to Code instances.
+        Tuple of (codes, per-code mapping with every rank count settled).
 
     Raises:
         ValueError: If a required code is not found in the AiiDA profile.
-        NotImplementedError: If the requested code combination is not supported yet.
     """
+    workflow = koopmans_input.workflow
     task = workflow.task
-    codes: Codes = {}
 
     # All tasks need pw.x
-    codes["pw"] = load_code("pw", "pw.x")
+    names = ["pw"]
+    optional: list[str] = []
 
     # A corrected singlepoint — or a trajectory, which runs one DSCF
     # singlepoint per snapshot — needs a screening-method-specific code
@@ -86,34 +158,30 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     # the screening step itself is skipped.
     if task in (Task.SINGLEPOINT, Task.TRAJECTORY) and workflow.correction != Correction.NONE:
         if workflow.screening_method == CalculateScreeningMethod.DSCF:
-            codes["kcp"] = load_code("kcp", "kcp.x")
+            names.append("kcp")
         elif workflow.screening_method == CalculateScreeningMethod.DFPT:
             # kcw.x runs all three DFPT steps (wann2kc, screen, ham) selected
             # via its ``control.calculation`` flag, so a single code suffices.
-            codes["kcw"] = load_code("kcw", "kcw.x")
+            names.append("kcw")
 
     # The dielectric-constant task runs ph.x on top of the scf
     if task == Task.DFT_EPS:
-        codes["ph"] = load_code("ph", "ph.x")
+        names.append("ph")
 
     # Wannierize task needs additional codes
     if task == Task.WANNIERIZE:
-        codes["pw2wannier90"] = load_code("pw2wannier90", "pw2wannier90.x")
-        codes["wannier90"] = load_code("wannier90", "wannier90.x")
+        names += ["pw2wannier90", "wannier90"]
 
-        # Automated block splitting runs the Wannier.jl CalcJobs (the julia
-        # binary registered via aiida_wannierjl.helpers.get_wannierjl_code).
+        # Automated block splitting runs the Wannier.jl CalcJobs.
         if workflow.block_wannierization_threshold is not None:
-            codes["wannierjl"] = load_code("wannierjl", "julia (Wannier.jl)")
+            names.append("wannierjl")
 
         # projwfc is only needed when the Wannierize flow computes a projected
         # DOS / bandstructure, so treat it as optional rather than required.
-        try:
-            codes["projwfc"] = orm.load_code("projwfc@localhost")
-        except Exception:  # noqa: S110
-            pass
+        names.append("projwfc")
+        optional.append("projwfc")
 
-    return codes
+    return load_codes(koopmans_input, {}, names, optional)
 
 
 def default_rank_count(name: str, code: orm.AbstractCode) -> int | None:
@@ -121,16 +189,11 @@ def default_rank_count(name: str, code: orm.AbstractCode) -> int | None:
 
     One rank for a code that does not run under MPI, and the code's computer's
     ``default_mpiprocs_per_machine`` otherwise. ``None`` means nothing declares
-    a count: a computer with no default leaves the rank count to the scheduler,
-    as it does today.
+    a count, which leaves it to the scheduler.
 
     A code named in :data:`~koopmans.aiida.setup.codes.SERIAL_CODES` takes one
-    rank whatever its node says. That list states a property of the program —
-    wann2kcp.x races on its buffer scratch — so it holds even for a node
-    registered before ``koopmans install`` learned to stamp ``with_mpi``,
-    which is how those nodes look in older profiles. Of that list only
-    wann2kcp reaches here: merge_evc is outside the ``parallelization``
-    vocabulary, so :func:`complete_rank_counts` never asks about it.
+    rank whatever its node says, because that list states a property of the
+    program rather than of the node.
     """
     from koopmans.aiida.setup.codes import SERIAL_CODES, effective_with_mpi
 
@@ -234,20 +297,6 @@ def check_pools_divide_ranks(
             f"one of {_divisors(ranks)}, or set `parallelization.{name}.ntasks` to a "
             f"multiple of {npool}."
         )
-
-
-def resolve_rank_counts(koopmans_input: KoopmansInput, codes: Codes) -> ParallelizationDict:
-    """Return the per-code mapping every loaded code's rank count is settled in.
-
-    Completes the counts (:func:`complete_rank_counts`) and rejects a pool count
-    that cannot divide one (:func:`check_pools_divide_ranks`). Call it wherever
-    ``codes`` grows: it derives everything from ``koopmans_input`` and ``codes``,
-    so calling it again with more codes settles those too.
-    """
-    requested = koopmans_input.parallelization.as_mapping()
-    completed = complete_rank_counts(requested, codes)
-    check_pools_divide_ranks(completed, requested)
-    return completed
 
 
 def prepare_common_inputs(
@@ -511,13 +560,8 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "permitted singlepoint prediction — not yet ported."
         )
 
-    # Load required codes
-    codes = load_codes_for_task(koopmans_input.workflow)
-
-    # Both halves of the rank count meet only here: what the input file asked
-    # for, and what each loaded code's computer offers when it asked for
-    # nothing. Routes that load further codes settle those the same way.
-    parallelization = resolve_rank_counts(koopmans_input, codes)
+    # Load required codes, each carrying the MPI ranks it will run on
+    codes, parallelization = load_codes_for_task(koopmans_input)
 
     # Build the workgraph based on task. An error raised inside the plugin
     # speaks its vocabulary (derived blocks, `num_bands`), which the user
