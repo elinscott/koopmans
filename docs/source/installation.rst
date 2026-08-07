@@ -16,14 +16,14 @@ inputs, runs `Quantum ESPRESSO <https://www.quantum-espresso.org/>`_ and `Wannie
 
 Which executables you need depends on the ``task`` you ask for, and — for a
 ``singlepoint`` — on how it screens. Every executable a task can reach must be there
-before it starts, whatever the rest of the input file says:
+before it starts, whatever the rest of the input file says — with the one exception
+noted below:
 
 - ``dft_bands`` needs ``pw.x``, which everything needs.
 - ``dft_eps`` adds ``ph.x``, which computes dielectric constants.
 - ``wannierize`` adds ``wannier90.x`` and ``pw2wannier90.x``, which construct the
-  localized orbitals; ``projwfc.x``, which gives a projected density of states alongside
-  them; and `Wannier.jl <https://github.com/qiaojunfeng/Wannier.jl>`_ with a Julia
-  interpreter, which splits a Wannierization into blocks.
+  localized orbitals, and ``projwfc.x``, which gives a projected density of states
+  alongside them.
 - ``singlepoint`` with ``screening_method = 'dscf'`` adds ``kcp.x``, which computes
   screening parameters from total-energy differences and evaluates the corrected
   functional, together with the ``wannier90.x``, ``pw2wannier90.x``, ``wann2kcp.x`` and
@@ -34,9 +34,13 @@ before it starts, whatever the rest of the input file says:
 - ``trajectory`` runs one ``dscf`` singlepoint per snapshot, so it needs what that
   needs.
 
-Wannier.jl is the one entry the engine setup cannot find on your ``PATH``: build its
-Julia project with ``aiida_wannierjl.helpers.setup_julia_environment`` and register it
-with ``aiida_wannierjl.helpers.get_wannierjl_code``.
+One Wannierization setting reaches past that list. Setting
+``workflow.block_wannierization_threshold`` splits the Wannierization into blocks with
+`Wannier.jl <https://github.com/qiaojunfeng/Wannier.jl>`_, which needs a Julia
+interpreter — the one thing the engine setup cannot find on your ``PATH``. Build its
+project with ``aiida_wannierjl.helpers.setup_julia_environment`` and register it with
+``aiida_wannierjl.helpers.get_wannierjl_code``. Leave the threshold unset and you need
+neither.
 
 ********************
  The Python package

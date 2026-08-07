@@ -150,11 +150,27 @@ def _external_projector_kwargs(
 def required_codes(koopmans_input: KoopmansInput) -> list[str]:
     """Return the codes the Wannierize chain runs.
 
-    pw.x and pw2wannier90.x feed wannier90.x; projwfc.x supplies the
+    pw.x and pw2wannier90.x feed wannier90.x, and projwfc.x supplies the
     projected density of states the flow reports alongside the Wannier
-    functions, and Wannier.jl the parallel transport a block splits with.
+    functions. Every one of those comes out of the same Quantum ESPRESSO
+    build, so the chain asks for all of them whatever the input file says.
+
+    Wannier.jl is the one exception, and it is excepted for what it is
+    rather than for how often it is used: a second language runtime, which
+    ``koopmans install`` cannot register and which a Koopmans user has no
+    other reason to have. It is asked for only where the chain reaches it.
+
+    ``block_wannierization_threshold`` is the one input that reaches it
+    today. Automatic projections are the second trigger — a block whose
+    band groups exist only at runtime is split the same way, which
+    ``WannierizeBlocks`` already treats as a split trigger of its own —
+    but no route hands it such a block without a threshold, so nothing
+    here tests for it yet.
     """
-    return ["pw", "pw2wannier90", "wannier90", "projwfc", "wannierjl"]
+    codes = ["pw", "pw2wannier90", "wannier90", "projwfc"]
+    if koopmans_input.workflow.block_wannierization_threshold is not None:
+        codes.append("wannierjl")
+    return codes
 
 
 def build_wannierize_workgraph(

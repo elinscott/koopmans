@@ -98,9 +98,10 @@ class TestRequiredCodes:
         [
             ("dft_bands", {}, {"pw"}),
             ("dft_eps", {}, {"pw", "ph"}),
+            ("wannierize", {}, {"pw", "pw2wannier90", "wannier90", "projwfc"}),
             (
                 "wannierize",
-                {},
+                {"block_wannierization_threshold": 0.1},
                 {"pw", "pw2wannier90", "wannier90", "projwfc", "wannierjl"},
             ),
             (
@@ -131,27 +132,37 @@ class TestRequiredCodes:
         route = route_for(Task(task))
         assert set(route.required_codes(koopmans_input)) == expected
 
-    @pytest.mark.parametrize(
-        ("flag", "value"),
-        [
-            ("block_wannierization_threshold", 0.1),
-            ("auto_projections", True),
-        ],
-    )
-    def test_wannierize_set_ignores_its_flags(self, flag: str, value: Any) -> None:
-        """No input-file flag narrows or widens what a Wannierize run must have.
+    def test_only_a_split_run_asks_for_the_julia_code(self) -> None:
+        """The threshold is what adds Wannier.jl, and it is all that adds it.
 
-        The discriminating half of the static rule: the same profile serves
-        a split run and a plain one, so a user cannot get part-way through
-        before learning a code is missing.
+        Both halves are needed. Without the with-threshold case a
+        declaration that never names the julia code would pass; without the
+        without-threshold case one that always names it would, and every
+        Wannierize user would need a Julia install.
         """
         from koopmans.aiida.workflows import route_for
         from koopmans.input_file.workflow import Task
 
         route = route_for(Task.WANNIERIZE)
         plain = route.required_codes(_input_for("wannierize"))
-        flagged = route.required_codes(_input_for("wannierize", **{flag: value}))
-        assert plain == flagged
+        split = route.required_codes(_input_for("wannierize", block_wannierization_threshold=0.1))
+        assert "wannierjl" not in plain
+        assert "wannierjl" in split
+        assert set(split) - set(plain) == {"wannierjl"}
+
+    def test_the_rest_of_the_wannierize_set_ignores_its_flags(self) -> None:
+        """Only Wannier.jl moves with the input; the QE codes are unconditional.
+
+        They come out of one build, so narrowing them would let a user get
+        part-way through a run before learning one is missing.
+        """
+        from koopmans.aiida.workflows import route_for
+        from koopmans.input_file.workflow import Task
+
+        route = route_for(Task.WANNIERIZE)
+        plain = route.required_codes(_input_for("wannierize"))
+        automatic = route.required_codes(_input_for("wannierize", auto_projections=True))
+        assert plain == automatic
 
     def test_missing_code_names_the_task_and_the_fix(
         self, aiida_profile_clean: Any, localhost_computer: Any
@@ -183,8 +194,9 @@ class TestRequiredCodes:
             ("projwfc", "quantumespresso.projwfc"),
         ):
             localhost_code(label, entry_point)
+        split = _input_for("wannierize", block_wannierization_threshold=0.1)
         with pytest.raises(ValueError, match=r"setup_julia_environment") as excinfo:
-            load_codes_for_task(_input_for("wannierize"))
+            load_codes_for_task(split)
         assert "`wannierjl@localhost`" in str(excinfo.value)
         assert "koopmans install" not in str(excinfo.value)
 
