@@ -785,7 +785,7 @@ raw:
               structured_type:
                 kind: enum
                 path: aiida_koopmans.functionals.Correction
-            required: true
+            required: false
         ecutrho:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -835,7 +835,7 @@ raw:
               structured_type:
                 kind: enum
                 path: aiida_koopmans.variational_orbitals.VariationalOrbitalType
-            required: true
+            required: false
         initial_alpha:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -2109,7 +2109,7 @@ raw:
                   structured_type:
                     kind: enum
                     path: aiida_koopmans.functionals.Correction
-                required: true
+                required: false
             ecutrho:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2159,7 +2159,7 @@ raw:
                   structured_type:
                     kind: enum
                     path: aiida_koopmans.variational_orbitals.VariationalOrbitalType
-                required: true
+                required: false
             initial_alpha:
               dynamic: false
               identifier: <scrubbed:identifier>

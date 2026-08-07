@@ -331,6 +331,54 @@ def kpoints_input_to_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData:
     return kpts
 
 
+def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
+    """Convert the mesh the named step samples to AiiDA KpointsData.
+
+    ``kpoints.overrides.<step>`` states the mesh for that step alone; every
+    attribute it leaves unset comes from the top-level ``grid`` and
+    ``offset``.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        step: Name of a ``kpoints.overrides`` entry.
+
+    Returns:
+        AiiDA KpointsData node with k-point mesh.
+
+    Raises:
+        ValueError: If the step's entry states a ``grid_spacing`` instead of
+            a mesh.
+    """
+    override = getattr(kpoints.overrides, step)
+    if override is None:
+        return kpoints_input_to_kpoints_mesh(kpoints)
+    if override.grid_spacing is not None:
+        raise ValueError(
+            f"`kpoints.overrides.{step}.grid_spacing` leaves the mesh to the cell, so "
+            f"the {step} mesh is not known before the calculation runs. Write "
+            f"`kpoints.overrides.{step}.grid` instead."
+        )
+    kpts = orm.KpointsData()
+    grid = kpoints.grid if override.grid is None else override.grid
+    offset = kpoints.offset if override.offset is None else override.offset
+    kpts.set_kpoints_mesh(list(grid), offset=list(offset))  # type: ignore[no-untyped-call]
+    return kpts
+
+
+def step_grid_spacing(kpoints: KpointsInput, step: str) -> float | None:
+    """Return the largest k-point spacing the named step samples at, if it states one.
+
+    ``None`` where the step states a mesh instead, which is every step the
+    input file does not give a ``grid_spacing``.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        step: Name of a ``kpoints.overrides`` entry.
+    """
+    override = getattr(kpoints.overrides, step)
+    return None if override is None else override.grid_spacing
+
+
 def _parse_kpoints_path_string(
     path_string: str, point_coords: dict[str, list[float]]
 ) -> list[tuple[str, str]]:
@@ -512,7 +560,9 @@ def kpoints_input_to_kpoints_path(
                 for label, coords in point_coords.items()
             }
 
-    kpoint_list, label_list = _calculate_kpoints_along_path(path, point_coords, kpoints.density)
+    kpoint_list, label_list = _calculate_kpoints_along_path(
+        path, point_coords, kpoints.path_density
+    )
 
     kpts = orm.KpointsData()
     kpts.set_kpoints(kpoint_list)  # type: ignore[no-untyped-call]

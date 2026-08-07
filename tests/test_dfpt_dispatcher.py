@@ -102,6 +102,58 @@ class TestUnpolarized:
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 8
 
 
+class TestPerStepKpointMesh:
+    """``kpoints.overrides`` gives the scf and the nscf separate meshes.
+
+    kcw.x counts its Brillouin zone in the nscf mesh (``CONTROL.mp1-3``),
+    so the two must move independently: a denser scf that dragged the
+    nscf with it would change what kcw.x screens.
+    """
+
+    def test_a_denser_scf_leaves_the_nscf_alone(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The scf entry reaches the scf and nothing downstream of it."""
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"scf": {"grid": [4, 4, 4]}}
+        wg = _build(d, dfpt_codes)
+        scf_nscf = wg.tasks["scf_nscf"]
+        assert list(scf_nscf.inputs["scf_kpoints"].value.get_kpoints_mesh()[0]) == [4, 4, 4]
+        assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == 8
+
+    def test_an_scf_grid_spacing_reaches_the_scf_as_a_distance(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The scf is left to the spacing while the nscf keeps its explicit list.
+
+        The scf mesh has to be *absent*, not merely accompanied by the
+        distance: ``PwBaseWorkChain`` takes one of the two, and a mesh wins.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
+        wg = _build(d, dfpt_codes)
+        scf_nscf = wg.tasks["scf_nscf"]
+        assert scf_nscf.inputs["scf_kpoints"].value is None
+        overrides = scf_nscf.inputs["overrides"].value
+        assert overrides["scf"]["kpoints_distance"] == pytest.approx(0.11)
+        assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == 8
+
+    def test_the_nscf_entry_sets_the_mesh_kcw_counts_in(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A 3x3x3 nscf reaches the nscf k-list and kcw.x's ``CONTROL.mp1-3``.
+
+        The two are the same statement of the sampling, and kcw.x reads the
+        Wannier functions against the grid it is told, so an ``mp1-3`` left
+        on the old mesh would misread them.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
+        wg = _build(d, dfpt_codes)
+        assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 27
+        assert wg.tasks["dfpt"].inputs["kgrid"].value == [3, 3, 3]
+
+
 class TestCollinear:
     """spin='collinear' fans out per spin channel and validates its inputs."""
 

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from koopmans.aiida.workflows import prepare_common_inputs
+from koopmans.aiida.workflows import (
+    pin_step_kpoints,
+    prepare_common_inputs,
+    reject_kpoint_overrides,
+)
 
 if TYPE_CHECKING:
     from aiida_koopmans.parallelization import ParallelizationDict
@@ -31,7 +35,14 @@ def build_dft_bands_workgraph(
     """
     from aiida_koopmans.workgraphs.pw import RunPwBands
 
-    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+    reject_kpoint_overrides(
+        koopmans_input,
+        {
+            "nscf": "`kpoints.overrides.nscf` cannot take effect in a `dft_bands` "
+            "calculation: it runs an scf and then samples `kpoints.path`, with no "
+            "nscf mesh in between. Set `kpoints.overrides.scf` or `kpoints.grid`."
+        },
+    )
 
     structure, _pseudo_family, overrides = prepare_common_inputs(
         koopmans_input, ["scf", "bands"], parallelization
@@ -42,5 +53,5 @@ def build_dft_bands_workgraph(
         structure=structure,
         overrides=overrides,
         parallelization=parallelization or None,
-        scf_kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
+        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
     )

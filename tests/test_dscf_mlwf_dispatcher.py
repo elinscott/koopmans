@@ -570,3 +570,25 @@ class TestFrozenWindowThreading:
         init = next(t for t in wg.tasks if t.name == "wannier_initialization")
         overrides = init.inputs.wannier_overrides["wannier90"].value
         assert overrides["dis_froz_max"] == 1.0
+
+
+class TestPerStepKpointMeshRejected:
+    """The kcp.x route runs every step on one mesh, so it takes no per-step entry.
+
+    Its kcp.x steps recompute the ground state in the supercell that
+    ``kpoints.grid`` describes. An scf on another mesh would be a ground
+    state the Wannier functions did not come from, and the mismatch would
+    show up nowhere in the run.
+    """
+
+    @pytest.mark.parametrize("step", ["scf", "nscf"])
+    def test_either_entry_raises_naming_the_grid(self, step: str) -> None:
+        """The message sends the reader to the one keyword this route reads.
+
+        The guard runs before any code or pseudopotential is loaded, so it
+        needs no profile.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"]["overrides"] = {step: {"grid": [4, 4, 4]}}
+        with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
+            _build(d, codes={})
