@@ -134,6 +134,48 @@ class TestDftEps:
         assert list(scf.inputs["kpoints"].value.get_kpoints_mesh()[0]) == [2, 2, 2]
         assert scf.inputs["kpoints_distance"].value is None
 
+    def test_the_scf_entry_moves_the_scf_mesh(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """Dielectric constants converge slowly in k, so this scf may want more."""
+        d = _si_eps_dict()
+        d["kpoints"]["overrides"] = {"scf": {"grid": [4, 4, 4]}}
+        wg = build_workgraph(KoopmansInput.model_validate(d))
+        scf = wg.tasks["scf"]
+        assert list(scf.inputs["kpoints"].value.get_kpoints_mesh()[0]) == [4, 4, 4]
+
+    def test_a_grid_spacing_reaches_the_scf_as_a_distance(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """The spacing has to displace the protocol's own, with no mesh alongside."""
+        d = _si_eps_dict()
+        d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
+        wg = build_workgraph(KoopmansInput.model_validate(d))
+        scf = wg.tasks["scf"]
+        assert scf.inputs["kpoints"].value is None
+        assert float(scf.inputs["kpoints_distance"].value) == pytest.approx(0.11)
+
+    def test_an_nscf_entry_is_rejected(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """There is no nscf step here for the mesh to reach."""
+        d = _si_eps_dict()
+        d["kpoints"]["overrides"] = {"nscf": {"grid": [4, 4, 4]}}
+        with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_eps"):
+            build_workgraph(KoopmansInput.model_validate(d))
+
     def test_missing_ph_code_raises(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
