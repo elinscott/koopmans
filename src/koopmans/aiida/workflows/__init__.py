@@ -122,42 +122,28 @@ def pw_pseudo_overrides(
 ) -> dict[str, Any]:
     """Return the ``pw`` override entries that pin a cutoff-less family's pseudos.
 
-    ``parameters['SYSTEM']`` states both cutoffs or neither: aiida-quantumespresso
-    merges the overrides over the family's recommendation, so one cutoff alone
-    would pair with the other's recommended value.
-
     Empty for a family that publishes recommended cutoffs. Otherwise the
     family's pseudos, which aiida-quantumespresso's protocol builder accepts
-    only when both cutoffs are in ``parameters['SYSTEM']``.
+    only when ``parameters['SYSTEM']`` carries both cutoffs — a pair
+    :func:`~koopmans.aiida.conversion.input_to_pw_parameters` completes from
+    ``ecutwfc`` alone.
 
     Raises:
-        ValueError: If exactly one cutoff is stated, or if the family
-            publishes none and neither is.
+        ValueError: If the family publishes no recommended cutoffs and the
+            input states none either.
     """
     from koopmans.aiida.conversion import get_pseudos_from_family
     from koopmans.aiida.setup.pseudos import pseudo_family_has_cutoffs
 
-    system = parameters.get("SYSTEM", {})
-    missing = [key for key in ("ecutwfc", "ecutrho") if key not in system]
-
     if pseudo_family_has_cutoffs(pseudo_family):
-        if len(missing) == 1:
-            [absent] = missing
-            stated = "ecutrho" if absent == "ecutwfc" else "ecutwfc"
-            raise ValueError(
-                f"`calculator_parameters.pw.system.{stated}` replaces the cutoff the "
-                f"pseudopotential family `{pseudo_family}` recommends, but `{absent}` "
-                f"would stay on that family's recommendation. Set `{absent}` too, or "
-                "neither and take both recommendations."
-            )
         return {}
 
-    if missing:
+    if "ecutwfc" not in parameters.get("SYSTEM", {}):
         raise ValueError(
             f"The pseudopotential family `{pseudo_family}` publishes no recommended "
-            f"cutoffs, so {' and '.join(f'`{key}`' for key in missing)} must come from "
-            "the input file: set `calculator_parameters.pw.system.ecutwfc` and "
-            "`calculator_parameters.pw.system.ecutrho`."
+            "cutoffs, so they must come from the input file: set "
+            "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it "
+            "unless `calculator_parameters.pw.system.ecutrho` states otherwise."
         )
 
     return {"pseudos": get_pseudos_from_family(pseudo_family, structure)}

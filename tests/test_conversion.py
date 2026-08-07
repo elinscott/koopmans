@@ -241,6 +241,21 @@ class TestInputToPwParameters:
         parameters = input_to_pw_parameters(inp)
         assert "calculation" not in parameters.get("CONTROL", {})
 
+    def test_ecutrho_follows_the_kcp_block_when_it_is_set(self, aiida_profile: Any) -> None:
+        """An explicit ``kcp.system.ecutrho`` puts pw.x on the CP supercell grid.
+
+        100 Ry rather than the four-times-20 the pair would take on its own,
+        so the assertion cannot be satisfied by the derivation.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={"ecutwfc": 20.0, "kcp": {"system": {"ecutrho": 100.0}}}
+            )
+        )
+        assert input_to_pw_parameters(inp)["SYSTEM"]["ecutrho"] == pytest.approx(100.0)
+
 
 class TestCodeParallelizationHelper:
     """``code_parallelization`` maps a per-code config to (options, settings)."""
