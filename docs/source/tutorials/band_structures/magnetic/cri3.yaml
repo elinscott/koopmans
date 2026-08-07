@@ -1,0 +1,60 @@
+# The KI band structure of ferromagnetic bulk CrI3, with the screening
+# parameters computed from linear response.
+
+workflow:
+  task: singlepoint
+  correction: ki
+  screening_method: dfpt          # screening from linear response (kcw.x)
+  init_orbitals: mlwfs            # a crystal needs localized orbitals
+  spin: collinear                 # the two spin channels differ
+  group_orbitals_by: spread       # orbitals this alike share one parameter
+  group_orbitals_tol: 0.1         # in Angstrom^2
+  pseudo_library: PseudoDojo/0.4/LDA/SR/standard/upf
+
+atoms:
+  cell_parameters:
+    periodic: true
+    units: angstrom
+    vectors:                      # rhombohedral, the low-temperature phase
+      - [3.4335, 1.9823321493, 6.6023333333]
+      - [-3.4335, 1.9823321493, 6.6023333333]
+      - [0.0, -3.9646642985, 6.6023333333]
+  atomic_positions:
+    units: crystal
+    positions:
+      - [Cr, 0.3336766667, 0.3336766667, -0.6663233333]
+      - [Cr, 0.6663233333, 0.6663233333, -0.3336766667]
+      - [I, 0.5699400001, 0.92223, -0.72907]
+      - [I, 0.92223, 0.27093, -0.4300599999]
+      - [I, 0.27093, 0.5699400001, -0.07777]
+      - [I, 0.4300599999, 0.07777, -0.27093]
+      - [I, 1.07777, -0.27093, -0.5699400001]
+      - [I, 0.72907, -0.5699400001, 0.07777]
+
+kpoints:
+  grid: [2, 2, 2]                 # the mesh the Wannier functions are built on
+  path: GLFG                      # the path the band structure is drawn along
+  density: 30
+
+calculator_parameters:
+  ecutwfc: 30.0                   # wavefunction cutoff (Ry)
+  tot_magnetization: 6            # three unpaired d electrons on each Cr
+  pw:
+    system:
+      nbnd: 42                    # spans both channels' Wannier manifolds
+  wannier90:
+    up:                           # 38 occupied Wannier functions, then 4 empty
+      projections:
+        - [{site: Cr, ang_mtm: "l=0"}]
+        - [{site: Cr, ang_mtm: "l=1"}]
+        - [{site: I, ang_mtm: "l=0"}]
+        - [{site: I, ang_mtm: "l=1"}, {site: Cr, ang_mtm: "l=2,mr=1,4,5"}]
+        - [{site: Cr, ang_mtm: "l=2,mr=2,3"}]
+    down:                         # 32 occupied Wannier functions, then 10 empty
+      projections:
+        - [{site: Cr, ang_mtm: "l=0"}]
+        - [{site: Cr, ang_mtm: "l=1"}]
+        - [{site: I, ang_mtm: "l=0"}]
+        - [{site: I, ang_mtm: "l=1"}]
+        - [{site: Cr, ang_mtm: "l=2,mr=1,4,5"}]
+        - [{site: Cr, ang_mtm: "l=2,mr=2,3"}]
