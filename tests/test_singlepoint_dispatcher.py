@@ -167,7 +167,11 @@ class TestPwAndKcpCutoffsAgree:
         ids=[case[0] for case in _ACCEPTED_CUTOFF_SHAPES],
     )
     def test_both_codes_receive_the_same_pair(
-        self, ozone_input: KoopmansInput, aiida_profile: object, label: str, overrides: dict
+        self,
+        ozone_input: KoopmansInput,
+        aiida_profile: object,
+        label: str,
+        overrides: dict[str, float],
     ) -> None:
         """Reads the numbers each code is handed, rather than trusting the parse check.
 
