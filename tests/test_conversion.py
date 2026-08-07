@@ -490,31 +490,28 @@ class TestStepKpointsMesh:
     """A step's mesh is its own attributes laid over the top-level ones."""
 
     @pytest.mark.parametrize(
-        ("override", "grid", "offset"),
+        "override",
         [
-            (None, [2, 2, 2], [0.0, 0.5, 0.0]),
-            ({"grid": [4, 4, 4]}, [4, 4, 4], [0.0, 0.5, 0.0]),
-            ({"offset": [0.5, 0.5, 0.5]}, [2, 2, 2], [0.5, 0.5, 0.5]),
-            ({"grid": [4, 4, 4], "offset": [0.0, 0.0, 0.0]}, [4, 4, 4], [0.0, 0.0, 0.0]),
+            None,
+            {"grid": [4, 4, 4]},
+            {"offset": [0.5, 0.5, 0.5]},
+            {"grid": [4, 4, 4], "offset": [0.0, 0.0, 0.0]},
         ],
     )
     def test_unset_attributes_come_from_the_top_level(
         self,
         aiida_profile: Any,
         override: dict[str, Any] | None,
-        grid: list[int],
-        offset: list[float],
     ) -> None:
         """An entry states only what differs; the rest is the top-level mesh."""
         from koopmans.aiida.conversion import step_kpoints_mesh
         from koopmans.input_file import GridKpointsInput
 
-        kpoints = GridKpointsInput.model_validate(
-            {"grid": [2, 2, 2], "offset": [0.0, 0.5, 0.0], "overrides": {"scf": override}}
-        )
+        top_level = {"grid": [2, 2, 2], "offset": [0.0, 0.5, 0.0]}
+        kpoints = GridKpointsInput.model_validate({**top_level, "overrides": {"scf": override}})
         mesh, mesh_offset = step_kpoints_mesh(kpoints, "scf").get_kpoints_mesh()  # type: ignore[no-untyped-call]
-        assert [int(x) for x in mesh] == grid
-        assert list(mesh_offset) == offset
+        assert [int(x) for x in mesh] == (override or {}).get("grid", top_level["grid"])
+        assert list(mesh_offset) == (override or {}).get("offset", top_level["offset"])
 
 
 class TestGridSpacingReachesTheBuilder:
