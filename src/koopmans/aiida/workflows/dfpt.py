@@ -132,13 +132,11 @@ def build_singlepoint_dfpt_workgraph(
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
     nscf_mesh = step_kpoints_mesh(koopmans_input.kpoints, "nscf")
-    nscf_grid = [int(x) for x in nscf_mesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
 
     return SinglepointDFPTWorkflow.build(
         codes=codes,
         structure=structure,
         kpoints=nscf_mesh,
-        kgrid=nscf_grid,
         scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
         bands_kpoints=bands_kpoints,
         pseudo_family=pseudo_family,
