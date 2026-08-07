@@ -124,7 +124,7 @@ process, managed the same way:
     $ koopmans backend hq status
     HyperQueue server is running.
       worker 3: pool of 24 CPU(s)
-      each calculation is given 14 MPI rank(s) by default
+      each calculation is given 4 MPI rank(s) by default
 
 Start it with ``koopmans backend hq start`` if it is not running. To change the pool
 without reinstalling, restart the worker with a new size:
