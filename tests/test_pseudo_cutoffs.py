@@ -174,7 +174,7 @@ class TestFamilyWithoutCutoffs:
             ("fake_user_built_family", "MyPseudos/local"),
         ],
     )
-    def test_input_cutoffs_and_pinned_pseudos_build(
+    def test_input_cutoffs_reach_the_builder(
         self,
         aiida_profile_clean: Any,
         installed_pw_code: Any,
@@ -186,10 +186,9 @@ class TestFamilyWithoutCutoffs:
 
         Covers the family koopmans installs itself (a cutoffs family with no
         stringency) and the one ``aiida-pseudo install family`` produces (a
-        plain family, which cannot carry cutoffs at all). Before the fix
-        neither reached a builder at all. ``ecutrho`` at 80 Ry shows the
-        top-level ``ecutwfc`` shorthand pinning it at four times the input's
-        20 Ry.
+        plain family, which cannot carry cutoffs at all). ``ecutrho`` at 80 Ry
+        is the top-level ``ecutwfc`` shorthand at four times the input's 20 Ry,
+        so it can have come from nowhere else.
         """
         from koopmans.aiida.workflows import prepare_common_inputs
 
@@ -210,8 +209,8 @@ class TestFamilyWithoutCutoffs:
     ) -> None:
         """A family with nothing to recommend is satisfied by ``ecutwfc`` alone.
 
-        The pinned pseudos reach a builder that has no recommendation to fall
-        back on, so the derived 80 Ry is the only ``ecutrho`` in play.
+        The builder has no recommendation to fall back on, so the derived
+        80 Ry is the only ``ecutrho`` in play.
         """
         from koopmans.aiida.workflows import prepare_common_inputs
 
@@ -249,21 +248,3 @@ class TestFamilyWithoutCutoffs:
         assert "SG15/1.2/PBE/FR" in message
         assert "calculator_parameters.ecutwfc" in message
         assert "is not installed" not in message
-
-    def test_workgraph_builds_with_pinned_pseudos(
-        self,
-        aiida_profile_clean: Any,
-        installed_pw_code: Any,
-        fake_sg15_family_without_cutoffs: Any,
-    ) -> None:
-        """The pinned pseudo nodes survive the graph input serialization.
-
-        The override dict now carries ``UpfData`` nodes; this is the check
-        that ``build_workgraph`` still assembles a WorkGraph around them.
-        """
-        from koopmans.aiida.workflows import build_workgraph
-
-        inp = KoopmansInput.model_validate(silicon_pw_input(pseudo_library="SG15/1.2/PBE/FR"))
-        wg = build_workgraph(inp)
-        overrides = wg.tasks["PwBandsWorkChain"].inputs["scf"]["pw"]["parameters"]
-        assert overrides.value.get_dict()["SYSTEM"]["ecutwfc"] == pytest.approx(20.0)

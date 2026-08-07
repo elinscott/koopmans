@@ -9,7 +9,11 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import pin_step_kpoints, prepare_common_inputs, pw_pseudo_overrides
+from koopmans.aiida.workflows import (
+    pin_step_kpoints,
+    prepare_common_inputs,
+    require_cutoffs_for_family,
+)
 from koopmans.aiida.workflows.blocks import (
     create_automatic_blocks,
     create_explicit_blocks,
@@ -310,15 +314,17 @@ def _build_wannierize_blocks_workgraph(
     scf_parameters.get("SYSTEM", {}).pop("nbnd", None)
     nscf_parameters = copy.deepcopy(parameters)
     nscf_parameters.setdefault("SYSTEM", {})["nbnd"] = nbnd
-    pinned = pw_pseudo_overrides(pseudo_family, structure, parameters)
+    # This route assembles its own scf/nscf overrides instead of calling
+    # ``prepare_common_inputs``, so the cutoff check is its own too.
+    require_cutoffs_for_family(pseudo_family, parameters)
     wannier_overrides: WannierizeOverrides = {
         "scf": {
             "pseudo_family": pseudo_family,
-            "pw": {"parameters": scf_parameters, **pinned},
+            "pw": {"parameters": scf_parameters},
         },
         "nscf": {
             "pseudo_family": pseudo_family,
-            "pw": {"parameters": nscf_parameters, **pinned},
+            "pw": {"parameters": nscf_parameters},
         },
     }
 

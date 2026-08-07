@@ -115,28 +115,22 @@ def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
     return codes
 
 
-def pw_pseudo_overrides(
-    pseudo_family: str,
-    structure: orm.StructureData,
-    parameters: dict[str, Any],
-) -> dict[str, Any]:
-    """Return the ``pw`` override entries that pin a cutoff-less family's pseudos.
+def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -> None:
+    """Reject an input that names no cutoffs against a family recommending none.
 
-    Empty for a family that publishes recommended cutoffs. Otherwise the
-    family's pseudos, which aiida-quantumespresso's protocol builder accepts
-    only when ``parameters['SYSTEM']`` carries both cutoffs — a pair
-    :func:`~koopmans.aiida.conversion.input_to_pw_parameters` completes from
-    ``ecutwfc`` alone.
+    Args:
+        pseudo_family: Label of the family the pw.x steps will use.
+        parameters: The pw.x parameters the input file produced, whose
+            ``SYSTEM`` block carries ``ecutwfc`` when the input states it.
 
     Raises:
         ValueError: If the family publishes no recommended cutoffs and the
             input states none either.
     """
-    from koopmans.aiida.conversion import get_pseudos_from_family
     from koopmans.aiida.setup.pseudos import pseudo_family_has_cutoffs
 
     if pseudo_family_has_cutoffs(pseudo_family):
-        return {}
+        return
 
     if "ecutwfc" not in parameters.get("SYSTEM", {}):
         raise ValueError(
@@ -145,8 +139,6 @@ def pw_pseudo_overrides(
             "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it "
             "unless `calculator_parameters.pw.system.ecutrho` states otherwise."
         )
-
-    return {"pseudos": get_pseudos_from_family(pseudo_family, structure)}
 
 
 def prepare_common_inputs(
@@ -157,9 +149,9 @@ def prepare_common_inputs(
 
     Converts the koopmans input into a structure, ensures the pseudo family is
     installed, and builds an overrides dict with a PW parameters entry for each
-    of the requested sub-workflow keys. A family publishing no recommended
-    cutoffs also has its pseudos pinned in that entry
-    (:func:`pw_pseudo_overrides`).
+    of the requested sub-workflow keys. An input naming no cutoffs against a
+    family recommending none is rejected here
+    (:func:`require_cutoffs_for_family`).
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -176,8 +168,9 @@ def prepare_common_inputs(
 
     ensure_pseudo_family_installed(pseudo_family)
 
+    require_cutoffs_for_family(pseudo_family, parameters)
+
     pw_overrides: dict[str, Any] = {"parameters": parameters}
-    pw_overrides.update(pw_pseudo_overrides(pseudo_family, structure, parameters))
 
     # The pw entry carries the pw.x parallelization directive: -npool rides
     # settings.cmdline; ntasks rides metadata.options.resources — both survive
