@@ -35,8 +35,7 @@ class TestBuild:
     def test_build_matches_build_workgraph(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcp_code: Any,
+        installed_dscf_codes: Any,
         fake_sg15_pseudo_family: Any,
         tutorials_dir: Path,
     ) -> None:

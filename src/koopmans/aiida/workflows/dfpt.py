@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, cast
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
-    load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
 )
@@ -22,6 +21,17 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
+
+
+def required_codes(koopmans_input: KoopmansInput) -> list[str]:
+    """Return the codes the DFPT singlepoint chain runs.
+
+    pw.x, pw2wannier90.x and wannier90.x build the variational orbitals;
+    kcw.x runs all three of its steps (wann2kc, screen, ham) off its
+    ``control.calculation`` flag, so one code covers them; ph.x supplies the
+    dielectric constant.
+    """
+    return ["pw", "pw2wannier90", "wannier90", "kcw", "ph"]
 
 
 def build_singlepoint_dfpt_workgraph(
@@ -128,12 +138,6 @@ def build_singlepoint_dfpt_workgraph(
         if koopmans_input.kpoints.path is not None
         else None
     )
-
-    # The wannierization steps need codes that load_codes_for_task only wires
-    # for the WANNIERIZE task; load them here until it grows a DFPT branch.
-    # 'auto' adds the ph.x dielectric chain in front of the kcw.x steps.
-    wanted = ["wannier90", "pw2wannier90"] + (["ph"] if eps_inf == "auto" else [])
-    codes, parallelization = load_codes(koopmans_input, codes, wanted)
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.

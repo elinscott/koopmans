@@ -8,10 +8,10 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_codes, reject_kpoint_overrides
+from koopmans.aiida.workflows import reject_kpoint_overrides
 from koopmans.aiida.workflows.dscf import (
+    DSCF_CODES,
     KPOINT_OVERRIDES_ON_TRAJECTORY,
-    WANNIER_INIT_CODES,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
     require_supported_correction,
@@ -28,6 +28,17 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
     from koopmans.input_file.ml import MLConfig
     from koopmans.input_file.workflow import WorkflowConfig
+
+
+def required_codes(koopmans_input: KoopmansInput) -> list[str]:
+    """Return the codes the trajectory chain runs: one kcp.x singlepoint per snapshot.
+
+    The set is the kcp.x singlepoint's whatever ``workflow.screening_method``
+    says, because kcp.x is the only screening this route implements. The
+    pw2wannier90.x that builds the ``power_spectrum`` descriptors is already
+    in it.
+    """
+    return list(DSCF_CODES)
 
 
 def build_trajectory_workgraph(
@@ -104,12 +115,10 @@ def build_trajectory_workgraph(
         extra_kwargs = dscf_wannier_init_inputs(
             koopmans_input, next(iter(snapshots.values())), inputs["nbnd"]
         )
-        codes, parallelization = load_codes(koopmans_input, codes, WANNIER_INIT_CODES)
         extra_kwargs["codes"] = dict(codes)
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         # The descriptors come from a pw2wannier90.x decompose pass.
-        codes, parallelization = load_codes(koopmans_input, codes, ["pw2wannier90"])
         extra_kwargs["pw2wannier90_code"] = codes["pw2wannier90"]
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 

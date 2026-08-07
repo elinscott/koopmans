@@ -509,6 +509,18 @@ def installed_ph_code(localhost_code: Any) -> Any:
 
 
 @pytest.fixture
+def installed_projwfc_code(localhost_code: Any) -> Any:
+    """Register a dummy ``projwfc@localhost`` code so ``load_code`` succeeds."""
+    return localhost_code("projwfc", "quantumespresso.projwfc")
+
+
+@pytest.fixture
+def installed_wannierjl_code(localhost_code: Any) -> Any:
+    """Register a dummy ``wannierjl@localhost`` code so ``load_code`` succeeds."""
+    return localhost_code("wannierjl", "wannierjl.check_neighbors")
+
+
+@pytest.fixture
 def installed_wannier_codes(localhost_code: Any) -> dict[str, Any]:
     """Register dummy ``wannier90`` / ``pw2wannier90`` codes for DFPT builds."""
     return {
@@ -523,6 +535,58 @@ def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     return {
         "wann2kcp": localhost_code("wann2kcp", "koopmans.wann2kcp"),
         "merge_evc": localhost_code("merge_evc", "koopmans.merge_evc"),
+    }
+
+
+@pytest.fixture
+def installed_dscf_codes(
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    installed_wannier_codes: dict[str, Any],
+    installed_fold_codes: dict[str, Any],
+) -> dict[str, Any]:
+    """Register every code a kcp.x singlepoint or trajectory chain runs.
+
+    Spelt out rather than read off the route's declaration, so that dropping
+    a name from the declaration is not silently matched here too.
+    """
+    return {
+        "pw": installed_pw_code,
+        "kcp": installed_kcp_code,
+        **installed_wannier_codes,
+        **installed_fold_codes,
+    }
+
+
+@pytest.fixture
+def installed_dfpt_codes(
+    installed_pw_code: Any,
+    installed_kcw_code: Any,
+    installed_ph_code: Any,
+    installed_wannier_codes: dict[str, Any],
+) -> dict[str, Any]:
+    """Register every code a kcw.x singlepoint chain runs."""
+    return {
+        "pw": installed_pw_code,
+        "kcw": installed_kcw_code,
+        "ph": installed_ph_code,
+        **installed_wannier_codes,
+    }
+
+
+@pytest.fixture
+def installed_wannierize_codes(
+    installed_pw_code: Any,
+    installed_projwfc_code: Any,
+    installed_wannierjl_code: Any,
+    installed_wannier_codes: dict[str, Any],
+) -> dict[str, Any]:
+    """Register every code a Wannierize chain runs."""
+    return {
+        "pw": installed_pw_code,
+        "projwfc": installed_projwfc_code,
+        "wannierjl": installed_wannierjl_code,
+        **installed_wannier_codes,
     }
 
 

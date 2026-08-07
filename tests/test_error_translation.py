@@ -89,8 +89,7 @@ class TestDispatchTranslation:
     def test_projection_site_error(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcp_code: Any,
+        installed_dscf_codes: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """An unknown projection site's advice names the offending label."""
@@ -106,8 +105,7 @@ class TestDispatchTranslation:
     def test_block_boundary_error(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcw_code: Any,
+        installed_dfpt_codes: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """A block spanning both manifolds is advised to split at the boundary."""
@@ -125,8 +123,7 @@ class TestDispatchTranslation:
     def test_occupied_coverage_error(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcw_code: Any,
+        installed_dfpt_codes: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """Occupied projections short of the manifold point at the coverage rule."""
@@ -142,8 +139,7 @@ class TestDispatchTranslation:
     def test_empty_coverage_error(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcw_code: Any,
+        installed_dfpt_codes: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """An ``nbnd`` undercutting the empty projections points at ``nbnd``."""
@@ -161,8 +157,7 @@ class TestDispatchTranslation:
     def test_block_disentanglement_error(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcp_code: Any,
+        installed_dscf_codes: Any,
         fake_sg15_pseudo_family: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -197,8 +192,7 @@ class TestDispatchTranslation:
     def test_frozen_window_error(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_wannier_codes: Any,
+        installed_wannierize_codes: Any,
         fake_sg15_cutoffs_family: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -259,8 +253,7 @@ class TestDispatchTranslation:
     def test_model_mismatch_error(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcp_code: Any,
+        installed_dscf_codes: Any,
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Any,
         tmp_path: Any,
@@ -301,10 +294,7 @@ class TestDispatchTranslation:
     def test_derivation_invariant_crosses_without_advice(
         self,
         aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcp_code: Any,
-        installed_wannier_codes: Any,
-        installed_fold_codes: Any,
+        installed_dscf_codes: Any,
         fake_sg15_pseudo_family: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:

@@ -11,16 +11,21 @@ from koopmans.aiida.workflows import (
 )
 
 if TYPE_CHECKING:
-    from aiida import orm
     from aiida_koopmans.parallelization import ParallelizationDict
+    from aiida_koopmans.workgraphs import Codes
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
 
 
+def required_codes(koopmans_input: KoopmansInput) -> list[str]:
+    """Return the codes the dielectric chain runs: an scf, then ph.x at q = Gamma."""
+    return ["pw", "ph"]
+
+
 def build_dft_eps_workgraph(
     koopmans_input: KoopmansInput,
-    codes: dict[str, orm.AbstractCode],
+    codes: Codes,
     parallelization: ParallelizationDict,
 ) -> WorkGraph:
     """Build a workgraph for the dielectric-constant (ph.x) task.

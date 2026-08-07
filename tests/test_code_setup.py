@@ -60,9 +60,133 @@ class TestExecutableCoverage:
         a missing installation.
         """
         from koopmans.aiida.workflows import load_code
+        from koopmans.input_file.workflow import Task
 
         with pytest.raises(ValueError, match=r"'pw90' is not a code koopmans registers"):
-            load_code("pw90")
+            load_code("pw90", Task.DFT_BANDS)
+
+
+def _input_for(task: str, **workflow: Any) -> Any:
+    """Return a minimal silicon input for ``task``, for the declaration pins."""
+    from koopmans.input_file import KoopmansInput
+
+    return KoopmansInput.model_validate(
+        {
+            "workflow": {"task": task, "pseudo_library": "SG15/1.2/PBE/SR", **workflow},
+            "atoms": {
+                "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
+                "atomic_positions": {
+                    "units": "crystal",
+                    "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
+                },
+            },
+            "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+            "calculator_parameters": {"ecutwfc": 20.0, "nbnd": 8},
+        }
+    )
+
+
+class TestRequiredCodes:
+    """Each route states the whole code set its chain runs, up front.
+
+    The sets are spelt out here rather than read off the declarations, so
+    that dropping a name from one fails this test.
+    """
+
+    @pytest.mark.parametrize(
+        ("task", "workflow", "expected"),
+        [
+            ("dft_bands", {}, {"pw"}),
+            ("dft_eps", {}, {"pw", "ph"}),
+            (
+                "wannierize",
+                {},
+                {"pw", "pw2wannier90", "wannier90", "projwfc", "wannierjl"},
+            ),
+            (
+                "singlepoint",
+                {"screening_method": "dscf"},
+                {"pw", "kcp", "wannier90", "pw2wannier90", "wann2kcp", "merge_evc"},
+            ),
+            (
+                "singlepoint",
+                {"screening_method": "dfpt"},
+                {"pw", "kcw", "wannier90", "pw2wannier90", "ph"},
+            ),
+            (
+                "trajectory",
+                {},
+                {"pw", "kcp", "wannier90", "pw2wannier90", "wann2kcp", "merge_evc"},
+            ),
+        ],
+    )
+    def test_route_states_its_whole_chain(
+        self, task: str, workflow: dict[str, Any], expected: set[str]
+    ) -> None:
+        """The declared set is exactly the codes the chain can reach."""
+        from koopmans.aiida.workflows import route_for
+        from koopmans.input_file.workflow import Task
+
+        koopmans_input = _input_for(task, **workflow)
+        route = route_for(Task(task))
+        assert set(route.required_codes(koopmans_input)) == expected
+
+    @pytest.mark.parametrize(
+        ("flag", "value"),
+        [
+            ("block_wannierization_threshold", 0.1),
+            ("auto_projections", True),
+        ],
+    )
+    def test_wannierize_set_ignores_its_flags(self, flag: str, value: Any) -> None:
+        """No input-file flag narrows or widens what a Wannierize run must have.
+
+        The discriminating half of the static rule: the same profile serves
+        a split run and a plain one, so a user cannot get part-way through
+        before learning a code is missing.
+        """
+        from koopmans.aiida.workflows import route_for
+        from koopmans.input_file.workflow import Task
+
+        route = route_for(Task.WANNIERIZE)
+        plain = route.required_codes(_input_for("wannierize"))
+        flagged = route.required_codes(_input_for("wannierize", **{flag: value}))
+        assert plain == flagged
+
+    def test_missing_code_names_the_task_and_the_fix(
+        self, aiida_profile_clean: Any, localhost_computer: Any
+    ) -> None:
+        """A code no profile holds is reported before anything is built."""
+        from koopmans.aiida.workflows import load_codes_for_task
+
+        with pytest.raises(ValueError) as excinfo:
+            load_codes_for_task(_input_for("dft_eps"))
+        assert str(excinfo.value) == (
+            "The `dft_eps` task runs pw.x, but this AiiDA profile has no `pw@localhost` "
+            "code. Run `koopmans install` to register every koopmans code this machine has."
+        )
+
+    def test_the_julia_code_points_at_its_own_installer(
+        self, aiida_profile_clean: Any, installed_pw_code: Any, localhost_code: Any
+    ) -> None:
+        """Wannier.jl is not something ``koopmans install`` can find.
+
+        ``koopmans install`` scans for Quantum ESPRESSO binaries, so
+        pointing a user at it for the julia code would send them in a
+        circle.
+        """
+        from koopmans.aiida.workflows import load_codes_for_task
+
+        for label, entry_point in (
+            ("pw2wannier90", "quantumespresso.pw2wannier90"),
+            ("wannier90", "wannier90.wannier90"),
+            ("projwfc", "quantumespresso.projwfc"),
+        ):
+            localhost_code(label, entry_point)
+        with pytest.raises(ValueError, match=r"setup_julia_environment") as excinfo:
+            load_codes_for_task(_input_for("wannierize"))
+        assert "`wannierjl@localhost`" in str(excinfo.value)
+        assert "koopmans install" not in str(excinfo.value)
 
 
 class TestMpiSymbolNames:

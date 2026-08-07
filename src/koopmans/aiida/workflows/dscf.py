@@ -9,13 +9,14 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import load_codes, reject_kpoint_overrides
+from koopmans.aiida.workflows import reject_kpoint_overrides
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
     validate_blocks_separate_occ_and_emp,
 )
 from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
+from koopmans.aiida.workflows.dfpt import required_codes as dfpt_required_codes
 from koopmans.aiida.workflows.grouping import grouping_tol
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
 from koopmans.input_file.workflow import (
@@ -37,6 +38,11 @@ if TYPE_CHECKING:
 #: The codes the periodic mlwfs/projwfs initialisation runs on top of kcp.x:
 #: one wannierization, then the fold to the supercell.
 WANNIER_INIT_CODES = ["wannier90", "pw2wannier90", "wann2kcp", "merge_evc"]
+
+#: The codes a kcp.x singlepoint chain runs. The Wannier initialisation is
+#: included whatever ``init_orbitals`` says, so that a molecular run and a
+#: periodic one ask the same thing of the profile.
+DSCF_CODES = ["pw", "kcp", *WANNIER_INIT_CODES]
 
 #: Why no kcp.x route carries a second mesh: ``MlwfInitialization`` takes one
 #: ``kpoints``, which its scf samples and its supercell is folded from, and the
@@ -61,6 +67,19 @@ KPOINT_OVERRIDES_ON_DSCF = {
 KPOINT_OVERRIDES_ON_TRAJECTORY = {
     step: _KCP_TAKES_ONE_MESH.format(step=step, alternative="") for step in ("scf", "nscf")
 }
+
+
+def required_codes(koopmans_input: KoopmansInput) -> list[str]:
+    """Return the codes the singlepoint chain runs.
+
+    ``workflow.screening_method`` picks the chain, and the two share only
+    pw.x: ``dscf`` screens with kcp.x, ``dfpt`` with kcw.x. Nothing else
+    narrows the set, so a profile that can run one singlepoint can run every
+    singlepoint of that method.
+    """
+    if koopmans_input.workflow.screening_method == CalculateScreeningMethod.DFPT:
+        return dfpt_required_codes(koopmans_input)
+    return list(DSCF_CODES)
 
 
 def build_singlepoint_workgraph(
@@ -111,7 +130,6 @@ def build_singlepoint_workgraph(
         VariationalOrbitalType.PROJWFS,
     ):
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
-        codes, parallelization = load_codes(koopmans_input, codes, WANNIER_INIT_CODES)
         extra_kwargs["codes"] = dict(codes)
 
     return KoopmansDSCFWorkflow.build(
@@ -133,8 +151,7 @@ def dscf_wannier_init_inputs(
     Covers the periodic mlwfs/projwfs initialisation: the projection blocks
     (primitive band indices; per spin channel when ``spin='collinear'``), the
     k-mesh, and the Makov-Payne knobs. The molecular/kohn-sham route needs
-    none of this. The caller adds the :data:`WANNIER_INIT_CODES` these inputs
-    run on.
+    none of this.
     """
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,

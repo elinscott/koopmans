@@ -60,26 +60,14 @@ def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     )
 
 
-@pytest.fixture
-def dfpt_codes(
-    installed_pw_code: Any, installed_kcw_code: Any, installed_wannier_codes: Any
-) -> dict[str, Any]:
-    """Assemble the full DFPT code dict from the dummy-code fixtures."""
-    return {
-        "pw": installed_pw_code,
-        "kcw": installed_kcw_code,
-        **installed_wannier_codes,
-    }
-
-
 class TestUnpolarized:
     """spin='none' builds the closed-shell single chain."""
 
     def test_single_chain(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """One kcw chain, no per-channel task suffixes."""
-        wg = _build(_si_dfpt_dict(), dfpt_codes)
+        wg = _build(_si_dfpt_dict(), installed_dfpt_codes)
         names = wg.get_task_names()
         assert "wannierize" in names
         assert "dfpt" in names
@@ -87,7 +75,7 @@ class TestUnpolarized:
         assert "dfpt_down" not in names
 
     def test_scf_samples_the_input_mesh(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """The input file's grid reaches the scf, not just the nscf.
 
@@ -95,7 +83,7 @@ class TestUnpolarized:
         k-point distance, so the calculation would not be the one the
         input file describes.
         """
-        wg = _build(_si_dfpt_dict(), dfpt_codes)
+        wg = _build(_si_dfpt_dict(), installed_dfpt_codes)
         scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
         assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
         # The nscf keeps the unreduced expansion of the same grid.
@@ -111,18 +99,18 @@ class TestPerStepKpointMesh:
     """
 
     def test_a_denser_scf_leaves_the_nscf_alone(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """The scf entry reaches the scf and nothing downstream of it."""
         d = _si_dfpt_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid": [4, 4, 4]}}
-        wg = _build(d, dfpt_codes)
+        wg = _build(d, installed_dfpt_codes)
         scf_nscf = wg.tasks["scf_nscf"]
         assert list(scf_nscf.inputs["scf_kpoints"].value.get_kpoints_mesh()[0]) == [4, 4, 4]
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == 8
 
     def test_an_scf_grid_spacing_reaches_the_scf_as_a_distance(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """The scf is left to the spacing while the nscf keeps its explicit list.
 
@@ -131,7 +119,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_dfpt_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
-        wg = _build(d, dfpt_codes)
+        wg = _build(d, installed_dfpt_codes)
         scf_nscf = wg.tasks["scf_nscf"]
         assert scf_nscf.inputs["scf_kpoints"].value is None
         overrides = scf_nscf.inputs["overrides"].value
@@ -139,7 +127,7 @@ class TestPerStepKpointMesh:
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == 8
 
     def test_the_nscf_entry_sets_the_mesh_kcw_counts_in(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """A 3x3x3 nscf reaches the nscf k-list and kcw.x's ``CONTROL.mp1-3``.
 
@@ -149,7 +137,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_dfpt_dict()
         d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
-        wg = _build(d, dfpt_codes)
+        wg = _build(d, installed_dfpt_codes)
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 27
         assert wg.tasks["dfpt"].inputs["kgrid"].value == [3, 3, 3]
 
@@ -166,10 +154,10 @@ class TestCollinear:
         return d
 
     def test_fans_out_per_channel(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """One shared scf+nscf; wannierize + kcw chain per channel."""
-        wg = _build(self._collinear_dict(), dfpt_codes)
+        wg = _build(self._collinear_dict(), installed_dfpt_codes)
         names = wg.get_task_names()
         assert names.count("scf_nscf") == 1
         for expected in ("wannierize_up", "dfpt_up", "wannierize_down", "dfpt_down"):
@@ -182,30 +170,30 @@ class TestCollinear:
         assert scf_system["nspin"] == 2
         assert scf_system["tot_magnetization"] == 0
 
-    def test_missing_per_spin_projections_raises(self, dfpt_codes: Any) -> None:
+    def test_missing_per_spin_projections_raises(self, installed_dfpt_codes: Any) -> None:
         """Collinear DFPT requires w90.up / w90.down projections."""
         d = _si_dfpt_dict(spin="collinear")
         d["calculator_parameters"]["tot_magnetization"] = 0
         with pytest.raises(ValueError, match="per-spin projections"):
-            _build(d, dfpt_codes)
+            _build(d, installed_dfpt_codes)
 
-    def test_missing_magnetization_raises(self, dfpt_codes: Any) -> None:
+    def test_missing_magnetization_raises(self, installed_dfpt_codes: Any) -> None:
         """Collinear DFPT requires tot_magnetization."""
         d = _si_dfpt_dict(spin="collinear")
         per_spin = {"projections": [[{"site": "Si", "ang_mtm": "sp"}]]}
         d["calculator_parameters"]["wannier90"]["up"] = per_spin
         d["calculator_parameters"]["wannier90"]["down"] = per_spin
         with pytest.raises(ValueError, match="tot_magnetization"):
-            _build(d, dfpt_codes)
+            _build(d, installed_dfpt_codes)
 
     def test_non_integer_channel_occupations_raise(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """Nelec + tot_magnetization must be even."""
         d = self._collinear_dict()
         d["calculator_parameters"]["tot_magnetization"] = 1  # nelec=8 -> 4.5/3.5
         with pytest.raises(ValueError, match="integer per-channel occupations"):
-            _build(d, dfpt_codes)
+            _build(d, installed_dfpt_codes)
 
 
 class TestMultiBlockZnO:
@@ -267,10 +255,10 @@ class TestMultiBlockZnO:
         }
 
     def test_multi_block_manifolds(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_pseudodojo_lda_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_pseudodojo_lda_family: Any
     ) -> None:
         """Every occupied block wannierizes separately; the kcw chain sees totals."""
-        wg = _build(self._zno_dict(), dfpt_codes)
+        wg = _build(self._zno_dict(), installed_dfpt_codes)
         names = wg.get_task_names()
         for expected in (
             "wannierize",
@@ -294,12 +282,16 @@ class TestSpinor:
 
     @pytest.mark.parametrize("spin_value", ["non_collinear", "spin_orbit"])
     def test_single_spinor_chain(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any, spin_value: str
+        self,
+        aiida_profile: Any,
+        installed_dfpt_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        spin_value: str,
     ) -> None:
         """Single chain with noncolin (+ lspinorb for SOC) forced on the PW runs."""
         # Spinor manifold: the sp block doubles to 8 spinor Wannier
         # functions, matching nocc = nelec = 8.
-        wg = _build(_si_dfpt_dict(spin=spin_value), dfpt_codes)
+        wg = _build(_si_dfpt_dict(spin=spin_value), installed_dfpt_codes)
         names = wg.get_task_names()
         assert "wannierize" in names
         assert "dfpt" in names
@@ -316,7 +308,7 @@ class TestOrbitalGrouping:
     """The spread criterion drives workflow-level grouping; self_hartree is DSCF-only."""
 
     def test_default_resolves_to_none_and_builds(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """A DFPT input parses with group_orbitals_by='none' and builds ungrouped.
 
@@ -328,33 +320,33 @@ class TestOrbitalGrouping:
         inp = KoopmansInput.model_validate(d)
         assert inp.workflow.group_orbitals_by is not None
         assert inp.workflow.group_orbitals_by.value == "none"
-        wg = _build(d, dfpt_codes)
+        wg = _build(d, installed_dfpt_codes)
         assert "dfpt" in wg.get_task_names()
         assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value is None
 
     def test_explicit_self_hartree_is_rejected(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """The DFPT route has no self-Hartree metric; the criterion must not be ignored."""
         with pytest.raises(NotImplementedError, match="spread"):
-            _build(_si_dfpt_dict(group_orbitals_by="self_hartree"), dfpt_codes)
+            _build(_si_dfpt_dict(group_orbitals_by="self_hartree"), installed_dfpt_codes)
 
     def test_spread_defaults_the_tolerance_and_threads_it(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """Choosing the criterion suffices: the schema default tol reaches the chain."""
         d = _si_dfpt_dict(group_orbitals_by="spread")
         inp = KoopmansInput.model_validate(d)
         assert inp.workflow.group_orbitals_tol == 0.05
-        wg = _build(d, dfpt_codes)
+        wg = _build(d, installed_dfpt_codes)
         assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.05
 
     def test_spread_honours_an_explicit_tolerance(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """A user tolerance overrides the schema default."""
         d = _si_dfpt_dict(group_orbitals_by="spread", group_orbitals_tol=0.2)
-        wg = _build(d, dfpt_codes)
+        wg = _build(d, installed_dfpt_codes)
         assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.2
 
 
@@ -362,7 +354,7 @@ class TestWannier90Overrides:
     """User wannier90 keywords feed the per-manifold wannierization."""
 
     def test_keyword_reaches_wannierize_task(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """A user ``num_iter`` overrides the wannierize builder default.
 
@@ -373,19 +365,19 @@ class TestWannier90Overrides:
         """
         d = _si_dfpt_dict()
         d["calculator_parameters"]["wannier90"]["num_iter"] = 17
-        wg = _build(d, dfpt_codes)
+        wg = _build(d, installed_dfpt_codes)
         w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides["num_iter"] == 17
 
     def test_no_keywords_omits_user_override(
-        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self, aiida_profile: Any, installed_dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """With only projections set, the builder default ``num_iter`` stands.
 
         Discriminates the override path: absent a user keyword the wannierize
         task never sees ``num_iter = 17``.
         """
-        wg = _build(_si_dfpt_dict(), dfpt_codes)
+        wg = _build(_si_dfpt_dict(), installed_dfpt_codes)
         w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides.get("num_iter") != 17
 
@@ -396,14 +388,14 @@ class TestRankCounts:
     def test_every_loaded_code_names_its_ranks(
         self,
         aiida_profile: Any,
-        dfpt_codes: Any,
+        installed_dfpt_codes: Any,
         fake_sg15_pseudo_family: Any,
         assert_ranks_settled_for_every_loaded_code: Any,
     ) -> None:
-        """The wannierization codes the route loads itself are settled too.
+        """Every code the DFPT chain declares reaches the graph with a count.
 
-        ``load_codes_for_task`` wires wannier90 and pw2wannier90 for the
-        wannierize task only, so the DFPT route is what loads them here.
+        ph.x is in the set although this input names a numeric ``eps_inf``:
+        the chain's codes do not narrow on the input's flags.
         """
         from koopmans.aiida.workflows import build_workgraph
 
@@ -415,4 +407,5 @@ class TestRankCounts:
             "kcw": {"ntasks": 4},
             "wannier90": {"ntasks": 4},
             "pw2wannier90": {"ntasks": 4},
+            "ph": {"ntasks": 4},
         }

@@ -147,6 +147,16 @@ def _external_projector_kwargs(
     }
 
 
+def required_codes(koopmans_input: KoopmansInput) -> list[str]:
+    """Return the codes the Wannierize chain runs.
+
+    pw.x and pw2wannier90.x feed wannier90.x; projwfc.x supplies the
+    projected density of states the flow reports alongside the Wannier
+    functions, and Wannier.jl the parallel transport a block splits with.
+    """
+    return ["pw", "pw2wannier90", "wannier90", "projwfc", "wannierjl"]
+
+
 def build_wannierize_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,

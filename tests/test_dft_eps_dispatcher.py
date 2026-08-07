@@ -193,10 +193,10 @@ class TestDfptAutoEps:
     """eps_inf='auto' prepends the dielectric chain to the DFPT stream."""
 
     @pytest.fixture
-    def dfpt_codes(
+    def dfpt_codes_without_ph(
         self, installed_pw_code: Any, installed_kcw_code: Any, installed_wannier_codes: Any
     ) -> dict[str, Any]:
-        """Assemble the DFPT code dict from the dummy-code fixtures."""
+        """Assemble the DFPT code dict with ph.x left out."""
         return {
             "pw": installed_pw_code,
             "kcw": installed_kcw_code,
@@ -206,13 +206,13 @@ class TestDfptAutoEps:
     def test_auto_adds_dielectric_task(
         self,
         aiida_profile: Any,
-        dfpt_codes: Any,
+        installed_dfpt_codes: Any,
         installed_ph_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """A 'dielectric' task appears alongside the kcw chain."""
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        wg = build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes, parallelization={})
+        wg = build_singlepoint_dfpt_workgraph(inp, codes=installed_dfpt_codes, parallelization={})
         names = wg.get_task_names()
         assert "dielectric" in names
         assert "dfpt" in names
@@ -220,7 +220,7 @@ class TestDfptAutoEps:
     def test_both_ground_states_sample_the_input_mesh(
         self,
         aiida_profile: Any,
-        dfpt_codes: Any,
+        installed_dfpt_codes: Any,
         installed_ph_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
@@ -233,31 +233,36 @@ class TestDfptAutoEps:
         needs to say so; per-step meshes are koopmans#50.
         """
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        wg = build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes, parallelization={})
+        wg = build_singlepoint_dfpt_workgraph(inp, codes=installed_dfpt_codes, parallelization={})
         eps_mesh = wg.tasks["dielectric"].inputs["scf_kpoints"].value
         main_mesh = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
         assert list(eps_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
         assert list(main_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
 
     def test_auto_without_ph_code_raises(
-        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+        self,
+        aiida_profile_clean: Any,
+        dfpt_codes_without_ph: Any,
+        fake_sg15_pseudo_family: Any,
     ) -> None:
-        """eps_inf='auto' without ph@localhost fails with a setup hint.
+        """A ph-less code set reaching the route fails with a setup hint.
 
-        Requests ``aiida_profile_clean``: earlier tests may have installed a
-        ``ph@localhost`` code in the session profile.
+        The dispatcher declares ph.x for every DFPT singlepoint, so no input
+        file reaches this state; the route is called directly to pin the
+        plugin's own guard, which a caller assembling its own code set can
+        still trip.
         """
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
         with pytest.raises(ValueError, match=r"ph\.x"):
-            build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes, parallelization={})
+            build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes_without_ph, parallelization={})
 
-    def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
+    def test_unknown_eps_string_raises(self, installed_dfpt_codes: Any) -> None:
         """A non-'auto' string eps_inf is rejected up front."""
         d = _si_dfpt_auto_dict()
         d["workflow"]["eps_inf"] = "automatic"
         inp = KoopmansInput.model_validate(d)
         with pytest.raises(ValueError, match="not understood"):
-            build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes, parallelization={})
+            build_singlepoint_dfpt_workgraph(inp, codes=installed_dfpt_codes, parallelization={})
 
 
 class TestRankCounts:

@@ -18,6 +18,11 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
+def required_codes(koopmans_input: KoopmansInput) -> list[str]:
+    """Return the codes the DFT bands chain runs: an scf, then a bands run."""
+    return ["pw"]
+
+
 def build_dft_bands_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,

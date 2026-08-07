@@ -6,7 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from aiida import orm
 from aiida_koopmans.ml import MLMode
@@ -20,11 +20,7 @@ from koopmans.aiida.conversion import (
     step_kpoints_mesh,
 )
 from koopmans.input_file.parallelization import POOL_SUPPORTING_CODES
-from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
-    Correction,
-    Task,
-)
+from koopmans.input_file.workflow import Task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -70,118 +66,77 @@ def executable_for(name: str) -> str:
     return executables[name]
 
 
-def load_code(name: str) -> orm.AbstractCode:
-    """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
+def code_install_hint(name: str) -> str:
+    """Return the sentence telling the reader how to register the code ``name``.
+
+    ``koopmans install`` scans the machine for the Quantum ESPRESSO binaries
+    and registers one code per binary it finds. ``wannierjl`` is the one code
+    it cannot find that way: it runs Julia against a pinned Wannier.jl
+    project that has to be built first.
+    """
+    if name == "wannierjl":
+        return (
+            "Build the Julia environment with "
+            "`aiida_wannierjl.helpers.setup_julia_environment`, then register the code "
+            "with `aiida_wannierjl.helpers.get_wannierjl_code`."
+        )
+    return "Run `koopmans install` to register every koopmans code this machine has."
+
+
+def load_code(name: str, task: Task) -> orm.AbstractCode:
+    """Load the code labelled ``<name>@localhost``, or say how to install it.
+
+    Args:
+        name: The code label, as ``koopmans install`` registers it.
+        task: The task whose chain runs the code, named in the message.
+
+    Returns:
+        The stored code.
+
+    Raises:
+        ValueError: If this profile holds no such code.
+    """
     executable = executable_for(name)
     try:
         return orm.load_code(f"{name}@localhost")
     except Exception as exc:
         raise ValueError(
-            f"Could not load {executable} code: {exc}\n"
-            "Please run 'koopmans install' first to set up the AiiDA backend."
+            f"The `{task.value}` task runs {executable}, but this AiiDA profile has no "
+            f"`{name}@localhost` code. {code_install_hint(name)}"
         ) from exc
 
 
-def load_codes(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-    names: list[str],
-    optional: list[str] | None = None,
-) -> tuple[Codes, ParallelizationDict]:
-    """Return ``codes`` plus the codes ``names`` asks for, and their rank counts.
+def load_codes_for_task(koopmans_input: KoopmansInput) -> tuple[Codes, ParallelizationDict]:
+    """Load every code the task in ``koopmans_input`` runs, and settle their ranks.
 
-    Loading a code and settling how many MPI ranks it runs on are one act:
-    the mapping this returns covers every code in the result, so a caller
-    that loads more codes gets a mapping that covers those too. A name
-    already in ``codes`` keeps the code it is bound to.
+    The route decides which codes those are (:func:`route_for`), and it
+    decides once, up front: a code the run might reach has to be in the
+    profile before the run starts, so its absence is reported as a setup
+    error rather than discovered part-way through.
 
-    Args:
-        koopmans_input: The parsed input, for the ``parallelization`` block.
-        codes: The codes loaded so far; not modified.
-        names: The code names to add.
-        optional: Names whose absence from the profile is not an error, for a
-            code a task runs only in some configurations.
+    Loading a code and settling how many MPI ranks it runs on are one act,
+    so the mapping this returns covers every code it loaded.
 
     Returns:
         Tuple of (codes, per-code mapping with every rank count settled).
 
     Raises:
-        ValueError: If a required code is not in the profile, or if a code's
-            ``npool`` does not divide the ranks it will run on.
+        ValueError: If a code is not in the profile, or if a code's ``npool``
+            does not divide the ranks it will run on.
     """
-    optional_names = set(optional or ())
-    loaded: dict[str, orm.AbstractCode] = dict(codes)
-    for name in names:
-        # Before the profile is asked: an unregistered name is a bug here, not
-        # a code the user has yet to install, so ``optional`` never covers it.
+    task = koopmans_input.workflow.task
+    loaded: dict[str, orm.AbstractCode] = {}
+    for name in route_for(task).required_codes(koopmans_input):
+        # Before the profile is asked: an unregistered name is a bug in the
+        # route's declaration, not a code the user has yet to install.
         executable_for(name)
-        if name in loaded:
-            continue
-        try:
-            loaded[name] = load_code(name)
-        except ValueError:
-            if name not in optional_names:
-                raise
+        if name not in loaded:
+            loaded[name] = load_code(name, task)
 
     requested = koopmans_input.parallelization.as_mapping()
     completed = complete_rank_counts(requested, cast("Codes", loaded))
     check_pools_divide_ranks(completed, requested)
     return cast("Codes", loaded), completed
-
-
-def load_codes_for_task(koopmans_input: KoopmansInput) -> tuple[Codes, ParallelizationDict]:
-    """Load the codes the task in ``koopmans_input`` needs, and settle their ranks.
-
-    Which codes are needed depends not only on ``task`` but also on the
-    Koopmans correction (``ki`` vs ``none`` vs …) and the screening method
-    (``dscf`` needs kcp.x, ``dfpt`` would need kcw.x, etc.). A route that
-    branches on more than this loads the rest itself, through
-    :func:`load_codes`.
-
-    Returns:
-        Tuple of (codes, per-code mapping with every rank count settled).
-
-    Raises:
-        ValueError: If a required code is not found in the AiiDA profile.
-    """
-    workflow = koopmans_input.workflow
-    task = workflow.task
-
-    # All tasks need pw.x
-    names = ["pw"]
-    optional: list[str] = []
-
-    # A corrected singlepoint — or a trajectory, which runs one DSCF
-    # singlepoint per snapshot — needs a screening-method-specific code
-    # regardless of ``calculate_alpha``: when alphas are guessed instead
-    # of computed, kcp.x/kcw.x still evaluate the corrected functional — only
-    # the screening step itself is skipped.
-    if task in (Task.SINGLEPOINT, Task.TRAJECTORY) and workflow.correction != Correction.NONE:
-        if workflow.screening_method == CalculateScreeningMethod.DSCF:
-            names.append("kcp")
-        elif workflow.screening_method == CalculateScreeningMethod.DFPT:
-            # kcw.x runs all three DFPT steps (wann2kc, screen, ham) selected
-            # via its ``control.calculation`` flag, so a single code suffices.
-            names.append("kcw")
-
-    # The dielectric-constant task runs ph.x on top of the scf
-    if task == Task.DFT_EPS:
-        names.append("ph")
-
-    # Wannierize task needs additional codes
-    if task == Task.WANNIERIZE:
-        names += ["pw2wannier90", "wannier90"]
-
-        # Automated block splitting runs the Wannier.jl CalcJobs.
-        if workflow.block_wannierization_threshold is not None:
-            names.append("wannierjl")
-
-        # projwfc is only needed when the Wannierize flow computes a projected
-        # DOS / bandstructure, so treat it as optional rather than required.
-        names.append("projwfc")
-        optional.append("projwfc")
-
-    return load_codes(koopmans_input, {}, names, optional)
 
 
 def default_rank_count(name: str, code: orm.AbstractCode) -> int | None:
@@ -533,6 +488,43 @@ def advice_for(exc: BaseException) -> str | None:
     return None
 
 
+class Route(NamedTuple):
+    """A task's route: the codes its chain runs on, and its graph builder."""
+
+    required_codes: Callable[[KoopmansInput], list[str]]
+    build: Callable[[KoopmansInput, Codes, ParallelizationDict], WorkGraph]
+
+
+def route_for(task: Task) -> Route:
+    """Return the route that builds ``task``, or raise if nothing builds it.
+
+    Each route module states its own code set, because every condition that
+    picks one reads an input-file field.
+
+    The route modules are imported here rather than at module level:
+    importing one pulls in its plugin dependencies, and a caller that only
+    wants the input file parsed should not pay for the graphs.
+
+    Raises:
+        ValueError: If no route builds ``task``.
+    """
+    from koopmans.aiida.workflows import dft, dscf, eps, trajectory, wannierize
+
+    routes = {
+        Task.DFT_BANDS: Route(dft.required_codes, dft.build_dft_bands_workgraph),
+        Task.WANNIERIZE: Route(wannierize.required_codes, wannierize.build_wannierize_workgraph),
+        Task.SINGLEPOINT: Route(dscf.required_codes, dscf.build_singlepoint_workgraph),
+        Task.TRAJECTORY: Route(trajectory.required_codes, trajectory.build_trajectory_workgraph),
+        Task.DFT_EPS: Route(eps.required_codes, eps.build_dft_eps_workgraph),
+    }
+    if task not in routes:
+        raise ValueError(
+            f"Task '{task.value}' is not yet implemented. "
+            f"Supported tasks: {', '.join(sorted(supported.value for supported in routes))}"
+        )
+    return routes[task]
+
+
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build the appropriate workgraph for a KoopmansInput.
 
@@ -560,39 +552,15 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "permitted singlepoint prediction — not yet ported."
         )
 
-    # Load required codes, each carrying the MPI ranks it will run on
+    # Load the codes the route runs, each carrying the MPI ranks it will run on
+    route = route_for(task)
     codes, parallelization = load_codes_for_task(koopmans_input)
 
-    # Build the workgraph based on task. An error raised inside the plugin
-    # speaks its vocabulary (derived blocks, `num_bands`), which the user
-    # never wrote; attach the input-file advice at this boundary.
+    # An error raised inside the plugin speaks its vocabulary (derived blocks,
+    # `num_bands`), which the user never wrote; attach the input-file advice
+    # at this boundary.
     try:
-        if task == Task.DFT_BANDS:
-            from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
-
-            return build_dft_bands_workgraph(koopmans_input, codes, parallelization)
-        elif task == Task.WANNIERIZE:
-            from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
-
-            return build_wannierize_workgraph(koopmans_input, codes, parallelization)
-        elif task == Task.SINGLEPOINT:
-            from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
-
-            return build_singlepoint_workgraph(koopmans_input, codes, parallelization)
-        elif task == Task.TRAJECTORY:
-            from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
-
-            return build_trajectory_workgraph(koopmans_input, codes, parallelization)
-        elif task == Task.DFT_EPS:
-            from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
-
-            return build_dft_eps_workgraph(koopmans_input, codes, parallelization)
-        else:
-            raise ValueError(
-                f"Task '{task.value}' is not yet implemented. "
-                f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-                f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
-            )
+        return route.build(koopmans_input, codes, parallelization)
     except Exception as exc:
         advice = advice_for(exc)
         if advice is not None:

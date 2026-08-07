@@ -30,8 +30,7 @@ def tutorial_1_ozone_input(tutorials_dir: Path) -> KoopmansInput:
 
 def test_build_workgraph(
     aiida_profile: Any,
-    installed_pw_code: Any,
-    installed_kcp_code: Any,
+    installed_dscf_codes: Any,
     fake_sg15_pseudo_family: Any,
     tutorial_1_ozone_input: KoopmansInput,
     serialize_workgraph: Any,
@@ -77,8 +76,7 @@ def test_build_workgraph(
 
 def test_build_workgraph_multi_iteration(
     aiida_profile: Any,
-    installed_pw_code: Any,
-    installed_kcp_code: Any,
+    installed_dscf_codes: Any,
     fake_sg15_pseudo_family: Any,
     tutorial_1_ozone_input: KoopmansInput,
     serialize_workgraph: Any,
@@ -110,8 +108,7 @@ def test_build_workgraph_multi_iteration(
 
 def test_build_workgraph_spin_polarized(
     aiida_profile: Any,
-    installed_pw_code: Any,
-    installed_kcp_code: Any,
+    installed_dscf_codes: Any,
     fake_sg15_pseudo_family: Any,
     tutorial_1_ozone_input: KoopmansInput,
     serialize_workgraph: Any,
@@ -150,8 +147,7 @@ def test_build_workgraph_spin_polarized(
 
 def test_dispatcher_rejects_unsupported_correction(
     aiida_profile: Any,
-    installed_pw_code: Any,
-    installed_kcp_code: Any,
+    installed_dscf_codes: Any,
     tutorial_1_ozone_input: KoopmansInput,
 ) -> None:
     """``build_workgraph`` should raise ``NotImplementedError`` for PKIPZ.
