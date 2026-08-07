@@ -56,8 +56,13 @@ def pseudo_family_has_cutoffs(pseudo_family: str) -> bool:
 
 _LIBRARY_NOTES = {
     "SG15": (
-        "SG15/1.0 carries only H and O; every other element is published at 1.2.",
-        "SG15 recommends no cutoffs, so set `ecutwfc` and `ecutrho` in your input file.",
+        "SG15/1.2 is the newest scalar-relativistic set and covers all 69 elements; "
+        "1.0 covers the same 69 at the original revision, and 1.1 only the 17 "
+        "revised in between.",
+        "There is no fully relativistic set at 1.2: SG15/1.0/PBE/FR carries 52 "
+        "elements and SG15/1.1/PBE/FR the other 12 (Si, P, S and nine more p-block "
+        "elements).",
+        "SG15 recommends no cutoffs, so set `ecutwfc` in your input file.",
     ),
 }
 
@@ -84,8 +89,8 @@ def available_pseudo_families() -> dict[str, list[str]]:
         ),
         "SG15": sorted(
             f"SG15/{version}/PBE/{relativistic}"
-            for version in _SG15_SUPPORTED_VERSIONS
-            for relativistic in _SG15_SUPPORTED_RELATIVISTIC
+            for version, relativistic_variants in _SG15_VARIANTS.items()
+            for relativistic in relativistic_variants
         ),
     }
 
@@ -147,9 +152,9 @@ def install_pseudo_family(pseudo_family: str) -> None:
         _install_sg15_family(pseudo_family, parts)
     elif parts[0] == "SSSP":
         raise ValueError(
-            f"'{pseudo_family}' is an SSSP family. SSSP mixes ultrasoft and PAW "
-            "pseudopotentials, and Koopmans functionals are defined for "
-            "norm-conserving ones. Name a PseudoDojo or SG15 family instead; run "
+            f"'{pseudo_family}' is an SSSP family. SSSP mixes ultrasoft, PAW and "
+            "norm-conserving pseudopotentials, and Koopmans functionals are defined "
+            "for norm-conserving ones. Name a PseudoDojo or SG15 family instead; run "
             "`koopmans pseudos` for the full list."
         )
     else:
@@ -230,22 +235,36 @@ def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
         family.set_default_stringency("normal")
 
 
-# SG15 ONCV is published as a single frozen tarball on quantum-simulation.org. It
-# bundles every version x relativistic variant in one flat archive; the label's
-# version/relativistic parts select which subset of UPFs to install. There is no
-# upstream ``aiida-pseudo`` installer for SG15, so we build the family ourselves.
-# SG15 publishes no recommended cutoffs, so it is a plain
-# ``PseudoPotentialFamily`` and ``ecutwfc``/``ecutrho`` come from the input file.
+# SG15 ONCV is published as a single frozen tarball on quantum-simulation.org,
+# one flat directory of ``<element>_ONCV_PBE[_FR]-<version>.upf`` files; the
+# label's version/relativistic parts select which of them to install. There is
+# no upstream ``aiida-pseudo`` installer for SG15, so we build the family
+# ourselves. SG15 publishes no recommended cutoffs, so it is a plain
+# ``PseudoPotentialFamily`` and ``ecutwfc`` comes from the input file.
 _SG15_ARCHIVE_URL = (
     "http://www.quantum-simulation.org/potentials/sg15_oncv/sg15_oncv_upf_2020-02-06.tar.gz"
 )
 _SG15_ARCHIVE_SHA256 = "3f3bd74aa5d6e0b038218a6051bb99ed9469dc03d0f05b3ec8a523f0f7a7dff0"
-_SG15_SUPPORTED_VERSIONS = {"1.0", "1.2"}
-_SG15_SUPPORTED_RELATIVISTIC = {"SR", "FR"}
+
+# SG15 revises element by element, so a version does not carry both relativistic
+# variants just because it carries one: the 2020-02-06 archive holds 69 SR
+# elements at 1.0 and at 1.2, 17 at 1.1, and fully relativistic files at 1.0 (52
+# elements) and 1.1 (12) only. A label naming a variant the archive lacks would
+# install nothing, so the offered labels are read from here.
+_SG15_VARIANTS: dict[str, tuple[str, ...]] = {
+    "1.0": ("SR", "FR"),
+    "1.1": ("SR", "FR"),
+    "1.2": ("SR",),
+}
 
 
 def _install_sg15_family(label: str, parts: list[str]) -> None:
-    """Install an SG15 ONCV pseudopotential family."""
+    """Install an SG15 ONCV pseudopotential family.
+
+    Raises:
+        ValueError: If the label names a functional, version or relativistic
+            variant the 2020-02-06 archive does not publish.
+    """
     import hashlib
     import io
     import re
@@ -259,15 +278,17 @@ def _install_sg15_family(label: str, parts: list[str]) -> None:
 
     if functional != "PBE":
         raise ValueError(f"SG15 only provides PBE pseudopotentials; got functional='{functional}'.")
-    if version not in _SG15_SUPPORTED_VERSIONS:
+    relativistic_variants = _SG15_VARIANTS.get(version)
+    if relativistic_variants is None:
         raise ValueError(
             f"SG15 version '{version}' is not packaged in the 2020-02-06 archive. "
-            f"Supported versions: {sorted(_SG15_SUPPORTED_VERSIONS)}."
+            f"Supported versions: {sorted(_SG15_VARIANTS)}."
         )
-    if relativistic not in _SG15_SUPPORTED_RELATIVISTIC:
+    if relativistic not in relativistic_variants:
         raise ValueError(
-            f"SG15 relativistic variant '{relativistic}' is not supported. "
-            f"Expected one of: {sorted(_SG15_SUPPORTED_RELATIVISTIC)}."
+            f"SG15 publishes no {relativistic} pseudopotentials at version {version}; "
+            f"at {version} the archive carries {', '.join(relativistic_variants)}. "
+            "Run `koopmans pseudos` for every label koopmans accepts."
         )
 
     fr_suffix = "_FR" if relativistic == "FR" else ""
