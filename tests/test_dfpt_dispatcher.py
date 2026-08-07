@@ -388,3 +388,32 @@ class TestWannier90Overrides:
         wg = _build(_si_dfpt_dict(), dfpt_codes)
         w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides.get("num_iter") != 17
+
+
+class TestRankCounts:
+    """The DFPT route's codes all leave the dispatcher carrying a rank count."""
+
+    def test_every_loaded_code_names_its_ranks(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        assert_ranks_settled_for_every_loaded_code: Any,
+    ) -> None:
+        """The wannierization codes the route loads itself are settled too.
+
+        ``load_codes_for_task`` wires wannier90 and pw2wannier90 for the
+        wannierize task only, so the DFPT route loads them after the
+        dispatcher has already settled the counts once.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        parallelization = assert_ranks_settled_for_every_loaded_code(
+            lambda: build_workgraph(KoopmansInput.model_validate(_si_dfpt_dict()))
+        )
+        assert parallelization == {
+            "pw": {"ntasks": 4},
+            "kcw": {"ntasks": 4},
+            "wannier90": {"ntasks": 4},
+            "pw2wannier90": {"ntasks": 4},
+        }

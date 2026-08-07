@@ -1047,3 +1047,32 @@ class TestGraphBuild:
         assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
         # The nscf keeps the unreduced expansion of the same grid.
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
+
+
+class TestRankCounts:
+    """The Wannierize route's codes all leave the dispatcher carrying a rank count."""
+
+    def test_every_loaded_code_names_its_ranks(
+        self,
+        aiida_profile: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        assert_ranks_settled_for_every_loaded_code: Any,
+    ) -> None:
+        """Each of pw, wannier90 and pw2wannier90 reaches the graph with an ``ntasks``.
+
+        The julia code the splitting runs is deliberately absent: it is
+        outside the ``parallelization`` block's vocabulary.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        d = _si_split_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        parallelization = assert_ranks_settled_for_every_loaded_code(
+            lambda: build_workgraph(KoopmansInput.model_validate(d))
+        )
+        assert parallelization == {
+            "pw": {"ntasks": 4},
+            "wannier90": {"ntasks": 4},
+            "pw2wannier90": {"ntasks": 4},
+        }

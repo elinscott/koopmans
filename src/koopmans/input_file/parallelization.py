@@ -19,6 +19,7 @@ from typing import Self, cast
 from aiida_koopmans.parallelization import CODE_NAMES, ParallelizationDict
 from pydantic import Field, model_validator
 
+from koopmans.aiida.setup.codes import SERIAL_CODES
 from koopmans.base import BaseModel
 
 # Every code the parallelization block recognises. Sourced from the single
@@ -78,8 +79,9 @@ class ParallelizationInput(BaseModel):
     """Per-code parallelization settings.
 
     A mapping of code name to :class:`CodeParallelization`. Only the codes
-    listed here are recognised; any other key is rejected. Codes left unset
-    inherit the QE/AiiDA defaults (a single MPI rank, no pools).
+    listed here are recognised; any other key is rejected. A code left unset
+    runs on the localhost computer's default rank count, with no pools; a code
+    that cannot run under mpirun runs on one rank whatever is asked for.
     """
 
     pw: CodeParallelization | None = None
@@ -93,8 +95,15 @@ class ParallelizationInput(BaseModel):
 
     @model_validator(mode="after")
     def reject_unsupported_flags(self) -> Self:
-        """Reject ``npool`` / ``pd`` for codes whose command line has no such flag."""
+        """Reject a flag the named code cannot take: ``npool``, ``pd``, or MPI ranks at all."""
         for code, cfg in self.as_dict().items():
+            if cfg.ntasks is not None and cfg.ntasks != 1 and code in SERIAL_CODES:
+                raise ValueError(
+                    f"'ntasks' is {cfg.ntasks} for {code}, which cannot run under mpirun: "
+                    f"{code} is {SERIAL_CODES[code]}. That is a property of the program, "
+                    f"not of the input file, so there is nothing for 'ntasks' to overrule; "
+                    f"drop 'ntasks' from the {code} entry."
+                )
             if cfg.npool is not None and code not in POOL_SUPPORTING_CODES:
                 raise ValueError(
                     f"'npool' is not valid for {code} (it does not parallelize over "

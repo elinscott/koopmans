@@ -828,3 +828,40 @@ class TestPerStepKpointMeshRejected:
 
         with pytest.raises(NotImplementedError, match="only supports DSCF screening"):
             build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
+
+
+class TestRankCounts:
+    """The trajectory route's codes all leave the dispatcher carrying a rank count."""
+
+    def test_every_loaded_code_names_its_ranks(
+        self,
+        aiida_profile: Any,
+        tmp_path: Path,
+        installed_pw_code: Any,
+        installed_kcp_code: Any,
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+        assert_ranks_settled_for_every_loaded_code: Any,
+    ) -> None:
+        """The Wannier route's extra codes are settled after the dispatcher's pass.
+
+        merge_evc is deliberately absent: the ``parallelization`` block has no
+        key for it, so its single rank stays its CalcJob's to declare.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
+
+        parallelization = assert_ranks_settled_for_every_loaded_code(
+            lambda: build_workgraph(koopmans_input)
+        )
+        assert parallelization == {
+            "pw": {"ntasks": 4},
+            "kcp": {"ntasks": 4},
+            "wannier90": {"ntasks": 4},
+            "pw2wannier90": {"ntasks": 4},
+            "wann2kcp": {"ntasks": 1},
+        }

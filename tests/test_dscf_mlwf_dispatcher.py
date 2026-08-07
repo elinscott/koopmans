@@ -592,3 +592,35 @@ class TestPerStepKpointMeshRejected:
         d["kpoints"]["overrides"] = {step: {"grid": [4, 4, 4]}}
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             _build(d, codes={})
+
+
+class TestRankCounts:
+    """The Wannier-initialised DSCF route's codes all carry a rank count."""
+
+    def test_every_loaded_code_names_its_ranks(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_kcp_code: Any,
+        installed_wannier_codes: Any,
+        installed_fold_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        assert_ranks_settled_for_every_loaded_code: Any,
+    ) -> None:
+        """The four codes the fold path loads are settled after the dispatcher's pass.
+
+        wann2kcp gets one rank rather than the computer's four, so the
+        assertion also shows the serial rule surviving the second pass.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        parallelization = assert_ranks_settled_for_every_loaded_code(
+            lambda: build_workgraph(KoopmansInput.model_validate(_si_dscf_dict()))
+        )
+        assert parallelization == {
+            "pw": {"ntasks": 4},
+            "kcp": {"ntasks": 4},
+            "wannier90": {"ntasks": 4},
+            "pw2wannier90": {"ntasks": 4},
+            "wann2kcp": {"ntasks": 1},
+        }

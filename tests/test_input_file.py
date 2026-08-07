@@ -272,14 +272,33 @@ class TestParallelizationSchema:
         assert cfg is not None
         assert (cfg.npool, cfg.pd) == (2, True)
 
-    def test_ntasks_allowed_for_any_code(self) -> None:
-        """The ntasks (MPI ranks) field is universal — even wannier90 accepts it."""
+    def test_ntasks_allowed_for_any_code_that_runs_under_mpi(self) -> None:
+        """The ntasks (MPI ranks) field needs no support matrix — even wannier90 takes it."""
         inp = KoopmansInput.model_validate(
             _parallelization_input(parallelization={"wannier90": {"ntasks": 4}})
         )
         wannier90 = inp.parallelization.wannier90
         assert wannier90 is not None
         assert wannier90.ntasks == 4
+
+    def test_ntasks_rejected_for_a_code_that_cannot_run_under_mpi(self) -> None:
+        """wann2kcp is refused extra ranks here, as ``koopmans install --parallel`` refuses them.
+
+        Two statements of one rule: a program that races on its own scratch
+        is serial whatever the input file or the build says. Left to the
+        submission the request would build fine and fail much later.
+        """
+        with pytest.raises(ValueError, match=r"property of the program"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={"wann2kcp": {"ntasks": 8}})
+            )
+
+    def test_one_rank_for_a_serial_code_is_accepted(self) -> None:
+        """Asking for the single rank the program already takes contradicts nothing."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"wann2kcp": {"ntasks": 1}})
+        )
+        assert inp.parallelization.as_mapping() == {"wann2kcp": {"ntasks": 1}}
 
     def test_unknown_code_rejected(self) -> None:
         """An unrecognised code name is not a valid parallelization key."""

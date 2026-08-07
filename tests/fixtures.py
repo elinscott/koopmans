@@ -633,6 +633,58 @@ def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
     return _install_fake_family("PseudoDojo/0.4/LDA/SR/standard/upf", {"Zn": 20.0, "O": 6.0})
 
 
+@pytest.fixture
+def assert_ranks_settled_for_every_loaded_code(
+    monkeypatch: Any, localhost_default_ranks: Callable[[int | None], None]
+) -> Callable[[Callable[[], Any]], dict[str, Any]]:
+    """Return a checker that every code a route loads leaves it carrying a rank count.
+
+    The checker takes a zero-argument build, records the label of every code
+    the build resolves, and asserts that the ``parallelization`` mapping on the
+    built graph names an ``ntasks`` for each of those labels the block has a
+    vocabulary for. A route that loads codes after the dispatcher settled the
+    counts, and does not settle them again, fails here.
+
+    Runs against a computer default of four ranks, so a code the route missed
+    cannot pass by coincidence: an unsettled code carries no count at all, and
+    a serial one carries 1.
+
+    Returns the mapping, for a caller that wants to check the counts too.
+    """
+    from aiida import orm
+    from aiida_koopmans.parallelization import CODE_NAMES
+
+    def check(build: Callable[[], Any]) -> dict[str, Any]:
+        """Build, then assert the graph's rank counts cover every code loaded."""
+        localhost_default_ranks(4)
+        loaded: list[str] = []
+        real_load_code = orm.load_code
+
+        def spy(identifier: Any, *args: Any, **kwargs: Any) -> Any:
+            """Record the label, then load the code."""
+            code = real_load_code(identifier, *args, **kwargs)
+            loaded.append(str(identifier).split("@")[0])
+            return code
+
+        monkeypatch.setattr(orm, "load_code", spy)
+        workgraph = build()
+        monkeypatch.undo()
+
+        parallelization = workgraph.inputs.parallelization.value or {}
+        missing = [
+            name
+            for name in loaded
+            if name in CODE_NAMES and parallelization.get(name, {}).get("ntasks") is None
+        ]
+        assert not missing, (
+            f"loaded {sorted(set(loaded))} but the graph's parallelization "
+            f"{parallelization} names no ntasks for {sorted(set(missing))}"
+        )
+        return dict(parallelization)
+
+    return check
+
+
 def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:
     """Return the tables the dispatcher synthesizes from the fixture's ``Si.dat``.
 

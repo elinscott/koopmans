@@ -13,6 +13,7 @@ Mirrors the layout used by the sibling ``aiida-koopmans2/tests/``.
 from __future__ import annotations
 
 from tests.fixtures import (  # noqa: F401
+    assert_ranks_settled_for_every_loaded_code,
     binary_probe,
     clear_database,
     clear_database_after_test,

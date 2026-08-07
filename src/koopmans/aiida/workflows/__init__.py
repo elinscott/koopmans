@@ -126,9 +126,11 @@ def default_rank_count(name: str, code: orm.AbstractCode) -> int | None:
 
     A code named in :data:`~koopmans.aiida.setup.codes.SERIAL_CODES` takes one
     rank whatever its node says. That list states a property of the program —
-    merge_evc.x concatenates, wann2kcp.x races on its scratch — so it holds
-    even for a node registered before ``koopmans install`` learned to stamp
-    ``with_mpi``, which is how those nodes look in older profiles.
+    wann2kcp.x races on its buffer scratch — so it holds even for a node
+    registered before ``koopmans install`` learned to stamp ``with_mpi``,
+    which is how those nodes look in older profiles. Of that list only
+    wann2kcp reaches here: merge_evc is outside the ``parallelization``
+    vocabulary, so :func:`complete_rank_counts` never asks about it.
     """
     from koopmans.aiida.setup.codes import SERIAL_CODES, effective_with_mpi
 
@@ -151,8 +153,10 @@ def complete_rank_counts(parallelization: ParallelizationDict, codes: Codes) -> 
 
     Only codes in ``codes`` are completed, and only those the ``parallelization``
     block names (:data:`~aiida_koopmans.parallelization.CODE_NAMES`) — an entry
-    for any other key is rejected downstream. An ``ntasks`` the input file set
-    is left as it is, so this never overrides the user.
+    for any other key is rejected downstream. A code outside that vocabulary
+    (merge_evc, wannierjl) gets no entry at all, because the input file has no
+    way to name one: its rank count is its CalcJob's to declare. An ``ntasks``
+    the input file set is left as it is, so this never overrides the user.
 
     Args:
         parallelization: The per-code mapping, as ``ParallelizationInput.as_mapping``

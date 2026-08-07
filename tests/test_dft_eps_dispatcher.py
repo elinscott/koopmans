@@ -258,3 +258,28 @@ class TestDfptAutoEps:
         inp = KoopmansInput.model_validate(d)
         with pytest.raises(ValueError, match="not understood"):
             build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes, parallelization={})
+
+
+class TestRankCounts:
+    """The dielectric route's codes all leave the dispatcher carrying a rank count."""
+
+    def test_every_loaded_code_names_its_ranks(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+        assert_ranks_settled_for_every_loaded_code: Any,
+    ) -> None:
+        """Both pw and ph reach the graph with an ``ntasks``.
+
+        Going through the dispatcher rather than the route builder is what
+        makes this discriminate: the route's own hand-off of the mapping is
+        inside the path under test.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        parallelization = assert_ranks_settled_for_every_loaded_code(
+            lambda: build_workgraph(KoopmansInput.model_validate(_si_eps_dict()))
+        )
+        assert parallelization == {"pw": {"ntasks": 4}, "ph": {"ntasks": 4}}
