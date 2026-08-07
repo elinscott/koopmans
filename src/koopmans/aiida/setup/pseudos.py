@@ -41,6 +41,22 @@ def ensure_pseudo_family_installed(pseudo_family: str) -> None:
     logger.info("Successfully installed pseudo family '%s'", pseudo_family)
 
 
+def pseudo_family_has_cutoffs(pseudo_family: str) -> bool:
+    """Report whether an installed family publishes recommended cutoffs.
+
+    True only if the family defines at least one cutoff stringency; without one
+    ``get_recommended_cutoffs`` has nothing to return.
+
+    Raises:
+        NotExistent: If the family is not installed.
+    """
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
+
+    family = PseudoPotentialFamily.collection.get(label=pseudo_family)
+    stringencies = getattr(family, "get_cutoff_stringencies", None)
+    return stringencies is not None and bool(stringencies())
+
+
 def install_pseudo_family(pseudo_family: str) -> None:
     """Install a pseudopotential family. Parse the label and dispatch."""
     parts = pseudo_family.split("/")
@@ -179,9 +195,10 @@ def _install_sssp_family(label: str, parts: list[str]) -> None:
 # SG15 ONCV is published as a single frozen tarball on quantum-simulation.org. It
 # bundles every version x relativistic variant in one flat archive; the label's
 # version/relativistic parts select which subset of UPFs to install. There is no
-# upstream ``aiida-pseudo`` installer for SG15, so we install as a plain
-# ``CutoffsPseudoPotentialFamily`` so recommended cutoffs can be attached later
-# via ``family.set_cutoffs`` without a reinstall.
+# upstream ``aiida-pseudo`` installer for SG15, so we install a
+# ``CutoffsPseudoPotentialFamily`` directly. SG15 publishes no recommended
+# cutoffs, so the family carries none and the input file must set ``ecutwfc``
+# and ``ecutrho`` itself.
 _SG15_ARCHIVE_URL = (
     "http://www.quantum-simulation.org/potentials/sg15_oncv/sg15_oncv_upf_2020-02-06.tar.gz"
 )
