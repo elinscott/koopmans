@@ -537,6 +537,26 @@ class TestCompleteRankCounts:
         assert unstamped.with_mpi is None
         assert complete_rank_counts({}, {"wann2kcp": unstamped}) == {"wann2kcp": {"ntasks": 1}}
 
+    def test_the_julia_code_takes_one_rank_however_it_is_stamped(
+        self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
+    ) -> None:
+        """A ``wannierjl`` code takes 1 even when its node claims MPI.
+
+        Left to the node, an unstamped julia code reaches 1 only because
+        ``aiida-wannierjl``'s CalcJobs default ``withmpi`` to False — a
+        sibling package's choice. A node stamped ``with_mpi=True`` would
+        then take the computer's default and start one Julia process per
+        rank in one working directory.
+        """
+        from koopmans.aiida.workflows import default_rank_count
+
+        localhost_default_ranks(4)
+        unstamped = localhost_code("ranks-wjl-unstamped", "wannierjl.check_neighbors")
+        stamped = localhost_code("ranks-wjl-mpi", "wannierjl.check_neighbors", True)
+        assert stamped.with_mpi is True
+        assert default_rank_count("wannierjl", unstamped) == 1
+        assert default_rank_count("wannierjl", stamped) == 1
+
     def test_an_ntasks_the_input_set_wins(
         self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
     ) -> None:
