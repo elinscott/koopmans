@@ -647,8 +647,8 @@ class TestCutoffLessPseudoFamily:
         requirement but never reaches the pw.x parameters, so this is the
         input that arrives at the family with nothing to state. The route
         reaches ``require_cutoffs_for_family`` nowhere else: drop the call and
-        the user meets aiida-quantumespresso's account instead —
-        stringencies and ``overrides``, neither of them an input-file keyword.
+        the graph builds without complaint, carrying no wavefunction cutoff at
+        all into its pw.x steps.
         """
         d = _si_dscf_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
         del d["calculator_parameters"]["ecutwfc"]
