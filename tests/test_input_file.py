@@ -333,3 +333,143 @@ class TestKpointsOffset:
 
         with pytest.raises(ValueError, match="samples Gamma itself"):
             GammaOnlyKpointsInput(offset=(0.5, 0.0, 0.0))
+
+
+def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:
+    """Return the minimal silicon input with its ``kpoints`` block replaced."""
+    d = _minimal_si_input()
+    d["kpoints"] = kpoints
+    return d
+
+
+class TestPerStepKpoints:
+    """``kpoints.overrides`` states the mesh one step samples, absolutely."""
+
+    def test_an_entry_parses_alongside_the_top_level_values(self) -> None:
+        """The top-level values stay the default for the steps left out."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(grid=[2, 2, 2], overrides={"scf": {"grid": [4, 4, 4]}})
+        )
+        assert inp.kpoints.grid == (2, 2, 2)
+        assert inp.kpoints.overrides.scf is not None
+        assert inp.kpoints.overrides.scf.grid == (4, 4, 4)
+        assert inp.kpoints.overrides.scf.offset is None
+        assert inp.kpoints.overrides.nscf is None
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            ({"bands": {"grid": [4, 4, 4]}}, r"overrides\.bands"),
+            ({"scf": {"gird": [4, 4, 4]}}, r"overrides\.scf\.gird"),
+        ],
+    )
+    def test_step_and_attribute_names_are_closed_sets(
+        self, overrides: dict[str, object], expected: str, tmp_path: Path
+    ) -> None:
+        """A typo in either name is a parse error, not a silently dropped mesh."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with_kpoints(grid=[2, 2, 2], **{"overrides": overrides}))
+        )
+
+        with pytest.raises(ValueError, match=rf"{expected}.*is not a valid keyword"):
+            read_input_file(input_file)
+
+    def test_grid_and_grid_spacing_exclude_each_other(self) -> None:
+        """Both state the same mesh, so accepting both would hide one of them."""
+        with pytest.raises(ValueError, match="Give one of the two"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(
+                    grid=[2, 2, 2], overrides={"scf": {"grid": [4, 4, 4], "grid_spacing": 0.15}}
+                )
+            )
+
+    def test_the_nscf_mesh_must_state_its_dimensions(self) -> None:
+        """A spacing cannot say what wannier90 reads as ``mp_grid``."""
+        with pytest.raises(ValueError, match=r"nscf\.grid_spacing.*mp_grid"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(grid=[2, 2, 2], overrides={"nscf": {"grid_spacing": 0.15}})
+            )
+
+    def test_the_nscf_mesh_cannot_be_shifted(self) -> None:
+        """Reject a shift the nscf mesh, built Gamma-centred, would never carry.
+
+        Every route expands it with ``get_explicit_kpoints``, which returns
+        the unshifted k-list, so accepting the keyword would leave the input
+        file describing a calculation that never runs.
+        """
+        with pytest.raises(ValueError, match=r"`nscf\.offset` is not supported"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(
+                    grid=[2, 2, 2], overrides={"nscf": {"offset": [0.5, 0.5, 0.5]}}
+                )
+            )
+
+    def test_the_scf_mesh_can_still_be_shifted(self) -> None:
+        """The rejection is the nscf entry's, not the attribute's.
+
+        An scf converges faster on a shifted mesh, and that mesh reaches
+        Quantum ESPRESSO as written.
+        """
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(grid=[2, 2, 2], overrides={"scf": {"offset": [0.5, 0.5, 0.5]}})
+        )
+        assert inp.kpoints.overrides.scf is not None
+        assert inp.kpoints.overrides.scf.offset == (0.5, 0.5, 0.5)
+
+    def test_gamma_only_has_no_steps_to_override(self) -> None:
+        """Every step of a gamma-only calculation samples the same one point."""
+        with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(gamma_only=True, overrides={"scf": {"grid": [4, 4, 4]}})
+            )
+
+    def test_gamma_only_rejects_a_mesh_built_as_a_model(self) -> None:
+        """The rejection belongs to the field, not to one way of reaching it.
+
+        A check that reads the raw input dict passes anything already
+        validated straight through, so a gamma-only input assembled in code
+        would carry a per-step mesh no route can honour.
+        """
+        from koopmans.input_file import (
+            GammaOnlyKpointsInput,
+            KpointsOverridesInput,
+            StepKpointsInput,
+        )
+
+        with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
+            GammaOnlyKpointsInput(
+                overrides=KpointsOverridesInput(scf=StepKpointsInput(grid=(4, 4, 4)))
+            )
+
+    @pytest.mark.parametrize("overrides", ["scf", [{"grid": [4, 4, 4]}], 4])
+    def test_an_overrides_block_that_is_not_a_mapping_is_a_parse_error(
+        self, overrides: object, tmp_path: Path
+    ) -> None:
+        """Reported with the file's other errors rather than as a traceback."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with_kpoints(grid=[2, 2, 2], overrides=overrides))
+        )
+
+        with pytest.raises(ValueError, match=r"overrides.*valid dictionary"):
+            read_input_file(input_file)
+
+
+class TestPathDensityRename:
+    """``density`` sat beside ``grid`` and read as the density of a mesh."""
+
+    def test_the_old_name_names_its_replacement(self, tmp_path: Path) -> None:
+        """A silent alias would leave the input file saying the ambiguous thing."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(_si_input_with_kpoints(grid=[2, 2, 2], density=20.0)))
+
+        with pytest.raises(ValueError, match=r"`density` has been renamed `path_density`"):
+            read_input_file(input_file)
+
+    def test_the_new_name_carries_the_value(self) -> None:
+        """``path_density`` is the same number under a name that says what it counts."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(grid=[2, 2, 2], path="GX", path_density=20.0)
+        )
+        assert inp.kpoints.path_density == 20.0
