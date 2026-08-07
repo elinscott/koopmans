@@ -23,6 +23,7 @@ import json
 import os
 import platform
 import tarfile
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -204,12 +205,18 @@ with open(os.environ["KOOPMANS_TEST_HQ_LOG"], "a") as log:
 
 workers_path = os.environ["KOOPMANS_TEST_HQ_WORKERS"]
 server_path = os.environ["KOOPMANS_TEST_HQ_SERVER"]
+ignored_path = os.environ["KOOPMANS_TEST_HQ_IGNORED"]
 verb = [arg for arg in args if not arg.startswith("-")][:2]
 
 
 def server_up():
     with open(server_path) as handle:
         return handle.read().strip() == "1"
+
+
+def ignored():
+    with open(ignored_path) as handle:
+        return " ".join(verb) in json.load(handle)
 
 
 if verb == ["server", "info"]:
@@ -226,6 +233,12 @@ if verb[:1] == ["server"] and verb[1:2] in (["start"], ["stop"]):
 if verb[:1] == ["worker"] and not server_up():
     sys.stderr.write("No running instance of HQ found\\n")
     sys.exit(1)
+
+# A command the test asked the stub to swallow: hq accepts it and the worker
+# list is unchanged, which is what a worker that dies on startup, or one that
+# outlives its stop, looks like from koopmans' side.
+if ignored():
+    sys.exit(0)
 
 if verb == ["worker", "list"]:
     with open(workers_path) as handle:
@@ -258,15 +271,24 @@ sys.exit(0)
 class FakeHq:
     """A stub ``hq`` binary plus the state the tests read back from it."""
 
-    def __init__(self, log: Path, workers: Path, server: Path) -> None:
+    def __init__(self, log: Path, workers: Path, server: Path, ignored: Path) -> None:
         """Record where the stub logs its argv and keeps its server state."""
         self._log = log
         self._workers = workers
         self._server = server
+        self._ignored = ignored
 
     def stop_server(self) -> None:
         """Make the stub behave as a machine whose HQ server is down."""
         self._server.write_text("0")
+
+    def ignore(self, *commands: str) -> None:
+        """Make the stub accept the given commands and change nothing.
+
+        ``ignore("worker start")`` is a worker that dies before it registers;
+        ``ignore("worker stop")`` is one that outlives the stop it was sent.
+        """
+        self._ignored.write_text(json.dumps(list(commands)))
 
     @property
     def worker_pools(self) -> list[int]:
@@ -335,14 +357,17 @@ def fake_hq(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeHq:
     workers.write_text("[]")
     server = tmp_path / "server-up"
     server.write_text("1")
+    ignored = tmp_path / "ignored.json"
+    ignored.write_text("[]")
     monkeypatch.setenv("KOOPMANS_TEST_HQ_WORKERS", str(workers))
     monkeypatch.setenv("KOOPMANS_TEST_HQ_SERVER", str(server))
+    monkeypatch.setenv("KOOPMANS_TEST_HQ_IGNORED", str(ignored))
     monkeypatch.setenv("KOOPMANS_TEST_HQ_LOG", str(tmp_path / "argv.log"))
     monkeypatch.delenv("KOOPMANS_MAX_PROCS", raising=False)
     # The poll loops sleep in real time; the stub responds instantly.
-    monkeypatch.setattr(hq_mod.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
-    return FakeHq(log=tmp_path / "argv.log", workers=workers, server=server)
+    return FakeHq(log=tmp_path / "argv.log", workers=workers, server=server, ignored=ignored)
 
 
 class TestWorkerDetection:
@@ -456,6 +481,53 @@ class TestWorkerListParsing:
         (tmp_path / "workers.json").write_text(json.dumps(listed))
 
         assert [(w.id, w.cpus) for w in running_hq_workers()] == [(1, 24)]
+
+
+class TestHqCannotAnswer:
+    """An ``hq`` that cannot be run reads as "nothing running", never a crash."""
+
+    @staticmethod
+    def test_no_binary_reports_nothing_running(
+        fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no ``hq`` on the machine the helpers answer, rather than raise.
+
+        Every caller of these helpers runs before the binary is guaranteed to
+        exist — ``koopmans install`` itself does — so an unresolvable binary
+        has to be an answer and not an exception.
+        """
+        from koopmans.aiida.setup.hq import is_hq_server_running, running_hq_workers
+
+        fake_hq.set_workers(24)
+        monkeypatch.delenv("KOOPMANS_HQ_BINARY")
+        monkeypatch.setattr("shutil.which", lambda name: None)
+
+        assert not is_hq_server_running()
+        assert running_hq_workers() == []
+
+    @staticmethod
+    def test_an_hq_that_never_returns_reports_nothing_running(
+        fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hung ``hq`` times out into "nothing running", not a traceback.
+
+        Discriminates against reading the subprocess result unconditionally:
+        with the timeout raised instead of returned, this test is the only one
+        that fails, since every other stub call answers instantly.
+        """
+        import subprocess
+
+        from koopmans.aiida.setup.hq import is_hq_server_running, running_hq_workers
+
+        fake_hq.set_workers(24)
+
+        def hang(*args: Any, **kwargs: Any) -> None:
+            raise subprocess.TimeoutExpired(cmd="hq", timeout=5)
+
+        monkeypatch.setattr(subprocess, "run", hang)
+
+        assert not is_hq_server_running()
+        assert running_hq_workers() == []
 
 
 class TestWorkerCommands:
@@ -659,6 +731,132 @@ class TestWorkerCommands:
         assert result.exit_code == 0, result.output
         assert "pool of 12 CPU(s)" in result.output
         assert "14 MPI rank(s) by default" in result.output
+
+    def test_status_with_the_server_down_names_the_command_that_fixes_it(
+        self, fake_hq: FakeHq
+    ) -> None:
+        """A machine fresh from a reboot has no server, and status must say so.
+
+        Without a server there is nothing to ask about workers, so the report
+        stops at the server rather than adding "no worker is running", which
+        would read as a second thing to fix.
+        """
+        fake_hq.stop_server()
+
+        result = self._invoke(["backend", "hq", "status"])
+
+        assert result.exit_code == 0, result.output
+        assert "HyperQueue server is not running." in result.output
+        assert "koopmans backend hq start" in result.output
+        assert "worker" not in result.output
+
+    def test_status_omits_the_default_calc_size_before_a_computer_exists(
+        self, fake_hq: FakeHq, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Report no default rank count while there is no Computer to read it off.
+
+        The number is the localhost Computer's, so a profile without one — the
+        state between ``koopmans install`` creating the profile and registering
+        the Computer — leaves the pool to be reported on its own.
+        """
+        from koopmans.aiida.setup import orchestrate
+
+        fake_hq.set_workers(12)
+        monkeypatch.setattr(orchestrate, "profile_exists", lambda: True)
+        monkeypatch.setattr(orchestrate, "load_koopmans_profile", lambda: None)
+        monkeypatch.setattr(orchestrate, "computer_exists", lambda: False)
+
+        result = self._invoke(["backend", "hq", "status"])
+
+        assert result.exit_code == 0, result.output
+        assert "pool of 12 CPU(s)" in result.output
+        assert "by default" not in result.output
+
+    def test_start_reports_a_worker_that_never_registers(self, fake_hq: FakeHq) -> None:
+        """A worker that dies on startup is a failure, not a silent success.
+
+        The spawn itself always succeeds — koopmans detaches the process and
+        never reads its exit status — so the only evidence is that no worker
+        ever appears in ``hq worker list``.
+        """
+        fake_hq.ignore("worker start")
+
+        result = self._invoke(["backend", "hq", "start", "--max-procs", "12"])
+
+        assert result.exit_code != 0
+        assert "Failed to start the HyperQueue worker" in result.output
+        assert "hq.worker.log" in result.output
+
+    def test_restart_starts_nothing_when_the_old_worker_will_not_stop(
+        self, fake_hq: FakeHq
+    ) -> None:
+        """A stop that does not take must not be followed by a second worker.
+
+        Two workers would then share the machine's cores between them, each
+        sized for the whole of it.
+        """
+        fake_hq.set_workers(24)
+        fake_hq.ignore("worker stop")
+
+        result = self._invoke(["backend", "hq", "restart", "--max-procs", "12"])
+
+        assert result.exit_code != 0
+        assert "Failed to restart the HyperQueue worker" in result.output
+        assert not [c for c in fake_hq.commands if c[:2] == ["worker", "start"]]
+        assert fake_hq.worker_pools == [24]
+
+
+class TestBackendStatusRows:
+    """``koopmans backend status`` answers the HQ rows by asking ``hq``."""
+
+    @staticmethod
+    @pytest.fixture
+    def stubbed_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Report a profile with no Computer, without touching a real one."""
+        from koopmans.aiida.setup import orchestrate
+
+        monkeypatch.setattr(orchestrate, "profile_exists", lambda: True)
+        monkeypatch.setattr(orchestrate, "load_koopmans_profile", lambda: None)
+        monkeypatch.setattr(orchestrate, "computer_exists", lambda: False)
+        monkeypatch.setattr(orchestrate, "is_daemon_running", lambda: False)
+
+    @staticmethod
+    def test_a_running_server_and_worker_are_reported(
+        fake_hq: FakeHq, stubbed_profile: None
+    ) -> None:
+        """Both HQ rows follow ``hq``, so a hand-started worker shows up."""
+        from koopmans.aiida.setup.orchestrate import verify_installation
+
+        fake_hq.set_workers(24)
+
+        status = verify_installation()
+
+        assert status["hq.binary"]
+        assert status["hq.server"]
+        assert status["hq.worker"]
+
+    @staticmethod
+    def test_without_a_binary_the_server_and_worker_are_not_probed(
+        fake_hq: FakeHq, stubbed_profile: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Missing ``hq`` is its own row, and stops the other two being guessed.
+
+        A worker may well be running; koopmans simply has no way to look. The
+        rows are booleans, so the binary row is what carries "unknown" — and
+        the stub records that nothing was asked of it.
+        """
+        from koopmans.aiida.setup.orchestrate import verify_installation
+
+        fake_hq.set_workers(24)
+        monkeypatch.delenv("KOOPMANS_HQ_BINARY")
+        monkeypatch.setattr("shutil.which", lambda name: None)
+
+        status = verify_installation()
+
+        assert not status["hq.binary"]
+        assert not status["hq.server"]
+        assert not status["hq.worker"]
+        assert fake_hq.commands == []
 
 
 def test_install_sizes_the_pool_and_the_calc_separately(
