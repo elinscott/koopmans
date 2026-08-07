@@ -616,6 +616,7 @@ def silicon_pw_input(
     pseudo_library: str = "SG15/1.2/PBE/SR",
     parallelization: dict[str, Any] | None = None,
     calculator_parameters: dict[str, Any] | None = None,
+    kpoints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a minimal silicon ``dft_bands`` input dict for the wiring tests.
 
@@ -631,7 +632,7 @@ def silicon_pw_input(
                 "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
             },
         },
-        "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+        "kpoints": kpoints or {"grid": [2, 2, 2], "offset": [0, 0, 0]},
         "calculator_parameters": (
             {"ecutwfc": 20.0} if calculator_parameters is None else calculator_parameters
         ),
