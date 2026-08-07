@@ -16,6 +16,8 @@ from koopmans.aiida.conversion import (
     atoms_input_to_structure,
     code_parallelization,
     input_to_pw_parameters,
+    step_grid_spacing,
+    step_kpoints_mesh,
 )
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
@@ -161,6 +163,50 @@ def prepare_common_inputs(
     }
 
     return structure, pseudo_family, overrides
+
+
+def reject_kpoint_overrides(koopmans_input: KoopmansInput, messages: dict[str, str]) -> None:
+    """Raise for a per-step k-point mesh the route about to be built cannot honour.
+
+    ``messages`` maps a ``kpoints.overrides`` step name to what the user
+    should write instead.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+        messages: The message to raise for each step this route rejects.
+
+    Raises:
+        ValueError: If the input gives a mesh for one of those steps.
+    """
+    for step, message in messages.items():
+        if getattr(koopmans_input.kpoints.overrides, step) is not None:
+            raise ValueError(message)
+
+
+def pin_step_kpoints(
+    overrides: dict[str, Any],
+    step: str,
+    koopmans_input: KoopmansInput,
+) -> orm.KpointsData | None:
+    """Return the mesh a step samples, recording a grid spacing in ``overrides`` instead.
+
+    ``PwBaseWorkChain`` takes either an explicit mesh or a
+    ``kpoints_distance``, so a step whose entry states a ``grid_spacing``
+    gets the distance written into its override namespace and no mesh.
+
+    Args:
+        overrides: The route's per-step override dict (mutated in place).
+        step: Name of a ``kpoints.overrides`` entry.
+        koopmans_input: The parsed koopmans input.
+
+    Returns:
+        The mesh the step samples, or ``None`` where the spacing fixes it.
+    """
+    spacing = step_grid_spacing(koopmans_input.kpoints, step)
+    if spacing is not None:
+        overrides.setdefault(step, {})["kpoints_distance"] = spacing
+        return None
+    return step_kpoints_mesh(koopmans_input.kpoints, step)
 
 
 def _projection_site_advice(exc: ProjectionSiteError) -> str:

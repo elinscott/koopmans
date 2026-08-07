@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import prepare_common_inputs
+from koopmans.aiida.workflows import pin_step_kpoints, prepare_common_inputs
 from koopmans.aiida.workflows.blocks import (
     create_automatic_blocks,
     create_explicit_blocks,
@@ -104,22 +104,25 @@ def _validate_projection_sources(koopmans_input: KoopmansInput) -> None:
 
 def _kpoint_sampling(
     koopmans_input: KoopmansInput,
-) -> tuple[orm.KpointsData, orm.KpointsData, list[int]]:
+    overrides: dict[str, Any],
+) -> tuple[orm.KpointsData | None, orm.KpointsData, list[int]]:
     """Return the scf mesh, the explicit nscf/wannier90 k-list and its dimensions.
 
     wannier90 and pw2wannier90 need eigenstates on the full explicit k-list
     (wannier90 ``kmesh.pl`` ordering, no symmetry reduction) and cannot
     re-derive the Monkhorst-Pack dimensions from it, so the mesh is expanded
     here and the grid carried alongside. The scf takes the mesh itself and
-    may reduce it by symmetry.
+    may reduce it by symmetry; ``None`` where its entry leaves the mesh to a
+    ``grid_spacing`` written into ``overrides["scf"]``.
     """
     from aiida_wannier90_workflows.utils.kpoints import get_explicit_kpoints
 
-    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+    from koopmans.aiida.conversion import step_kpoints_mesh
 
-    mesh = kpoints_input_to_kpoints_mesh(koopmans_input.kpoints)
+    scf_kpoints = pin_step_kpoints(overrides, "scf", koopmans_input)
+    mesh = step_kpoints_mesh(koopmans_input.kpoints, "nscf")
     mp_grid = [int(x) for x in mesh.get_kpoints_mesh()[0]]  # type: ignore[no-untyped-call]
-    return mesh, get_explicit_kpoints(mesh), mp_grid
+    return scf_kpoints, get_explicit_kpoints(mesh), mp_grid
 
 
 def _external_projector_kwargs(
@@ -196,7 +199,7 @@ def build_wannierize_workgraph(
     if extra_kwargs:
         extra_kwargs["projection_type"] = WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
 
-    scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input)
+    scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, overrides)
 
     return Wannierize.build(
         codes=codes,
@@ -321,7 +324,7 @@ def _build_wannierize_blocks_workgraph(
     if w90_user:
         wannier_overrides["wannier90"] = w90_user
 
-    scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input)
+    scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, wannier_overrides)
 
     # Without a threshold the graph splits nothing, and WannierizeBlocks
     # rejects the split-only inputs rather than ignore them.

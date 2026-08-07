@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from koopmans.aiida.workflows import prepare_common_inputs
+from koopmans.aiida.workflows import (
+    pin_step_kpoints,
+    prepare_common_inputs,
+    reject_kpoint_overrides,
+)
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -34,7 +38,14 @@ def build_dft_eps_workgraph(
     """
     from aiida_koopmans.workgraphs.ph import DielectricTask
 
-    from koopmans.aiida.conversion import kpoints_input_to_kpoints_mesh
+    reject_kpoint_overrides(
+        koopmans_input,
+        {
+            "nscf": "`kpoints.overrides.nscf` cannot take effect in a `dft_eps` "
+            "calculation: it runs one scf and then ph.x, with no nscf step. Set "
+            "`kpoints.overrides.scf` or `kpoints.grid`."
+        },
+    )
 
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf"])
     overrides["scf"]["pw"]["parameters"].get("SYSTEM", {}).pop("nbnd", None)
@@ -46,5 +57,5 @@ def build_dft_eps_workgraph(
         pseudo_family=pseudo_family,
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
-        scf_kpoints=kpoints_input_to_kpoints_mesh(koopmans_input.kpoints),
+        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
     )
