@@ -795,7 +795,7 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
-            build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
 
     def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:
         """A route reached whatever the method must not name one back at the reader.
@@ -813,7 +813,7 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError) as excinfo:
-            build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
         assert "screening_method" not in str(excinfo.value)
 
     def test_an_unsupported_screening_method_is_reported_first(self, tmp_path: Path) -> None:
@@ -827,4 +827,4 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="only supports DSCF screening"):
-            build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
