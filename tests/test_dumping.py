@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 import pytest
 
 from koopmans.aiida.dumping import (
-    _NODE_METADATA_FILE,
+    NODE_METADATA_FILE,
     _hoist_lone_calculations,
     _link_duplicate_files,
     _prune_source_only_step_folders,
@@ -82,7 +82,7 @@ def _metadata(name: str, node_type: str = _CALCULATION_NODE_TYPE) -> tuple[str, 
     bytes its own, as a real dump's pk and uuid do, so that the symlink
     pass has nothing to collapse.
     """
-    path = f"{name}/{_NODE_METADATA_FILE}" if name else _NODE_METADATA_FILE
+    path = f"{name}/{NODE_METADATA_FILE}" if name else NODE_METADATA_FILE
     return (path, f"---\nNode data:\n  label: {name}\n  node_type: {node_type}\n")
 
 
@@ -466,7 +466,7 @@ class TestPruneWorkflowMetadata:
 
         _prune_workflow_metadata(tmp_path)
 
-        assert (tmp_path / "01-scf" / _NODE_METADATA_FILE).is_file()
+        assert (tmp_path / "01-scf" / NODE_METADATA_FILE).is_file()
 
     def test_a_workflow_layer_loses_its_metadata(self, tmp_path: Path) -> None:
         """A workgraph folder runs nothing of its own; its children do."""
@@ -474,7 +474,7 @@ class TestPruneWorkflowMetadata:
 
         _prune_workflow_metadata(tmp_path)
 
-        assert not (tmp_path / "01-scf_nscf" / _NODE_METADATA_FILE).exists()
+        assert not (tmp_path / "01-scf_nscf" / NODE_METADATA_FILE).exists()
 
     def test_the_root_keeps_its_own(self, tmp_path: Path) -> None:
         """The root is a workgraph too, and its pk names the whole run."""
@@ -482,7 +482,7 @@ class TestPruneWorkflowMetadata:
 
         _prune_workflow_metadata(tmp_path)
 
-        assert (tmp_path / _NODE_METADATA_FILE).is_file()
+        assert (tmp_path / NODE_METADATA_FILE).is_file()
 
     def test_a_file_of_an_unrecognized_shape_is_kept(self, tmp_path: Path) -> None:
         """Only an explicit workflow ``node_type`` deletes the file.
@@ -490,11 +490,11 @@ class TestPruneWorkflowMetadata:
         A format this cannot read is kept, so an aiida-core change costs
         the reader a folder listing rather than the node it names.
         """
-        _make_tree(tmp_path, [("01-step/" + _NODE_METADATA_FILE, "---\nsomething: else\n")])
+        _make_tree(tmp_path, [("01-step/" + NODE_METADATA_FILE, "---\nsomething: else\n")])
 
         _prune_workflow_metadata(tmp_path)
 
-        assert (tmp_path / "01-step" / _NODE_METADATA_FILE).is_file()
+        assert (tmp_path / "01-step" / NODE_METADATA_FILE).is_file()
 
     def test_a_workflow_node_type_named_elsewhere_in_the_file_decides_nothing(
         self, tmp_path: Path
@@ -509,7 +509,7 @@ class TestPruneWorkflowMetadata:
             tmp_path,
             [
                 (
-                    f"01-scf/{_NODE_METADATA_FILE}",
+                    f"01-scf/{NODE_METADATA_FILE}",
                     "---\nNode data:\n"
                     f"  description: rerun of the {_WORKFLOW_NODE_TYPE} that stopped\n"
                     f"  node_type: {_CALCULATION_NODE_TYPE}\n",
@@ -519,7 +519,7 @@ class TestPruneWorkflowMetadata:
 
         _prune_workflow_metadata(tmp_path)
 
-        assert (tmp_path / "01-scf" / _NODE_METADATA_FILE).is_file()
+        assert (tmp_path / "01-scf" / NODE_METADATA_FILE).is_file()
 
     @pytest.mark.parametrize(
         "content",
@@ -549,12 +549,12 @@ class TestPruneWorkflowMetadata:
         the filesystem's.
         """
         _make_tree(tmp_path, [_metadata("01-scf_nscf/01-scf", _WORKFLOW_NODE_TYPE)])
-        (tmp_path / "01-scf_nscf" / _NODE_METADATA_FILE).write_bytes(content)
+        (tmp_path / "01-scf_nscf" / NODE_METADATA_FILE).write_bytes(content)
 
         _prune_workflow_metadata(tmp_path)
 
-        assert (tmp_path / "01-scf_nscf" / _NODE_METADATA_FILE).is_file()
-        assert not (tmp_path / "01-scf_nscf" / "01-scf" / _NODE_METADATA_FILE).exists()
+        assert (tmp_path / "01-scf_nscf" / NODE_METADATA_FILE).is_file()
+        assert not (tmp_path / "01-scf_nscf" / "01-scf" / NODE_METADATA_FILE).exists()
 
 
 class TestRenumberStepFolders:
@@ -831,7 +831,7 @@ class TestHoistLoneCalculations:
         _hoist_lone_calculations(tmp_path)
 
         assert (tmp_path / "01-write_note/outputs/aiida.cpo").is_file()
-        assert _WORKFLOW_NODE_TYPE in (tmp_path / _NODE_METADATA_FILE).read_text()
+        assert _WORKFLOW_NODE_TYPE in (tmp_path / NODE_METADATA_FILE).read_text()
 
     def test_a_chain_of_single_child_steps_collapses_by_one_layer(self, tmp_path: Path) -> None:
         """Every step name on the way to the calculation survives."""
@@ -1147,7 +1147,7 @@ class TestDumpedNodeMetadata:
 
         dumped, process = self._dump_a_run(tmp_path / "dump")
 
-        metadata = yaml.safe_load((dumped / _NODE_METADATA_FILE).read_text())
+        metadata = yaml.safe_load((dumped / NODE_METADATA_FILE).read_text())
         assert metadata["Node data"]["pk"] == process.pk
         assert metadata["Node data"]["uuid"] == process.uuid
 
@@ -1167,7 +1167,7 @@ class TestDumpedNodeMetadata:
         dumped, _ = self._dump_a_run(tmp_path / "dump")
 
         named = {}
-        for path in dumped.rglob(_NODE_METADATA_FILE):
+        for path in dumped.rglob(NODE_METADATA_FILE):
             if path.parent == dumped:
                 continue
             recorded = yaml.safe_load(path.read_text())["Node data"]
@@ -1186,7 +1186,7 @@ class TestDumpedNodeMetadata:
 
         dumped, _ = self._dump_a_run(tmp_path / "dump")
 
-        below = [p for p in dumped.rglob(_NODE_METADATA_FILE) if p.parent != dumped]
+        below = [p for p in dumped.rglob(NODE_METADATA_FILE) if p.parent != dumped]
         assert below
         for path in below:
             node_type = yaml.safe_load(path.read_text())["Node data"]["node_type"]
@@ -1205,7 +1205,7 @@ class TestDumpedNodeMetadata:
 
         dumped, _ = self._dump_a_run(tmp_path / "dump")
 
-        written = list(dumped.rglob(_NODE_METADATA_FILE))
+        written = list(dumped.rglob(NODE_METADATA_FILE))
         assert written
         for path in written:
             assert "Node attributes" not in yaml.safe_load(path.read_text())

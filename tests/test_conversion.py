@@ -206,6 +206,29 @@ class TestSeekpathBasisGuard:
         with pytest.raises(NotImplementedError, match="not a primitive cell"):
             kpoints_input_to_kpoints_path(kpoints, structure)
 
+    def test_the_path_carries_the_structure_cell(self, aiida_profile: Any) -> None:
+        """The node carries the cell, so distances along it can be measured.
+
+        Crystal coordinates alone say nothing about the lengths of the path's
+        segments; anything seeded from this node — a pw.x or kcw.x band
+        structure — inherits the cell with them.
+        """
+        import numpy as np
+        from aiida import orm
+
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+        from koopmans.input_file import GridKpointsInput
+
+        a = 5.43
+        cell = (np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2).tolist()
+        structure = orm.StructureData(cell=cell)
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+
+        kpts = kpoints_input_to_kpoints_path(GridKpointsInput(grid=(2, 2, 2)), structure)
+
+        assert np.allclose(kpts.cell, cell)
+        assert list(kpts.pbc) == [True, True, True]
+
 
 class TestInputToPwParameters:
     """The shared pw parameter dict carries no calculation type of its own."""
