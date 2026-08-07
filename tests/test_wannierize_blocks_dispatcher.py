@@ -35,7 +35,7 @@ def _si_split_dict(**workflow_updates: Any) -> dict[str, Any]:
             "task": "wannierize",
             # The cutoffs family fixture: the split builder calls
             # get_builder_from_protocol eagerly at build time, which only
-            # accepts SSSP / PseudoDojo / cutoffs families.
+            # accepts PseudoDojo or cutoffs families.
             "pseudo_library": "SG15/1.0/PBE/SR",
             "block_wannierization_threshold": 1.5,
         },

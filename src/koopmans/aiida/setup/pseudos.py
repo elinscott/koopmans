@@ -1,4 +1,4 @@
-"""Pseudopotential family installers (PseudoDojo / SSSP / SG15)."""
+"""Pseudopotential family installers (PseudoDojo / SG15)."""
 
 from __future__ import annotations
 
@@ -16,9 +16,6 @@ def ensure_pseudo_family_installed(pseudo_family: str) -> None:
 
     Supports PseudoDojo families with labels like:
         'PseudoDojo/0.4/LDA/SR/standard/upf'
-
-    SSSP families with labels like:
-        'SSSP/1.3/PBEsol/efficiency'
 
     And SG15 ONCV families with labels like:
         'SG15/1.2/PBE/SR'
@@ -68,19 +65,23 @@ _LIBRARY_NOTES = {
 def available_pseudo_families() -> dict[str, list[str]]:
     """Return every valid ``pseudo_library`` label, sorted, keyed by library.
 
-    ``aiida-pseudo`` publishes PseudoDojo's and SSSP's labels in exactly the
-    format the field takes, so those are asked rather than written down: the
-    valid families are not the cross-product of their options, and the set
-    grows whenever a library publishes a version. SG15 is not an
-    ``aiida-pseudo`` library, so its labels are enumerated here.
+    Every label is norm-conserving and in UPF format: Koopmans functionals are
+    defined for norm-conserving pseudopotentials, and ``pw.x`` reads UPF alone.
+    PseudoDojo's labels are asked of ``aiida-pseudo`` rather than written down,
+    so a newly published version appears here without an edit; its non-UPF
+    formats are dropped. SG15 is not an ``aiida-pseudo`` library, so its labels
+    are enumerated here.
 
     No profile is needed.
     """
-    from aiida_pseudo.groups.family import PseudoDojoFamily, SsspFamily
+    from aiida_pseudo.groups.family import PseudoDojoFamily
 
     return {
-        "PseudoDojo": sorted(PseudoDojoFamily.get_valid_labels()),
-        "SSSP": sorted(SsspFamily.get_valid_labels()),
+        "PseudoDojo": sorted(
+            label
+            for label in PseudoDojoFamily.get_valid_labels()
+            if label.rsplit("/", 1)[-1].lower() == _PSEUDO_DOJO_FORMAT
+        ),
         "SG15": sorted(
             f"SG15/{version}/PBE/{relativistic}"
             for version in _SG15_SUPPORTED_VERSIONS
@@ -125,54 +126,68 @@ def list_pseudo_families() -> None:
             for note in notes:
                 click.echo(f"  {note}")
 
+    click.echo("\nEvery family listed is norm-conserving and in UPF format, which is what")
+    click.echo("Koopmans functionals and `pw.x` require.")
     click.echo("\nName one of these as `pseudo_library` in the input file's `workflow` block, and")
     click.echo("koopmans installs it the first time it is used. To use pseudopotentials of your")
     click.echo("own, run `aiida-pseudo install family <directory> <label>` and name that label.")
 
 
 def install_pseudo_family(pseudo_family: str) -> None:
-    """Install a pseudopotential family. Parse the label and dispatch."""
+    """Install a pseudopotential family. Parse the label and dispatch.
+
+    Raises:
+        ValueError: If the label names a family koopmans cannot run with.
+    """
     parts = pseudo_family.split("/")
 
     if parts[0] == "PseudoDojo" and len(parts) == 6:
         _install_pseudo_dojo_family(pseudo_family, parts)
-    elif parts[0] == "SSSP" and len(parts) == 4:
-        _install_sssp_family(pseudo_family, parts)
     elif parts[0] == "SG15" and len(parts) == 4:
         _install_sg15_family(pseudo_family, parts)
+    elif parts[0] == "SSSP":
+        raise ValueError(
+            f"'{pseudo_family}' is an SSSP family. SSSP mixes ultrasoft and PAW "
+            "pseudopotentials, and Koopmans functionals are defined for "
+            "norm-conserving ones. Name a PseudoDojo or SG15 family instead; run "
+            "`koopmans pseudos` for the full list."
+        )
     else:
         raise ValueError(
             f"Unrecognized pseudo family format: '{pseudo_family}'. "
-            "Expected 'PseudoDojo/version/functional/relativistic/protocol/format', "
-            "'SSSP/version/functional/protocol', "
-            "or 'SG15/version/functional/relativistic'."
+            "Expected 'PseudoDojo/version/functional/relativistic/protocol/upf' "
+            "or 'SG15/version/functional/relativistic'. "
+            "Run `koopmans pseudos` for every label koopmans accepts."
         )
 
 
+# PseudoDojo publishes each family in four formats. ``PwCalculation`` declares
+# its ``pseudos`` input with ``valid_type=(LegacyUpfData, UpfData)``, so the
+# psp8, psml and jthxml families install but cannot be handed to pw.x.
+_PSEUDO_DOJO_FORMAT = "upf"
+
+
 def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
-    """Install a PseudoDojo pseudopotential family."""
+    """Install a PseudoDojo pseudopotential family.
+
+    Raises:
+        ValueError: If the label asks for a format other than ``upf``.
+    """
     import contextlib
     import io
     import warnings
 
     from aiida_pseudo.cli.install import download_pseudo_dojo, install_pseudo_dojo
-    from aiida_pseudo.data.pseudo import JthXmlData, PsmlData, Psp8Data, UpfData
+    from aiida_pseudo.data.pseudo import UpfData
     from aiida_pseudo.groups.family import PseudoDojoConfiguration
 
     _, version, functional, relativistic, protocol, pseudo_format = parts
 
-    format_to_type = {
-        "upf": UpfData,
-        "psp8": Psp8Data,
-        "psml": PsmlData,
-        "jthxml": JthXmlData,
-    }
-
-    pseudo_type = format_to_type.get(pseudo_format.lower())
-    if pseudo_type is None:
+    if pseudo_format.lower() != _PSEUDO_DOJO_FORMAT:
         raise ValueError(
-            f"Unknown pseudo format '{pseudo_format}'. "
-            f"Supported formats: {list(format_to_type.keys())}"
+            f"PseudoDojo publishes '{label}' in the {pseudo_format} format, which "
+            "pw.x cannot read; it takes UPF only. End the label with "
+            f"'/{_PSEUDO_DOJO_FORMAT}'."
         )
 
     configuration = PseudoDojoConfiguration(
@@ -207,62 +222,12 @@ def _install_pseudo_dojo_family(label: str, parts: list[str]) -> None:
                 configuration=configuration,
                 filepath_archive=filepath_archive,
                 filepath_metadata=filepath_metadata,
-                pseudo_type=pseudo_type,
+                pseudo_type=UpfData,
                 label=label,
                 traceback=False,
             )
 
         family.set_default_stringency("normal")
-
-
-def _install_sssp_family(label: str, parts: list[str]) -> None:
-    """Install an SSSP pseudopotential family."""
-    import contextlib
-    import io
-    import warnings
-
-    from aiida_pseudo.cli.install import download_sssp, install_sssp
-    from aiida_pseudo.groups.family import SsspConfiguration
-
-    _, version, functional, protocol = parts
-
-    configuration = SsspConfiguration(
-        version=version,
-        functional=functional,
-        protocol=protocol,
-    )
-
-    click.echo(f"  Downloading pseudopotentials for '{label}'...")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        filepath_archive = Path(tmpdir) / "archive.tar.gz"
-        filepath_metadata = Path(tmpdir) / "metadata.json"
-
-        with (
-            warnings.catch_warnings(),
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            warnings.simplefilter("ignore")
-
-            download_sssp(
-                configuration=configuration,
-                filepath_archive=filepath_archive,
-                filepath_metadata=filepath_metadata,
-                traceback=False,
-            )
-
-            install_sssp(
-                filepath_archive=filepath_archive,
-                filepath_metadata=filepath_metadata,
-                label=label,
-                traceback=False,
-            )
-
-    from aiida_pseudo.groups.family import SsspFamily
-
-    family = SsspFamily.collection.get(label=label)
-    click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")
 
 
 # SG15 ONCV is published as a single frozen tarball on quantum-simulation.org. It

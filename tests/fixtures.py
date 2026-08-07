@@ -522,8 +522,8 @@ def _install_fake_family(
     meaningful pseudos. ``cutoffs=True`` builds a
     ``CutoffsPseudoPotentialFamily`` with recommended cutoffs — needed by
     builders that call ``get_builder_from_protocol`` eagerly at build time
-    (the aiida-qe protocol machinery only accepts SSSP, PseudoDojo, or a
-    cutoffs family); plain families cover ``ensure_pseudo_family_installed``.
+    (the aiida-qe protocol machinery only accepts PseudoDojo or a cutoffs
+    family); plain families cover ``ensure_pseudo_family_installed``.
     ``recommended_cutoffs=False`` leaves that cutoffs family with no stringency
     defined, the shape ``_install_sg15_family`` produces.
     ``has_so=True`` marks every pseudo fully relativistic.
