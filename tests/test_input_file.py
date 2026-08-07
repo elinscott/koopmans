@@ -1,7 +1,6 @@
 """Tests for input file parsing."""
 
 import json
-from enum import Enum
 from pathlib import Path
 
 import pytest
@@ -334,83 +333,3 @@ class TestKpointsOffset:
 
         with pytest.raises(ValueError, match="samples Gamma itself"):
             GammaOnlyKpointsInput(offset=(0.5, 0.0, 0.0))
-
-
-class _DescriptorStandIn(Enum):
-    """A descriptor enum carrying the placeholder, which ``MLDescriptor`` does not yet."""
-
-    UNSET = "placeholder"
-
-
-class TestDescriptorPlaceholderRejected:
-    """``ml:descriptor`` names a descriptor, never the plugin's placeholder.
-
-    The placeholder exists so the plugin's workflows have a value to put on
-    an enum socket that node-graph makes required whatever its default. It
-    computes nothing, so an input file must not be able to select it.
-    """
-
-    @staticmethod
-    def _ml_input(descriptor: object) -> dict[str, object]:
-        d = _minimal_si_input()
-        d["ml"] = {"mode": "predict", "descriptor": descriptor}
-        return d
-
-    @pytest.mark.parametrize("spelling", ["unset", "UNSET", "Unset"])
-    def test_the_placeholder_is_rejected(self, spelling: str) -> None:
-        """However it is spelled, the placeholder is refused by name."""
-        from koopmans.input_file import MLConfig
-
-        with pytest.raises(ValueError, match="internal placeholder"):
-            MLConfig.model_validate({"descriptor": spelling})
-
-    @pytest.mark.parametrize("descriptor", ["power_spectrum", "self_hartree"])
-    def test_every_real_descriptor_still_parses(self, descriptor: str) -> None:
-        """The guard rejects the placeholder only, not the descriptors.
-
-        Discriminates against a validator that refuses everything, which
-        would satisfy the rejection test on its own.
-        """
-        from koopmans.input_file import MLConfig
-
-        assert MLConfig.model_validate({"descriptor": descriptor}).descriptor == descriptor
-
-    def test_the_message_names_what_to_choose_instead(self) -> None:
-        """The refusal lists the descriptors, and does not advertise the placeholder."""
-        from koopmans.input_file import MLConfig
-
-        with pytest.raises(ValueError) as excinfo:
-            MLConfig.model_validate({"descriptor": "unset"})
-        message = str(excinfo.value)
-        assert "'power_spectrum'" in message, message
-        assert "'self_hartree'" in message, message
-        # The choices are offered before the semicolon; the placeholder is
-        # named after it, as the thing being refused, and never offered.
-        offered = message.split(";")[0]
-        assert "unset" not in offered, offered
-
-    def test_the_enum_member_form_is_rejected_too(self) -> None:
-        """A placeholder arriving as an enum member, not a string, is refused.
-
-        ``MLDescriptor`` does not carry the member yet, so a stand-in
-        exercises the branch that reads a member's name.
-        """
-        from koopmans.input_file import MLConfig
-
-        with pytest.raises(ValueError, match="internal placeholder"):
-            MLConfig.model_validate({"descriptor": _DescriptorStandIn.UNSET})
-
-    def test_rejected_through_a_whole_input_file(self, tmp_path: Path) -> None:
-        """The refusal reaches a user reading it off a real input file."""
-        input_file = tmp_path / "input.json"
-        input_file.write_text(json.dumps(self._ml_input("unset")))
-
-        with pytest.raises(ValueError, match="internal placeholder"):
-            read_input_file(input_file)
-
-    def test_a_real_descriptor_parses_through_a_whole_input_file(self, tmp_path: Path) -> None:
-        """The same input file parses once it names a descriptor."""
-        input_file = tmp_path / "input.json"
-        input_file.write_text(json.dumps(self._ml_input("power_spectrum")))
-
-        assert read_input_file(input_file).ml.descriptor == "power_spectrum"

@@ -1,6 +1,5 @@
 """Machine learning configuration for screening parameter prediction."""
 
-from enum import Enum
 from typing import Self
 from warnings import warn
 
@@ -10,20 +9,6 @@ from pydantic import Field, field_validator, model_validator
 from koopmans.base import BaseModel
 
 __all__ = ["MLConfig"]
-
-# The plugin's placeholder for "no descriptor named", matched on the member's
-# name so it stays rejected however its value is spelled. It is not a
-# descriptor: it exists to give the workflows' enum sockets a value to carry.
-_PLACEHOLDER_DESCRIPTOR = "unset"
-
-
-def _selectable_descriptors() -> str:
-    """List the descriptors an input file may name, in input-file spelling."""
-    return " or ".join(
-        repr(str(member.value))
-        for member in MLDescriptor
-        if member.name.casefold() != _PLACEHOLDER_DESCRIPTOR
-    )
 
 
 class MLConfig(BaseModel):
@@ -72,28 +57,6 @@ class MLConfig(BaseModel):
         "per orbital: simplistic and unexpressive, and unlikely to carry enough to predict a "
         "screening parameter",
     )
-
-    @field_validator("descriptor", mode="before")
-    @classmethod
-    def reject_placeholder_descriptor(cls, value: object) -> object:
-        """Reject the plugin's placeholder for "no descriptor named".
-
-        Runs before coercion, so an input file naming it is refused whether
-        or not the plugin's enum carries the member yet.
-        """
-        if isinstance(value, Enum):
-            spellings = {value.name.casefold(), str(value.value).casefold()}
-        elif isinstance(value, str):
-            spellings = {value.casefold()}
-        else:
-            return value
-        if _PLACEHOLDER_DESCRIPTOR in spellings:
-            raise ValueError(
-                f"`ml:descriptor` takes {_selectable_descriptors()}; "
-                f"'{_PLACEHOLDER_DESCRIPTOR}' is an internal placeholder the workflow "
-                "puts on its own inputs, not a descriptor you can choose."
-            )
-        return value
 
     @field_validator("model", mode="before")
     @classmethod

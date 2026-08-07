@@ -755,7 +755,7 @@ raw:
               structured_type:
                 kind: enum
                 path: aiida_koopmans.functionals.Correction
-            required: true
+            required: false
         decompose_parameters:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -764,7 +764,6 @@ raw:
             child_default_link_limit: 1
             required: false
         descriptor:
-          default: self_hartree
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -775,7 +774,7 @@ raw:
               structured_type:
                 kind: enum
                 path: aiida_koopmans.ml.MLDescriptor
-            required: true
+            required: false
         ecutrho:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -825,7 +824,7 @@ raw:
               structured_type:
                 kind: enum
                 path: aiida_koopmans.variational_orbitals.VariationalOrbitalType
-            required: true
+            required: false
         initial_alpha:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1932,7 +1931,6 @@ raw:
         code:
           __aiida_code__: kcp@localhost
         correction: ki
-        descriptor: self_hartree
         ecutrho: 200.0
         ecutwfc: 50.0
         fix_spin_contamination: false
@@ -2104,7 +2102,7 @@ raw:
                   structured_type:
                     kind: enum
                     path: aiida_koopmans.functionals.Correction
-                required: true
+                required: false
             decompose_parameters:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2113,7 +2111,6 @@ raw:
                 child_default_link_limit: 1
                 required: false
             descriptor:
-              default: self_hartree
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2124,7 +2121,7 @@ raw:
                   structured_type:
                     kind: enum
                     path: aiida_koopmans.ml.MLDescriptor
-                required: true
+                required: false
             ecutrho:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2174,7 +2171,7 @@ raw:
                   structured_type:
                     kind: enum
                     path: aiida_koopmans.variational_orbitals.VariationalOrbitalType
-                required: true
+                required: false
             initial_alpha:
               dynamic: false
               identifier: <scrubbed:identifier>
