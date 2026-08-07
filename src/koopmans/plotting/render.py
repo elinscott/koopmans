@@ -144,6 +144,19 @@ def _ticks(
     return positions, names
 
 
+def _path_extent(distances: Sequence[np.ndarray]) -> tuple[float, float] | None:
+    """Return the first and last x the curves reach, or ``None`` if they reach none.
+
+    ``None`` also stands for a path of zero length, which no limits can frame.
+    """
+    reached = [item for item in distances if item.size]
+    if not reached:
+        return None
+    first = min(float(item[0]) for item in reached)
+    last = max(float(item[-1]) for item in reached)
+    return None if last <= first else (first, last)
+
+
 def draw_band_structures(
     axes: Axes,
     series: Sequence[BandSeries],
@@ -153,15 +166,18 @@ def draw_band_structures(
 
     Every series is measured in one reciprocal basis, and the ticks come from
     the first series that names any high-symmetry points; a jump breaks the
-    curves rather than joining them across the gap.
+    curves rather than joining them across the gap. A rule marks each interior
+    special point, and the x limits are the ends of the path itself.
 
     :param axes: where to draw.
     :param series: the curves, each already carrying the figure's ``zero``.
     :param caption: a sentence stating what the figure's zero is.
     """
     cell = _shared_cell(series)
+    drawn_distances: list[np.ndarray] = []
     for index, item in enumerate(series):
         distances = path_distances(item, cell)
+        drawn_distances.append(distances)
         energies = np.asarray(item.energies, dtype=np.float64) - item.zero
         color = f"C{index % 10}"
         drawn = False
@@ -180,9 +196,14 @@ def draw_band_structures(
     if positions:
         axes.set_xticks(positions)
         axes.set_xticklabels(names)
+        # The first and last special points sit on the spines, which already
+        # draw them.
         for position in positions[1:-1]:
             axes.axvline(position, color="0.8", linewidth=0.6, zorder=0, label=DIVIDER_LABEL)
-        axes.set_xlim(positions[0], positions[-1])
+
+    limits = _path_extent(drawn_distances)
+    if limits is not None:
+        axes.set_xlim(*limits)
 
     axes.set_ylabel(f"Energy ({series[0].units})")
     if caption is not None:

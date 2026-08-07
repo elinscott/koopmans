@@ -133,6 +133,22 @@ def band_lines(axes: Any) -> list[Any]:
     return [line for line in axes.get_lines() if line.get_label() != DIVIDER_LABEL]
 
 
+def divider_positions(axes: Any) -> list[float]:
+    """Return the x of every rule drawn at a high-symmetry point, in order.
+
+    A rule is vertical, so both of its x data are the position; taking the
+    first would pass a horizontal line off as one.
+    """
+    positions = []
+    for line in axes.get_lines():
+        if line.get_label() != DIVIDER_LABEL:
+            continue
+        xdata = list(line.get_xdata())
+        assert xdata[0] == pytest.approx(xdata[-1]), "a path divider must be vertical"
+        positions.append(float(xdata[0]))
+    return sorted(positions)
+
+
 def blank_axes() -> Any:
     """Return a fresh set of axes on a headless backend."""
     import matplotlib
@@ -156,6 +172,24 @@ def broken_path() -> BandSeries:
         ],
         energies=[[-5.0], [-4.5], [-4.0], [-3.0], [-3.5], [-4.0]],
         path_labels=[(0, "G"), (2, "X"), (3, "L"), (5, "G")],
+    )
+
+
+def three_corner_path() -> BandSeries:
+    """Return a series whose unbroken path runs G-X-M, so X is interior to it.
+
+    The 4 Angstrom cubic cell puts X at pi/4 and M at pi/2.
+    """
+    return series(
+        kpoints=[
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.5, 0.25, 0.0],
+            [0.5, 0.5, 0.0],
+        ],
+        energies=[[-5.0], [-4.5], [-4.0], [-3.5], [-3.0]],
+        path_labels=[(0, "G"), (2, "X"), (4, "M")],
     )
 
 
@@ -599,6 +633,65 @@ class TestRenderer:
         draw_band_structures(axes, [series("DFT")])
 
         assert axes.get_xlim() == pytest.approx((0.0, np.pi / 4))
+
+    def test_the_axis_spans_the_path_with_nothing_named(self) -> None:
+        """The limits come from the curves, so a run naming no points gets them too.
+
+        Bands dumped before the k-path prerequisites carry no labels at all;
+        limits taken from the ticks would leave those figures padded.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT", path_labels=[])])
+
+        assert axes.get_xlim() == pytest.approx((0.0, np.pi / 4))
+
+    def test_the_limits_do_not_clip_the_curve(self) -> None:
+        """A path sampled past its last named point still reaches the spine.
+
+        Limits taken from the last tick would cut the unnamed tail off at
+        pi/4 while the curve runs to 3*pi/8.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(
+            axes,
+            [
+                series(
+                    "DFT",
+                    kpoints=[[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0], [0.75, 0.0, 0.0]],
+                    energies=[[-5.0], [-4.5], [-4.0], [-3.5]],
+                    path_labels=[(0, "G"), (2, "X")],
+                )
+            ],
+        )
+
+        assert axes.get_xlim() == pytest.approx((0.0, 3 * np.pi / 8))
+
+    def test_a_rule_is_drawn_at_each_interior_special_point(self) -> None:
+        """The rules are what separates one segment of the path from the next.
+
+        Only X is interior: G and M sit on the spines, which draw them already.
+        A rule at every named point would put one on each spine, and a rule
+        placed by index would put X at 2 rather than at pi/4.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [three_corner_path()])
+
+        assert divider_positions(axes) == pytest.approx([np.pi / 4])
+
+    def test_a_discontinuity_draws_one_rule(self) -> None:
+        """The two sides of a jump sit at one position, so they get one rule.
+
+        Drawing one per named point would stack two rules there, at twice the
+        weight of every other.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [broken_path()])
+
+        assert divider_positions(axes) == pytest.approx([np.pi / 4])
 
     def test_a_jump_joins_two_names_on_one_tick(self) -> None:
         """The two sides of a discontinuity share a position, so they share a tick."""
