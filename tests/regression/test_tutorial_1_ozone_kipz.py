@@ -40,8 +40,7 @@ def tutorial_1_ozone_kipz_input(tutorials_dir: Path) -> KoopmansInput:
 
 def test_dispatcher_accepts_kipz_correction(
     aiida_profile: Any,
-    installed_pw_code: Any,
-    installed_kcp_code: Any,
+    installed_dscf_codes: Any,
     fake_sg15_pseudo_family: Any,
     tutorial_1_ozone_kipz_input: KoopmansInput,
     serialize_workgraph: Any,

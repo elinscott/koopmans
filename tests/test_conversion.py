@@ -247,22 +247,20 @@ class TestCodeParallelizationHelper:
     def test_ntasks_npool_and_pd(self) -> None:
         """Ntasks → resources; npool → -npool then pd → -pd true on the cmdline."""
         from koopmans.aiida.conversion import code_parallelization
-        from koopmans.input_file.parallelization import CodeParallelization
 
-        options, settings = code_parallelization(CodeParallelization(ntasks=8, npool=4, pd=True))
+        options, settings = code_parallelization({"ntasks": 8, "npool": 4, "pd": True})
         assert options == {"resources": {"num_machines": 1, "num_mpiprocs_per_machine": 8}}
         assert settings == {"cmdline": ["-npool", "4", "-pd", "true"]}
 
     def test_partial_and_none(self) -> None:
         """Unset fields yield empty halves; ``None`` config yields two empties."""
         from koopmans.aiida.conversion import code_parallelization
-        from koopmans.input_file.parallelization import CodeParallelization
 
-        options, settings = code_parallelization(CodeParallelization(npool=2))
+        options, settings = code_parallelization({"npool": 2})
         assert options == {}
         assert settings == {"cmdline": ["-npool", "2"]}
         # pd False must not emit a flag (only pd True does).
-        assert code_parallelization(CodeParallelization(pd=False)) == ({}, {})
+        assert code_parallelization({"pd": False}) == ({}, {})
         assert code_parallelization(None) == ({}, {})
 
 
@@ -275,7 +273,9 @@ class TestParallelizationWiring:
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"npool": 4}}))
-        _, _, overrides = prepare_common_inputs(inp, ["scf", "bands"])
+        _, _, overrides = prepare_common_inputs(
+            inp, ["scf", "bands"], inp.parallelization.as_mapping()
+        )
         for key in ("scf", "bands"):
             assert overrides[key]["pw"]["settings"]["cmdline"] == ["-npool", "4"]
 
@@ -285,7 +285,7 @@ class TestParallelizationWiring:
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"ntasks": 8}}))
-        _, _, overrides = prepare_common_inputs(inp, ["scf"])
+        _, _, overrides = prepare_common_inputs(inp, ["scf"], inp.parallelization.as_mapping())
         resources = overrides["scf"]["pw"]["metadata"]["options"]["resources"]
         assert resources == {"num_machines": 1, "num_mpiprocs_per_machine": 8}
 
@@ -295,7 +295,7 @@ class TestParallelizationWiring:
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_pw_input())
-        _, _, overrides = prepare_common_inputs(inp, ["scf"])
+        _, _, overrides = prepare_common_inputs(inp, ["scf"], inp.parallelization.as_mapping())
         assert "settings" not in overrides["scf"]["pw"]
         assert "metadata" not in overrides["scf"]["pw"]
 
@@ -322,7 +322,9 @@ class TestParallelizationWiring:
                 parallelization={"pw": {"ntasks": 8, "npool": 4}},
             )
         )
-        structure, _, overrides = prepare_common_inputs(inp, ["scf", "bands"])
+        structure, _, overrides = prepare_common_inputs(
+            inp, ["scf", "bands"], inp.parallelization.as_mapping()
+        )
         builder = PwBandsWorkChain.get_builder_from_protocol(
             code=installed_pw_code, structure=structure, overrides=overrides
         )
@@ -330,6 +332,103 @@ class TestParallelizationWiring:
         assert builder.scf.pw.metadata.options["resources"]["num_mpiprocs_per_machine"] == 8
         # The bands step's own calculation type survives the shared pw overrides.
         assert builder.bands.pw.parameters.get_dict()["CONTROL"]["calculation"] == "bands"
+
+
+class TestPoolsDivideRanks:
+    """An ``npool`` that does not divide a code's ranks is rejected at build time."""
+
+    def test_commensurate_pair_builds(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Four pools over eight ranks divides, so the build runs to a WorkGraph."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                parallelization={"pw": {"ntasks": 8, "npool": 4}},
+            )
+        )
+        assert build_workgraph(inp).tasks["PwBandsWorkChain"] is not None
+
+    def test_ntasks_source_is_named(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """With ``ntasks`` written down, the message points back at that field."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                parallelization={"pw": {"ntasks": 14, "npool": 4}},
+            )
+        )
+        with pytest.raises(ValueError, match=r"`parallelization\.pw\.ntasks` asks for 14"):
+            build_workgraph(inp)
+
+    def test_computer_default_source_is_named(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        localhost_default_ranks: Any,
+        monkeypatch: Any,
+    ) -> None:
+        """Without ``ntasks`` the ranks come from the computer, and the message says so.
+
+        The case the ZnO run hit: the user wrote only ``npool``, so a number
+        they never typed decided the outcome, and the message has to name
+        where it came from. The build is stubbed at its entry point so the
+        test also pins *when* the rejection lands — nothing of the graph is
+        assembled, and no pseudopotential family is installed, before it.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.aiida.workflows import dft as dft_module
+        from koopmans.input_file import KoopmansInput
+
+        reached: list[str] = []
+
+        def record_and_stub(*args: Any, **kwargs: Any) -> tuple[None, str, dict[str, Any]]:
+            """Stand in for the real preparation, noting that it ran."""
+            reached.append("prepare_common_inputs")
+            return None, "fam", {}
+
+        monkeypatch.setattr(dft_module, "prepare_common_inputs", record_and_stub)
+        localhost_default_ranks(14)
+
+        inp = KoopmansInput.model_validate(_pw_input(parallelization={"pw": {"npool": 4}}))
+        with pytest.raises(ValueError) as excinfo:
+            build_workgraph(inp)
+
+        assert reached == []
+        message = str(excinfo.value)
+        assert "sets no `ntasks`" in message
+        assert "computer's default of 14 MPI ranks" in message
+        # The remedy is spelled in the two numbers the user can act on.
+        assert "[1, 2, 7, 14]" in message
+        assert "multiple of 4" in message
+
+    def test_code_without_pool_support_is_left_alone(self) -> None:
+        """A non-pool code is skipped even holding an incommensurate pair.
+
+        Bypasses the schema (which rejects ``npool`` for wannier90 outright)
+        to check that pool support is decided by ``POOL_SUPPORTING_CODES``
+        and not by the mere presence of an ``npool`` key.
+        """
+        from koopmans.aiida.workflows import check_pools_divide_ranks
+
+        check_pools_divide_ranks({"wannier90": {"ntasks": 14, "npool": 4}}, {})
+
+    def test_code_the_task_never_loads_is_left_alone(self) -> None:
+        """A code with no rank count is skipped: this task does not run it.
+
+        Only the codes a task loads leave the dispatcher with an ``ntasks``,
+        so an entry for any other code carries no number to check against.
+        """
+        from koopmans.aiida.workflows import check_pools_divide_ranks
+
+        check_pools_divide_ranks({"projwfc": {"npool": 4}}, {"projwfc": {"npool": 4}})
 
 
 class TestDispatcherThreadsParallelization:
@@ -353,14 +452,15 @@ class TestDispatcherThreadsParallelization:
         # Stub the profile-dependent structure/pseudo setup and the graph build
         # so the test isolates the dispatcher's threading logic.
         monkeypatch.setattr(
-            dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+            dft_module, "prepare_common_inputs", lambda inp, keys, par: (None, "fam", {})
         )
         monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
 
         inp = KoopmansInput.model_validate(
             _pw_input(parallelization={"pw": {"npool": 4}, "kcw": {"ntasks": 8}})
         )
-        build_dft_bands_workgraph(inp, {"pw": object()})
+        mapping = inp.parallelization.as_mapping()
+        build_dft_bands_workgraph(inp, {"pw": object()}, mapping)
         assert captured["parallelization"] == {"pw": {"npool": 4}, "kcw": {"ntasks": 8}}
 
     def test_no_config_passes_none(self, aiida_profile: Any, monkeypatch: Any) -> None:
@@ -373,14 +473,173 @@ class TestDispatcherThreadsParallelization:
 
         captured: dict[str, Any] = {}
         monkeypatch.setattr(
-            dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+            dft_module, "prepare_common_inputs", lambda inp, keys, par: (None, "fam", {})
         )
         monkeypatch.setattr(
             pw_module.RunPwBands, "build", staticmethod(lambda **kw: captured.update(kw))
         )
 
-        build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()), {"pw": object()})
+        build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()), {"pw": object()}, {})
         assert captured["parallelization"] is None
+
+
+class TestCompleteRankCounts:
+    """Every code a task loads leaves the dispatcher carrying a stored rank count."""
+
+    def test_every_loaded_code_gets_the_computer_default(
+        self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
+    ) -> None:
+        """With no parallelization block at all, each loaded code still names its ranks.
+
+        This is the state that used to leave ``resources`` at
+        ``{'num_machines': 1}``, so the rank count was whatever the
+        presubmitting worker resolved it to.
+        """
+        from koopmans.aiida.workflows import complete_rank_counts
+
+        localhost_default_ranks(4)
+        codes = {
+            "pw": localhost_code("ranks-pw", "quantumespresso.pw"),
+            "kcw": localhost_code("ranks-kcw", "koopmans.kcw_wann2kc"),
+        }
+        assert complete_rank_counts({}, codes) == {
+            "pw": {"ntasks": 4},
+            "kcw": {"ntasks": 4},
+        }
+
+    def test_a_code_that_does_not_run_under_mpi_takes_one_rank(
+        self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
+    ) -> None:
+        """A code stamped ``with_mpi=False`` gets 1, not the computer's default.
+
+        Keying off the computer alone would put a serial binary under
+        ``mpirun -np 4``, which the coin flip only did half the time.
+        """
+        from koopmans.aiida.workflows import complete_rank_counts
+
+        localhost_default_ranks(4)
+        serial = localhost_code("ranks-serial-w90", "wannier90.wannier90", False)
+        assert complete_rank_counts({}, {"wannier90": serial}) == {"wannier90": {"ntasks": 1}}
+
+    def test_a_serial_program_takes_one_rank_unstamped(
+        self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
+    ) -> None:
+        """wann2kcp gets 1 even from a node registered before the MPI probe existed.
+
+        Its CalcJob plugin declares ``withmpi = True``, so reading the node
+        alone would give it the computer's default and the submission would
+        then be rejected for asking more than one rank.
+        """
+        from koopmans.aiida.workflows import complete_rank_counts
+
+        localhost_default_ranks(4)
+        unstamped = localhost_code("ranks-wann2kcp", "koopmans.wann2kcp")
+        assert unstamped.with_mpi is None
+        assert complete_rank_counts({}, {"wann2kcp": unstamped}) == {"wann2kcp": {"ntasks": 1}}
+
+    def test_the_julia_code_takes_one_rank_however_it_is_stamped(
+        self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
+    ) -> None:
+        """A ``wannierjl`` code takes 1 even when its node claims MPI.
+
+        Left to the node, an unstamped julia code reaches 1 only because
+        ``aiida-wannierjl``'s CalcJobs default ``withmpi`` to False — a
+        sibling package's choice. A node stamped ``with_mpi=True`` would
+        then take the computer's default and start one Julia process per
+        rank in one working directory.
+        """
+        from koopmans.aiida.workflows import default_rank_count
+
+        localhost_default_ranks(4)
+        unstamped = localhost_code("ranks-wjl-unstamped", "wannierjl.check_neighbors")
+        stamped = localhost_code("ranks-wjl-mpi", "wannierjl.check_neighbors", True)
+        assert stamped.with_mpi is True
+        assert default_rank_count("wannierjl", unstamped) == 1
+        assert default_rank_count("wannierjl", stamped) == 1
+
+    def test_an_ntasks_the_input_set_wins(
+        self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
+    ) -> None:
+        """A count from the input file survives, and its other flags with it."""
+        from koopmans.aiida.workflows import complete_rank_counts
+
+        localhost_default_ranks(4)
+        codes = {"pw": localhost_code("ranks-pw-input", "quantumespresso.pw")}
+        completed = complete_rank_counts({"pw": {"ntasks": 8, "npool": 2}}, codes)
+        assert completed == {"pw": {"ntasks": 8, "npool": 2}}
+
+    def test_a_code_outside_the_vocabulary_is_left_alone(
+        self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
+    ) -> None:
+        """A Wannier.jl code gets no entry: the parallelization block rejects the key."""
+        from koopmans.aiida.workflows import complete_rank_counts
+
+        localhost_default_ranks(4)
+        codes = {"wannierjl": localhost_code("ranks-wjl", "wannierjl.wannierize")}
+        assert complete_rank_counts({}, codes) == {}
+
+    def test_no_computer_default_leaves_the_count_implicit(
+        self, aiida_profile: Any, localhost_code: Any, localhost_default_ranks: Any
+    ) -> None:
+        """Nothing declares a count, so none is invented.
+
+        Writing 1 here would silence aiida-core's complaint that a
+        node-counting scheduler was given only ``num_machines``.
+        """
+        from koopmans.aiida.workflows import complete_rank_counts
+
+        localhost_default_ranks(None)
+        codes = {"pw": localhost_code("ranks-pw-nodefault", "quantumespresso.pw")}
+        assert complete_rank_counts({}, codes) == {}
+
+
+def _resources_in(payload: Any, path: str = "") -> list[tuple[str, dict[str, Any]]]:
+    """Return every ``resources`` dict in a serialized workgraph, with its path."""
+    found: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            here = f"{path}.{key}" if path else str(key)
+            if key == "resources" and isinstance(value, dict):
+                found.append((here, value))
+            found += _resources_in(value, here)
+    elif isinstance(payload, list | tuple):
+        for index, value in enumerate(payload):
+            found += _resources_in(value, f"{path}[{index}]")
+    return found
+
+
+class TestBuiltGraphCarriesExplicitRanks:
+    """No step of a built workgraph leaves its rank count to the scheduler."""
+
+    def test_dft_bands_names_its_ranks(
+        self,
+        aiida_profile: Any,
+        hyperqueue_localhost_unpatched: Any,
+        installed_pw_code: Any,
+        localhost_default_ranks: Any,
+        fake_sg15_cutoffs_family: Any,
+        serialize_workgraph: Any,
+    ) -> None:
+        """A dft_bands graph built with no parallelization block still names 4 ranks.
+
+        Walks the whole serialized graph rather than one namespace: a
+        ``resources`` dict anywhere in it that names only ``num_machines`` is
+        a rank count the submitting process decides, which is the bug. The
+        walk sees such a dict only against the unpatched hyperqueue scheduler,
+        so the fixture is what gives the check teeth.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        localhost_default_ranks(4)
+        inp = KoopmansInput.model_validate(_pw_input(pseudo_library="SG15/1.0/PBE/SR"))
+        found = _resources_in(serialize_workgraph(build_workgraph(inp))["raw"])
+        # Without this, a graph that declares no resources at all would pass
+        # the check below and prove nothing.
+        assert found, "the built graph declares no resources"
+        implicit = [path for path, value in found if "num_mpiprocs_per_machine" not in value]
+        assert implicit == []
+        assert all(value["num_mpiprocs_per_machine"] == 4 for _, value in found)
 
 
 def _pw_input(

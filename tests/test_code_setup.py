@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -32,81 +31,174 @@ LDD_OUTPUT = """\
 """
 
 
-def _workflows_source() -> str:
-    """Concatenate the workflows package's module sources for call-site scans."""
-    import koopmans.aiida.workflows as workflows
-
-    return "".join(
-        path.read_text() for path in sorted(Path(workflows.__file__).parent.glob("*.py"))
-    )
-
-
 class TestExecutableCoverage:
     """Every code the dispatcher can load must be registrable."""
 
-    def test_dispatched_codes_have_executable_entries(self) -> None:
-        """Each ``load_code`` executable is a key in ``QE_EXECUTABLES``."""
-        from koopmans.aiida.setup.codes import QE_EXECUTABLES
+    def test_dispatchable_names_are_registered(self) -> None:
+        """The dispatcher's vocabulary is the labels the installer registers.
 
-        source = _workflows_source()
-        executables = set(re.findall(r'(?<!\.)\bload_code\(\s*"[^"]+"\s*,\s*"([^"]+)"', source))
-
-        assert executables, "regex matched no load_code call sites"
-        # Codes registered outside the QE install scan (their second argument
-        # is a human-readable name, not an executable on PATH).
-        non_qe = {name for name in executables if not name.endswith(".x")}
-        assert non_qe <= {"julia (Wannier.jl)"}, f"unexpected non-QE load sites: {non_qe}"
-        missing = (executables - non_qe) - set(QE_EXECUTABLES)
-        assert not missing, f"dispatcher loads {missing} with no QE_EXECUTABLES entry"
-
-    def test_dispatched_labels_are_registered(self) -> None:
-        """Each ``load_code`` label is a label the installer registers."""
-        from koopmans.aiida.setup.codes import code_specs
-
-        source = _workflows_source()
-        labels = set(re.findall(r'(?<!\.)\bload_code\(\s*"([^"]+)"\s*,\s*"[^"]+"', source))
-
-        assert labels, "regex matched no load_code call sites"
-        # ``wannierjl`` is registered by its own plugin helper, not the QE scan.
-        missing = labels - set(code_specs()) - {"wannierjl"}
-        assert not missing, f"dispatcher loads {missing} with no registration entry"
-
-    def test_no_non_literal_load_code_calls(self) -> None:
-        """Every ``load_code`` call passes two string literals.
-
-        The coverage test above only sees literal arguments; a call built
-        from variables would escape it and could load an unregistered code.
+        Every route names its codes through this vocabulary, so a name it
+        does not hold cannot reach a profile lookup at all.
         """
-        source = _workflows_source()
-        all_calls = len(re.findall(r"(?<!\.)\bload_code\((?!\s*self)", source))
-        literal_calls = len(re.findall(r'load_code\(\s*"[^"]+"\s*,\s*"[^"]+"', source))
-        definitions = len(re.findall(r"def load_code\(", source))
+        from koopmans.aiida.setup.codes import code_specs
+        from koopmans.aiida.workflows import code_executables
 
-        assert all_calls - definitions == literal_calls, (
-            "a load_code call site uses non-literal arguments and escapes "
-            "the executable-coverage test"
+        specs = code_specs()
+        # ``wannierjl`` is registered by its own plugin helper, not the QE scan.
+        assert set(code_executables()) == set(specs) | {"wannierjl"}
+        assert all(
+            executable == specs[name][0]
+            for name, executable in code_executables().items()
+            if name in specs
         )
 
-    def test_load_code_labels_match_executables(self) -> None:
-        """Each ``load_code`` pair matches how that label is registered.
+    def test_an_unregistered_name_is_rejected(self) -> None:
+        """Loading a name outside the vocabulary says so, rather than searching.
 
-        Registration pairs a label with an executable, so a call site that
-        names a different executable for a label would pass the coverage
-        test yet load a code built from the wrong binary.
+        Nothing but the dispatcher's own source names a code, so a name no
+        installer registers is a typo, and a profile lookup would report it as
+        a missing installation.
         """
-        from koopmans.aiida.setup.codes import code_specs
+        from koopmans.aiida.workflows import load_code
+        from koopmans.input_file.workflow import Task
 
-        source = _workflows_source()
-        pairs = re.findall(r'(?<!\.)\bload_code\(\s*"([^"]+)"\s*,\s*"([^"]+)"', source)
-        specs = code_specs()
+        with pytest.raises(ValueError, match=r"'pw90' is not a code koopmans registers"):
+            load_code("pw90", Task.DFT_BANDS)
 
-        assert pairs, "regex matched no load_code call sites"
-        mismatched = [
-            (label, executable)
-            for label, executable in pairs
-            if executable.endswith(".x") and specs.get(label, (None,))[0] != executable
-        ]
-        assert not mismatched, f"label/executable mismatch at call sites: {mismatched}"
+
+def _input_for(task: str, **workflow: Any) -> Any:
+    """Return a minimal silicon input for ``task``, for the declaration pins."""
+    from koopmans.input_file import KoopmansInput
+
+    return KoopmansInput.model_validate(
+        {
+            "workflow": {"task": task, "pseudo_library": "SG15/1.2/PBE/SR", **workflow},
+            "atoms": {
+                "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
+                "atomic_positions": {
+                    "units": "crystal",
+                    "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
+                },
+            },
+            "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+            "calculator_parameters": {"ecutwfc": 20.0, "nbnd": 8},
+        }
+    )
+
+
+class TestRequiredCodes:
+    """Each route states the whole code set its chain runs, up front.
+
+    The sets are spelt out here rather than read off the declarations, so
+    that dropping a name from one fails this test.
+    """
+
+    @pytest.mark.parametrize(
+        ("task", "workflow", "expected"),
+        [
+            ("dft_bands", {}, {"pw"}),
+            ("dft_eps", {}, {"pw", "ph"}),
+            ("wannierize", {}, {"pw", "pw2wannier90", "wannier90", "projwfc"}),
+            (
+                "wannierize",
+                {"block_wannierization_threshold": 0.1},
+                {"pw", "pw2wannier90", "wannier90", "projwfc", "wannierjl"},
+            ),
+            (
+                "singlepoint",
+                {"screening_method": "dscf"},
+                {"pw", "kcp", "wannier90", "pw2wannier90", "wann2kcp", "merge_evc"},
+            ),
+            (
+                "singlepoint",
+                {"screening_method": "dfpt"},
+                {"pw", "kcw", "wannier90", "pw2wannier90", "ph"},
+            ),
+            (
+                "trajectory",
+                {},
+                {"pw", "kcp", "wannier90", "pw2wannier90", "wann2kcp", "merge_evc"},
+            ),
+        ],
+    )
+    def test_route_states_its_whole_chain(
+        self, task: str, workflow: dict[str, Any], expected: set[str]
+    ) -> None:
+        """The declared set is exactly the codes the chain can reach."""
+        from koopmans.aiida.workflows import route_for
+        from koopmans.input_file.workflow import Task
+
+        koopmans_input = _input_for(task, **workflow)
+        route = route_for(Task(task))
+        assert set(route.required_codes(koopmans_input)) == expected
+
+    def test_only_a_split_run_asks_for_the_julia_code(self) -> None:
+        """The threshold is what adds Wannier.jl, and it is all that adds it.
+
+        Both halves are needed. Without the with-threshold case a
+        declaration that never names the julia code would pass; without the
+        without-threshold case one that always names it would, and every
+        Wannierize user would need a Julia install.
+        """
+        from koopmans.aiida.workflows import route_for
+        from koopmans.input_file.workflow import Task
+
+        route = route_for(Task.WANNIERIZE)
+        plain = route.required_codes(_input_for("wannierize"))
+        split = route.required_codes(_input_for("wannierize", block_wannierization_threshold=0.1))
+        assert "wannierjl" not in plain
+        assert "wannierjl" in split
+        assert set(split) - set(plain) == {"wannierjl"}
+
+    def test_the_rest_of_the_wannierize_set_ignores_its_flags(self) -> None:
+        """Only Wannier.jl moves with the input; the QE codes are unconditional.
+
+        They come out of one build, so narrowing them would let a user get
+        part-way through a run before learning one is missing.
+        """
+        from koopmans.aiida.workflows import route_for
+        from koopmans.input_file.workflow import Task
+
+        route = route_for(Task.WANNIERIZE)
+        plain = route.required_codes(_input_for("wannierize"))
+        automatic = route.required_codes(_input_for("wannierize", auto_projections=True))
+        assert plain == automatic
+
+    def test_missing_code_names_the_task_and_the_fix(
+        self, aiida_profile_clean: Any, localhost_computer: Any
+    ) -> None:
+        """A code no profile holds is reported before anything is built."""
+        from koopmans.aiida.workflows import load_codes_for_task
+
+        with pytest.raises(ValueError) as excinfo:
+            load_codes_for_task(_input_for("dft_eps"))
+        assert str(excinfo.value) == (
+            "The `dft_eps` task runs pw.x, but this AiiDA profile has no `pw@localhost` "
+            "code. Run `koopmans install` to register every koopmans code this machine has."
+        )
+
+    def test_the_julia_code_points_at_its_own_installer(
+        self, aiida_profile_clean: Any, installed_pw_code: Any, localhost_code: Any
+    ) -> None:
+        """Wannier.jl is not something ``koopmans install`` can find.
+
+        ``koopmans install`` scans for Quantum ESPRESSO binaries, so
+        pointing a user at it for the julia code would send them in a
+        circle.
+        """
+        from koopmans.aiida.workflows import load_codes_for_task
+
+        for label, entry_point in (
+            ("pw2wannier90", "quantumespresso.pw2wannier90"),
+            ("wannier90", "wannier90.wannier90"),
+            ("projwfc", "quantumespresso.projwfc"),
+        ):
+            localhost_code(label, entry_point)
+        split = _input_for("wannierize", block_wannierization_threshold=0.1)
+        with pytest.raises(ValueError, match=r"setup_julia_environment") as excinfo:
+            load_codes_for_task(split)
+        assert "`wannierjl@localhost`" in str(excinfo.value)
+        assert "koopmans install" not in str(excinfo.value)
 
 
 class TestMpiSymbolNames:

@@ -6,12 +6,16 @@ from typing import TYPE_CHECKING, Any, cast
 
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.workflows import load_code, pin_step_kpoints, prepare_common_inputs
+from koopmans.aiida.workflows import (
+    pin_step_kpoints,
+    prepare_common_inputs,
+)
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
 
 if TYPE_CHECKING:
     from aiida import orm
+    from aiida_koopmans.parallelization import ParallelizationDict
     from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
@@ -19,9 +23,21 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
+def required_codes(koopmans_input: KoopmansInput) -> list[str]:
+    """Return the codes the DFPT singlepoint chain runs.
+
+    pw.x, pw2wannier90.x and wannier90.x build the variational orbitals;
+    kcw.x runs all three of its steps (wann2kc, screen, ham) off its
+    ``control.calculation`` flag, so one code covers them; ph.x supplies the
+    dielectric constant.
+    """
+    return ["pw", "pw2wannier90", "wannier90", "kcw", "ph"]
+
+
 def build_singlepoint_dfpt_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
+    parallelization: ParallelizationDict,
 ) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
 
@@ -88,7 +104,9 @@ def build_singlepoint_dfpt_workgraph(
                 "occupations."
             )
 
-    structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
+    structure, pseudo_family, overrides = prepare_common_inputs(
+        koopmans_input, ["scf", "nscf"], parallelization
+    )
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
     # feed every per-block wannierisation. Flat by design (see
@@ -121,14 +139,6 @@ def build_singlepoint_dfpt_workgraph(
         else None
     )
 
-    # The wannierization steps need codes that load_codes_for_task only wires
-    # for the WANNIERIZE task; load them here until it grows a DFPT branch.
-    codes = dict(codes)
-    codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
-    codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
-    if eps_inf == "auto":
-        codes.setdefault("ph", load_code("ph", "ph.x"))
-
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
     nscf_mesh = step_kpoints_mesh(koopmans_input.kpoints, "nscf")
@@ -149,7 +159,7 @@ def build_singlepoint_dfpt_workgraph(
         spin=spin,
         manifolds=manifolds,
         group_orbitals_tol=group_orbitals_tol,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        parallelization=parallelization or None,
     )
 
 

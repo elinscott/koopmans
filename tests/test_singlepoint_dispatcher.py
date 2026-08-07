@@ -169,7 +169,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="correction="):
-            build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp, codes={}, parallelization={})
 
     @pytest.mark.parametrize("correction_value", ["kipz", "pkipz", "none", "all"])
     def test_dfpt_rejects_non_ki_corrections(
@@ -187,7 +187,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="only implements the KI correction"):
-            build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp, codes={}, parallelization={})
 
     @pytest.mark.parametrize("screening_method", ["dscf", "dfpt"])
     def test_external_projectors_rejected(
@@ -205,7 +205,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="not wired into the singlepoint route"):
-            build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp, codes={}, parallelization={})
 
     @pytest.mark.parametrize("task", ["singlepoint", "dft_bands", "trajectory", "dft_eps"])
     def test_auto_projections_rejected_outside_wannierize(
@@ -266,7 +266,7 @@ class TestExplicitOrbitalGroupsRejected:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="orbital_groups are not yet threaded"):
-            build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp, codes={}, parallelization={})
 
 
 class TestInitialAlphaFromGuess:

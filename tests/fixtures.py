@@ -422,8 +422,13 @@ def localhost_code(localhost_computer: Any) -> Any:
     from aiida.common.exceptions import NotExistent
     from aiida.orm import InstalledCode, load_code
 
-    def factory(label: str, entry_point: str) -> Any:
-        """Return the ``<label>@localhost`` code, creating it if absent."""
+    def get_or_create_code(label: str, entry_point: str, with_mpi: bool | None = None) -> Any:
+        """Return the ``<label>@localhost`` code, creating it if absent.
+
+        ``with_mpi`` stamps the node the way ``koopmans install``'s binary
+        probe does; left unset, the code behaves like one registered before
+        the probe existed.
+        """
         try:
             return load_code(f"{label}@{localhost_computer.label}")
         except NotExistent:
@@ -432,9 +437,51 @@ def localhost_code(localhost_computer: Any) -> Any:
                 computer=localhost_computer,
                 default_calc_job_plugin=entry_point,
                 filepath_executable="/bin/true",
+                with_mpi=with_mpi,
             ).store()
 
-    return factory
+    return get_or_create_code
+
+
+@pytest.fixture
+def localhost_default_ranks(localhost_computer: Any) -> Iterator[Callable[[int | None], None]]:
+    """Return a setter for the localhost computer's default MPI ranks.
+
+    Computers are mutable and shared across a session's tests, so the previous
+    default is put back afterwards.
+    """
+    previous = localhost_computer.get_default_mpiprocs_per_machine()
+
+    def _set(nprocs: int | None) -> None:
+        """Set the computer's ``default_mpiprocs_per_machine``."""
+        localhost_computer.set_default_mpiprocs_per_machine(nprocs)
+
+    yield _set
+    localhost_computer.set_default_mpiprocs_per_machine(previous)
+
+
+@pytest.fixture
+def hyperqueue_localhost_unpatched(localhost_computer: Any, monkeypatch: Any) -> Iterator[Any]:
+    """Put the localhost computer on hyperqueue, with the upstream resource class.
+
+    ``aiida_koopmans`` flips ``HyperQueueJobResource.accepts_default_mpiprocs_per_machine``
+    to ``True`` when it is imported, and aiida-core then fills a missing
+    ``num_mpiprocs_per_machine`` in while validating a builder. A daemon worker
+    that never imported the plugin sees the upstream ``False`` and fills in
+    nothing, so an implicit rank count survives into the stored inputs. Putting
+    the test process in that state is what makes such a count visible.
+    """
+    from aiida_hyperqueue.scheduler import HyperQueueJobResource
+
+    monkeypatch.setattr(
+        HyperQueueJobResource,
+        "accepts_default_mpiprocs_per_machine",
+        classmethod(lambda cls: False),
+    )
+    previous = localhost_computer.scheduler_type
+    localhost_computer.scheduler_type = "hyperqueue"
+    yield localhost_computer
+    localhost_computer.scheduler_type = previous
 
 
 @pytest.fixture
@@ -462,6 +509,18 @@ def installed_ph_code(localhost_code: Any) -> Any:
 
 
 @pytest.fixture
+def installed_projwfc_code(localhost_code: Any) -> Any:
+    """Register a dummy ``projwfc@localhost`` code so ``load_code`` succeeds."""
+    return localhost_code("projwfc", "quantumespresso.projwfc")
+
+
+@pytest.fixture
+def installed_wannierjl_code(localhost_code: Any) -> Any:
+    """Register a dummy ``wannierjl@localhost`` code so ``load_code`` succeeds."""
+    return localhost_code("wannierjl", "wannierjl.check_neighbors")
+
+
+@pytest.fixture
 def installed_wannier_codes(localhost_code: Any) -> dict[str, Any]:
     """Register dummy ``wannier90`` / ``pw2wannier90`` codes for DFPT builds."""
     return {
@@ -476,6 +535,58 @@ def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     return {
         "wann2kcp": localhost_code("wann2kcp", "koopmans.wann2kcp"),
         "merge_evc": localhost_code("merge_evc", "koopmans.merge_evc"),
+    }
+
+
+@pytest.fixture
+def installed_dscf_codes(
+    installed_pw_code: Any,
+    installed_kcp_code: Any,
+    installed_wannier_codes: dict[str, Any],
+    installed_fold_codes: dict[str, Any],
+) -> dict[str, Any]:
+    """Register every code a kcp.x singlepoint or trajectory chain runs.
+
+    Spelt out rather than read off the route's declaration, so that dropping
+    a name from the declaration is not silently matched here too.
+    """
+    return {
+        "pw": installed_pw_code,
+        "kcp": installed_kcp_code,
+        **installed_wannier_codes,
+        **installed_fold_codes,
+    }
+
+
+@pytest.fixture
+def installed_dfpt_codes(
+    installed_pw_code: Any,
+    installed_kcw_code: Any,
+    installed_ph_code: Any,
+    installed_wannier_codes: dict[str, Any],
+) -> dict[str, Any]:
+    """Register every code a kcw.x singlepoint chain runs."""
+    return {
+        "pw": installed_pw_code,
+        "kcw": installed_kcw_code,
+        "ph": installed_ph_code,
+        **installed_wannier_codes,
+    }
+
+
+@pytest.fixture
+def installed_wannierize_codes(
+    installed_pw_code: Any,
+    installed_projwfc_code: Any,
+    installed_wannierjl_code: Any,
+    installed_wannier_codes: dict[str, Any],
+) -> dict[str, Any]:
+    """Register every code a Wannierize chain runs."""
+    return {
+        "pw": installed_pw_code,
+        "projwfc": installed_projwfc_code,
+        "wannierjl": installed_wannierjl_code,
+        **installed_wannier_codes,
     }
 
 
@@ -584,6 +695,58 @@ def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
     (ZnO: nelec 52, nocc 26).
     """
     return _install_fake_family("PseudoDojo/0.4/LDA/SR/standard/upf", {"Zn": 20.0, "O": 6.0})
+
+
+@pytest.fixture
+def assert_ranks_settled_for_every_loaded_code(
+    monkeypatch: Any, localhost_default_ranks: Callable[[int | None], None]
+) -> Callable[[Callable[[], Any]], dict[str, Any]]:
+    """Return a checker that every code a route loads leaves it carrying a rank count.
+
+    The checker takes a zero-argument build, records the label of every code
+    the build resolves, and asserts that the ``parallelization`` mapping on the
+    built graph names an ``ntasks`` for each of those labels the block has a
+    vocabulary for. A route that loads codes after the dispatcher settled the
+    counts, and does not settle them again, fails here.
+
+    Runs against a computer default of four ranks, so a code the route missed
+    cannot pass by coincidence: an unsettled code carries no count at all, and
+    a serial one carries 1.
+
+    Returns the mapping, for a caller that wants to check the counts too.
+    """
+    from aiida import orm
+    from aiida_koopmans.parallelization import CODE_NAMES
+
+    def check(build: Callable[[], Any]) -> dict[str, Any]:
+        """Build, then assert the graph's rank counts cover every code loaded."""
+        localhost_default_ranks(4)
+        loaded: list[str] = []
+        real_load_code = orm.load_code
+
+        def spy(identifier: Any, *args: Any, **kwargs: Any) -> Any:
+            """Record the label, then load the code."""
+            code = real_load_code(identifier, *args, **kwargs)
+            loaded.append(str(identifier).split("@")[0])
+            return code
+
+        monkeypatch.setattr(orm, "load_code", spy)
+        workgraph = build()
+        monkeypatch.undo()
+
+        parallelization = workgraph.inputs.parallelization.value or {}
+        missing = [
+            name
+            for name in loaded
+            if name in CODE_NAMES and parallelization.get(name, {}).get("ntasks") is None
+        ]
+        assert not missing, (
+            f"loaded {sorted(set(loaded))} but the graph's parallelization "
+            f"{parallelization} names no ntasks for {sorted(set(missing))}"
+        )
+        return dict(parallelization)
+
+    return check
 
 
 def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:

@@ -254,12 +254,6 @@ class TestSnapshotConversion:
             atoms_input_to_structure(atoms)
 
 
-@pytest.fixture
-def trajectory_codes(installed_pw_code: Any, installed_kcp_code: Any) -> dict[str, Any]:
-    """Return the codes dict the trajectory dispatcher receives (pw + kcp)."""
-    return {"pw": installed_pw_code, "kcp": installed_kcp_code}
-
-
 class TestTrajectoryDispatcher:
     """``build_trajectory_workgraph`` fans one DSCF task out per snapshot."""
 
@@ -267,7 +261,7 @@ class TestTrajectoryDispatcher:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -277,7 +271,7 @@ class TestTrajectoryDispatcher:
         xyz = write_multiframe_xyz(tmp_path, 3)
         koopmans_input = KoopmansInput.model_validate(_trajectory_input_dict(str(xyz)))
 
-        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, installed_dscf_codes, {})
 
         names = set(workgraph.get_task_names())
         assert {f"dscf_snapshot_{i}" for i in range(1, 4)} <= names
@@ -286,7 +280,7 @@ class TestTrajectoryDispatcher:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -299,7 +293,7 @@ class TestTrajectoryDispatcher:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="trajectory"):
-            build_singlepoint_workgraph(koopmans_input, trajectory_codes)
+            build_singlepoint_workgraph(koopmans_input, installed_dscf_codes, {})
 
     def test_external_projectors_rejected(
         self,
@@ -315,7 +309,7 @@ class TestTrajectoryDispatcher:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="not wired into the trajectory route"):
-            build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
 
 
 def _wannier_trajectory_input_dict(snapshots: str) -> dict[str, Any]:
@@ -345,10 +339,7 @@ class TestOrbitalDensityDescriptor:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
-        installed_wannier_codes: dict[str, Any],
-        installed_fold_codes: dict[str, Any],
-        installed_decompose_code: Any,
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -364,7 +355,7 @@ class TestOrbitalDensityDescriptor:
         d["ml"]["descriptor"] = "power_spectrum"
         koopmans_input = KoopmansInput.model_validate(d)
 
-        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, installed_dscf_codes, {})
 
         names = set(workgraph.get_task_names())
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
@@ -374,9 +365,7 @@ class TestOrbitalDensityDescriptor:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
-        installed_wannier_codes: dict[str, Any],
-        installed_fold_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -386,7 +375,7 @@ class TestOrbitalDensityDescriptor:
         xyz = write_multiframe_xyz(tmp_path, 2)
         koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
 
-        workgraph = build_trajectory_workgraph(koopmans_input, trajectory_codes)
+        workgraph = build_trajectory_workgraph(koopmans_input, installed_dscf_codes, {})
 
         names = set(workgraph.get_task_names())
         assert not any(name.startswith("descriptors_") for name in names), names
@@ -396,8 +385,7 @@ class TestOrbitalDensityDescriptor:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
-        installed_decompose_code: Any,
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -410,7 +398,7 @@ class TestOrbitalDensityDescriptor:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="init_orbitals"):
-            build_trajectory_workgraph(koopmans_input, trajectory_codes)
+            build_trajectory_workgraph(koopmans_input, installed_dscf_codes, {})
 
     def test_basis_settings_reach_the_namelist(self) -> None:
         """The ``ml`` radial-basis settings become decompose namelist keys.
@@ -463,7 +451,7 @@ class TestPredictMode:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -482,11 +470,15 @@ class TestPredictMode:
 
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {}
-        ab_initio = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        ab_initio = build_trajectory_workgraph(
+            KoopmansInput.model_validate(d), installed_dscf_codes, {}
+        )
 
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"}
-        predict = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        predict = build_trajectory_workgraph(
+            KoopmansInput.model_validate(d), installed_dscf_codes, {}
+        )
 
         def _dscf(workgraph: Any) -> Any:
             names = set(workgraph.get_task_names())
@@ -517,7 +509,9 @@ class TestPredictMode:
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="requires a trained model"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(
+                KoopmansInput.model_validate(d), codes={}, parallelization={}
+            )
 
     def test_predict_rejects_power_spectrum(
         self,
@@ -532,7 +526,9 @@ class TestPredictMode:
         d["ml"] = {"mode": "predict", "descriptor": "power_spectrum"}
 
         with pytest.raises(NotImplementedError, match="self_hartree"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(
+                KoopmansInput.model_validate(d), codes={}, parallelization={}
+            )
 
     def test_predict_rejects_alpha_numsteps(
         self,
@@ -547,7 +543,9 @@ class TestPredictMode:
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="alpha_numsteps cannot take effect"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(
+                KoopmansInput.model_validate(d), codes={}, parallelization={}
+            )
 
     def test_non_trajectory_task_rejects_ml_block(
         self,
@@ -584,7 +582,7 @@ class TestModelNodeRoute:
         ml_block: dict[str, Any],
         *,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         write_multiframe_xyz: Callable[..., Path],
     ) -> Any:
         from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
@@ -592,7 +590,7 @@ class TestModelNodeRoute:
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = ml_block
-        return build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        return build_trajectory_workgraph(KoopmansInput.model_validate(d), installed_dscf_codes, {})
 
     @staticmethod
     def _dscf_model_value(workgraph: Any) -> Any:
@@ -603,7 +601,7 @@ class TestModelNodeRoute:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
         identify: str,
@@ -624,7 +622,7 @@ class TestModelNodeRoute:
                 "descriptor": "self_hartree",
             },
             tmp_path=tmp_path,
-            trajectory_codes=trajectory_codes,
+            installed_dscf_codes=installed_dscf_codes,
             write_multiframe_xyz=write_multiframe_xyz,
         )
         # The stored node sits on the trajectory graph's own input (a
@@ -640,7 +638,7 @@ class TestModelNodeRoute:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -654,7 +652,7 @@ class TestModelNodeRoute:
         by_node = self._build_with_ml(
             {"mode": "predict", "model": node.pk, "descriptor": "self_hartree"},
             tmp_path=tmp_path,
-            trajectory_codes=trajectory_codes,
+            installed_dscf_codes=installed_dscf_codes,
             write_multiframe_xyz=write_multiframe_xyz,
         )
         model_path = tmp_path / "model.json"
@@ -662,7 +660,7 @@ class TestModelNodeRoute:
         by_file = self._build_with_ml(
             {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"},
             tmp_path=tmp_path,
-            trajectory_codes=trajectory_codes,
+            installed_dscf_codes=installed_dscf_codes,
             write_multiframe_xyz=write_multiframe_xyz,
         )
         assert self._dscf_model_value(by_node) == self._dscf_model_value(by_file)
@@ -684,7 +682,9 @@ class TestModelNodeRoute:
         d["ml"] = {"mode": "predict", "model": wrong.pk, "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="must name the stored trained-model Dict"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+            build_trajectory_workgraph(
+                KoopmansInput.model_validate(d), codes={}, parallelization={}
+            )
 
     def test_model_and_model_file_are_exclusive(self) -> None:
         """Naming both model sources fails at schema validation."""
@@ -715,7 +715,7 @@ class TestFrozenWindowThreading:
     def _dscf_task(
         self,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         write_multiframe_xyz: Callable[..., Path],
         *,
         pw_nbnd: int,
@@ -726,21 +726,19 @@ class TestFrozenWindowThreading:
         xyz = write_multiframe_xyz(tmp_path, 1)
         d = _wannier_trajectory_input_dict(str(xyz))
         d["calculator_parameters"]["pw"] = {"system": {"nbnd": pw_nbnd}}
-        wg = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+        wg = build_trajectory_workgraph(KoopmansInput.model_validate(d), installed_dscf_codes, {})
         return next(t for t in wg.tasks if t.name == "dscf_snapshot_1")
 
     def test_water_empty_block_pools_and_freezes(
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
-        installed_wannier_codes: dict[str, Any],
-        installed_fold_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """With nscf headroom the empty block reads the pool and keeps the window."""
-        dscf = self._dscf_task(tmp_path, trajectory_codes, write_multiframe_xyz, pw_nbnd=12)
+        dscf = self._dscf_task(tmp_path, installed_dscf_codes, write_multiframe_xyz, pw_nbnd=12)
         blocks = dscf.inputs.blocks.value
         empty = next(b for b in blocks if not b["filled"])
         assert empty["num_wann"] == 2
@@ -753,14 +751,12 @@ class TestFrozenWindowThreading:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
-        installed_wannier_codes: dict[str, Any],
-        installed_fold_codes: dict[str, Any],
+        installed_dscf_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """Nscf nbnd equal to the Wannier manifold selects the isolated shape."""
-        dscf = self._dscf_task(tmp_path, trajectory_codes, write_multiframe_xyz, pw_nbnd=6)
+        dscf = self._dscf_task(tmp_path, installed_dscf_codes, write_multiframe_xyz, pw_nbnd=6)
         blocks = dscf.inputs.blocks.value
         empty = next(b for b in blocks if not b["filled"])
         assert empty["num_wann"] == 2
@@ -785,7 +781,7 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
-            build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
 
     def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:
         """A route reached whatever the method must not name one back at the reader.
@@ -803,7 +799,7 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError) as excinfo:
-            build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
         assert "screening_method" not in str(excinfo.value)
 
     def test_an_unsupported_screening_method_is_reported_first(self, tmp_path: Path) -> None:
@@ -817,4 +813,38 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="only supports DSCF screening"):
-            build_trajectory_workgraph(koopmans_input, codes={})
+            build_trajectory_workgraph(koopmans_input, codes={}, parallelization={})
+
+
+class TestRankCounts:
+    """The trajectory route's codes all leave the dispatcher carrying a rank count."""
+
+    def test_every_loaded_code_names_its_ranks(
+        self,
+        aiida_profile: Any,
+        tmp_path: Path,
+        installed_dscf_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+        assert_ranks_settled_for_every_loaded_code: Any,
+    ) -> None:
+        """The Wannier route's extra codes carry a rank count of their own.
+
+        merge_evc is deliberately absent: the ``parallelization`` block has no
+        key for it, so its single rank stays its CalcJob's to declare.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
+
+        parallelization = assert_ranks_settled_for_every_loaded_code(
+            lambda: build_workgraph(koopmans_input)
+        )
+        assert parallelization == {
+            "pw": {"ntasks": 4},
+            "kcp": {"ntasks": 4},
+            "wannier90": {"ntasks": 4},
+            "pw2wannier90": {"ntasks": 4},
+            "wann2kcp": {"ntasks": 1},
+        }

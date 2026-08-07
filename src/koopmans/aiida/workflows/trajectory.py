@@ -8,8 +8,9 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_code, reject_kpoint_overrides
+from koopmans.aiida.workflows import reject_kpoint_overrides
 from koopmans.aiida.workflows.dscf import (
+    DSCF_CODES,
     KPOINT_OVERRIDES_ON_TRAJECTORY,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
@@ -20,6 +21,7 @@ from koopmans.input_file.workflow import CalculateScreeningMethod, VariationalOr
 
 if TYPE_CHECKING:
     from aiida import orm
+    from aiida_koopmans.parallelization import ParallelizationDict
     from aiida_koopmans.workgraphs import Codes
     from aiida_workgraph import WorkGraph
 
@@ -28,9 +30,21 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
+def required_codes(koopmans_input: KoopmansInput) -> list[str]:
+    """Return the codes the trajectory chain runs: one kcp.x singlepoint per snapshot.
+
+    The set is the kcp.x singlepoint's whatever ``workflow.screening_method``
+    says, because kcp.x is the only screening this route implements. The
+    pw2wannier90.x that builds the ``power_spectrum`` descriptors is already
+    in it.
+    """
+    return list(DSCF_CODES)
+
+
 def build_trajectory_workgraph(
     koopmans_input: KoopmansInput,
     codes: Codes,
+    parallelization: ParallelizationDict,
 ) -> WorkGraph:
     """Build a workgraph for a trajectory (machine-learning) task.
 
@@ -99,17 +113,19 @@ def build_trajectory_workgraph(
         VariationalOrbitalType.PROJWFS,
     ):
         extra_kwargs = dscf_wannier_init_inputs(
-            koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
+            koopmans_input, next(iter(snapshots.values())), inputs["nbnd"]
         )
+        extra_kwargs["codes"] = dict(codes)
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
-        extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
+        # The descriptors come from a pw2wannier90.x decompose pass.
+        extra_kwargs["pw2wannier90_code"] = codes["pw2wannier90"]
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
     return TrajectoryWorkflow.build(
         code=codes["kcp"],
         snapshots=snapshots,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        parallelization=parallelization or None,
         **inputs,
         **extra_kwargs,
         ml_mode=ml_mode,

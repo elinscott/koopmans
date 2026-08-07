@@ -14,23 +14,33 @@ inputs, runs `Quantum ESPRESSO <https://www.quantum-espresso.org/>`_ and `Wannie
 <https://wannier.org/>`_, and reads the outputs back. Their executables must be on your
 ``PATH`` before you set up the engine.
 
-Which executables you need depends on what you want to calculate:
+Which executables you need depends on the ``task`` you ask for, and — for a
+``singlepoint`` — on how it screens. Every executable a task can reach must be there
+before it starts, whatever the rest of the input file says — with the one exception
+noted below:
 
-- ``pw.x`` is needed by everything.
-- ``kcp.x`` computes screening parameters from total-energy differences, and evaluates
-  the corrected functional. On a periodic system that route also uses ``wann2kcp.x`` and
-  ``merge_evc.x``.
-- ``kcw.x`` computes the screening parameters from linear response instead, and
-  interpolates the final band structure.
-- ``wannier90.x`` and ``pw2wannier90.x`` construct the localized orbitals that periodic
-  systems use as variational orbitals.
-- ``projwfc.x`` is optional, and gives you a projected density of states alongside a
-  Wannierization.
-- ``ph.x`` computes dielectric constants.
+- ``dft_bands`` needs ``pw.x``, which everything needs.
+- ``dft_eps`` adds ``ph.x``, which computes dielectric constants.
+- ``wannierize`` adds ``wannier90.x`` and ``pw2wannier90.x``, which construct the
+  localized orbitals, and ``projwfc.x``, which gives a projected density of states
+  alongside them.
+- ``singlepoint`` with ``screening_method = 'dscf'`` adds ``kcp.x``, which computes
+  screening parameters from total-energy differences and evaluates the corrected
+  functional, together with the ``wannier90.x``, ``pw2wannier90.x``, ``wann2kcp.x`` and
+  ``merge_evc.x`` that build its variational orbitals on a periodic system.
+- ``singlepoint`` with ``screening_method = 'dfpt'`` adds ``kcw.x``, which computes the
+  screening parameters from linear response instead and interpolates the final band
+  structure, together with ``wannier90.x``, ``pw2wannier90.x`` and ``ph.x``.
+- ``trajectory`` runs one ``dscf`` singlepoint per snapshot, so it needs what that
+  needs.
 
-Choosing the blocks of a Wannierization automatically additionally needs `Wannier.jl
-<https://github.com/qiaojunfeng/Wannier.jl>`_ and a Julia interpreter. Everything else
-works without them.
+One Wannierization setting reaches past that list. Setting
+``workflow.block_wannierization_threshold`` splits the Wannierization into blocks with
+`Wannier.jl <https://github.com/qiaojunfeng/Wannier.jl>`_, which needs a Julia
+interpreter — the one thing the engine setup cannot find on your ``PATH``. Build its
+project with ``aiida_wannierjl.helpers.setup_julia_environment`` and register it with
+``aiida_wannierjl.helpers.get_wannierjl_code``. Leave the threshold unset and you need
+neither.
 
 ********************
  The Python package

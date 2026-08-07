@@ -55,9 +55,17 @@ def code_specs() -> dict[str, tuple[str, str | None]]:
 # program, not of the build, so ``--parallel`` on one of these labels is
 # rejected rather than honoured. The CalcJobs also enforce single-rank
 # resources; this additionally stops mpirun from being prepended at all.
+#
+# A label here need not be one this installer registers. ``wannierjl`` is
+# registered by ``aiida_wannierjl.helpers``, so its entry never reaches the
+# install-time decision; it fixes the rank count
+# :func:`~koopmans.aiida.workflows.default_rank_count` reports, which would
+# otherwise follow whatever the code node and the plugin's CalcJob happen to
+# say.
 SERIAL_CODES: dict[str, str] = {
     "wann2kcp": "always serial: races on its buffer scratch",
     "merge_evc": "always serial: a plain concatenation tool",
+    "wannierjl": "always serial: one Julia process writing one results file",
 }
 
 # The MPI initialization entry points, after lower-casing, dropping the

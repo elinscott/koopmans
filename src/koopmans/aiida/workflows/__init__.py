@@ -6,7 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from aiida import orm
 from aiida_koopmans.ml import MLMode
@@ -19,17 +19,14 @@ from koopmans.aiida.conversion import (
     step_grid_spacing,
     step_kpoints_mesh,
 )
-from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
-    Correction,
-    Task,
-)
+from koopmans.input_file.parallelization import POOL_SUPPORTING_CODES
+from koopmans.input_file.workflow import Task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from aiida_koopmans.ml import ModelMismatchError
-    from aiida_koopmans.parallelization import ParallelizationError
+    from aiida_koopmans.parallelization import ParallelizationDict, ParallelizationError
     from aiida_koopmans.projections import (
         BlockBoundaryError,
         BlockDisentanglementError,
@@ -41,83 +38,226 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
-    from koopmans.input_file.workflow import WorkflowConfig
 
 
-def load_code(name: str, executable: str) -> orm.AbstractCode:
-    """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
+def code_executables() -> dict[str, str]:
+    """Return the executable behind every code name the dispatcher can load.
+
+    The names are the labels ``koopmans install`` registers, so a name outside
+    this mapping names a code no profile holds. ``wannierjl`` is the one entry
+    naming no binary on PATH: its julia executable is registered by
+    ``aiida_wannierjl.helpers.get_wannierjl_code``.
+    """
+    from koopmans.aiida.setup.codes import code_specs
+
+    return {label: executable for label, (executable, _) in code_specs().items()} | {
+        "wannierjl": "julia (Wannier.jl)"
+    }
+
+
+def executable_for(name: str) -> str:
+    """Return the executable ``name`` labels, or raise if no such code is registered."""
+    executables = code_executables()
+    if name not in executables:
+        raise ValueError(
+            f"'{name}' is not a code koopmans registers, so no profile can hold it. "
+            f"Name one of {sorted(executables)}."
+        )
+    return executables[name]
+
+
+def code_install_hint(name: str) -> str:
+    """Return the sentence telling the reader how to register the code ``name``.
+
+    ``koopmans install`` scans the machine for the Quantum ESPRESSO binaries
+    and registers one code per binary it finds. ``wannierjl`` is the one code
+    it cannot find that way: it runs Julia against a pinned Wannier.jl
+    project that has to be built first.
+    """
+    if name == "wannierjl":
+        return (
+            "Build the Julia environment with "
+            "`aiida_wannierjl.helpers.setup_julia_environment`, then register the code "
+            "with `aiida_wannierjl.helpers.get_wannierjl_code`."
+        )
+    return "Run `koopmans install` to register every koopmans code this machine has."
+
+
+def load_code(name: str, task: Task) -> orm.AbstractCode:
+    """Load the code labelled ``<name>@localhost``, or say how to install it.
+
+    Args:
+        name: The code label, as ``koopmans install`` registers it.
+        task: The task whose chain runs the code, named in the message.
+
+    Returns:
+        The stored code.
+
+    Raises:
+        ValueError: If this profile holds no such code.
+    """
+    executable = executable_for(name)
     try:
         return orm.load_code(f"{name}@localhost")
     except Exception as exc:
         raise ValueError(
-            f"Could not load {executable} code: {exc}\n"
-            "Please run 'koopmans install' first to set up the AiiDA backend."
+            f"The `{task.value}` task runs {executable}, but this AiiDA profile has no "
+            f"`{name}@localhost` code. {code_install_hint(name)}"
         ) from exc
 
 
-def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
-    """Load the AiiDA codes required by the workflow described in ``workflow``.
+def load_codes_for_task(koopmans_input: KoopmansInput) -> tuple[Codes, ParallelizationDict]:
+    """Load every code the task in ``koopmans_input`` runs, and settle their ranks.
 
-    Which codes are needed depends not only on ``task`` but also on the
-    Koopmans correction (``ki`` vs ``none`` vs …) and the screening method
-    (``dscf`` needs kcp.x, ``dfpt`` would need kcw.x, etc.).
+    The route decides which codes those are (:func:`route_for`), and it
+    decides once, up front: a code the run might reach has to be in the
+    profile before the run starts, so its absence is reported as a setup
+    error rather than discovered part-way through.
 
-    Args:
-        workflow: The ``WorkflowConfig`` block from a parsed ``KoopmansInput``.
+    Loading a code and settling how many MPI ranks it runs on are one act,
+    so the mapping this returns covers every code it loaded.
 
     Returns:
-        Dictionary mapping code names to Code instances.
+        Tuple of (codes, per-code mapping with every rank count settled).
 
     Raises:
-        ValueError: If a required code is not found in the AiiDA profile.
-        NotImplementedError: If the requested code combination is not supported yet.
+        ValueError: If a code is not in the profile, or if a code's ``npool``
+            does not divide the ranks it will run on.
     """
-    task = workflow.task
-    codes: Codes = {}
+    task = koopmans_input.workflow.task
+    loaded: dict[str, orm.AbstractCode] = {}
+    for name in route_for(task).required_codes(koopmans_input):
+        # Before the profile is asked: an unregistered name is a bug in the
+        # route's declaration, not a code the user has yet to install.
+        executable_for(name)
+        if name not in loaded:
+            loaded[name] = load_code(name, task)
 
-    # All tasks need pw.x
-    codes["pw"] = load_code("pw", "pw.x")
+    requested = koopmans_input.parallelization.as_mapping()
+    completed = complete_rank_counts(requested, cast("Codes", loaded))
+    check_pools_divide_ranks(completed, requested)
+    return cast("Codes", loaded), completed
 
-    # A corrected singlepoint — or a trajectory, which runs one DSCF
-    # singlepoint per snapshot — needs a screening-method-specific code
-    # regardless of ``calculate_alpha``: when alphas are guessed instead
-    # of computed, kcp.x/kcw.x still evaluate the corrected functional — only
-    # the screening step itself is skipped.
-    if task in (Task.SINGLEPOINT, Task.TRAJECTORY) and workflow.correction != Correction.NONE:
-        if workflow.screening_method == CalculateScreeningMethod.DSCF:
-            codes["kcp"] = load_code("kcp", "kcp.x")
-        elif workflow.screening_method == CalculateScreeningMethod.DFPT:
-            # kcw.x runs all three DFPT steps (wann2kc, screen, ham) selected
-            # via its ``control.calculation`` flag, so a single code suffices.
-            codes["kcw"] = load_code("kcw", "kcw.x")
 
-    # The dielectric-constant task runs ph.x on top of the scf
-    if task == Task.DFT_EPS:
-        codes["ph"] = load_code("ph", "ph.x")
+def default_rank_count(name: str, code: orm.AbstractCode) -> int | None:
+    """Return the MPI ranks ``code`` takes when the input file names no ``ntasks``.
 
-    # Wannierize task needs additional codes
-    if task == Task.WANNIERIZE:
-        codes["pw2wannier90"] = load_code("pw2wannier90", "pw2wannier90.x")
-        codes["wannier90"] = load_code("wannier90", "wannier90.x")
+    One rank for a code that does not run under MPI, and the code's computer's
+    ``default_mpiprocs_per_machine`` otherwise. ``None`` means nothing declares
+    a count, which leaves it to the scheduler.
 
-        # Automated block splitting runs the Wannier.jl CalcJobs (the julia
-        # binary registered via aiida_wannierjl.helpers.get_wannierjl_code).
-        if workflow.block_wannierization_threshold is not None:
-            codes["wannierjl"] = load_code("wannierjl", "julia (Wannier.jl)")
+    A code named in :data:`~koopmans.aiida.setup.codes.SERIAL_CODES` takes one
+    rank whatever its node says, because that list states a property of the
+    program rather than of the node.
+    """
+    from koopmans.aiida.setup.codes import SERIAL_CODES, effective_with_mpi
 
-        # projwfc is only needed when the Wannierize flow computes a projected
-        # DOS / bandstructure, so treat it as optional rather than required.
-        try:
-            codes["projwfc"] = orm.load_code("projwfc@localhost")
-        except Exception:  # noqa: S110
-            pass
+    if name in SERIAL_CODES or effective_with_mpi(code) is False:
+        return 1
+    computer = getattr(code, "computer", None)
+    if computer is None:
+        return None
+    ranks = computer.get_default_mpiprocs_per_machine()
+    return int(ranks) if ranks is not None else None
 
-    return codes
+
+def complete_rank_counts(parallelization: ParallelizationDict, codes: Codes) -> ParallelizationDict:
+    """Return ``parallelization`` with an explicit ``ntasks`` for every loaded code.
+
+    An entry with no ``ntasks`` reaches the scheduler as a rank count nothing
+    stores, resolved at submission against the computer's mutable default; two
+    calculations with identical stored inputs can then run on different numbers
+    of ranks. Filling the count in makes it an input of the workgraph.
+
+    Only codes in ``codes`` are completed, and only those the ``parallelization``
+    block names (:data:`~aiida_koopmans.parallelization.CODE_NAMES`) — an entry
+    for any other key is rejected downstream. A code outside that vocabulary
+    (merge_evc, wannierjl) gets no entry at all, because the input file has no
+    way to name one: its rank count is its CalcJob's to declare. An ``ntasks``
+    the input file set is left as it is, so this never overrides the user.
+
+    Args:
+        parallelization: The per-code mapping, as ``ParallelizationInput.as_mapping``
+            returns it.
+        codes: The codes loaded for this task, keyed by the same code names.
+
+    Returns:
+        A new mapping; the argument is not modified.
+    """
+    from aiida_koopmans.parallelization import CODE_NAMES
+
+    completed: dict[str, dict[str, Any]] = {
+        name: dict(entry) for name, entry in parallelization.items()
+    }
+    for name, code in codes.items():
+        if name not in CODE_NAMES:
+            continue
+        entry = completed.setdefault(name, {})
+        if entry.get("ntasks") is not None:
+            continue
+        ranks = default_rank_count(name, code)
+        if ranks is not None:
+            entry["ntasks"] = ranks
+    return cast("ParallelizationDict", {name: entry for name, entry in completed.items() if entry})
+
+
+def _divisors(number: int) -> list[int]:
+    """Return every positive divisor of ``number``, ascending."""
+    return [candidate for candidate in range(1, number + 1) if number % candidate == 0]
+
+
+def check_pools_divide_ranks(
+    parallelization: ParallelizationDict, requested: ParallelizationDict
+) -> None:
+    """Raise if a code's ``npool`` does not divide the MPI ranks it will run on.
+
+    Quantum ESPRESSO splits a run's ranks into ``npool`` equal k-point pools,
+    so the rank count must be a multiple of ``npool``.
+
+    Checks only codes that accept ``-npool`` (:data:`POOL_SUPPORTING_CODES`)
+    and that carry a rank count, which after :func:`complete_rank_counts` means
+    the codes this task loads — an entry for a code it never runs is left
+    alone.
+
+    Args:
+        parallelization: The completed per-code mapping, every loaded code
+            carrying the ``ntasks`` it will run with.
+        requested: What the input file named, which decides whether the message
+            points the reader at their own ``ntasks`` or at the computer's
+            default.
+
+    Raises:
+        ValueError: If a code's ``npool`` does not divide its rank count.
+    """
+    for name, config in parallelization.items():
+        npool = config.get("npool")
+        ranks = config.get("ntasks")
+        if npool is None or ranks is None or name not in POOL_SUPPORTING_CODES:
+            continue
+        if ranks % npool == 0:
+            continue
+
+        if requested.get(name, {}).get("ntasks") is not None:
+            ranks_come_from = f"`parallelization.{name}.ntasks` asks for {ranks} MPI ranks"
+        else:
+            ranks_come_from = (
+                f"`parallelization.{name}` sets no `ntasks`, so {name} takes this "
+                f"computer's default of {ranks} MPI ranks"
+            )
+
+        raise ValueError(
+            f"{ranks_come_from}, and `parallelization.{name}.npool` is {npool}, which "
+            f"does not divide {ranks}. Quantum ESPRESSO splits a run's ranks into "
+            f"equal k-point pools, so {name} would abort at startup. Set `npool` to "
+            f"one of {_divisors(ranks)}, or set `parallelization.{name}.ntasks` to a "
+            f"multiple of {npool}."
+        )
 
 
 def prepare_common_inputs(
     koopmans_input: KoopmansInput,
     override_keys: list[str],
+    parallelization: ParallelizationDict,
 ) -> tuple[orm.StructureData, str, dict[str, Any]]:
     """Prepare the common inputs shared by all workgraph builders.
 
@@ -128,6 +268,8 @@ def prepare_common_inputs(
     Args:
         koopmans_input: The parsed koopmans input.
         override_keys: Sub-workflow keys to include in overrides (e.g. ["scf", "bands"]).
+        parallelization: The per-code mapping, rank counts already completed by
+            :func:`complete_rank_counts`.
 
     Returns:
         Tuple of (structure, pseudo_family, overrides).
@@ -148,7 +290,7 @@ def prepare_common_inputs(
     # steps; the full per-code mapping is threaded to every graph builder too,
     # so pw.x steps assembled inside the graphs (e.g. the dielectric scf) pick
     # up the same directive.
-    options, settings = code_parallelization(koopmans_input.parallelization.pw)
+    options, settings = code_parallelization(parallelization.get("pw"))
     if settings:
         pw_overrides["settings"] = settings
     if options:
@@ -346,6 +488,43 @@ def advice_for(exc: BaseException) -> str | None:
     return None
 
 
+class Route(NamedTuple):
+    """A task's route: the codes its chain runs on, and its graph builder."""
+
+    required_codes: Callable[[KoopmansInput], list[str]]
+    build: Callable[[KoopmansInput, Codes, ParallelizationDict], WorkGraph]
+
+
+def route_for(task: Task) -> Route:
+    """Return the route that builds ``task``, or raise if nothing builds it.
+
+    Each route module states its own code set, because every condition that
+    picks one reads an input-file field.
+
+    The route modules are imported here rather than at module level:
+    importing one pulls in its plugin dependencies, and a caller that only
+    wants the input file parsed should not pay for the graphs.
+
+    Raises:
+        ValueError: If no route builds ``task``.
+    """
+    from koopmans.aiida.workflows import dft, dscf, eps, trajectory, wannierize
+
+    routes = {
+        Task.DFT_BANDS: Route(dft.required_codes, dft.build_dft_bands_workgraph),
+        Task.WANNIERIZE: Route(wannierize.required_codes, wannierize.build_wannierize_workgraph),
+        Task.SINGLEPOINT: Route(dscf.required_codes, dscf.build_singlepoint_workgraph),
+        Task.TRAJECTORY: Route(trajectory.required_codes, trajectory.build_trajectory_workgraph),
+        Task.DFT_EPS: Route(eps.required_codes, eps.build_dft_eps_workgraph),
+    }
+    if task not in routes:
+        raise ValueError(
+            f"Task '{task.value}' is not yet implemented. "
+            f"Supported tasks: {', '.join(sorted(supported.value for supported in routes))}"
+        )
+    return routes[task]
+
+
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build the appropriate workgraph for a KoopmansInput.
 
@@ -373,39 +552,15 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "permitted singlepoint prediction — not yet ported."
         )
 
-    # Load required codes
-    codes = load_codes_for_task(koopmans_input.workflow)
+    # Load the codes the route runs, each carrying the MPI ranks it will run on
+    route = route_for(task)
+    codes, parallelization = load_codes_for_task(koopmans_input)
 
-    # Build the workgraph based on task. An error raised inside the plugin
-    # speaks its vocabulary (derived blocks, `num_bands`), which the user
-    # never wrote; attach the input-file advice at this boundary.
+    # An error raised inside the plugin speaks its vocabulary (derived blocks,
+    # `num_bands`), which the user never wrote; attach the input-file advice
+    # at this boundary.
     try:
-        if task == Task.DFT_BANDS:
-            from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
-
-            return build_dft_bands_workgraph(koopmans_input, codes)
-        elif task == Task.WANNIERIZE:
-            from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
-
-            return build_wannierize_workgraph(koopmans_input, codes)
-        elif task == Task.SINGLEPOINT:
-            from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
-
-            return build_singlepoint_workgraph(koopmans_input, codes)
-        elif task == Task.TRAJECTORY:
-            from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
-
-            return build_trajectory_workgraph(koopmans_input, codes)
-        elif task == Task.DFT_EPS:
-            from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
-
-            return build_dft_eps_workgraph(koopmans_input, codes)
-        else:
-            raise ValueError(
-                f"Task '{task.value}' is not yet implemented. "
-                f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-                f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
-            )
+        return route.build(koopmans_input, codes, parallelization)
     except Exception as exc:
         advice = advice_for(exc)
         if advice is not None:

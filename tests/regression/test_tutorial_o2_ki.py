@@ -42,8 +42,7 @@ def o2_input(tutorials_dir: Path) -> KoopmansInput:
 
 def test_build_workgraph(
     aiida_profile: Any,
-    installed_pw_code: Any,
-    installed_kcp_code: Any,
+    installed_dscf_codes: Any,
     fake_sg15_pseudo_family: Any,
     o2_input: KoopmansInput,
     serialize_workgraph: Any,

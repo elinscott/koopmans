@@ -83,7 +83,9 @@ def _si_collinear_dscf_dict() -> dict[str, Any]:
 
 def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return build_singlepoint_workgraph(inp, codes=codes)
+    return build_singlepoint_workgraph(
+        inp, codes=codes, parallelization=inp.parallelization.as_mapping()
+    )
 
 
 def _dscf_blocks(
@@ -121,7 +123,7 @@ def dscf_codes(
     """Assemble the codes dict the dispatcher receives, plus fold-path dummies.
 
     Only ``pw`` and ``kcp`` are passed in (mirroring ``load_codes_for_task``);
-    the wannier / fold codes are looked up by label inside the builder, so the
+    the wannier / fold codes are looked up by name inside the route, so the
     fixtures merely register them.
     """
     return {"pw": installed_pw_code, "kcp": installed_kcp_code}
@@ -471,7 +473,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert extra["wannier_overrides"]["wannier90"] == {"num_iter": 17}
         # Projections are consumed by the block derivation, never leaked into
         # the flat keyword override.
@@ -492,7 +494,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_1", True),
             ("emp_1", False),
@@ -512,7 +514,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_up_1", True),
             ("emp_up_1", False),
@@ -544,7 +546,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
 
 
@@ -590,3 +592,35 @@ class TestPerStepKpointMeshRejected:
         d["kpoints"]["overrides"] = {step: {"grid": [4, 4, 4]}}
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             _build(d, codes={})
+
+
+class TestRankCounts:
+    """The Wannier-initialised DSCF route's codes all carry a rank count."""
+
+    def test_every_loaded_code_names_its_ranks(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_kcp_code: Any,
+        installed_wannier_codes: Any,
+        installed_fold_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        assert_ranks_settled_for_every_loaded_code: Any,
+    ) -> None:
+        """The four codes the fold path loads carry a rank count of their own.
+
+        wann2kcp gets one rank rather than the computer's four, so the
+        assertion also shows the serial rule reaching a route-loaded code.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        parallelization = assert_ranks_settled_for_every_loaded_code(
+            lambda: build_workgraph(KoopmansInput.model_validate(_si_dscf_dict()))
+        )
+        assert parallelization == {
+            "pw": {"ntasks": 4},
+            "kcp": {"ntasks": 4},
+            "wannier90": {"ntasks": 4},
+            "pw2wannier90": {"ntasks": 4},
+            "wann2kcp": {"ntasks": 1},
+        }
