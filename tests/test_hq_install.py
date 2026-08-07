@@ -522,6 +522,7 @@ class TestHqCannotAnswer:
         fake_hq.set_workers(24)
 
         def hang(*args: Any, **kwargs: Any) -> None:
+            """Behave as an ``hq`` that never answers within the timeout."""
             raise subprocess.TimeoutExpired(cmd="hq", timeout=5)
 
         monkeypatch.setattr(subprocess, "run", hang)
