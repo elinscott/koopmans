@@ -621,10 +621,9 @@ def _resolve_pw_cutoffs(system: dict[str, Any], kcp_ecutrho: float) -> None:
 
     if not math.isclose(ecutrho, NORM_CONSERVING_DUAL * ecutwfc):
         warnings.warn(
-            f"`{source}` = {ecutrho:g} Ry is {ecutrho / ecutwfc:g} times ecutwfc = "
-            f"{ecutwfc:g} Ry. koopmans runs norm-conserving pseudopotentials, for which "
-            f"the two converge together at a ratio of {NORM_CONSERVING_DUAL:g}. Drop "
-            f"`{source}` to take that ratio.",
+            f"`{source}` = {ecutrho:g} Ry: ecutrho should be {NORM_CONSERVING_DUAL:g} x "
+            f"ecutwfc = {NORM_CONSERVING_DUAL * ecutwfc:g} Ry for norm-conserving "
+            f"pseudopotentials. Drop `{source}` to take that.",
             UserWarning,
             stacklevel=3,
         )
