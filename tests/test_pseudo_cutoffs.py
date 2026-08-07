@@ -92,26 +92,29 @@ class TestFamilyWithCutoffs:
         system = _build_scf_pw(installed_pw_code, structure, overrides).parameters["SYSTEM"]
         assert (system["ecutwfc"], system["ecutrho"]) == pytest.approx((45.0, 180.0))
 
-    def test_a_pw_block_ecutwfc_displaces_the_shorthand_pair(
+    def test_the_pair_is_resolved_after_the_pw_block_is_merged(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Two sources of ``ecutwfc`` still leave one ratio behind.
+        """A shorthand ``ecutwfc`` and a ``pw`` block ``ecutrho`` are one pair.
 
-        ``pw.system.ecutwfc`` wins over the top-level shorthand, so a density
-        cutoff derived from the shorthand's 20 Ry would pair 45 Ry with 80 Ry.
+        The two cutoffs arrive from different keys, so resolving before the
+        merge would derive 180 Ry from the shorthand, then overwrite it with
+        300 Ry and never measure the ratio the two make: the warning is what
+        says the merged pair was the one checked.
         """
         from koopmans.aiida.workflows import prepare_common_inputs
 
         inp = KoopmansInput.model_validate(
             silicon_pw_input(
                 pseudo_library="SG15/1.0/PBE/SR",
-                calculator_parameters={"ecutwfc": 20.0, "pw": {"system": {"ecutwfc": 45.0}}},
+                calculator_parameters={"ecutwfc": 45.0, "pw": {"system": {"ecutrho": 300.0}}},
             )
         )
-        structure, _, overrides = prepare_common_inputs(inp, ["scf", "bands"])
+        with pytest.warns(UserWarning, match="norm-conserving"):
+            structure, _, overrides = prepare_common_inputs(inp, ["scf", "bands"])
 
         system = _build_scf_pw(installed_pw_code, structure, overrides).parameters["SYSTEM"]
-        assert (system["ecutwfc"], system["ecutrho"]) == pytest.approx((45.0, 180.0))
+        assert (system["ecutwfc"], system["ecutrho"]) == pytest.approx((45.0, 300.0))
 
     def test_ecutrho_alone_is_rejected(
         self, aiida_profile_clean: Any, fake_sg15_cutoffs_family: Any

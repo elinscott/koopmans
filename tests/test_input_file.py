@@ -203,6 +203,115 @@ class TestCutoffsMustBePositive:
         assert "must be greater than 0" in message
 
 
+def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object]:
+    """Return the minimal silicon input, its ``calculator_parameters`` replaced."""
+    d = _minimal_si_input()
+    d["calculator_parameters"] = calculator_parameters
+    return d
+
+
+_DISAGREEING_CUTOFFS = [
+    (
+        "pw and kcp state different wavefunction cutoffs",
+        {"pw": {"system": {"ecutwfc": 45.0}}, "kcp": {"system": {"ecutwfc": 20.0}}},
+        ["calculator_parameters.pw.system.ecutwfc", "calculator_parameters.kcp.system.ecutwfc"],
+    ),
+    (
+        "pw and kcp state different density cutoffs",
+        {
+            "ecutwfc": 45.0,
+            "pw": {"system": {"ecutrho": 180.0}},
+            "kcp": {"system": {"ecutrho": 300.0}},
+        },
+        ["calculator_parameters.pw.system.ecutrho", "calculator_parameters.kcp.system.ecutrho"],
+    ),
+    (
+        "a pw block overrides the shorthand kcp falls back to",
+        {"ecutwfc": 20.0, "nbnd": 8, "pw": {"system": {"ecutwfc": 45.0}}},
+        ["calculator_parameters.ecutwfc", "calculator_parameters.pw.system.ecutwfc"],
+    ),
+    (
+        "a kcp block states what the shorthand overrides",
+        {"ecutwfc": 20.0, "kcp": {"system": {"ecutwfc": 30.0}}},
+        ["calculator_parameters.ecutwfc", "calculator_parameters.kcp.system.ecutwfc"],
+    ),
+]
+
+_AGREEING_CUTOFFS = [
+    ("the shorthand alone", {"ecutwfc": 20.0}),
+    ("a pw block restating the shorthand", {"ecutwfc": 20.0, "pw": {"system": {"ecutwfc": 20.0}}}),
+    (
+        "pw and kcp stating one wavefunction cutoff",
+        {"pw": {"system": {"ecutwfc": 45.0}}, "kcp": {"system": {"ecutwfc": 45.0}}},
+    ),
+    (
+        "pw and kcp stating one density cutoff",
+        {
+            "ecutwfc": 45.0,
+            "pw": {"system": {"ecutrho": 180.0}},
+            "kcp": {"system": {"ecutrho": 180.0}},
+        },
+    ),
+    ("a pw cutoff with no kcp block", {"pw": {"system": {"ecutwfc": 45.0}}}),
+    (
+        "a kcp density cutoff with no pw block",
+        {"ecutwfc": 40.0, "kcp": {"system": {"ecutrho": 160.0}}},
+    ),
+]
+
+
+class TestCutoffsMustAgreeAcrossBlocks:
+    """pw.x and kcp.x read their cutoffs from different keys, and must get one grid."""
+
+    @pytest.mark.parametrize(
+        ("label", "calculator_parameters", "keys"),
+        _DISAGREEING_CUTOFFS,
+        ids=[case[0] for case in _DISAGREEING_CUTOFFS],
+    )
+    def test_disagreeing_cutoffs_are_rejected(
+        self,
+        label: str,
+        calculator_parameters: dict[str, object],
+        keys: list[str],
+        tmp_path: Path,
+    ) -> None:
+        """The message names every key that stated a value, so the user can pick one.
+
+        The shorthand cases are the reproduced defect: an input naming only
+        ``pw.system.ecutwfc`` beside the shorthand ran pw.x at 45 Ry and kcp.x
+        at 20 Ry, and neither block stated the cutoff twice.
+        """
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(_si_input_with(calculator_parameters)))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        for key in keys:
+            assert f"`{key}`" in message
+        assert "must run on the same grid" in message
+
+    @pytest.mark.parametrize(
+        ("label", "calculator_parameters"),
+        _AGREEING_CUTOFFS,
+        ids=[case[0] for case in _AGREEING_CUTOFFS],
+    )
+    def test_agreeing_cutoffs_are_accepted(
+        self, label: str, calculator_parameters: dict[str, object], tmp_path: Path
+    ) -> None:
+        """Restating a cutoff, and leaving one block silent, both stay legal.
+
+        Separates disagreement from mere repetition: a rule keyed on "two
+        blocks mention it" rather than on the values would reject these, and
+        the last case is the shape the O2 tutorial ships.
+        """
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(_si_input_with(calculator_parameters)))
+
+        read_input_file(input_file)
+
+
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
     """Return a minimal silicon input dict for parallelization-block tests."""
     d: dict[str, object] = {
