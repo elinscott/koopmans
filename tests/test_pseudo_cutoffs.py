@@ -46,6 +46,58 @@ class TestFamilyWithCutoffs:
         system = _build_scf_pw(installed_pw_code, structure, overrides).parameters["SYSTEM"]
         assert (system["ecutwfc"], system["ecutrho"]) == pytest.approx(recommended)
 
+    def test_the_input_cutoffs_beat_the_recommendation(
+        self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Cutoffs stated in the input displace the family's, which are lower here.
+
+        The fixture family recommends 30 eV / 240 eV, i.e. about 2.2 Ry /
+        17.6 Ry, so an input at 45 Ry / 300 Ry is nowhere near it: the
+        assertion separates the two sources rather than reading a value both
+        could have produced.
+        """
+        from koopmans.aiida.workflows import prepare_common_inputs
+
+        inp = KoopmansInput.model_validate(
+            silicon_pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                calculator_parameters={"pw": {"system": {"ecutwfc": 45.0, "ecutrho": 300.0}}},
+            )
+        )
+        structure, _, overrides = prepare_common_inputs(inp, ["scf", "bands"])
+
+        system = _build_scf_pw(installed_pw_code, structure, overrides).parameters["SYSTEM"]
+        assert (system["ecutwfc"], system["ecutrho"]) == pytest.approx((45.0, 300.0))
+
+    @pytest.mark.parametrize(("stated", "absent"), [("ecutwfc", "ecutrho"), ("ecutrho", "ecutwfc")])
+    def test_one_cutoff_alone_is_rejected(
+        self,
+        aiida_profile_clean: Any,
+        fake_sg15_cutoffs_family: Any,
+        stated: str,
+        absent: str,
+    ) -> None:
+        """Half an input pair would leave the other half on the recommendation.
+
+        The two are converged together, so an input at 45 Ry beside a
+        recommended 17.6 Ry describes a calculation neither source asked for.
+        """
+        from koopmans.aiida.workflows import prepare_common_inputs
+
+        inp = KoopmansInput.model_validate(
+            silicon_pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                calculator_parameters={"pw": {"system": {stated: 45.0}}},
+            )
+        )
+        with pytest.raises(ValueError) as excinfo:
+            prepare_common_inputs(inp, ["scf", "bands"])
+
+        message = str(excinfo.value)
+        assert f"`calculator_parameters.pw.system.{stated}`" in message
+        assert f"`{absent}`" in message
+        assert "SG15/1.0/PBE/SR" in message
+
 
 class TestFamilyWithoutCutoffs:
     """Both shapes an uncut family takes are driven from the input file."""
