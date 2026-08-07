@@ -166,11 +166,11 @@ directory holding one file per element:
 
 .. code-block:: console
 
-    $ aiida-pseudo install family <directory> my-lda-fr -F pseudo.family.cutoffs
-    $ aiida-pseudo family cutoffs set my-lda-fr <cutoffs.json>
+    $ aiida-pseudo install family <directory> my-lda-fr
 
-Both commands are needed: the calculations take ``ecutwfc`` and ``ecutrho`` from the
-family's recommended cutoffs. Then set ``pseudo_library`` to ``my-lda-fr``.
+Then set ``pseudo_library`` to ``my-lda-fr``. A family installed this way publishes no
+recommended cutoffs, so state ``calculator_parameters.ecutwfc`` in your input file;
+``ecutrho`` follows at four times it, the ratio norm-conserving pseudopotentials use.
 
 ****************************
  Installing for development
