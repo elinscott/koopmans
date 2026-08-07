@@ -766,3 +766,55 @@ class TestFrozenWindowThreading:
         assert empty["num_wann"] == 2
         assert empty["num_bands"] == 2
         assert list(empty["exclude_bands"]) == [1, 2, 3, 4]
+
+
+class TestPerStepKpointMeshRejected:
+    """The trajectory task screens with kcp.x, which runs every step on one mesh."""
+
+    @pytest.mark.parametrize("step", ["scf", "nscf"])
+    def test_either_entry_raises_naming_the_grid(self, tmp_path: Path, step: str) -> None:
+        """The same rejection as the singlepoint kcp.x route, on the same reasoning.
+
+        The guard runs before any code or pseudopotential is loaded, so it
+        needs no profile.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["kpoints"] = {"grid": [2, 2, 2], "overrides": {step: {"grid": [4, 4, 4]}}}
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
+            build_trajectory_workgraph(koopmans_input, codes={})
+
+    def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:
+        """A route reached whatever the method must not name one back at the reader.
+
+        ``screening_method`` does not select this route — every trajectory
+        runs kcp.x — so quoting ``'dscf'`` would tell someone who wrote
+        ``'dfpt'`` to set what they did not set.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["calculate_alpha"] = False
+        d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(ValueError) as excinfo:
+            build_trajectory_workgraph(koopmans_input, codes={})
+        assert "screening_method" not in str(excinfo.value)
+
+    def test_an_unsupported_screening_method_is_reported_first(self, tmp_path: Path) -> None:
+        """The mesh is the reader's second problem when the method is the first."""
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["calculate_alpha"] = True
+        d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="only supports DSCF screening"):
+            build_trajectory_workgraph(koopmans_input, codes={})
