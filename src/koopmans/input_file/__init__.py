@@ -44,6 +44,7 @@ __all__ = [
     "KCPInputParameters",
     "KoopmansInput",
     "KpointOffset",
+    "KpointsOverridesInput",
     "MLConfig",
     "NoOffset",
     "PW2Wannier90InputParameters",
@@ -52,6 +53,7 @@ __all__ = [
     "Projection",
     "RestrictedWannier90InputParameters",
     "SpinSpecificWannierInput",
+    "StepKpointsInput",
     "UnfoldAndInterpolateConfig",
     "Wannier90InputParametersWithUpDown",
     "WorkflowConfig",
@@ -169,6 +171,80 @@ def _no_shift(value: float) -> float:
 NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
+class StepKpointsInput(BaseModel):
+    """K-point sampling for one step, in place of the top-level values.
+
+    Every attribute is absolute and every one left unset is taken from the
+    top-level ``kpoints``.
+    """
+
+    grid: tuple[int, int, int] | None = None
+    """Monkhorst-Pack dimensions of the mesh this step samples."""
+
+    offset: tuple[KpointOffset, KpointOffset, KpointOffset] | None = None
+    """Per-axis fraction of a grid step to shift this step's mesh by.
+
+    Available on the ``scf`` entry alone.
+    """
+
+    grid_spacing: float | None = Field(default=None, gt=0.0)
+    """Largest spacing between neighbouring k-points, in inverse angstrom.
+
+    The cell fixes the mesh dimensions, so a converged value carries from
+    one structure to the next. Excludes ``grid`` and ``offset``.
+    """
+
+    @model_validator(mode="after")
+    def _one_statement_of_the_mesh(self) -> StepKpointsInput:
+        """Require ``grid_spacing`` to be the entry's only statement of the mesh."""
+        if self.grid_spacing is None:
+            return self
+        for name in ("grid", "offset"):
+            if getattr(self, name) is not None:
+                raise ValueError(
+                    f"`grid_spacing` and `{name}` both describe the same mesh: "
+                    "`grid_spacing` lets the cell fix the mesh, so it cannot be "
+                    f"combined with `{name}`. Give one of the two."
+                )
+        return self
+
+
+class KpointsOverridesInput(BaseModel):
+    """K-point sampling for individual steps, in place of the top-level values.
+
+    Steps left out sample the top-level ``grid`` and ``offset``.
+    """
+
+    scf: StepKpointsInput | None = None
+    """The mesh the ground-state calculation converges the density on."""
+
+    nscf: StepKpointsInput | None = None
+    """The Gamma-centred mesh the Wannier functions are built from."""
+
+    @model_validator(mode="after")
+    def _nscf_states_a_mesh_koopmans_builds(self) -> KpointsOverridesInput:
+        """Restrict the nscf entry to the meshes the Wannierization runs on.
+
+        The nscf mesh is wannier90's ``mp_grid``, which a spacing does not
+        state, and koopmans builds it Gamma-centred.
+        """
+        if self.nscf is None:
+            return self
+        if self.nscf.grid_spacing is not None:
+            raise ValueError(
+                "`nscf.grid_spacing` cannot be used: the nscf mesh dimensions are "
+                "wannier90's `mp_grid`, which a spacing does not state. Give "
+                "`nscf.grid` instead."
+            )
+        if self.nscf.offset is not None:
+            raise ValueError(
+                "`nscf.offset` is not supported: the nscf mesh koopmans builds is "
+                "Gamma-centred. An offset belongs on the `scf` entry, and the "
+                "top-level `kpoints.offset` already applies to the scf."
+            )
+        return self
+
+
 class GammaOnlyKpointsInput(BaseModel):
     """K-points configuration for gamma-only calculations."""
 
@@ -178,7 +254,25 @@ class GammaOnlyKpointsInput(BaseModel):
     """A gamma-only calculation samples Gamma itself, so it cannot be shifted."""
 
     path: Literal["G"] = "G"
-    density: float = 10.0
+    path_density: float = 10.0
+    """Number of k-points per inverse angstrom along ``path``."""
+
+    overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
+    """Per-step k-point sampling, which a gamma-only calculation cannot have."""
+
+    @field_validator("overrides")
+    @classmethod
+    def check_no_step_is_given_a_mesh(
+        cls, overrides: KpointsOverridesInput
+    ) -> KpointsOverridesInput:
+        """Reject a per-step mesh: every step of a gamma-only run samples Gamma."""
+        for step in type(overrides).model_fields:
+            if getattr(overrides, step) is not None:
+                raise ValueError(
+                    f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
+                    "every step samples Gamma alone. Give a `grid` instead of `gamma_only`."
+                )
+        return overrides
 
 
 class GridKpointsInput(BaseModel):
@@ -190,7 +284,11 @@ class GridKpointsInput(BaseModel):
     """Per-axis fraction of a grid step to shift the mesh by."""
 
     path: str | None = None
-    density: float = 10.0
+    path_density: float = 10.0
+    """Number of k-points per inverse angstrom along ``path``."""
+
+    overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
+    """Per-step k-point sampling, in place of ``grid`` and ``offset``."""
 
 
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput
@@ -266,6 +364,23 @@ class KoopmansInput(BaseModel):
         default_factory=ParallelizationInput,
         description="Per-code parallelization settings (MPI ranks and k-point pools)",
     )
+
+    @field_validator("kpoints", mode="before")
+    @classmethod
+    def check_density_was_renamed(cls, kpoints: Any) -> Any:
+        """Reject the former ``density`` spelling of ``path_density``.
+
+        ``KpointsInput`` is an untagged union, so a check inside either
+        member is reported against both. This one names a keyword the two
+        share, so it belongs where the field does.
+        """
+        if isinstance(kpoints, dict) and "density" in kpoints:
+            raise ValueError(
+                "`density` has been renamed `path_density`: it counts k-points per "
+                "unit length along `path`, and sitting beside `grid` it reads like "
+                "the density of a mesh. Rename it."
+            )
+        return kpoints
 
     @field_validator("version")
     @classmethod

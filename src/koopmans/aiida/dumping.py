@@ -45,6 +45,16 @@ _PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
 # The dumped source of a python task: its code, not data the run made.
 _TASK_SOURCE_FILE = "source_file"
 
+# aiida-core's record of which node a folder came from: pk, uuid, node
+# type and timestamps. It names the folder rather than adding to it.
+_NODE_METADATA_FILE = "aiida_node_metadata.yaml"
+
+# What a step folder can hold and still count as having produced nothing.
+_NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, _NODE_METADATA_FILE})
+
+# The dump's own bookkeeping, which says nothing about the run.
+_DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safeguard")
+
 _DIGEST_BLOCK = 1 << 20
 
 _SYMLINK_README = """\
@@ -141,7 +151,8 @@ def _prune_source_only_step_folders(path: Path) -> None:
     """Delete step folders holding nothing but python tasks' own source.
 
     A bookkeeping task dumps its ``source_file`` — its code, which the
-    installed package holds — and nothing else. Any other file keeps the
+    installed package holds — and its ``aiida_node_metadata.yaml``, which
+    names the node the folder came from. Any other file keeps the
     folder, whatever the process was: aiida-core writes ``node_outputs``
     only for ``SinglefileData`` and ``FolderData``, so an ``ArrayData`` a
     task produced reaches disk only as the ``function_inputs`` of
@@ -153,7 +164,7 @@ def _prune_source_only_step_folders(path: Path) -> None:
     """
     for child in _step_folders(path):
         _prune_source_only_step_folders(child)
-        if all(item.name == _TASK_SOURCE_FILE for item in child.rglob("*") if item.is_file()):
+        if all(item.name in _NON_CONTENT_FILES for item in child.rglob("*") if item.is_file()):
             shutil.rmtree(child)
 
 
@@ -296,6 +307,10 @@ def _strip_process_label_suffixes(path: Path) -> None:
 def _hoist_lone_calculations(path: Path) -> None:
     """Lift a lone calculation's contents into the step folder holding it.
 
+    Hoists only when that calculation is everything the folder holds, so
+    a folder that also keeps a metadata file of its own — the root does —
+    keeps the calculation's folder and the step name on it.
+
     Descends top-down and stops at the folder it hoists into, so a chain
     of single-child steps collapses by one layer only and every step name
     on the way survives.
@@ -374,7 +389,7 @@ def _simplify_calcjob_dump(output_path: Path) -> None:
 
     - Merges node_inputs into inputs
     - Merges node_outputs into outputs
-    - Removes metadata files (README.md, aiida_node_metadata.yaml, etc.)
+    - Removes the dump's own bookkeeping files
 
     :param output_path: Path to the dumped calculation directory.
     """
@@ -394,16 +409,48 @@ def _simplify_calcjob_dump(output_path: Path) -> None:
             shutil.move(str(item), str(outputs / item.name))
         node_outputs.rmdir()
 
-    # Remove metadata files
-    for filename in [
-        "README.md",
-        "aiida_node_metadata.yaml",
-        "aiida_dump_log.json",
-        ".aiida_dump_safeguard",
-    ]:
+    # Drop the dump's own bookkeeping; the node metadata stays
+    for filename in _DUMP_BOOKKEEPING_FILES:
         filepath = output_path / filename
         if filepath.exists():
             filepath.unlink()
+
+
+def _describes_a_workflow(metadata_path: Path) -> bool:
+    """Return whether a dumped metadata file records a workflow node.
+
+    Reads the node's own ``node_type``, which every dumped process
+    records: ``process.workflow.…`` for a workgraph or a WorkChain,
+    ``process.calculation.…`` for a CalcJob or a python task. Nothing
+    else in the file decides, and a file that cannot be read at all —
+    unparseable, not text, unreadable — answers no, so it is kept rather
+    than deleted on a guess.
+    """
+    import yaml
+
+    try:
+        parsed = yaml.safe_load(metadata_path.read_text())
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return False
+    node_data = parsed.get("Node data", {}) if isinstance(parsed, dict) else {}
+    node_type = node_data.get("node_type") if isinstance(node_data, dict) else None
+    return isinstance(node_type, str) and node_type.startswith("process.workflow.")
+
+
+def _prune_workflow_metadata(root_path: Path) -> None:
+    """Delete every workflow node's metadata file below the root.
+
+    A workflow folder runs nothing itself — the calculations under it do
+    — so its metadata sits between the reader and the data, and its
+    presence would stop a step folder wrapping a lone calculation from
+    being flattened into it. The root keeps its own file: that pk is the
+    handle to the whole run.
+
+    :param root_path: Root of the dumped tree.
+    """
+    for path in root_path.rglob(_NODE_METADATA_FILE):
+        if path.parent != root_path and _describes_a_workflow(path):
+            path.unlink()
 
 
 def trained_model_output(process: orm.ProcessNode) -> orm.Dict | None:
@@ -443,7 +490,9 @@ def dump_workgraph(
     Uses AiiDA's dump functionality, then:
     - Strips pk numbers and WorkGraph process labels from folder names
     - Simplifies each CalcJobNode folder structure
-    - Removes top-level metadata files
+    - Removes the dump's own bookkeeping files
+    - Keeps each calculation's ``aiida_node_metadata.yaml``, and the
+      root's (see :func:`_prune_workflow_metadata`)
     - Tidies the step folders (see :func:`_tidy_dumped_tree`)
 
     :param process: The workgraph ProcessNode.
@@ -457,11 +506,15 @@ def dump_workgraph(
     # so a workgraph killed by the progress UI's fast-fail path (or otherwise
     # terminated without sealing) can still be inspected — the alternative is
     # a hard ``ExportValidationError`` and no on-disk artifact at all.
+    # ``include_attributes=False`` keeps each node's metadata file to its
+    # identity: a workgraph's attributes carry the serialized graph, which
+    # grows with the graph and dwarfs everything else in the file.
     with suppress_aiida_logging():
         process.dump(
             output_path=output_path,
             include_inputs=True,
             include_outputs=True,
+            include_attributes=False,
             overwrite=True,
             dump_unsealed=True,
         )
@@ -475,18 +528,13 @@ def dump_workgraph(
         if folder.is_dir() and (folder / "inputs").exists():
             _simplify_calcjob_dump(folder)
 
-    # Remove metadata files throughout the tree
-    for filename in [
-        "README.md",
-        "aiida_node_metadata.yaml",
-        "aiida_dump_log.json",
-        ".aiida_dump_safeguard",
-    ]:
+    # Remove the dump's own bookkeeping throughout the tree
+    for filename in _DUMP_BOOKKEEPING_FILES:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
 
-    # Only now, with the metadata files gone, does a step that ran no
-    # calculation look empty.
+    _prune_workflow_metadata(output_path)
+
     _tidy_dumped_tree(output_path)
 
     _dump_model_json(process, output_path)

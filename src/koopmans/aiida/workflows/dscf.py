@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import load_code
+from koopmans.aiida.workflows import load_code, reject_kpoint_overrides
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -31,6 +31,31 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
+
+
+#: Why no kcp.x route carries a second mesh: ``MlwfInitialization`` takes one
+#: ``kpoints``, which its scf samples and its supercell is folded from, and the
+#: molecular route runs no pw.x step at all. A scope boundary, not physics.
+_KCP_TAKES_ONE_MESH = (
+    "`kpoints.overrides.{step}` cannot take effect on the kcp.x route: every step it "
+    "runs samples the one mesh `kpoints.grid` describes, which is also the supercell "
+    "its kcp.x steps fold to, and no step there takes a mesh of its own. Set "
+    "`kpoints.grid`.{alternative}"
+)
+
+KPOINT_OVERRIDES_ON_DSCF = {
+    step: _KCP_TAKES_ONE_MESH.format(
+        step=step,
+        alternative=" Screening with `screening_method = 'dfpt'` gives the scf a mesh of its own.",
+    )
+    for step in ("scf", "nscf")
+}
+
+#: The same rejection without the DFPT alternative, which the trajectory task
+#: does not offer.
+KPOINT_OVERRIDES_ON_TRAJECTORY = {
+    step: _KCP_TAKES_ONE_MESH.format(step=step, alternative="") for step in ("scf", "nscf")
+}
 
 
 def build_singlepoint_workgraph(
@@ -60,6 +85,7 @@ def build_singlepoint_workgraph(
     if workflow.screening_method == CalculateScreeningMethod.DFPT:
         return build_singlepoint_dfpt_workgraph(koopmans_input, codes)
 
+    reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
     require_supported_correction(workflow.correction)
 
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
