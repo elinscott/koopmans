@@ -170,7 +170,7 @@ class TestFamilyWithoutCutoffs:
     @pytest.mark.parametrize(
         ("fixture", "label"),
         [
-            ("fake_sg15_family_without_cutoffs", "SG15/1.2/PBE/FR"),
+            ("fake_sg15_family_without_cutoffs", "SG15/1.1/PBE/FR"),
             ("fake_user_built_family", "MyPseudos/local"),
         ],
     )
@@ -216,7 +216,7 @@ class TestFamilyWithoutCutoffs:
 
         inp = KoopmansInput.model_validate(
             silicon_pw_input(
-                pseudo_library="SG15/1.2/PBE/FR",
+                pseudo_library="SG15/1.1/PBE/FR",
                 calculator_parameters={"pw": {"system": {"ecutwfc": 20.0}}},
             )
         )
@@ -239,12 +239,12 @@ class TestFamilyWithoutCutoffs:
         from koopmans.aiida.workflows import prepare_common_inputs
 
         inp = KoopmansInput.model_validate(
-            silicon_pw_input(pseudo_library="SG15/1.2/PBE/FR", calculator_parameters={})
+            silicon_pw_input(pseudo_library="SG15/1.1/PBE/FR", calculator_parameters={})
         )
         with pytest.raises(ValueError) as excinfo:
             prepare_common_inputs(inp, ["scf", "bands"])
 
         message = str(excinfo.value)
-        assert "SG15/1.2/PBE/FR" in message
+        assert "SG15/1.1/PBE/FR" in message
         assert "calculator_parameters.ecutwfc" in message
         assert "is not installed" not in message

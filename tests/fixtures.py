@@ -521,9 +521,11 @@ def _install_fake_family(
     The streams are enough for ``UpfData`` validation, not physically
     meaningful pseudos. ``cutoffs=True`` builds a
     ``CutoffsPseudoPotentialFamily`` with recommended cutoffs — needed by
-    builders that call ``get_builder_from_protocol`` eagerly at build time
-    (the aiida-qe protocol machinery only accepts PseudoDojo or a cutoffs
-    family); plain families cover ``ensure_pseudo_family_installed``.
+    builders that call ``get_builder_from_protocol`` eagerly at build time,
+    which takes any family but wants the cutoffs from somewhere: a family that
+    recommends none is accepted only when the overrides state ``ecutwfc`` and
+    ``ecutrho`` themselves. Plain families cover
+    ``ensure_pseudo_family_installed``.
     ``recommended_cutoffs=False`` leaves that cutoffs family with no stringency
     defined, the shape ``_install_sg15_family`` produces.
     ``has_so=True`` marks every pseudo fully relativistic.
@@ -575,14 +577,14 @@ def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
 
 @pytest.fixture
 def fake_sg15_family_without_cutoffs(aiida_profile: Any) -> Any:
-    """Install ``SG15/1.2/PBE/FR`` in the shape ``_install_sg15_family`` produces.
+    """Install ``SG15/1.1/PBE/FR`` in the shape ``_install_sg15_family`` produces.
 
     A ``CutoffsPseudoPotentialFamily`` with no stringency defined, so it can
     recommend no cutoffs. A label of its own so it coexists with the other
     SG15 fixtures in one session profile.
     """
     return _install_fake_family(
-        "SG15/1.2/PBE/FR", {"Si": 4.0}, cutoffs=True, recommended_cutoffs=False
+        "SG15/1.1/PBE/FR", {"Si": 4.0}, cutoffs=True, recommended_cutoffs=False
     )
 
 
