@@ -22,6 +22,7 @@ __all__ = [
     "apply_labels",
     "check_paths_agree",
     "describe_energy_zero",
+    "energy_axis_label",
     "write_series_json",
 ]
 
@@ -180,6 +181,19 @@ def apply_energy_zero(
         f"{_ENERGY_NAMES[kind]}, so `--zero {kind.value}` has nothing to subtract. "
         f"Use {alternatives}."
     )
+
+
+#: How the y axis names each choice of zero.
+_ENERGY_SYMBOLS = {
+    EnergyZero.VBM: "$E - E_\\mathrm{VBM}$",
+    EnergyZero.FERMI: "$E - E_\\mathrm{F}$",
+    EnergyZero.NONE: "Energy",
+}
+
+
+def energy_axis_label(kind: EnergyZero, units: str = "eV") -> str:
+    """Return the y-axis label, naming the energy the figure subtracted."""
+    return f"{_ENERGY_SYMBOLS[kind]} ({units})"
 
 
 def describe_energy_zero(

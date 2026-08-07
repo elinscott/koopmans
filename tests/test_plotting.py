@@ -574,7 +574,7 @@ class TestRenderer:
         """The extension chooses the format, and nothing opens a window."""
         target = tmp_path / "bands.pdf"
 
-        render_band_structures([series("DFT")], output_path=target, caption="energies as computed")
+        render_band_structures([series("DFT")], output_path=target, zero=EnergyZero.VBM)
 
         assert target.is_file()
         assert target.read_bytes().startswith(b"%PDF")
@@ -701,23 +701,66 @@ class TestRenderer:
 
         assert [text.get_text() for text in axes.get_xticklabels()] == ["\u0393", "X|L", "\u0393"]
 
-    def test_the_title_keeps_the_captions_own_casing(self) -> None:
-        """Only the first character is raised.
+    def test_no_title_is_drawn(self) -> None:
+        """The axes carry no title, whatever zero the figure was given."""
+        axes = blank_axes()
 
-        ``str.capitalize`` lowercases everything after it, which turns the KI
-        series into "ki" and eV into "ev" on every figure.
+        draw_band_structures(axes, [series("KI")], zero=EnergyZero.VBM)
+
+        assert axes.get_title() == ""
+
+    @pytest.mark.parametrize(
+        ("kind", "expected"),
+        [
+            (EnergyZero.VBM, "$E - E_\\mathrm{VBM}$ (eV)"),
+            (EnergyZero.FERMI, "$E - E_\\mathrm{F}$ (eV)"),
+            (EnergyZero.NONE, "Energy (eV)"),
+        ],
+    )
+    def test_the_y_axis_names_the_energy_that_was_subtracted(
+        self, kind: EnergyZero, expected: str
+    ) -> None:
+        """A saved figure has to disclose its zero somewhere, and the title is gone.
+
+        A bare "Energy (eV)" over shifted energies reads as the energies as
+        computed.
         """
         axes = blank_axes()
 
-        draw_band_structures(
-            axes,
-            [series("KI")],
-            caption="energies relative to the valence band edge of 'KI' at 6.2452 eV",
-        )
+        draw_band_structures(axes, [series("KI")], zero=kind)
 
-        assert axes.get_title() == (
-            "Energies relative to the valence band edge of 'KI' at 6.2452 eV"
-        )
+        assert axes.get_ylabel() == expected
+
+    def test_one_series_carries_no_legend(self) -> None:
+        """A single curve needs no key to tell it from the others."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")])
+
+        assert axes.get_legend() is None
+
+    def test_a_split_series_carries_no_legend(self) -> None:
+        """A discontinuity draws several lines, and it is still one series.
+
+        Keying the legend off the drawn lines would bring it back for every
+        band structure whose path has a break.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [broken_path()])
+
+        assert len(band_lines(axes)) > 1
+        assert axes.get_legend() is None
+
+    def test_an_overlay_carries_a_legend_naming_every_series(self) -> None:
+        """Two curves are told apart by their labels, so the key stays."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT"), series("KI")])
+
+        legend = axes.get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == ["DFT", "KI"]
 
     def test_a_series_without_a_cell_shares_the_axis(self) -> None:
         """One reciprocal basis measures every curve on the figure.

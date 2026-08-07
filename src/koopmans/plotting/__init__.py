@@ -30,6 +30,7 @@ from koopmans.plotting.series import (
     apply_labels,
     check_paths_agree,
     describe_energy_zero,
+    energy_axis_label,
     write_series_json,
 )
 
@@ -47,6 +48,7 @@ __all__ = [
     "check_paths_agree",
     "describe_energy_zero",
     "draw_band_structures",
+    "energy_axis_label",
     "path_distances",
     "render_band_structures",
     "resolve_band_series",

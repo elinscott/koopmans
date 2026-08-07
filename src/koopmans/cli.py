@@ -503,7 +503,7 @@ def bandstructure(
         click.echo(f"Wrote {data_path} ({len(series)} series)")
 
     target = output_path if output_path is not None or show else Path("bandstructure.png")
-    render_band_structures(series, output_path=target, show=show, caption=caption)
+    render_band_structures(series, output_path=target, show=show, zero=kind)
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series, {caption})")
 

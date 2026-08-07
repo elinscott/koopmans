@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from koopmans.plotting.series import BandSeries
+from koopmans.plotting.series import BandSeries, EnergyZero, energy_axis_label
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -160,18 +160,19 @@ def _path_extent(distances: Sequence[np.ndarray]) -> tuple[float, float] | None:
 def draw_band_structures(
     axes: Axes,
     series: Sequence[BandSeries],
-    caption: str | None = None,
+    zero: EnergyZero = EnergyZero.NONE,
 ) -> None:
     """Draw every series onto one set of axes, shifted by its own ``zero``.
 
     Every series is measured in one reciprocal basis, and the ticks come from
     the first series that names any high-symmetry points; a jump breaks the
     curves rather than joining them across the gap. A rule marks each interior
-    special point, and the x limits are the ends of the path itself.
+    special point, and the x limits are the ends of the path itself. Only an
+    overlay carries a legend.
 
     :param axes: where to draw.
     :param series: the curves, each already carrying the figure's ``zero``.
-    :param caption: a sentence stating what the figure's zero is.
+    :param zero: which energy was subtracted, which the y axis names.
     """
     cell = _shared_cell(series)
     drawn_distances: list[np.ndarray] = []
@@ -205,19 +206,17 @@ def draw_band_structures(
     if limits is not None:
         axes.set_xlim(*limits)
 
-    axes.set_ylabel(f"Energy ({series[0].units})")
-    if caption is not None:
-        # Only the first character changes: ``str.capitalize`` would lowercase
-        # the rest, turning "KI" into "ki" and "eV" into "ev".
-        axes.set_title(caption[:1].upper() + caption[1:], fontsize="small")
-    axes.legend(frameon=False, fontsize="small")
+    axes.set_ylabel(energy_axis_label(zero, series[0].units))
+    # One curve needs no key to tell it from the others.
+    if len(series) > 1:
+        axes.legend(frameon=False, fontsize="small")
 
 
 def render_band_structures(
     series: Sequence[BandSeries],
     output_path: Path | None = None,
     show: bool = False,
-    caption: str | None = None,
+    zero: EnergyZero = EnergyZero.NONE,
 ) -> None:
     """Draw the series and write or show the figure.
 
@@ -225,7 +224,7 @@ def render_band_structures(
     :param output_path: where to write the figure; the extension sets the
         format. ``None`` writes nothing.
     :param show: open an interactive window.
-    :param caption: a sentence stating what the figure's zero is.
+    :param zero: which energy was subtracted, which the y axis names.
     """
     import matplotlib
 
@@ -236,7 +235,7 @@ def render_band_structures(
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(figsize=(6.0, 4.5))
-    draw_band_structures(axes, series, caption=caption)
+    draw_band_structures(axes, series, zero=zero)
     figure.tight_layout()
 
     if output_path is not None:
