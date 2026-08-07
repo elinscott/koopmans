@@ -1047,3 +1047,47 @@ class TestGraphBuild:
         assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
         # The nscf keeps the unreduced expansion of the same grid.
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
+
+
+class TestCutoffLessPseudoFamily:
+    """A family recommending no cutoffs drives this route's pw steps from the input.
+
+    The route builds its own scf and nscf overrides rather than going through
+    ``prepare_common_inputs``, so it needs the pinned pseudos of its own. The
+    checks drive the built graph's override entries into the pw protocol
+    builder, which is what the steps do when they run.
+    """
+
+    @staticmethod
+    def _si_structure(d: dict[str, Any]) -> Any:
+        from koopmans.aiida.conversion import atoms_input_to_structure
+
+        return atoms_input_to_structure(KoopmansInput.model_validate(d).atoms)
+
+    @pytest.mark.parametrize("step", ["scf", "nscf"])
+    def test_the_step_takes_the_input_cutoffs_and_the_family_pseudos(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_family_without_cutoffs: Any,
+        step: str,
+    ) -> None:
+        """Both cutoffs and the family's own pseudos reach the pw.x calculation.
+
+        Without the pinned pseudos this builder consults the family for the
+        cutoffs it cannot recommend and refuses to build at all — so the check
+        fails rather than reporting a weaker pw input.
+        """
+        from tests.fixtures import pw_step_from_overrides
+
+        d = _si_split_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
+        wg = _build(d, split_codes)
+        structure = self._si_structure(d)
+
+        overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
+        pw = pw_step_from_overrides(split_codes["pw"], structure, overrides[step])
+
+        assert pw.parameters["SYSTEM"]["ecutwfc"] == pytest.approx(20.0)
+        assert pw.parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
+        expected = fake_sg15_family_without_cutoffs.get_pseudos(structure=structure)
+        assert pw.pseudos["Si"].uuid == expected["Si"].uuid

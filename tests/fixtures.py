@@ -642,6 +642,21 @@ def silicon_pw_input(
     return d
 
 
+def pw_step_from_overrides(code: Any, structure: Any, overrides: dict[str, Any]) -> Any:
+    """Return the ``pw`` sub-builder one scf or nscf step assembles from ``overrides``.
+
+    Mirrors ``aiida_koopmans.workgraphs.pw.assemble_pw_base_step``, which hands
+    a route's per-step override entry to this builder when the step runs. Use
+    it on an entry taken off a built graph to see what the pw.x calculation
+    receives.
+    """
+    from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
+
+    return PwBaseWorkChain.get_builder_from_protocol(
+        code=code, structure=structure, overrides=overrides
+    ).pw
+
+
 def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:
     """Return the tables the dispatcher synthesizes from the fixture's ``Si.dat``.
 
