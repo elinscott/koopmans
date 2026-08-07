@@ -212,6 +212,7 @@ class TestInstallRefusesWhatItCannotRun:
 
         class _Family:
             def set_default_stringency(self, stringency: str) -> None:
+                """Record the stringency the installer asks for."""
                 received["stringency"] = stringency
 
         def _install(**kwargs: Any) -> _Family:
