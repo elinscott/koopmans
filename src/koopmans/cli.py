@@ -41,6 +41,7 @@ from koopmans.aiida.setup.orchestrate import (
 from koopmans.aiida.setup.profile import load_koopmans_profile, setup_profile
 from koopmans.aiida.utils import suppress_aiida_logging
 from koopmans.input_file import read_input_file
+from koopmans.plotting.series import EnergyZero
 
 __all__ = [
     "cli",
@@ -503,6 +504,120 @@ def uninstall(yes: bool) -> None:
     # nothing here beyond the confirmation prompt so the call works even
     # when the profile is already broken / partially-deleted.
     uninstall_backend()
+
+
+@cli.group()
+def plot() -> None:
+    """Draw a figure from one or more finished runs."""
+
+
+# Shared by every ``plot`` subcommand.
+#
+# ``types-click`` still constrains ``path_type`` to str/bytes, which click
+# itself has not done for years, so each use of it needs the ignore below.
+output_option = click.option(
+    "-o",
+    "--output",
+    "output_path",
+    type=click.Path(dir_okay=False, path_type=Path),  # type: ignore[type-var]
+    default=None,
+    help="Where to write the figure; the extension sets the format.",
+)
+show_option = click.option(
+    "--show",
+    is_flag=True,
+    default=False,
+    help="Open an interactive window instead of writing a file (-o still writes one).",
+)
+zero_option = click.option(
+    "--zero",
+    type=click.Choice([kind.value for kind in EnergyZero]),
+    default=EnergyZero.VBM.value,
+    show_default=True,
+    help="Which energy to put at zero. One shift, from the first series that reports it, "
+    "is applied to every series on the axes.",
+)
+data_option = click.option(
+    "--data",
+    "data_path",
+    type=click.Path(dir_okay=False, path_type=Path),  # type: ignore[type-var]
+    default=None,
+    help="Also write the series the figure was drawn from, as JSON.",
+)
+
+
+@plot.command()
+@click.argument(
+    "folders",
+    nargs=-1,
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),  # type: ignore[type-var]
+)
+@output_option
+@show_option
+@zero_option
+@data_option
+@click.option(
+    "--label",
+    "labels",
+    multiple=True,
+    help="Rename a series; repeat to rename several, in order.",
+)
+def bandstructure(
+    folders: tuple[Path, ...],
+    output_path: Path | None,
+    show: bool,
+    zero: str,
+    data_path: Path | None,
+    labels: tuple[str, ...],
+) -> None:
+    """Draw the band structures of finished runs on one set of axes.
+
+    FOLDERS are directories `koopmans run` wrote. Every band structure across
+    all of them is drawn, so a DFT run and a Koopmans run given together
+    overlay, referenced to a single energy zero.
+
+    To export one band structure in Grace, gnuplot or dat form instead, use
+    `verdi data core.bands export`: those exporters take one node at a time,
+    and so lose both the overlay and its shared zero.
+    """
+    from koopmans.plotting import (
+        NoEnergyZeroError,
+        PathMismatchError,
+        PlottingError,
+        apply_energy_zero,
+        apply_labels,
+        check_paths_agree,
+        describe_energy_zero,
+        render_band_structures,
+        resolve_band_series,
+        write_series_json,
+    )
+
+    load_koopmans_profile()
+
+    kind = EnergyZero(zero)
+    try:
+        series, warnings = resolve_band_series(folders)
+        apply_labels(series, labels)
+        check_paths_agree(series)
+        value, reference = apply_energy_zero(series, kind)
+    except (PlottingError, PathMismatchError, NoEnergyZeroError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for warning in warnings:
+        click.echo(f"Warning: {warning}", err=True)
+
+    caption = describe_energy_zero(kind, value, reference, (reference or series[0]).units)
+
+    if data_path is not None:
+        write_series_json(series, data_path)
+        click.echo(f"Wrote {data_path} ({len(series)} series)")
+
+    target = output_path if output_path is not None or show else Path("bandstructure.png")
+    render_band_structures(series, output_path=target, show=show, zero=kind)
+    if target is not None:
+        click.echo(f"Wrote {target} ({len(series)} series, {caption})")
 
 
 def main() -> None:

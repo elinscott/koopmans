@@ -72,6 +72,7 @@ dependencies = [
     "ase>=3.23", # Bravais-lattice special k-points for explicit band paths
     "aiida-quantumespresso",
     "qe-tools", # QE's own unit-conversion constants
+    "matplotlib", # `koopmans plot`
     # Constraint only (not imported directly, but aiida-workgraph imports it):
     # every *released* aiida-shell subclasses the Code.Model API that
     # aiida-core removed after v2.8.0 (#6990), so this rides git master (see
