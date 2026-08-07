@@ -133,12 +133,12 @@ _REMOVED_KEYWORDS = [
 ]
 
 
-def _set_removed_keyword(d: dict[str, object], section: str, keyword: str) -> None:
-    """Set ``keyword`` under the (dotted) ``section`` path of an input dict."""
+def _set_keyword(d: dict[str, object], section: str, keyword: str, value: object = True) -> None:
+    """Set ``keyword`` to ``value`` under the (dotted) ``section`` path of an input dict."""
     target = d
     for part in section.split("."):
         target = target.setdefault(part, {})  # type: ignore[assignment]
-    target[keyword] = True
+    target[keyword] = value
 
 
 class TestRemovedKeywordsRejected:
@@ -150,7 +150,7 @@ class TestRemovedKeywordsRejected:
         from pydantic import ValidationError
 
         d = _minimal_si_input()
-        _set_removed_keyword(d, section, keyword)
+        _set_keyword(d, section, keyword)
 
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             KoopmansInput.model_validate(d)
@@ -161,12 +161,46 @@ class TestRemovedKeywordsRejected:
     ) -> None:
         """``read_input_file`` reports the retired keyword as an invalid keyword."""
         d = _minimal_si_input()
-        _set_removed_keyword(d, section, keyword)
+        _set_keyword(d, section, keyword)
         input_file = tmp_path / "input.json"
         input_file.write_text(json.dumps(d))
 
         with pytest.raises(ValueError, match=rf"{section}\.{keyword}.*is not a valid keyword"):
             read_input_file(input_file)
+
+
+_CUTOFF_KEYS = [
+    ("calculator_parameters.pw.system", "ecutwfc"),
+    ("calculator_parameters.pw.system", "ecutrho"),
+    ("calculator_parameters", "ecutwfc"),
+]
+
+
+class TestCutoffsMustBePositive:
+    """A cutoff of zero or less is rejected at parse."""
+
+    @pytest.mark.parametrize(("section", "keyword"), _CUTOFF_KEYS)
+    @pytest.mark.parametrize("value", [0.0, -45.0])
+    def test_a_non_positive_cutoff_is_rejected(
+        self, section: str, keyword: str, value: float, tmp_path: Path
+    ) -> None:
+        """The message names the key the input file used, not a ratio arithmetic failure.
+
+        Zero and a negative value fail differently downstream — one divides by
+        zero building the off-ratio warning, the other reports a ratio of -36 —
+        so both are asserted rather than one standing in for the pair.
+        """
+        d = _minimal_si_input()
+        _set_keyword(d, section, keyword, value)
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}`" in message
+        assert "must be greater than 0" in message
 
 
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:

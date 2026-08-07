@@ -321,7 +321,7 @@ class Wannier90InputParametersWithUpDown(RestrictedWannier90InputParameters):
 class CalculatorParametersInput(BaseModel):
     """Calculator-specific input parameters."""
 
-    ecutwfc: float | None = None
+    ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
     tot_magnetization: float | None = None
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
@@ -440,6 +440,7 @@ CUSTOM_MESSAGES = {
     "type": 'is the wrong type (should be "{expected_type}", not "{given_type}")',
     "extra_forbidden": "is not a valid keyword.",
     "missing": "was not provided.",
+    "greater_than": "must be greater than {gt}.",
 }
 
 
