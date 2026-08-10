@@ -14,17 +14,16 @@ logger = logging.getLogger(__name__)
 def ensure_pseudo_family_installed(pseudo_family: str) -> None:
     """Ensure a pseudopotential family is installed, installing it if necessary.
 
-    Supports PseudoDojo families with labels like:
+    Any already-installed family is used as it stands, whatever its label. A
+    label that names no installed family is downloaded, which koopmans can do
+    for three families:
         'PseudoDojo/0.4/LDA/SR/standard/upf'
-
-    SSSP families with labels like:
         'SSSP/1.3/PBEsol/efficiency'
-
-    And SG15 ONCV families with labels like:
         'SG15/1.2/PBE/SR'
 
     Raises:
-        ValueError: If the family format is not recognized or installation fails.
+        ValueError: If no family carries the label and koopmans cannot
+            download it, or if the download fails.
     """
     from aiida.common.exceptions import NotExistent
     from aiida_pseudo.groups.family import PseudoPotentialFamily
@@ -41,8 +40,27 @@ def ensure_pseudo_family_installed(pseudo_family: str) -> None:
     logger.info("Successfully installed pseudo family '%s'", pseudo_family)
 
 
+def pseudo_family_has_cutoffs(pseudo_family: str) -> bool:
+    """Report whether an installed family publishes recommended cutoffs.
+
+    True only if the family defines at least one cutoff stringency; without one
+    ``get_recommended_cutoffs`` has nothing to return.
+
+    Raises:
+        NotExistent: If the family is not installed.
+    """
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
+
+    family = PseudoPotentialFamily.collection.get(label=pseudo_family)
+    stringencies = getattr(family, "get_cutoff_stringencies", None)
+    return stringencies is not None and bool(stringencies())
+
+
 def install_pseudo_family(pseudo_family: str) -> None:
-    """Install a pseudopotential family. Parse the label and dispatch."""
+    """Download and install a pseudopotential family. Parse the label and dispatch.
+
+    No family may already carry the label.
+    """
     parts = pseudo_family.split("/")
 
     if parts[0] == "PseudoDojo" and len(parts) == 6:
@@ -53,8 +71,16 @@ def install_pseudo_family(pseudo_family: str) -> None:
         _install_sg15_family(pseudo_family, parts)
     else:
         raise ValueError(
-            f"Unrecognized pseudo family format: '{pseudo_family}'. "
-            "Expected 'PseudoDojo/version/functional/relativistic/protocol/format', "
+            f"No installed pseudopotential family has the label '{pseudo_family}', and "
+            "koopmans cannot download one under that label.\n"
+            "Install the pseudopotentials yourself, from a directory holding one file "
+            "per element:\n"
+            f"    aiida-pseudo install family <directory> {pseudo_family}\n"
+            "A family installed this way publishes no recommended cutoffs, so set "
+            "`calculator_parameters.ecutwfc` in your input file; `ecutrho` follows at "
+            "four times it.\n"
+            "Alternatively, name a family koopmans can download for you, as "
+            "'PseudoDojo/version/functional/relativistic/protocol/format', "
             "'SSSP/version/functional/protocol', "
             "or 'SG15/version/functional/relativistic'."
         )
@@ -179,9 +205,9 @@ def _install_sssp_family(label: str, parts: list[str]) -> None:
 # SG15 ONCV is published as a single frozen tarball on quantum-simulation.org. It
 # bundles every version x relativistic variant in one flat archive; the label's
 # version/relativistic parts select which subset of UPFs to install. There is no
-# upstream ``aiida-pseudo`` installer for SG15, so we install as a plain
-# ``CutoffsPseudoPotentialFamily`` so recommended cutoffs can be attached later
-# via ``family.set_cutoffs`` without a reinstall.
+# upstream ``aiida-pseudo`` installer for SG15, so we build the family ourselves.
+# SG15 publishes no recommended cutoffs, so it is a plain
+# ``PseudoPotentialFamily`` and ``ecutwfc``/``ecutrho`` come from the input file.
 _SG15_ARCHIVE_URL = (
     "http://www.quantum-simulation.org/potentials/sg15_oncv/sg15_oncv_upf_2020-02-06.tar.gz"
 )
@@ -199,7 +225,7 @@ def _install_sg15_family(label: str, parts: list[str]) -> None:
     import urllib.request
 
     from aiida_pseudo.data.pseudo import UpfData
-    from aiida_pseudo.groups.family import CutoffsPseudoPotentialFamily
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
 
     _, version, functional, relativistic = parts
 
@@ -257,6 +283,6 @@ def _install_sg15_family(label: str, parts: list[str]) -> None:
                 "The archive layout may have changed."
             )
 
-        family = CutoffsPseudoPotentialFamily.create_from_folder(flat, label, pseudo_type=UpfData)
+        family = PseudoPotentialFamily.create_from_folder(flat, label, pseudo_type=UpfData)
 
     click.echo(f"  Successfully installed '{label}' ({family.count()} pseudopotentials)")

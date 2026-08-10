@@ -40,18 +40,17 @@ def build_trajectory_workgraph(
     alphas (``ml: {mode: train}``), scores an existing model against them
     (``mode: test``), or applies an existing model in place of the Delta-SCF
     refinement (``mode: predict`` — each snapshot runs one trial KI at the
-    guess alphas, the model predicts every screening parameter from the
-    trial's self-Hartrees, and the final KI applies the predictions).
+    guess alphas, the model predicts every screening parameter from that
+    snapshot's descriptors, and the final KI applies the predictions).
 
     ``self_hartree`` needs nothing beyond the kcp.x runs themselves.
     ``power_spectrum`` builds its power spectra from a pw2wannier90.x
     ``wan_mode='decompose'`` pass over each snapshot's per-block Wannier
     functions, so it requires the Wannier-initialised route
     (``init_orbitals`` in ``mlwfs`` / ``projwfs``); the ``ml``
-    radial-basis settings become that pass's namelist keys. ``mode: predict``
-    supports ``self_hartree`` only: the decompose pass that builds the
-    power-spectrum descriptors is not wired into the DSCF's screening
-    stage, where the prediction runs.
+    radial-basis settings become that pass's namelist keys, and are
+    stamped into a trained model so a later run cannot predict with a
+    model built on a different basis. Both descriptors work in every mode.
 
     Each frame of the ``atoms.snapshots`` xyz becomes one ``snapshot_N``
     structure fed to the dynamic snapshots namespace. All frames share one
@@ -129,29 +128,19 @@ def _resolve_trajectory_ml(
     sources: the stored node named by ``ml:model`` (set as the graph input
     ``orm.Dict`` itself, so the run's provenance links back to the
     training artifact) or the JSON file named by ``ml:model_file``.
-    Predict-mode inputs that cannot take effect raise here: the
-    ``power_spectrum`` descriptor (its decompose pass is not wired into
-    the DSCF's screening stage, where the prediction runs) and
-    ``alpha_numsteps != 1``.
+    ``alpha_numsteps != 1`` under ``mode: predict`` raises here: the
+    refinement it counts is what the prediction replaces.
     """
     from json import load as json_load
 
     ml_mode = ml_config.mode
 
-    if ml_mode == MLMode.PREDICT:
-        if ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
-            raise NotImplementedError(
-                "ml:mode='predict' supports only descriptor='self_hartree': the "
-                "decompose pass that builds the power-spectrum descriptors is not wired "
-                "into the DSCF's screening stage, where the prediction runs. Use "
-                "descriptor='self_hartree'."
-            )
-        if workflow.alpha_numsteps != 1:
-            raise ValueError(
-                "ml:mode='predict' replaces the Delta-SCF refinement with a single "
-                "trial-KI prediction, so workflow:alpha_numsteps cannot take effect; "
-                "set it to 1."
-            )
+    if ml_mode == MLMode.PREDICT and workflow.alpha_numsteps != 1:
+        raise ValueError(
+            "ml:mode='predict' replaces the Delta-SCF refinement with a single "
+            "trial-KI prediction, so workflow:alpha_numsteps cannot take effect; "
+            "set it to 1."
+        )
 
     ml_model: dict[str, Any] | orm.Dict | None = None
     if ml_mode in (MLMode.TEST, MLMode.PREDICT):

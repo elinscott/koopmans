@@ -6,6 +6,8 @@ AiiDA-compatible data structures for use with workgraphs.
 
 from __future__ import annotations
 
+import math
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +40,10 @@ if TYPE_CHECKING:
 
 # Quantum ESPRESSO's own value, so that converted quantities match QE output
 BOHR_TO_ANGSTROM: float = CONSTANTS.bohr_to_ang
+
+# ``ecutrho / ecutwfc`` for a norm-conserving pseudopotential, which is what
+# kcp.x and kcw.x accept — and so the only kind koopmans runs.
+NORM_CONSERVING_DUAL: float = 4.0
 
 
 def code_parallelization(
@@ -575,6 +581,54 @@ def kpoints_input_to_kpoints_path(
     return kpts
 
 
+def _resolve_pw_cutoffs(system: dict[str, Any], kcp_ecutrho: float) -> None:
+    """Complete the ``SYSTEM`` cutoff pair in place, from ``ecutwfc``.
+
+    An unstated ``ecutrho`` becomes ``kcp_ecutrho``, or
+    ``NORM_CONSERVING_DUAL * ecutwfc`` when that is unset too. Whatever its
+    source, an ``ecutrho`` that is not :data:`NORM_CONSERVING_DUAL` times
+    ``ecutwfc`` takes effect with a warning naming the key it came from. With
+    neither cutoff stated the pair is left empty, for the pseudopotential
+    family to recommend.
+
+    Raises:
+        ValueError: If ``ecutrho`` is stated and ``ecutwfc`` is not.
+    """
+    ecutwfc = system.get("ecutwfc")
+    ecutrho = system.get("ecutrho")
+    source = "calculator_parameters.pw.system.ecutrho"
+
+    if ecutwfc is None:
+        if ecutrho is not None:
+            raise ValueError(
+                "`calculator_parameters.pw.system.ecutrho` is set without a wavefunction "
+                "cutoff, which would pair it with whatever the pseudopotential family "
+                "recommends. Set `calculator_parameters.ecutwfc`; `ecutrho` follows at "
+                f"{NORM_CONSERVING_DUAL:g} times it on its own."
+            )
+        return
+
+    if ecutrho is None:
+        if kcp_ecutrho:
+            # An explicit ``kcp.system.ecutrho`` keeps the pw.x runs on the grid
+            # of the CP supercell run the dft_init consistency checks compare
+            # against.
+            ecutrho = kcp_ecutrho
+            source = "calculator_parameters.kcp.system.ecutrho"
+        else:
+            ecutrho = NORM_CONSERVING_DUAL * ecutwfc
+        system["ecutrho"] = ecutrho
+
+    if not math.isclose(ecutrho, NORM_CONSERVING_DUAL * ecutwfc):
+        warnings.warn(
+            f"`{source}` = {ecutrho:g} Ry: ecutrho should be {NORM_CONSERVING_DUAL:g} x "
+            f"ecutwfc = {NORM_CONSERVING_DUAL * ecutwfc:g} Ry for norm-conserving "
+            f"pseudopotentials. Drop `{source}` to take that.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
 def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
     """Convert KoopmansInput to a PW input-parameter namelist dict.
 
@@ -596,16 +650,6 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     # Add ecutwfc if specified
     if calc_params.ecutwfc is not None:
         parameters["SYSTEM"]["ecutwfc"] = calc_params.ecutwfc
-        # Pin ecutrho alongside it (kcp.x convention: 4x for norm-conserving,
-        # same fallback as ``_extract_kcp_scalar_inputs``). Without this the
-        # pseudo family's placeholder ecutrho wins in protocol-built PW runs,
-        # putting them on a different grid from the CP supercell run that the
-        # dft_init consistency checks compare against. An explicit
-        # ``pw.system.ecutrho`` still overrides via the update below.
-        kcp_system = calc_params.kcp.system
-        parameters["SYSTEM"]["ecutrho"] = (
-            kcp_system.ecutrho if kcp_system.ecutrho else 4.0 * calc_params.ecutwfc
-        )
 
     # Add nbnd if specified
     if calc_params.nbnd is not None:
@@ -624,6 +668,11 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
         parameters["ELECTRONS"].update(
             pw_params.electrons.model_dump(exclude_none=True, exclude_defaults=True)
         )
+
+    # After the merge, so the pair is resolved from the cutoffs pw.x will run
+    # rather than from the top-level shorthand a ``pw.system`` block may replace.
+    _resolve_pw_cutoffs(parameters["SYSTEM"], calc_params.kcp.system.ecutrho)
+
     # Ensure all Path objects are converted to strings for JSON serialization
     parameters = _convert_paths_to_strings(parameters)
 

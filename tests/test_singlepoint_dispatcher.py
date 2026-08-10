@@ -149,6 +149,52 @@ class TestKcpDscfInputs:
         assert inputs["initial_alpha"] == workflow.alpha_guess
 
 
+_ACCEPTED_CUTOFF_SHAPES = [
+    ("the shorthand alone", {"ecutwfc": 45.0}),
+    ("a pw block restating the shorthand", {"ecutwfc": 45.0, "pw.system.ecutwfc": 45.0}),
+    ("pw and kcp stating one cutoff", {"pw.system.ecutwfc": 45.0, "kcp.system.ecutwfc": 45.0}),
+    ("a kcp density cutoff", {"ecutwfc": 45.0, "kcp.system.ecutrho": 180.0}),
+    ("a pw density cutoff", {"ecutwfc": 45.0, "pw.system.ecutrho": 180.0}),
+]
+
+
+class TestPwAndKcpCutoffsAgree:
+    """Every input the schema accepts puts pw.x and kcp.x on one grid."""
+
+    @pytest.mark.parametrize(
+        ("label", "overrides"),
+        _ACCEPTED_CUTOFF_SHAPES,
+        ids=[case[0] for case in _ACCEPTED_CUTOFF_SHAPES],
+    )
+    def test_both_codes_receive_the_same_pair(
+        self,
+        ozone_input: KoopmansInput,
+        aiida_profile: object,
+        label: str,
+        overrides: dict[str, float],
+    ) -> None:
+        """Reads the numbers each code is handed, rather than trusting the parse check.
+
+        The schema rejects an input that states two different cutoffs, which
+        says nothing about the ones it accepts: pw.x resolves its pair from the
+        ``pw`` block and kcp.x from the ``kcp`` block, by separate rules that a
+        shared input value is no guarantee of. Each shape below reaches the two
+        resolvers by a different route.
+        """
+        from koopmans.aiida.conversion import input_to_pw_parameters
+
+        # The tutorial's own shorthand is cleared first, so each shape states
+        # only the keys it names.
+        inp = _copy_with_calc_overrides(ozone_input, **{"ecutwfc": None, **overrides})
+
+        pw_system = input_to_pw_parameters(inp)["SYSTEM"]
+        kcp = kcp_dscf_inputs(inp)
+
+        assert pw_system["ecutwfc"] == pytest.approx(kcp["ecutwfc"])
+        assert pw_system["ecutrho"] == pytest.approx(kcp["ecutrho"])
+        assert (kcp["ecutwfc"], kcp["ecutrho"]) == pytest.approx((45.0, 180.0))
+
+
 class TestBuildSinglepointWorkgraphScopeGuards:
     """Scope-guard tests for ``build_singlepoint_workgraph``.
 

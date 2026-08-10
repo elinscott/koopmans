@@ -590,3 +590,73 @@ class TestPerStepKpointMeshRejected:
         d["kpoints"]["overrides"] = {step: {"grid": [4, 4, 4]}}
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             _build(d, codes={})
+
+
+class TestCutoffLessPseudoFamily:
+    """A family recommending no cutoffs drives this route's pw steps from the input.
+
+    The Wannier initialisation builds its own scf and nscf overrides rather
+    than going through ``prepare_common_inputs``, so it carries the cutoff
+    check of its own. The checks drive the built graph's override entries
+    into the pw protocol builder, which is what the steps do when they run.
+    """
+
+    @staticmethod
+    def _si_structure(d: dict[str, Any]) -> Any:
+        from koopmans.aiida.conversion import atoms_input_to_structure
+
+        return atoms_input_to_structure(KoopmansInput.model_validate(d).atoms)
+
+    @pytest.mark.parametrize("step", ["scf", "nscf"])
+    def test_the_step_takes_the_input_cutoffs_and_the_family_pseudos(
+        self,
+        aiida_profile_clean: Any,
+        dscf_codes: Any,
+        fake_sg15_family_without_cutoffs: Any,
+        step: str,
+    ) -> None:
+        """Both cutoffs and the family's own pseudos reach the pw.x calculation.
+
+        The family recommends nothing, so 20 Ry and its derived 80 Ry can only
+        have come from the input; the pseudo uuids say the builder resolved
+        them against the named family rather than some other one.
+        """
+        from tests.fixtures import pw_step_from_overrides
+
+        d = _si_dscf_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
+        wg = _build(d, dscf_codes)
+        structure = self._si_structure(d)
+
+        entry = wg.tasks["wannier_initialization"].inputs["wannier_overrides"][step].value
+        pw = pw_step_from_overrides(dscf_codes["pw"], structure, entry)
+
+        assert pw.parameters["SYSTEM"]["ecutwfc"] == pytest.approx(20.0)
+        assert pw.parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
+        expected = fake_sg15_family_without_cutoffs.get_pseudos(structure=structure)
+        assert pw.pseudos["Si"].uuid == expected["Si"].uuid
+
+    def test_no_cutoffs_at_all_names_the_family_and_the_keyword(
+        self,
+        aiida_profile_clean: Any,
+        dscf_codes: Any,
+        fake_sg15_family_without_cutoffs: Any,
+    ) -> None:
+        """A cutoff stated for kcp.x alone leaves the pw.x steps with none.
+
+        ``calculator_parameters.kcp.system.ecutwfc`` satisfies the kcp.x
+        requirement but never reaches the pw.x parameters, so this is the
+        input that arrives at the family with nothing to state. The route
+        reaches ``require_cutoffs_for_family`` nowhere else: drop the call and
+        the graph builds without complaint, carrying no wavefunction cutoff at
+        all into its pw.x steps.
+        """
+        d = _si_dscf_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
+        del d["calculator_parameters"]["ecutwfc"]
+        d["calculator_parameters"]["kcp"] = {"system": {"ecutwfc": 20.0}}
+
+        with pytest.raises(ValueError) as excinfo:
+            _build(d, dscf_codes)
+
+        message = str(excinfo.value)
+        assert fake_sg15_family_without_cutoffs.label in message
+        assert "calculator_parameters.ecutwfc" in message
