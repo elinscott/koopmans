@@ -139,7 +139,8 @@ def list_pseudo_families() -> None:
     click.echo("Koopmans functionals and `pw.x` require.")
     click.echo("\nName one of these as `pseudo_library` in the input file's `workflow` block, and")
     click.echo("koopmans installs it the first time it is used. To use pseudopotentials of your")
-    click.echo("own, run `aiida-pseudo install family <directory> <label>` and name that label.")
+    click.echo("own, run `aiida-pseudo install family <directory> <label>` and name that label;")
+    click.echo("it will recommend no cutoffs, so set `ecutwfc` in your input file.")
 
 
 def install_pseudo_family(pseudo_family: str) -> None:
