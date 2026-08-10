@@ -34,7 +34,7 @@ atoms:
 kpoints:
   grid: [2, 2, 2]                 # the mesh the Wannier functions are built on
   path: GLFG                      # the path the band structure is drawn along
-  density: 30
+  path_density: 30
 
 calculator_parameters:
   ecutwfc: 30.0                   # wavefunction cutoff (Ry)
