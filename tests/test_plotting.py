@@ -159,6 +159,20 @@ def blank_axes() -> Any:
     return plt.subplots()[1]
 
 
+@pytest.fixture(autouse=True)
+def close_figures() -> Any:
+    """Close every figure a test opened.
+
+    Held-open figures accumulate across the module until matplotlib warns
+    about it, and the warning lands in the output a ``CliRunner`` test then
+    asserts on.
+    """
+    yield
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
+
+
 def broken_path() -> BandSeries:
     """Return a series whose path runs G-X, then restarts at L and ends at G."""
     return series(
