@@ -36,7 +36,7 @@ class SystemNamelist(_SystemNamelist):
 
     ``ibrav``, ``nat`` and ``ntyp`` are derived from the input structure, not provided
     by the user. ``ecutwfc`` is optional at parse time; the dispatcher raises if it is
-    still unset when the workgraph is built.
+    still unset when the workgraph is built. Both cutoffs must be greater than zero.
     """
 
     # Excluded fields (see ``ControlNamelist`` above for the ClassVar rationale).
@@ -44,7 +44,8 @@ class SystemNamelist(_SystemNamelist):
     nat: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
     ntyp: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
     # Optional at parse time; the dispatcher raises if still unset at build time.
-    ecutwfc: float | None = None  # type: ignore[assignment]
+    ecutwfc: float | None = Field(default=None, gt=0.0)  # type: ignore[assignment]
+    ecutrho: float | None = Field(default=None, gt=0.0)
 
 
 class PWInputParameters(BaseModel):

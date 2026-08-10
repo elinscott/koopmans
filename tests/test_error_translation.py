@@ -16,7 +16,7 @@ import pytest
 
 from koopmans.aiida.workflows import advice_for, build_workgraph
 from koopmans.input_file import KoopmansInput
-from tests.test_conversion import _pw_input
+from tests.fixtures import silicon_pw_input as _pw_input
 from tests.test_dfpt_dispatcher import _si_dfpt_dict
 from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
 from tests.test_trajectory_dispatcher import _trajectory_input_dict
