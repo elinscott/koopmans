@@ -90,4 +90,11 @@ def install(label: str, parts: list[str]) -> None:
                 traceback=False,
             )
 
+        # Not redundant. ``install_pseudo_dojo`` sets low, normal and high in
+        # that order, and ``set_cutoffs`` makes a stringency the default only
+        # while it is the family's only one -- so the family would be left on
+        # `low`. "normal" is what aiida-pseudo's own `install pseudo-dojo`
+        # command defaults to. A run needing another stringency states
+        # `calculator_parameters.ecutwfc`, which takes precedence over any
+        # recommendation.
         family.set_default_stringency("normal")
