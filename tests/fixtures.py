@@ -625,6 +625,7 @@ def _install_fake_family(
     elements: dict[str, float],
     cutoffs: bool = False,
     has_so: bool = False,
+    recommended_cutoffs: bool = True,
 ) -> Any:
     """Install (or fetch) a fake pseudopotential family with synthetic UPF streams.
 
@@ -634,6 +635,8 @@ def _install_fake_family(
     builders that call ``get_builder_from_protocol`` eagerly at build time
     (the aiida-qe protocol machinery only accepts SSSP, PseudoDojo, or a
     cutoffs family); plain families cover ``ensure_pseudo_family_installed``.
+    ``recommended_cutoffs=False`` leaves that cutoffs family with no stringency
+    defined, the shape ``_install_sg15_family`` produces.
     ``has_so=True`` marks every pseudo fully relativistic.
     """
     from aiida.common.exceptions import NotExistent
@@ -657,7 +660,7 @@ def _install_fake_family(
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
         pseudos.append(upf.store())
     family.add_nodes(pseudos)
-    if cutoffs:
+    if cutoffs and recommended_cutoffs:
         family.set_cutoffs(
             {element: {"cutoff_wfc": 30.0, "cutoff_rho": 240.0} for element in elements},
             stringency="normal",
@@ -679,6 +682,28 @@ def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
     coexist in one session profile.
     """
     return _install_fake_family("SG15/1.0/PBE/SR", {"O": 6.0, "Si": 4.0}, cutoffs=True)
+
+
+@pytest.fixture
+def fake_sg15_family_without_cutoffs(aiida_profile: Any) -> Any:
+    """Install ``SG15/1.2/PBE/FR`` in the shape ``_install_sg15_family`` produces.
+
+    A ``CutoffsPseudoPotentialFamily`` with no stringency defined, so it can
+    recommend no cutoffs. A label of its own so it coexists with the other
+    SG15 fixtures in one session profile.
+    """
+    return _install_fake_family(
+        "SG15/1.2/PBE/FR", {"Si": 4.0}, cutoffs=True, recommended_cutoffs=False
+    )
+
+
+@pytest.fixture
+def fake_user_built_family(aiida_profile: Any) -> Any:
+    """Install a plain family, the shape ``aiida-pseudo install family`` produces.
+
+    No cutoff stringencies are even representable on this family class.
+    """
+    return _install_fake_family("MyPseudos/local", {"Si": 4.0})
 
 
 @pytest.fixture
@@ -747,6 +772,52 @@ def assert_ranks_settled_for_every_loaded_code(
         return dict(parallelization)
 
     return check
+
+
+def silicon_pw_input(
+    *,
+    pseudo_library: str = "SG15/1.2/PBE/SR",
+    parallelization: dict[str, Any] | None = None,
+    calculator_parameters: dict[str, Any] | None = None,
+    kpoints: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a minimal silicon ``dft_bands`` input dict for the wiring tests.
+
+    ``calculator_parameters`` replaces the default ``{"ecutwfc": 20.0}`` block
+    outright, so a caller can leave the cutoffs out entirely.
+    """
+    d: dict[str, Any] = {
+        "workflow": {"task": "dft_bands", "pseudo_library": pseudo_library},
+        "atoms": {
+            "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
+            "atomic_positions": {
+                "units": "crystal",
+                "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
+            },
+        },
+        "kpoints": kpoints or {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+        "calculator_parameters": (
+            {"ecutwfc": 20.0} if calculator_parameters is None else calculator_parameters
+        ),
+    }
+    if parallelization is not None:
+        d["parallelization"] = parallelization
+    return d
+
+
+def pw_step_from_overrides(code: Any, structure: Any, overrides: dict[str, Any]) -> Any:
+    """Return the ``pw`` sub-builder one scf or nscf step assembles from ``overrides``.
+
+    Mirrors ``aiida_koopmans.workgraphs.pw.assemble_pw_base_step``, which hands
+    a route's per-step override entry to this builder when the step runs. Use
+    it on an entry taken off a built graph to see what the pw.x calculation
+    receives.
+    """
+    from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
+
+    return PwBaseWorkChain.get_builder_from_protocol(
+        code=code, structure=structure, overrides=overrides
+    ).pw
 
 
 def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:

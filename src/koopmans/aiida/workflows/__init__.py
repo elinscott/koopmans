@@ -254,6 +254,32 @@ def check_pools_divide_ranks(
         )
 
 
+def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -> None:
+    """Reject an input that names no cutoffs against a family recommending none.
+
+    Args:
+        pseudo_family: Label of the family the pw.x steps will use.
+        parameters: The pw.x parameters the input file produced, whose
+            ``SYSTEM`` block carries ``ecutwfc`` when the input states it.
+
+    Raises:
+        ValueError: If the family publishes no recommended cutoffs and the
+            input states none either.
+    """
+    from koopmans.aiida.setup.pseudos import pseudo_family_has_cutoffs
+
+    if pseudo_family_has_cutoffs(pseudo_family):
+        return
+
+    if "ecutwfc" not in parameters.get("SYSTEM", {}):
+        raise ValueError(
+            f"The pseudopotential family `{pseudo_family}` publishes no recommended "
+            "cutoffs, so they must come from the input file: set "
+            "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it "
+            "unless `calculator_parameters.pw.system.ecutrho` states otherwise."
+        )
+
+
 def prepare_common_inputs(
     koopmans_input: KoopmansInput,
     override_keys: list[str],
@@ -263,7 +289,9 @@ def prepare_common_inputs(
 
     Converts the koopmans input into a structure, ensures the pseudo family is
     installed, and builds an overrides dict with a PW parameters entry for each
-    of the requested sub-workflow keys.
+    of the requested sub-workflow keys. An input naming no cutoffs against a
+    family recommending none is rejected here
+    (:func:`require_cutoffs_for_family`).
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -282,7 +310,10 @@ def prepare_common_inputs(
 
     ensure_pseudo_family_installed(pseudo_family)
 
+    require_cutoffs_for_family(pseudo_family, parameters)
+
     pw_overrides: dict[str, Any] = {"parameters": parameters}
+
     # The pw entry carries the pw.x parallelization directive: -npool rides
     # settings.cmdline; ntasks rides metadata.options.resources — both survive
     # get_builder_from_protocol's override merge (verified by eager build).

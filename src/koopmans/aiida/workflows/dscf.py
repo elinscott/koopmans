@@ -9,7 +9,7 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import reject_kpoint_overrides
+from koopmans.aiida.workflows import reject_kpoint_overrides, require_cutoffs_for_family
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -235,6 +235,9 @@ def dscf_wannier_init_inputs(
         validate_blocks_separate_occ_and_emp(blocks, nocc)
         validate_blocks_cover_all_occ_bands(blocks, nocc)
 
+    # The DSCF route never calls ``prepare_common_inputs``, so the cutoff check
+    # reaches its pw steps only from here.
+    require_cutoffs_for_family(pseudo_family, parameters)
     wannier_overrides: WannierizeOverrides = {
         "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
         "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},

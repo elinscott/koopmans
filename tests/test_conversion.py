@@ -14,6 +14,7 @@ from koopmans.aiida.conversion import (
     input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
+from tests.fixtures import silicon_pw_input as _pw_input
 
 SI_ALAT_BOHR = 10.2622
 
@@ -239,6 +240,46 @@ class TestInputToPwParameters:
         inp = KoopmansInput.model_validate(_pw_input())
         parameters = input_to_pw_parameters(inp)
         assert "calculation" not in parameters.get("CONTROL", {})
+
+    def test_ecutrho_follows_the_kcp_block_when_it_is_set(self, aiida_profile: Any) -> None:
+        """An explicit ``kcp.system.ecutrho`` puts pw.x on the CP supercell grid.
+
+        100 Ry rather than the four-times-20 the pair would take on its own,
+        so the assertion cannot be satisfied by the derivation. Off the
+        norm-conserving ratio it warns as a stated pw pair does, naming the
+        ``kcp`` key it came from rather than the ``pw`` one the input leaves
+        unset.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={"ecutwfc": 20.0, "kcp": {"system": {"ecutrho": 100.0}}}
+            )
+        )
+        with pytest.warns(UserWarning, match=r"`calculator_parameters\.kcp\.system\.ecutrho`"):
+            parameters = input_to_pw_parameters(inp)
+
+        assert parameters["SYSTEM"]["ecutrho"] == pytest.approx(100.0)
+
+    def test_ecutrho_from_the_kcp_block_on_the_ratio_is_silent(self, aiida_profile: Any) -> None:
+        """A ``kcp`` density cutoff already at four times ``ecutwfc`` warns about nothing.
+
+        Separates the warning from the source: it is the ratio that is
+        reported, not the fact that the value came from the ``kcp`` block.
+        """
+        import warnings
+
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(calculator_parameters={"ecutwfc": 20.0, "kcp": {"system": {"ecutrho": 80.0}}})
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            parameters = input_to_pw_parameters(inp)
+
+        assert parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
 
 
 class TestCodeParallelizationHelper:
@@ -640,30 +681,6 @@ class TestBuiltGraphCarriesExplicitRanks:
         implicit = [path for path, value in found if "num_mpiprocs_per_machine" not in value]
         assert implicit == []
         assert all(value["num_mpiprocs_per_machine"] == 4 for _, value in found)
-
-
-def _pw_input(
-    *,
-    pseudo_library: str = "SG15/1.2/PBE/SR",
-    parallelization: dict[str, Any] | None = None,
-    kpoints: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Return a minimal silicon dft_bands input dict for the wiring tests."""
-    d: dict[str, Any] = {
-        "workflow": {"task": "dft_bands", "pseudo_library": pseudo_library},
-        "atoms": {
-            "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
-            "atomic_positions": {
-                "units": "crystal",
-                "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
-            },
-        },
-        "kpoints": kpoints or {"grid": [2, 2, 2], "offset": [0, 0, 0]},
-        "calculator_parameters": {"ecutwfc": 20.0},
-    }
-    if parallelization is not None:
-        d["parallelization"] = parallelization
-    return d
 
 
 class TestDftBandsScfMesh:
