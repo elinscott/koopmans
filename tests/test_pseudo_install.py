@@ -213,11 +213,22 @@ def test_installed_labels_come_from_the_profile(
     assert SG15_LABEL in pseudos_mod.installed_pseudo_family_labels()
 
 
-def test_an_unrecognized_label_names_the_two_formats(aiida_profile_clean: Any) -> None:
-    """A label matching neither library's format is refused naming both."""
+def test_an_unrecognized_label_points_at_both_routes(aiida_profile_clean: Any) -> None:
+    """A label naming no downloadable family says so, and offers both ways on.
+
+    Not a format error: the label may be a perfectly good one for a family
+    the user installs themselves, so the message must lead with what was
+    checked rather than with the shape a label should have.
+    """
     import pytest
 
     from koopmans.aiida.setup.pseudos import install_pseudo_family
 
-    with pytest.raises(ValueError, match="Unrecognized pseudo family format"):
+    with pytest.raises(ValueError) as excinfo:
         install_pseudo_family("my-own-pseudos")
+
+    message = str(excinfo.value)
+    assert "Unrecognized pseudo family format" not in message
+    assert "No installed pseudopotential family has the label 'my-own-pseudos'" in message
+    assert "aiida-pseudo install family <directory> my-own-pseudos\n" in message
+    assert "koopmans pseudos" in message

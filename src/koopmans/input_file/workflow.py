@@ -64,8 +64,7 @@ class WorkflowConfig(BaseModel):
         default=True, description="whether or not to calculate the screening parameters ab-initio"
     )
     pseudo_library: str = Field(
-        description="the norm-conserving pseudopotential library to use "
-        "(for valid options, run `koopmans pseudos`)"
+        description="the label of the pseudopotential family to use. Any family you have installed yourself is used as it stands, whatever its label; a label naming no installed family is downloaded, which koopmans can do for the norm-conserving PseudoDojo and SG15 families `koopmans pseudos` lists. A family that publishes no recommended cutoffs takes them from `calculator_parameters.ecutwfc` instead"
     )
     screening_method: CalculateScreeningMethod = Field(
         default=CalculateScreeningMethod.DSCF,

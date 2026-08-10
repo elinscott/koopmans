@@ -14,14 +14,15 @@ logger = logging.getLogger(__name__)
 def ensure_pseudo_family_installed(pseudo_family: str) -> None:
     """Ensure a pseudopotential family is installed, installing it if necessary.
 
-    Supports PseudoDojo families with labels like:
+    Any already-installed family is used as it stands, whatever its label. A
+    label that names no installed family is downloaded, which koopmans can do
+    for the two norm-conserving libraries:
         'PseudoDojo/0.4/LDA/SR/standard/upf'
-
-    And SG15 ONCV families with labels like:
         'SG15/1.2/PBE/SR'
 
     Raises:
-        ValueError: If the family format is not recognized or installation fails.
+        ValueError: If no family carries the label and koopmans cannot
+            download it, or if the download fails.
     """
     from aiida.common.exceptions import NotExistent
     from aiida_pseudo.groups.family import PseudoPotentialFamily
@@ -142,10 +143,13 @@ def list_pseudo_families() -> None:
 
 
 def install_pseudo_family(pseudo_family: str) -> None:
-    """Install a pseudopotential family. Parse the label and dispatch.
+    """Download and install a pseudopotential family. Parse the label and dispatch.
+
+    No family may already carry the label.
 
     Raises:
-        ValueError: If the label names a family koopmans cannot run with.
+        ValueError: If the label names a family koopmans cannot run with, or
+            one it cannot download.
     """
     parts = pseudo_family.split("/")
 
@@ -162,10 +166,16 @@ def install_pseudo_family(pseudo_family: str) -> None:
         )
     else:
         raise ValueError(
-            f"Unrecognized pseudo family format: '{pseudo_family}'. "
-            "Expected 'PseudoDojo/version/functional/relativistic/protocol/upf' "
-            "or 'SG15/version/functional/relativistic'. "
-            "Run `koopmans pseudos` for every label koopmans accepts."
+            f"No installed pseudopotential family has the label '{pseudo_family}', and "
+            "koopmans cannot download one under that label.\n"
+            "Install the pseudopotentials yourself, from a directory holding one file "
+            "per element:\n"
+            f"    aiida-pseudo install family <directory> {pseudo_family}\n"
+            "A family installed this way publishes no recommended cutoffs, so set "
+            "`calculator_parameters.ecutwfc` in your input file; `ecutrho` follows at "
+            "four times it.\n"
+            "Alternatively, name a family koopmans can download for you: run "
+            "`koopmans pseudos` for every label it accepts."
         )
 
 
