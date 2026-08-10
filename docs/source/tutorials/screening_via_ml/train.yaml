@@ -14,7 +14,11 @@ workflow:
 
 ml:
   mode: train                     # fit a model on the computed screening parameters
-  descriptor: self_hartree        # what the model sees of each orbital
+  descriptor: power_spectrum   # what the model sees of each orbital
+  n_max: 6                     # radial basis of the orbital-density expansion,
+  l_max: 6                     # matching the legacy tutorial's
+  r_min: 1.0
+  r_max: 4.0
   estimator: ridge_regression     # what it fits
   occ_and_emp_together: false     # one model for filled orbitals, one for empty
 
