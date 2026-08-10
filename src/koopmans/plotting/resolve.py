@@ -173,7 +173,7 @@ _SUPERCELL_REASON = (
 )
 
 #: Why a wannierization draws a blank, whether the folder names the koopmans
-#: workgraph or one of the upstream workchains under it.
+#: workgraph or the calculation under it.
 _NO_WANNIER_PATH_REASON = (
     "wannier90 writes an interpolated band structure only when it is given "
     "both `bands_plot` and a k-point path, and no route sets either "
@@ -182,7 +182,7 @@ _NO_WANNIER_PATH_REASON = (
 
 #: Why a route can finish and still have no band structure to draw, keyed by
 #: the name of the workgraph the run built, or the process label of the
-#: workchain a folder inside it names.
+#: calculation a folder inside it names.
 _EMPTY_REASONS = {
     "KoopmansDSCFWorkflow": _SUPERCELL_REASON,
     "TrajectoryWorkflow": _SUPERCELL_REASON,
@@ -192,8 +192,6 @@ _EMPTY_REASONS = {
     ),
     "Wannierize": _NO_WANNIER_PATH_REASON,
     "WannierizeBlocks": _NO_WANNIER_PATH_REASON,
-    "Wannier90WorkChain": _NO_WANNIER_PATH_REASON,
-    "Wannier90BaseWorkChain": _NO_WANNIER_PATH_REASON,
     "Wannier90Calculation": _NO_WANNIER_PATH_REASON,
     "DielectricTask": "the dielectric route computes no band structure",
 }
