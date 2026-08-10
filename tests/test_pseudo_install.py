@@ -112,3 +112,112 @@ class TestVersion11IsComposedOver10:
 
         assert family.get_pseudo("Si").get_content() == offline_sg15_archive["Si_ONCV_PBE-1.0.upf"]
         assert set(family.elements) == {"Si", "O"}
+
+
+class TestTheInstallerRefusesWhatTheArchiveLacks:
+    """Each guard names what to change, before any pseudo lands in the profile."""
+
+    def test_a_non_pbe_functional_is_refused(self, aiida_profile_clean: Any) -> None:
+        """The archive is PBE-only, so the label's functional part must be PBE."""
+        import pytest
+
+        from koopmans.aiida.setup.pseudos import install_pseudo_family
+
+        with pytest.raises(ValueError, match="SG15 only provides PBE"):
+            install_pseudo_family("SG15/1.2/LDA/SR")
+
+    def test_an_unpackaged_version_is_refused(self, aiida_profile_clean: Any) -> None:
+        """A version the archive does not carry is named alongside the ones it does."""
+        import pytest
+
+        from koopmans.aiida.setup.pseudos import install_pseudo_family
+
+        with pytest.raises(ValueError, match=r"version '9.9' is not packaged"):
+            install_pseudo_family("SG15/9.9/PBE/SR")
+
+    def test_a_missing_variant_is_refused_before_the_download(
+        self, aiida_profile_clean: Any, monkeypatch: Any
+    ) -> None:
+        """1.2 publishes no FR members, and no bytes move before the refusal."""
+        import urllib.request
+
+        import pytest
+
+        from koopmans.aiida.setup.pseudos import install_pseudo_family
+
+        def _no_download(url: str) -> None:
+            raise AssertionError("the guard must fire before urlopen")
+
+        monkeypatch.setattr(urllib.request, "urlopen", _no_download)
+        with pytest.raises(ValueError, match=r"publishes no FR pseudopotentials at version 1\.2"):
+            install_pseudo_family("SG15/1.2/PBE/FR")
+
+    def test_a_tampered_archive_is_refused(
+        self, aiida_profile_clean: Any, offline_sg15_archive: dict[str, str], monkeypatch: Any
+    ) -> None:
+        """A checksum other than the pinned one stops the install cold."""
+        import pytest
+
+        from koopmans.aiida.setup import pseudos as pseudos_mod
+        from koopmans.aiida.setup.pseudos import install_pseudo_family
+
+        monkeypatch.setattr(pseudos_mod, "_SG15_ARCHIVE_SHA256", "0" * 64)
+        with pytest.raises(ValueError, match="checksum mismatch"):
+            install_pseudo_family(SG15_LABEL)
+
+
+def test_ensure_installs_an_absent_family(
+    aiida_profile_clean: Any, offline_sg15_archive: dict[str, str]
+) -> None:
+    """``ensure_pseudo_family_installed`` falls through to the installer when nothing matches."""
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
+
+    from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
+
+    ensure_pseudo_family_installed(SG15_LABEL)
+
+    assert PseudoPotentialFamily.collection.get(label=SG15_LABEL).count() == 2
+
+
+def test_an_archive_with_no_matching_members_is_named(
+    aiida_profile_clean: Any, offline_sg15_archive: dict[str, str], monkeypatch: Any
+) -> None:
+    """A version the table offers but the archive lacks fails naming the label.
+
+    The pre-download guard reads the table, so a table entry with no archive
+    members behind it is only caught here — the layout-changed error is what
+    a user would see if upstream re-released the tarball differently.
+    """
+    import pytest
+
+    from koopmans.aiida.setup import pseudos as pseudos_mod
+    from koopmans.aiida.setup.pseudos import install_pseudo_family
+
+    monkeypatch.setitem(pseudos_mod._SG15_VARIANTS, "1.3", {"SR": ("1.3",)})
+    with pytest.raises(ValueError, match=r"No UPF files matched .SG15/1\.3/PBE/SR."):
+        install_pseudo_family("SG15/1.3/PBE/SR")
+
+
+def test_installed_labels_come_from_the_profile(
+    aiida_profile_clean: Any, offline_sg15_archive: dict[str, str], monkeypatch: Any
+) -> None:
+    """The installed-label set reflects what the profile holds, not a cache."""
+    from koopmans.aiida.setup import profile as profile_mod
+    from koopmans.aiida.setup import pseudos as pseudos_mod
+
+    monkeypatch.setattr(profile_mod, "profile_exists", lambda: True)
+    monkeypatch.setattr(profile_mod, "load_koopmans_profile", lambda: None)
+
+    assert SG15_LABEL not in pseudos_mod.installed_pseudo_family_labels()
+    _installed(SG15_LABEL)
+    assert SG15_LABEL in pseudos_mod.installed_pseudo_family_labels()
+
+
+def test_an_unrecognized_label_names_the_two_formats(aiida_profile_clean: Any) -> None:
+    """A label matching neither library's format is refused naming both."""
+    import pytest
+
+    from koopmans.aiida.setup.pseudos import install_pseudo_family
+
+    with pytest.raises(ValueError, match="Unrecognized pseudo family format"):
+        install_pseudo_family("my-own-pseudos")

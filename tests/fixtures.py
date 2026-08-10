@@ -515,9 +515,11 @@ def fake_upf_content(
 # names its own revision in ``PP_INFO``, which is what lets a test say which of
 # them an installed pseudopotential is.
 SG15_ARCHIVE_MEMBERS: dict[str, tuple[str, float, bool, str]] = {
+    # 1.1 before 1.0 deliberately: overlay precedence must come from the
+    # revision, not from the order the tarball happens to list its members.
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.1.upf": ("Si", 4.0, False, "1.1"),
     "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.0.upf": ("Si", 4.0, False, "1.0"),
     "sg15_oncv_upf_2020-02-06/O_ONCV_PBE-1.0.upf": ("O", 6.0, False, "1.0"),
-    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.1.upf": ("Si", 4.0, False, "1.1"),
     "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.2.upf": ("Si", 4.0, False, "1.2"),
     "sg15_oncv_upf_2020-02-06/O_ONCV_PBE-1.2.upf": ("O", 6.0, False, "1.2"),
     "sg15_oncv_upf_2020-02-06/O_ONCV_PBE_FR-1.0.upf": ("O", 6.0, True, "1.0"),
@@ -548,6 +550,15 @@ def offline_sg15_archive(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
 
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        # The real tarball carries a directory entry and a README the
+        # installer's member walk must step over, so the fixture does too.
+        directory = tarfile.TarInfo("sg15/")
+        directory.type = tarfile.DIRTYPE
+        tar.addfile(directory)
+        readme = b"SG15 ONCV potentials"
+        info = tarfile.TarInfo("sg15/README")
+        info.size = len(readme)
+        tar.addfile(info, io.BytesIO(readme))
         for name in SG15_ARCHIVE_MEMBERS:
             payload = contents[Path(name).name].encode("utf-8")
             info = tarfile.TarInfo(name)
