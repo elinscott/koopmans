@@ -60,7 +60,9 @@ class TestTheListingIsDerived:
 
     def test_sg15_comes_from_the_installers_own_constants(self, monkeypatch: Any) -> None:
         """SG15 has no ``aiida-pseudo`` library, so its labels track the installer."""
-        monkeypatch.setattr(pseudos_mod, "_SG15_VARIANTS", {"7.7": {"SR": ("7.7",)}})
+        from koopmans.aiida.setup.pseudos import _sg15
+
+        monkeypatch.setattr(_sg15, "VARIANTS", {"7.7": {"SR": ("7.7",)}})
         output = _run(monkeypatch)
         assert "SG15/7.7/PBE/SR" in output
         assert "SG15/1.2/PBE/SR" not in output

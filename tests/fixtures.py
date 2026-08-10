@@ -539,7 +539,7 @@ def offline_sg15_archive(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     import tarfile
     import urllib.request
 
-    from koopmans.aiida.setup import pseudos
+    from koopmans.aiida.setup.pseudos import _sg15
 
     contents = {
         Path(name).name: fake_upf_content(
@@ -566,7 +566,7 @@ def offline_sg15_archive(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
             tar.addfile(info, io.BytesIO(payload))
     archive = buffer.getvalue()
 
-    monkeypatch.setattr(pseudos, "_SG15_ARCHIVE_SHA256", hashlib.sha256(archive).hexdigest())
+    monkeypatch.setattr(_sg15, "ARCHIVE_SHA256", hashlib.sha256(archive).hexdigest())
     monkeypatch.setattr(urllib.request, "urlopen", lambda url: io.BytesIO(archive))
     return contents
 
@@ -591,7 +591,7 @@ def _install_fake_family(
     ``CutoffsPseudoPotentialFamily`` with recommended cutoffs — needed by
     a build that states none of its own; ``cutoffs=False`` builds a plain
     ``PseudoPotentialFamily``, the shape both ``aiida-pseudo install family``
-    and ``_install_sg15_family`` produce.
+    and ``_sg15.install`` produce.
     ``recommended_cutoffs=False`` leaves the cutoffs family with no stringency
     defined, the shape ``-F pseudo.family.cutoffs`` produces on its own.
     ``has_so=True`` marks every pseudo fully relativistic.

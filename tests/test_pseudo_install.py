@@ -158,10 +158,9 @@ class TestTheInstallerRefusesWhatTheArchiveLacks:
         """A checksum other than the pinned one stops the install cold."""
         import pytest
 
-        from koopmans.aiida.setup import pseudos as pseudos_mod
-        from koopmans.aiida.setup.pseudos import install_pseudo_family
+        from koopmans.aiida.setup.pseudos import _sg15, install_pseudo_family
 
-        monkeypatch.setattr(pseudos_mod, "_SG15_ARCHIVE_SHA256", "0" * 64)
+        monkeypatch.setattr(_sg15, "ARCHIVE_SHA256", "0" * 64)
         with pytest.raises(ValueError, match="checksum mismatch"):
             install_pseudo_family(SG15_LABEL)
 
@@ -190,10 +189,9 @@ def test_an_archive_with_no_matching_members_is_named(
     """
     import pytest
 
-    from koopmans.aiida.setup import pseudos as pseudos_mod
-    from koopmans.aiida.setup.pseudos import install_pseudo_family
+    from koopmans.aiida.setup.pseudos import _sg15, install_pseudo_family
 
-    monkeypatch.setitem(pseudos_mod._SG15_VARIANTS, "1.3", {"SR": ("1.3",)})
+    monkeypatch.setitem(_sg15.VARIANTS, "1.3", {"SR": ("1.3",)})
     with pytest.raises(ValueError, match=r"No UPF files matched .SG15/1\.3/PBE/SR."):
         install_pseudo_family("SG15/1.3/PBE/SR")
 
