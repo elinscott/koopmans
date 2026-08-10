@@ -133,12 +133,12 @@ _REMOVED_KEYWORDS = [
 ]
 
 
-def _set_removed_keyword(d: dict[str, object], section: str, keyword: str) -> None:
-    """Set ``keyword`` under the (dotted) ``section`` path of an input dict."""
+def _set_keyword(d: dict[str, object], section: str, keyword: str, value: object = True) -> None:
+    """Set ``keyword`` to ``value`` under the (dotted) ``section`` path of an input dict."""
     target = d
     for part in section.split("."):
         target = target.setdefault(part, {})  # type: ignore[assignment]
-    target[keyword] = True
+    target[keyword] = value
 
 
 class TestRemovedKeywordsRejected:
@@ -150,7 +150,7 @@ class TestRemovedKeywordsRejected:
         from pydantic import ValidationError
 
         d = _minimal_si_input()
-        _set_removed_keyword(d, section, keyword)
+        _set_keyword(d, section, keyword)
 
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             KoopmansInput.model_validate(d)
@@ -161,12 +161,155 @@ class TestRemovedKeywordsRejected:
     ) -> None:
         """``read_input_file`` reports the retired keyword as an invalid keyword."""
         d = _minimal_si_input()
-        _set_removed_keyword(d, section, keyword)
+        _set_keyword(d, section, keyword)
         input_file = tmp_path / "input.json"
         input_file.write_text(json.dumps(d))
 
         with pytest.raises(ValueError, match=rf"{section}\.{keyword}.*is not a valid keyword"):
             read_input_file(input_file)
+
+
+_CUTOFF_KEYS = [
+    ("calculator_parameters.pw.system", "ecutwfc"),
+    ("calculator_parameters.pw.system", "ecutrho"),
+    ("calculator_parameters", "ecutwfc"),
+]
+
+
+class TestCutoffsMustBePositive:
+    """A cutoff of zero or less is rejected at parse."""
+
+    @pytest.mark.parametrize(("section", "keyword"), _CUTOFF_KEYS)
+    @pytest.mark.parametrize("value", [0.0, -45.0])
+    def test_a_non_positive_cutoff_is_rejected(
+        self, section: str, keyword: str, value: float, tmp_path: Path
+    ) -> None:
+        """The message names the key the input file used, not a ratio arithmetic failure.
+
+        Zero and a negative value fail differently downstream — one divides by
+        zero building the off-ratio warning, the other reports a ratio of -36 —
+        so both are asserted rather than one standing in for the pair.
+        """
+        d = _minimal_si_input()
+        _set_keyword(d, section, keyword, value)
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}`" in message
+        assert "must be greater than 0" in message
+
+
+def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object]:
+    """Return the minimal silicon input, its ``calculator_parameters`` replaced."""
+    d = _minimal_si_input()
+    d["calculator_parameters"] = calculator_parameters
+    return d
+
+
+_DISAGREEING_CUTOFFS = [
+    (
+        "pw and kcp state different wavefunction cutoffs",
+        {"pw": {"system": {"ecutwfc": 45.0}}, "kcp": {"system": {"ecutwfc": 20.0}}},
+        ["calculator_parameters.pw.system.ecutwfc", "calculator_parameters.kcp.system.ecutwfc"],
+    ),
+    (
+        "pw and kcp state different density cutoffs",
+        {
+            "ecutwfc": 45.0,
+            "pw": {"system": {"ecutrho": 180.0}},
+            "kcp": {"system": {"ecutrho": 300.0}},
+        },
+        ["calculator_parameters.pw.system.ecutrho", "calculator_parameters.kcp.system.ecutrho"],
+    ),
+    (
+        "a pw block overrides the shorthand kcp falls back to",
+        {"ecutwfc": 20.0, "nbnd": 8, "pw": {"system": {"ecutwfc": 45.0}}},
+        ["calculator_parameters.ecutwfc", "calculator_parameters.pw.system.ecutwfc"],
+    ),
+    (
+        "a kcp block states what the shorthand overrides",
+        {"ecutwfc": 20.0, "kcp": {"system": {"ecutwfc": 30.0}}},
+        ["calculator_parameters.ecutwfc", "calculator_parameters.kcp.system.ecutwfc"],
+    ),
+]
+
+_AGREEING_CUTOFFS = [
+    ("the shorthand alone", {"ecutwfc": 20.0}),
+    ("a pw block restating the shorthand", {"ecutwfc": 20.0, "pw": {"system": {"ecutwfc": 20.0}}}),
+    (
+        "pw and kcp stating one wavefunction cutoff",
+        {"pw": {"system": {"ecutwfc": 45.0}}, "kcp": {"system": {"ecutwfc": 45.0}}},
+    ),
+    (
+        "pw and kcp stating one density cutoff",
+        {
+            "ecutwfc": 45.0,
+            "pw": {"system": {"ecutrho": 180.0}},
+            "kcp": {"system": {"ecutrho": 180.0}},
+        },
+    ),
+    ("a pw cutoff with no kcp block", {"pw": {"system": {"ecutwfc": 45.0}}}),
+    (
+        "a kcp density cutoff with no pw block",
+        {"ecutwfc": 40.0, "kcp": {"system": {"ecutrho": 160.0}}},
+    ),
+]
+
+
+class TestCutoffsMustAgreeAcrossBlocks:
+    """pw.x and kcp.x read their cutoffs from different keys, and must get one grid."""
+
+    @pytest.mark.parametrize(
+        ("label", "calculator_parameters", "keys"),
+        _DISAGREEING_CUTOFFS,
+        ids=[case[0] for case in _DISAGREEING_CUTOFFS],
+    )
+    def test_disagreeing_cutoffs_are_rejected(
+        self,
+        label: str,
+        calculator_parameters: dict[str, object],
+        keys: list[str],
+        tmp_path: Path,
+    ) -> None:
+        """The message names every key that stated a value, so the user can pick one.
+
+        The shorthand cases are the reproduced defect: an input naming only
+        ``pw.system.ecutwfc`` beside the shorthand ran pw.x at 45 Ry and kcp.x
+        at 20 Ry, and neither block stated the cutoff twice.
+        """
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(_si_input_with(calculator_parameters)))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        for key in keys:
+            assert f"`{key}`" in message
+        assert "must run on the same grid" in message
+
+    @pytest.mark.parametrize(
+        ("label", "calculator_parameters"),
+        _AGREEING_CUTOFFS,
+        ids=[case[0] for case in _AGREEING_CUTOFFS],
+    )
+    def test_agreeing_cutoffs_are_accepted(
+        self, label: str, calculator_parameters: dict[str, object], tmp_path: Path
+    ) -> None:
+        """Restating a cutoff, and leaving one block silent, both stay legal.
+
+        Separates disagreement from mere repetition: a rule keyed on "two
+        blocks mention it" rather than on the values would reject these, and
+        the last case is the shape the O2 tutorial ships.
+        """
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(_si_input_with(calculator_parameters)))
+
+        read_input_file(input_file)
 
 
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:

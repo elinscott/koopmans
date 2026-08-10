@@ -114,8 +114,63 @@ for any other reason, start it again with
 
     $ koopmans backend daemon start
 
-and stop it with ``koopmans backend daemon stop``. ``koopmans backend uninstall``
-removes the whole setup, database included.
+and stop it with ``koopmans backend daemon stop``.
+
+The scheduler that hands your calculations onto the machine's cores has its own worker
+process, managed the same way:
+
+.. code-block:: console
+
+    $ koopmans backend hq status
+    HyperQueue server is running.
+      worker 3: pool of 24 CPU(s)
+      each calculation is given 4 MPI rank(s) by default
+
+Start it with ``koopmans backend hq start`` if it is not running. To change the pool
+without reinstalling, restart the worker with a new size:
+
+.. code-block:: console
+
+    $ koopmans backend hq restart --max-procs 28
+
+Keep the pool at least as large as the ranks one calculation is given — the second
+number above. A calculation asking for more ranks than the pool holds can never be
+scheduled, so it waits indefinitely rather than failing. To make each calculation
+smaller instead, rerun ``koopmans install --procs-per-calc``.
+
+``koopmans backend hq stop`` stops the worker but leaves the scheduler running, so the
+queue is not discarded. Check ``hq job summary`` before stopping a worker with work in
+flight: a task whose worker disappears may be retried on the next one, in the same
+directory as the interrupted run. ``koopmans backend uninstall`` removes the whole
+setup, database included.
+
+*******************
+ Pseudopotentials
+*******************
+
+You do not have to install pseudopotentials up front. The ``pseudo_library`` keyword of
+your input file names a family, and ``koopmans`` downloads that family the first time it
+is needed. It can fetch `PseudoDojo <http://www.pseudo-dojo.org/>`_, `SSSP
+<https://www.materialscloud.org/discover/sssp/table/efficiency>`_ and `SG15
+<http://www.quantum-simulation.org/potentials/sg15_oncv/>`_ families, named like
+
+- ``PseudoDojo/0.4/LDA/SR/standard/upf``
+- ``SSSP/1.3/PBEsol/efficiency``
+- ``SG15/1.2/PBE/SR``
+
+A family that you install yourself works just as well, under whatever label you give it:
+``koopmans`` downloads a family only when no installed one carries the label you asked
+for. This is the route for pseudopotentials it cannot fetch — the full-relativistic LDA
+sets that spin-orbit calculations need, for instance. Point ``aiida-pseudo`` at a
+directory holding one file per element:
+
+.. code-block:: console
+
+    $ aiida-pseudo install family <directory> my-lda-fr
+
+Then set ``pseudo_library`` to ``my-lda-fr``. A family installed this way publishes no
+recommended cutoffs, so state ``calculator_parameters.ecutwfc`` in your input file;
+``ecutrho`` follows at four times it, the ratio norm-conserving pseudopotentials use.
 
 ****************************
  Installing for development
