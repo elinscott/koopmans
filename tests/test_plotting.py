@@ -1439,8 +1439,9 @@ class TestFolderLabels:
 def wannierization_without_bands(tmp_path: Path, name: str, computer: orm.Computer) -> Path:
     """Write a folder naming a wannier90 calculation that interpolated nothing.
 
-    What the ZnO tutorial leaves on disk: no route hands wannier90 a k-path,
-    so the calculation finishes and publishes no ``interpolated_bands``.
+    What the ZnO tutorial leaves on disk: no route sets `bands_plot` or hands
+    wannier90 a k-path, so the calculation finishes and publishes no
+    ``interpolated_bands``.
     """
     calculation = make_process(
         W90_CALC, calcjob=True, computer=computer, process_label="Wannier90Calculation"
@@ -1499,6 +1500,10 @@ class TestEveryFolderContributes:
 
         assert "Leave out the folders above" not in str(caught.value)
         assert "koopmans issue #80" in str(caught.value)
+        # Both keywords are missing, and naming only the k-path would send the
+        # reader off to set one thing and find the bands still absent.
+        assert "bands_plot" in str(caught.value)
+        assert "k-point path" in str(caught.value)
 
     def test_a_folder_with_no_bands_is_named(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, runner: Any, tmp_path: Path
