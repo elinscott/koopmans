@@ -142,6 +142,17 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         series="Wannier interpolation",
         references=_no_references,
     ),
+    # A dump writes a folder per calculation, so the calculation is the only
+    # wannier90 step a folder can name; the base workchain above it owns the
+    # walk whenever a whole run is plotted, so the two never both match.
+    # aiida-wannier90 registers no reverse-resolvable entry point, so AiiDA
+    # stores its class path rather than an ``aiida.calculations:`` name.
+    BandProducer(
+        process_type="aiida_wannier90.calculations.wannier90.Wannier90Calculation",
+        socket="interpolated_bands",
+        series="Wannier interpolation",
+        references=_no_references,
+    ),
     *(
         BandProducer(
             process_type="aiida.workflows:wannier90_workflows.optimize",
@@ -155,29 +166,34 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
 
 _PRODUCER_TYPES = frozenset(producer.process_type for producer in BAND_PRODUCERS)
 
+#: Why a ΔSCF route draws a blank.
+_SUPERCELL_REASON = (
+    "the ΔSCF route computes on a supercell, and recovering primitive-cell "
+    "bands from it needs unfold-and-interpolate, which no route calls"
+)
+
+#: Why a wannierization draws a blank, whether the folder names the koopmans
+#: workgraph or one of the upstream workchains under it.
+_NO_WANNIER_PATH_REASON = (
+    "no route hands a k-point path to wannier90, so the Wannier "
+    "interpolation is never computed (koopmans issue #80)"
+)
+
 #: Why a route can finish and still have no band structure to draw, keyed by
-#: the name of the workgraph the run built.
+#: the name of the workgraph the run built, or the process label of the
+#: workchain a folder inside it names.
 _EMPTY_REASONS = {
-    "KoopmansDSCFWorkflow": (
-        "the ΔSCF route computes on a supercell, and recovering primitive-cell "
-        "bands from it needs unfold-and-interpolate, which no route calls"
-    ),
-    "TrajectoryWorkflow": (
-        "the ΔSCF route computes on a supercell, and recovering primitive-cell "
-        "bands from it needs unfold-and-interpolate, which no route calls"
-    ),
+    "KoopmansDSCFWorkflow": _SUPERCELL_REASON,
+    "TrajectoryWorkflow": _SUPERCELL_REASON,
     "SinglepointDFPTWorkflow": (
         "kcw.x interpolates a band structure only when it is given a k-point "
         "path; add `kpoints: {path: ...}` to the input file and rerun"
     ),
-    "Wannierize": (
-        "no route hands a k-point path to wannier90, so the Wannier "
-        "interpolation is never computed (koopmans issue #80)"
-    ),
-    "WannierizeBlocks": (
-        "no route hands a k-point path to wannier90, so the Wannier "
-        "interpolation is never computed (koopmans issue #80)"
-    ),
+    "Wannierize": _NO_WANNIER_PATH_REASON,
+    "WannierizeBlocks": _NO_WANNIER_PATH_REASON,
+    "Wannier90WorkChain": _NO_WANNIER_PATH_REASON,
+    "Wannier90BaseWorkChain": _NO_WANNIER_PATH_REASON,
+    "Wannier90Calculation": _NO_WANNIER_PATH_REASON,
     "DielectricTask": "the dielectric route computes no band structure",
 }
 

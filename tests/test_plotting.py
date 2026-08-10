@@ -41,6 +41,7 @@ PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
 PW_BASE = "aiida.workflows:quantumespresso.pw.base"
 KCW_HAM = "aiida.calculations:koopmans.kcw_ham"
 W90_BASE = "aiida.workflows:wannier90_workflows.base.wannier90"
+W90_CALC = "aiida_wannier90.calculations.wannier90.Wannier90Calculation"
 W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
 
 #: A cubic cell, so that reciprocal-space distances are easy to reason about.
@@ -1081,6 +1082,53 @@ class TestProducerOwnership:
         root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
         base = make_process(W90_BASE, caller=root, link_label="wannier90")
         attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_a_dumped_wannier90_calculation_is_plotted(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A folder naming the calculation alone yields its interpolated bands.
+
+        A dump writes ``aiida_node_metadata.yaml`` for calculations and for
+        the run's root, so the calculation is the only wannier90 step a folder
+        can name; recognizing the workchain above it and not the calculation
+        leaves that folder unplottable.
+        """
+        calculation = make_process(W90_CALC, calcjob=True, computer=aiida_localhost)
+        attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "03-wannier90", calculation)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+        assert found[0].energies == [[-5.0]]
+
+    def test_a_wannierization_yields_one_series_not_two(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The workchain returns the bands its calculation created, once.
+
+        Both steps carry the same socket, so a walk that did not stop at the
+        first would draw one band structure twice and give the figure a
+        legend keying two names to one curve.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        base = make_process(W90_BASE, caller=root, link_label="wannier90")
+        calculation = make_process(
+            W90_CALC,
+            caller=base,
+            link_label="iteration_01",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        bands = attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        bands.base.links.add_incoming(
+            base, link_type=LinkType.RETURN, link_label="interpolated_bands"
+        )
         folder = write_run_folder(tmp_path, "si_w90", root)
 
         found, _ = resolve_band_series([folder])
