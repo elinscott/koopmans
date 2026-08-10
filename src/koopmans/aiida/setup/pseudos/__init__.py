@@ -10,10 +10,14 @@ listing ``koopmans pseudos`` prints.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import click
 
 from . import _pseudodojo, _sg15
+
+if TYPE_CHECKING:
+    from aiida import orm
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +78,36 @@ def pseudo_family_has_cutoffs(pseudo_family: str) -> bool:
     family = PseudoPotentialFamily.collection.get(label=pseudo_family)
     stringencies = getattr(family, "get_cutoff_stringencies", None)
     return stringencies is not None and bool(stringencies())
+
+
+def require_norm_conserving_family(pseudo_family: str, structure: orm.StructureData) -> None:
+    """Reject a family whose pseudopotentials are not norm-conserving.
+
+    Reads the UPF header of the pseudopotential each of ``structure``'s kinds
+    would use. A header that states nothing about its type passes: the check
+    refuses on positive evidence of an ultrasoft or PAW pseudopotential, never
+    on a header it cannot read.
+
+    Raises:
+        ValueError: If any pseudopotential the run would use is ultrasoft or PAW.
+    """
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
+
+    from ._norm_conserving import non_norm_conserving_kinds
+
+    family = PseudoPotentialFamily.collection.get(label=pseudo_family)
+    offenders = non_norm_conserving_kinds(family.get_pseudos(structure=structure))
+    if not offenders:
+        return
+
+    named = ", ".join(f"{kind} ({pseudo_type})" for kind, pseudo_type in offenders.items())
+    raise ValueError(
+        f"The pseudopotential family `{pseudo_family}` is not norm-conserving: {named}. "
+        "Koopmans functionals are defined for norm-conserving pseudopotentials, and "
+        "kcp.x and kcw.x accept no other kind. Set `workflow.pseudo_library` to a "
+        "norm-conserving family; run `koopmans pseudos` for the ones koopmans can "
+        "download."
+    )
 
 
 def available_pseudo_families() -> dict[str, list[str]]:

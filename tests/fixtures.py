@@ -479,8 +479,112 @@ def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     }
 
 
+# Header excerpts transcribed from real pseudopotentials, which the synthetic
+# streams below cannot stand in for: generators disagree on how to spell a UPF
+# boolean, PAW files set the ultrasoft flag as well as their own, and the v1
+# layout is not XML at all.
+
+# PSlibrary's ultrasoft silicon (Si.pbe-n-rrkjus_psl.1.0.0.UPF): "true", not
+# "T", and ``pseudo_type`` reads USPP rather than US.
+UPF_V2_ULTRASOFT_HEADER = """\
+<UPF version="2.0.1">
+  <PP_INFO>
+Pseudopotential type: USPP
+  </PP_INFO>
+  <PP_HEADER
+     element="Si"
+     pseudo_type="USPP"
+     relativistic="scalar"
+     is_ultrasoft="true"
+     is_paw="false"
+     z_valence="4.000000000000E+000"/>
+</UPF>
+"""
+
+# PSlibrary's PAW silicon (Si.pbe-n-kjpaw_psl.1.0.0.UPF), which sets both
+# flags: reading ``is_ultrasoft`` alone would call this one ultrasoft.
+UPF_V2_PAW_HEADER = """\
+<UPF version="2.0.1">
+  <PP_HEADER
+     element="Si"
+     pseudo_type="PAW"
+     is_ultrasoft="true"
+     is_paw="true"
+     z_valence="4.000000000000E+000"/>
+</UPF>
+"""
+
+# A UPF v1 ultrasoft carbon (aiida-core's C_pbe_v1.2.uspp.F.UPF): no
+# ``<UPF version=...>`` wrapper and a fixed-format header whose third line
+# carries the type.
+UPF_V1_ULTRASOFT_HEADER = """\
+<PP_INFO>
+Generated using Vanderbilt code, version   7  3  6
+</PP_INFO>
+<PP_HEADER>
+   0                   Version Number
+  C                    Element
+   US                  Ultrasoft pseudopotential
+    T                  Nonlinear Core Correction
+SLA  PW   PBE  PBE     PBE  Exchange-Correlation functional
+    4.00000000000      Z valence
+</PP_HEADER>
+"""
+
+# Every PSlibrary pseudopotential that embeds its generation input carries a
+# Fortran namelist inside PP_INFO, whose bare ``&`` makes the file invalid
+# XML. An XML parser rejects the whole file; the header still reads.
+UPF_V2_ULTRASOFT_WITH_NAMELIST = """\
+<UPF version="2.0.1">
+  <PP_INFO>
+<PP_INPUTFILE>
+ &input
+   title='O',
+   config='[He] 2s2 2p4 3d-2',
+ /
+</PP_INPUTFILE>
+  </PP_INFO>
+  <PP_HEADER
+     element="O"
+     pseudo_type="USPP"
+     is_ultrasoft="true"
+     is_paw="false"
+     z_valence="6.000000000000E+000"/>
+</UPF>
+"""
+
+# A header that flags itself ultrasoft without naming a ``pseudo_type``, which
+# is the only thing the boolean flags decide: every other file states both.
+UPF_V2_FLAGGED_BUT_UNNAMED = """\
+<UPF version="2.0.1">
+  <PP_HEADER
+     element="Si"
+     is_ultrasoft="true"
+     is_paw="false"
+     z_valence="4.000000000000E+000"/>
+</UPF>
+"""
+
+# SG15's ONCV silicon (Si_ONCV_PBE-1.2.upf), the norm-conserving control.
+UPF_V2_NORM_CONSERVING_HEADER = """\
+<UPF version="2.0.1">
+  <PP_HEADER
+     element="Si"
+     pseudo_type="NC"
+     relativistic="scalar"
+     is_ultrasoft="F"
+     is_paw="F"
+     z_valence="4.000000000000E+000"/>
+</UPF>
+"""
+
+
 def fake_upf_content(
-    element: str, z_valence: float, has_so: bool | None = False, info: str | None = None
+    element: str,
+    z_valence: float,
+    has_so: bool | None = False,
+    info: str | None = None,
+    pseudo_type: str | None = None,
 ) -> str:
     """Return a synthetic UPF v2 stream for the fake test pseudos.
 
@@ -493,14 +597,24 @@ def fake_upf_content(
     error naming the pseudo. ``has_so=None`` omits the flag to exercise
     exactly that guard. ``info`` fills the ``PP_INFO`` block real generators
     write, which gives two otherwise identical streams content of their own.
+    ``pseudo_type`` writes the header attribute real generators use to say
+    what kind of pseudopotential this is ("NC", "US", "PAW"), along with the
+    ``is_ultrasoft``/``is_paw`` flags that agree with it; omitted by default,
+    which is the header that says nothing.
     """
     has_so_line = "" if has_so is None else f'has_so="{"T" if has_so else "F"}"\n'
     info_block = "" if info is None else f"<PP_INFO>\n{info}\n</PP_INFO>\n"
+    if pseudo_type is None:
+        type_lines = ""
+    else:
+        ultrasoft = "T" if pseudo_type.upper() in {"US", "USPP"} else "F"
+        paw = "T" if pseudo_type.upper() == "PAW" else "F"
+        type_lines = f'pseudo_type="{pseudo_type}"\nis_ultrasoft="{ultrasoft}"\nis_paw="{paw}"\n'
     return (
         f'<UPF version="2.0.1">\n'
         f"{info_block}"
         f'<PP_HEADER\nelement="{element}"\n'
-        f'z_valence="{z_valence}"\n{has_so_line}/>\n'
+        f'z_valence="{z_valence}"\n{type_lines}{has_so_line}/>\n'
         f"<PP_PSWFC>\n"
         f'<PP_CHI.1 l="0"/>\n<PP_CHI.2 l="1"/>\n'
         f"</PP_PSWFC>\n"
@@ -583,6 +697,7 @@ def _install_fake_family(
     cutoffs: bool = False,
     has_so: bool = False,
     recommended_cutoffs: bool = True,
+    pseudo_type: str | None = None,
 ) -> Any:
     """Install (or fetch) a fake pseudopotential family with synthetic UPF streams.
 
@@ -595,6 +710,7 @@ def _install_fake_family(
     ``recommended_cutoffs=False`` leaves the cutoffs family with no stringency
     defined, the shape ``-F pseudo.family.cutoffs`` produces on its own.
     ``has_so=True`` marks every pseudo fully relativistic.
+    ``pseudo_type`` writes that kind into every pseudo's header.
     """
     from aiida.common.exceptions import NotExistent
     from aiida_pseudo.data.pseudo.upf import UpfData
@@ -613,7 +729,7 @@ def _install_fake_family(
     family.store()
     pseudos = []
     for element, z_valence in elements.items():
-        content = fake_upf_content(element, z_valence, has_so=has_so)
+        content = fake_upf_content(element, z_valence, has_so=has_so, pseudo_type=pseudo_type)
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
         pseudos.append(upf.store())
     family.add_nodes(pseudos)
@@ -653,6 +769,28 @@ def fake_sg15_family_without_cutoffs(aiida_profile: Any) -> Any:
     return _install_fake_family(
         "SG15/1.1/PBE/FR", {"Si": 4.0}, cutoffs=True, recommended_cutoffs=False
     )
+
+
+@pytest.fixture
+def fake_ultrasoft_family(aiida_profile: Any) -> Any:
+    """Install a self-built family whose Si pseudopotential is ultrasoft.
+
+    The label says nothing about the kind of pseudopotential inside, which is
+    the whole point: only the header does.
+    """
+    return _install_fake_family("MyPseudos/ultrasoft", {"Si": 4.0}, cutoffs=True, pseudo_type="US")
+
+
+@pytest.fixture
+def fake_paw_family(aiida_profile: Any) -> Any:
+    """Install a self-built family whose Si pseudopotential is PAW."""
+    return _install_fake_family("MyPseudos/paw", {"Si": 4.0}, cutoffs=True, pseudo_type="PAW")
+
+
+@pytest.fixture
+def fake_declared_nc_family(aiida_profile: Any) -> Any:
+    """Install a self-built family whose Si pseudopotential declares itself NC."""
+    return _install_fake_family("MyPseudos/nc", {"Si": 4.0}, cutoffs=True, pseudo_type="NC")
 
 
 @pytest.fixture

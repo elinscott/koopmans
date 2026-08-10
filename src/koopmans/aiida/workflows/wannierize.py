@@ -315,7 +315,10 @@ def _build_wannierize_blocks_workgraph(
     nscf_parameters = copy.deepcopy(parameters)
     nscf_parameters.setdefault("SYSTEM", {})["nbnd"] = nbnd
     # This route assembles its own scf/nscf overrides instead of calling
-    # ``prepare_common_inputs``, so the cutoff check is its own too.
+    # ``prepare_common_inputs``, so the family checks are its own too.
+    from koopmans.aiida.setup.pseudos import require_norm_conserving_family
+
+    require_norm_conserving_family(pseudo_family, structure)
     require_cutoffs_for_family(pseudo_family, parameters)
     wannier_overrides: WannierizeOverrides = {
         "scf": {

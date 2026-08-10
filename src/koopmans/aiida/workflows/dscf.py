@@ -210,8 +210,11 @@ def dscf_wannier_init_inputs(
         validate_blocks_separate_occ_and_emp(blocks, nocc)
         validate_blocks_cover_all_occ_bands(blocks, nocc)
 
-    # The DSCF route never calls ``prepare_common_inputs``, so the cutoff check
-    # reaches its pw steps only from here.
+    # The DSCF route never calls ``prepare_common_inputs``, so the family
+    # checks reach its pw steps only from here.
+    from koopmans.aiida.setup.pseudos import require_norm_conserving_family
+
+    require_norm_conserving_family(pseudo_family, structure)
     require_cutoffs_for_family(pseudo_family, parameters)
     wannier_overrides: WannierizeOverrides = {
         "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
