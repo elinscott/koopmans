@@ -27,7 +27,6 @@ from koopmans.plotting import (
     PathMismatchError,
     PlottingError,
     apply_energy_zero,
-    apply_labels,
     check_paths_agree,
     describe_energy_zero,
     draw_band_structures,
@@ -68,6 +67,15 @@ def make_bands(
     bands.set_bands(energies, units="eV", occupations=occupations)  # type: ignore[no-untyped-call]
     if labels is not None:
         bands.labels = labels
+    return bands
+
+
+def make_spin_bands(kpoints: list[list[float]], energies: list[list[list[float]]]) -> orm.BandsData:
+    """Return a ``BandsData`` holding one table per spin channel."""
+    bands = orm.BandsData()
+    bands.set_cell(CUBIC)  # type: ignore[no-untyped-call]
+    bands.set_kpoints(kpoints)  # type: ignore[no-untyped-call]
+    bands.set_bands(np.asarray(energies, dtype=float), units="eV")  # type: ignore[no-untyped-call]
     return bands
 
 
@@ -310,19 +318,6 @@ class TestEnergyZero:
 
 class TestSeriesRecords:
     """The records the resolver hands the renderer."""
-
-    def test_labels_are_applied_in_order(self) -> None:
-        """``--label`` renames the leading series and leaves the rest alone."""
-        first, second = series("DFT"), series("KI")
-
-        apply_labels([first, second], ("LDA",))
-
-        assert (first.label, second.label) == ("LDA", "KI")
-
-    def test_too_many_labels_is_an_error(self) -> None:
-        """More labels than series is a typo, not a silent no-op."""
-        with pytest.raises(ValueError, match="only 1 band structure"):
-            apply_labels([series()], ("one", "two"))
 
     def test_data_file_holds_the_energies_and_the_zero(self, tmp_path: Path) -> None:
         """``--data`` writes energies as computed plus the shift that was applied.
@@ -806,6 +801,28 @@ class TestRenderer:
 
         assert [text.get_text() for text in axes.get_xticklabels()] == ["\u0393", "X"]
 
+    def test_the_legend_can_be_asked_for_on_one_curve(self) -> None:
+        """A caller that named its one series gets a key naming it.
+
+        The control is ``test_one_series_carries_no_legend`` above: the same
+        single series draws no key when nothing asks for one.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")], legend=True)
+
+        legend = axes.get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == ["DFT"]
+
+    def test_the_legend_can_be_refused_on_an_overlay(self) -> None:
+        """Asking for no key overrides the rule that an overlay carries one."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT"), series("KI")], legend=False)
+
+        assert axes.get_legend() is None
+
     def test_the_energy_axis_spans_the_bands_by_default(self) -> None:
         """With no range asked for, every band stays on the figure.
 
@@ -999,6 +1016,69 @@ class TestCommand:
         payload = json.loads((tmp_path / "zno.json").read_text())
         assert payload["series"][0]["energies"][0][0] == pytest.approx(-130.0)
 
+    def test_a_label_names_the_curve_and_brings_the_legend_back(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """Naming one folder's series is asking for it to be named on the figure.
+
+        The rule that a single curve carries no key exists to keep noise off a
+        figure nobody asked to annotate; an explicit --label is that asking, and
+        without this the label would be input with no effect.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--label",
+                "KI@LDA",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        legend = drawn_axes[-1].get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == ["KI@LDA"]
+
+    def test_one_folder_unnamed_still_carries_no_legend(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """The control: the key comes back for the label, not for the option's sake."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert drawn_axes[-1].get_legend() is None
+
+    def test_a_label_count_mismatch_is_reported(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The message states both counts, rather than padding or truncating."""
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(first), str(second), "--label", "DFT"],
+        )
+
+        assert result.exit_code == 1
+        assert "1 --label value(s) were given for 2 folder(s)" in result.output
+
     def test_an_inverted_ylim_is_refused(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:
@@ -1165,6 +1245,127 @@ class TestProducerOwnership:
 
         assert [item.label for item in found] == ["Wannier interpolation"]
         assert found[0].energies == [[-4.0]]
+
+
+# ----------------------------------------------------------------------
+# Naming the folders
+# ----------------------------------------------------------------------
+
+
+class TestFolderLabels:
+    """``--label`` names a folder, and every curve that folder contributes."""
+
+    def test_each_label_names_its_own_folder(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Labels pair with the folders positionally, in the order given.
+
+        Asserting the order of the names alone would pass just as well if the
+        two were paired the other way round, so each name is checked against
+        the bands of the folder it was given for.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second], ("DFT", "KI@LDA"))
+
+        named = {item.label: item for item in found}
+        assert list(named) == ["DFT", "KI@LDA"]
+        assert named["DFT"].vbm == pytest.approx(6.0)
+        assert named["KI@LDA"].vbm == pytest.approx(5.4)
+
+    def test_no_labels_keeps_the_derived_names(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The control: without labels the folder-qualified names stand.
+
+        Distinguishes naming from the prefixing that happens either way, which
+        a test only of the labelled case would leave unpinned.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second])
+
+        assert [item.label for item in found] == ["si_lda: DFT", "si_ki: DFT"]
+
+    def test_a_label_replaces_the_folder_prefix(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A named folder is not also prefixed with its own directory name.
+
+        The prefix exists to tell two folders apart; a name the user chose
+        already does that, and 'si_lda: DFT' spends the legend twice over.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second], ("DFT", "KI"))
+
+        assert all("si_" not in item.label for item in found)
+
+    def test_a_label_keeps_the_spin_channel(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A collinear folder becomes two curves, and one name covers both.
+
+        The channel is what tells them apart, so the name is applied to it
+        rather than in place of it; dropping it would key the legend twice to
+        the same text.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+        chain = make_process(PW_BANDS, caller=root, link_label="bands")
+        attach(
+            chain,
+            "band_structure",
+            make_spin_bands(
+                [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+                [[[-5.0, 5.0], [-4.0, 6.0]], [[-5.2, 5.2], [-4.2, 6.2]]],
+            ),
+        )
+        folder = write_run_folder(tmp_path, "fe", root)
+
+        found, _ = resolve_band_series([folder], ("Iron",))
+
+        assert [item.label for item in found] == ["Iron (up)", "Iron (down)"]
+
+    def test_a_label_keeps_the_block_qualifier(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A per-block fan-out keeps the step name each curve ran under."""
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        for block in ("wannierize_occ", "wannierize_emp"):
+            step = make_process(W90_BASE, caller=root, link_label=block)
+            attach(step, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder], ("Wannier",))
+
+        assert [item.label for item in found] == [
+            "Wannier (wannierize_occ)",
+            "Wannier (wannierize_emp)",
+        ]
+
+    def test_fewer_labels_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Padding the rest with derived names would hide the typo."""
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([first, second], ("DFT",))
+
+        assert "1 --label value(s) were given for 2 folder(s)" in str(caught.value)
+
+    def test_more_labels_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The extra name belongs to a folder that was left off the command."""
+        folder = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([folder], ("DFT", "KI"))
+
+        assert "2 --label value(s) were given for 1 folder(s)" in str(caught.value)
+
+    def test_the_count_is_checked_before_the_folders_are_read(self, tmp_path: Path) -> None:
+        """A miscount is reported without a profile or a run behind the folders.
+
+        The check is on the command line alone, so it does not depend on the
+        folders being readable, let alone on their runs being in this profile.
+        """
+        missing = tmp_path / "not_a_run"
+        missing.mkdir()
+
+        with pytest.raises(ValueError, match="--label"):
+            resolve_band_series([missing], ("DFT", "KI"))
 
 
 # ----------------------------------------------------------------------

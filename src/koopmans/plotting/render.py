@@ -162,6 +162,7 @@ def draw_band_structures(
     series: Sequence[BandSeries],
     zero: EnergyZero = EnergyZero.NONE,
     ylim: tuple[float, float] | None = None,
+    legend: bool | None = None,
 ) -> None:
     """Draw every series onto one set of axes, shifted by its own ``zero``.
 
@@ -176,6 +177,8 @@ def draw_band_structures(
     :param zero: which energy was subtracted, which the y axis names.
     :param ylim: the energy range to show, in the shifted energies the axis
         is drawn in. ``None`` shows every band in full.
+    :param legend: draw the key, or leave it out. ``None`` draws it for an
+        overlay and leaves it out for a single curve.
     """
     cell = _shared_cell(series)
     drawn_distances: list[np.ndarray] = []
@@ -213,7 +216,8 @@ def draw_band_structures(
 
     axes.set_ylabel(energy_axis_label(zero, series[0].units))
     # One curve needs no key to tell it from the others.
-    if len(series) > 1:
+    wanted = len(series) > 1 if legend is None else legend
+    if wanted:
         axes.legend(frameon=False, fontsize="small")
 
 
@@ -223,6 +227,7 @@ def render_band_structures(
     show: bool = False,
     zero: EnergyZero = EnergyZero.NONE,
     ylim: tuple[float, float] | None = None,
+    legend: bool | None = None,
 ) -> None:
     """Draw the series and write or show the figure.
 
@@ -233,6 +238,8 @@ def render_band_structures(
     :param zero: which energy was subtracted, which the y axis names.
     :param ylim: the energy range to show, in the shifted energies the axis
         is drawn in. ``None`` shows every band in full.
+    :param legend: draw the key, or leave it out. ``None`` draws it for an
+        overlay and leaves it out for a single curve.
     """
     import matplotlib
 
@@ -243,7 +250,7 @@ def render_band_structures(
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(figsize=(6.0, 4.5))
-    draw_band_structures(axes, series, zero=zero, ylim=ylim)
+    draw_band_structures(axes, series, zero=zero, ylim=ylim, legend=legend)
     figure.tight_layout()
 
     if output_path is not None:

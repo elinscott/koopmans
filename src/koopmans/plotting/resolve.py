@@ -296,32 +296,40 @@ def _cell_of(bands: orm.BandsData) -> list[list[float]] | None:
 
 
 def _series_from_bands(
-    node: orm.ProcessNode, producer: BandProducer, bands: orm.BandsData, name: str
-) -> list[BandSeries]:
+    node: orm.ProcessNode,
+    producer: BandProducer,
+    bands: orm.BandsData,
+    name: str,
+    qualifier: str,
+) -> list[tuple[BandSeries, str]]:
     """Return the series a single ``BandsData`` output contributes.
 
     A collinear calculation stores one table per spin channel and becomes one
-    series per channel.
+    series per channel. Each series is paired with the qualifier that tells it
+    from its siblings within the run, which a name the caller chose keeps.
     """
     vbm, fermi = producer.references(node, bands)
     energies = np.asarray(bands.get_bands(), dtype=np.float64)  # type: ignore[no-untyped-call]
     channels: list[tuple[str, np.ndarray[Any, Any]]] = (
-        [(f"{name} ({label})", energies[index]) for index, label in enumerate(("up", "down"))]
+        [(f"{qualifier} ({label})", energies[index]) for index, label in enumerate(("up", "down"))]
         if energies.ndim == 3
-        else [(name, energies)]
+        else [(qualifier, energies)]
     )
     return [
-        BandSeries(
-            label=label,
-            kpoints=[list(map(float, kpoint)) for kpoint in bands.get_kpoints()],  # type: ignore[no-untyped-call]
-            energies=table.tolist(),
-            cell=_cell_of(bands),
-            path_labels=[(int(index), str(text)) for index, text in (bands.labels or [])],
-            units=str(getattr(bands, "units", None) or "eV"),
-            vbm=vbm,
-            fermi=fermi,
+        (
+            BandSeries(
+                label=f"{name}{suffix}",
+                kpoints=[list(map(float, kpoint)) for kpoint in bands.get_kpoints()],  # type: ignore[no-untyped-call]
+                energies=table.tolist(),
+                cell=_cell_of(bands),
+                path_labels=[(int(index), str(text)) for index, text in (bands.labels or [])],
+                units=str(getattr(bands, "units", None) or "eV"),
+                vbm=vbm,
+                fermi=fermi,
+            ),
+            suffix,
         )
-        for label, table in channels
+        for suffix, table in channels
     ]
 
 
@@ -360,8 +368,13 @@ def _producing_steps(root: orm.ProcessNode) -> list[orm.ProcessNode]:
     return sorted(found, key=lambda step: (step.ctime, step.pk))
 
 
-def _series_from_node(node: orm.ProcessNode) -> list[BandSeries]:
-    """Return every declared band structure a run produced, in run order."""
+def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
+    """Return every declared band structure a run produced, in run order.
+
+    Each series is paired with its qualifier: the parenthesised text that tells
+    it from the other series of the same run, empty when the run produced only
+    one.
+    """
     matches = []
     for step in _producing_steps(node):
         for producer in BAND_PRODUCERS:
@@ -377,12 +390,10 @@ def _series_from_node(node: orm.ProcessNode) -> list[BandSeries]:
     for _, producer, _ in matches:
         counts[producer.series] = counts.get(producer.series, 0) + 1
 
-    series: list[BandSeries] = []
+    series: list[tuple[BandSeries, str]] = []
     for step, producer, bands in matches:
-        name = producer.series
-        if counts[name] > 1:
-            name = f"{name} ({_step_name(step)})"
-        series += _series_from_bands(step, producer, bands, name)
+        qualifier = f" ({_step_name(step)})" if counts[producer.series] > 1 else ""
+        series += _series_from_bands(step, producer, bands, producer.series, qualifier)
     return series
 
 
@@ -411,34 +422,49 @@ def _nothing_plottable(empty: Sequence[tuple[Path, orm.ProcessNode]], total: int
     return PlottingError("\n".join(lines))
 
 
-def resolve_band_series(folders: Sequence[Path]) -> tuple[list[BandSeries], list[str]]:
+def resolve_band_series(
+    folders: Sequence[Path], labels: Sequence[str] = ()
+) -> tuple[list[BandSeries], list[str]]:
     """Return the band structures of the given runs, and any warnings.
 
     Series are labelled by the step that produced them, prefixed by the folder
-    name when more than one folder is on the axes. Every folder must carry a
-    band structure: drawing fewer curves than folders asked for reads as a
-    figure of them all.
+    name when more than one folder is on the axes. ``labels`` names the folders
+    instead, one per folder in the order they were given; a folder that yields
+    several series keeps the qualifier telling them apart, so one name covers a
+    per-spin or per-block fan-out. Every folder must carry a band structure:
+    drawing fewer curves than folders asked for reads as a figure of them all.
 
+    :raises ValueError: if some but not all of the folders are named.
     :raises PlottingError: if a folder is not a run directory, its run is not
         in this profile, or any of them holds nothing plottable.
     """
+    if labels and len(labels) != len(folders):
+        raise ValueError(
+            f"{len(labels)} --label value(s) were given for {len(folders)} folder(s). "
+            "Give one --label per folder, in the order the folders are listed, or "
+            "none at all."
+        )
+
     nodes = [run_node(folder) for folder in folders]
 
     series: list[BandSeries] = []
     warnings: list[str] = []
     empty: list[tuple[Path, orm.ProcessNode]] = []
-    for folder, node in zip(folders, nodes, strict=True):
+    for index, (folder, node) in enumerate(zip(folders, nodes, strict=True)):
         warning = _failure_warning(folder, node)
         if warning is not None:
             warnings.append(warning)
         found = _series_from_node(node)
         if not found:
             empty.append((folder, node))
-        if len(folders) > 1:
+        if labels:
+            for item, qualifier in found:
+                item.label = f"{labels[index]}{qualifier}"
+        elif len(folders) > 1:
             prefix = folder.name or folder.resolve().name
-            for item in found:
+            for item, _ in found:
                 item.label = f"{prefix}: {item.label}"
-        series += found
+        series += [item for item, _ in found]
 
     if empty:
         raise _nothing_plottable(empty, len(folders))

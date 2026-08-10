@@ -585,7 +585,10 @@ ylim_option = click.option(
     "--label",
     "labels",
     multiple=True,
-    help="Rename a series; repeat to rename several, in order.",
+    metavar="TEXT",
+    help="Name a folder on the legend; repeat once per folder, in the order the "
+    "folders are listed. A folder drawn as several curves keeps what tells them "
+    "apart, such as the spin channel.",
 )
 def bandstructure(
     folders: tuple[Path, ...],
@@ -600,7 +603,10 @@ def bandstructure(
 
     FOLDERS are directories `koopmans run` wrote. Every band structure across
     all of them is drawn, so a DFT run and a Koopmans run given together
-    overlay, referenced to a single energy zero.
+    overlay, referenced to a single energy zero. Each is named after the step
+    that produced it unless --label names it:
+
+        koopmans plot bandstructure dft ki --label DFT --label "KI@LDA"
 
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
@@ -611,7 +617,6 @@ def bandstructure(
         PathMismatchError,
         PlottingError,
         apply_energy_zero,
-        apply_labels,
         check_paths_agree,
         describe_energy_zero,
         render_band_structures,
@@ -623,8 +628,7 @@ def bandstructure(
 
     kind = EnergyZero(zero)
     try:
-        series, warnings = resolve_band_series(folders)
-        apply_labels(series, labels)
+        series, warnings = resolve_band_series(folders, labels)
         check_paths_agree(series)
         value, reference = apply_energy_zero(series, kind)
     except (PlottingError, PathMismatchError, NoEnergyZeroError, ValueError) as exc:
@@ -640,7 +644,16 @@ def bandstructure(
         click.echo(f"Wrote {data_path} ({len(series)} series)")
 
     target = output_path if output_path is not None or show else Path("bandstructure.png")
-    render_band_structures(series, output_path=target, show=show, zero=kind, ylim=ylim)
+    # Naming a series is asking for it to be named on the figure, so an
+    # explicit label brings the legend back for a single curve.
+    render_band_structures(
+        series,
+        output_path=target,
+        show=show,
+        zero=kind,
+        ylim=ylim,
+        legend=True if labels else None,
+    )
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series, {caption})")
 
