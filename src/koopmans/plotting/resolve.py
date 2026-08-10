@@ -392,16 +392,22 @@ def _plotted_sockets() -> str:
     return ", ".join(names)
 
 
-def _nothing_plottable(folders: Sequence[Path], nodes: Sequence[orm.ProcessNode]) -> PlottingError:
-    """Return the error naming each route that ran and why it drew a blank."""
-    lines = [f"No band structure to plot in {', '.join(str(folder) for folder in folders)}."]
-    for folder, node in zip(folders, nodes, strict=True):
+def _nothing_plottable(empty: Sequence[tuple[Path, orm.ProcessNode]], total: int) -> PlottingError:
+    """Return the error naming each route that ran and why it drew a blank.
+
+    ``total`` is how many folders were asked for, so that the message can say
+    whether any of the others carry a band structure.
+    """
+    lines = [f"No band structure to plot in {', '.join(str(folder) for folder, _ in empty)}."]
+    for folder, node in empty:
         route = _route_name(node)
         reason = _EMPTY_REASONS.get(
             route,
             f"no step of it produced one of the outputs koopmans plots ({_plotted_sockets()})",
         )
         lines.append(f"  {folder} ran {route}, and {reason}.")
+    if len(empty) < total:
+        lines.append("Leave out the folders above to draw the rest.")
     return PlottingError("\n".join(lines))
 
 
@@ -409,26 +415,31 @@ def resolve_band_series(folders: Sequence[Path]) -> tuple[list[BandSeries], list
     """Return the band structures of the given runs, and any warnings.
 
     Series are labelled by the step that produced them, prefixed by the folder
-    name when more than one folder is on the axes.
+    name when more than one folder is on the axes. Every folder must carry a
+    band structure: drawing fewer curves than folders asked for reads as a
+    figure of them all.
 
     :raises PlottingError: if a folder is not a run directory, its run is not
-        in this profile, or nothing plottable was found in any of them.
+        in this profile, or any of them holds nothing plottable.
     """
     nodes = [run_node(folder) for folder in folders]
 
     series: list[BandSeries] = []
     warnings: list[str] = []
+    empty: list[tuple[Path, orm.ProcessNode]] = []
     for folder, node in zip(folders, nodes, strict=True):
         warning = _failure_warning(folder, node)
         if warning is not None:
             warnings.append(warning)
         found = _series_from_node(node)
+        if not found:
+            empty.append((folder, node))
         if len(folders) > 1:
             prefix = folder.name or folder.resolve().name
             for item in found:
                 item.label = f"{prefix}: {item.label}"
         series += found
 
-    if not series:
-        raise _nothing_plottable(folders, nodes)
+    if empty:
+        raise _nothing_plottable(empty, len(folders))
     return series, warnings

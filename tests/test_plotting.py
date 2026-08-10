@@ -80,11 +80,18 @@ def make_process(
     exit_message: str | None = None,
     calcjob: bool = False,
     computer: orm.Computer | None = None,
+    process_label: str | None = None,
 ) -> orm.ProcessNode:
-    """Return a stored, finished process node of the given ``process_type``."""
+    """Return a stored, finished process node of the given ``process_type``.
+
+    ``process_label`` is the class name the engine records, which names the
+    step in a message about a run that produced nothing.
+    """
     node: orm.ProcessNode = orm.CalcJobNode() if calcjob else orm.WorkflowNode()
     node.process_type = process_type
     node.label = label
+    if process_label is not None:
+        node.set_process_label(process_label)
     if calcjob:
         node.computer = computer
         node.set_option("resources", {"num_machines": 1})
@@ -1158,6 +1165,98 @@ class TestProducerOwnership:
 
         assert [item.label for item in found] == ["Wannier interpolation"]
         assert found[0].energies == [[-4.0]]
+
+
+# ----------------------------------------------------------------------
+# A folder that carries nothing
+# ----------------------------------------------------------------------
+
+
+def wannierization_without_bands(tmp_path: Path, name: str, computer: orm.Computer) -> Path:
+    """Write a folder naming a wannier90 calculation that interpolated nothing.
+
+    What the ZnO tutorial leaves on disk: no route hands wannier90 a k-path,
+    so the calculation finishes and publishes no ``interpolated_bands``.
+    """
+    calculation = make_process(
+        W90_CALC, calcjob=True, computer=computer, process_label="Wannier90Calculation"
+    )
+    attach(calculation, "output_parameters", orm.Dict({"number_wfs": 2}))  # type: ignore[no-untyped-call]
+    return write_run_folder(tmp_path, name, calculation)
+
+
+class TestEveryFolderContributes:
+    """A folder that yields no series is said so, not quietly dropped."""
+
+    def test_an_empty_folder_beside_a_full_one_is_reported(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Two folders in, one series out is a figure that misrepresents itself.
+
+        The reader is given a legend of one against a command line of two, and
+        nothing on the axes says the second run is missing.
+        """
+        ki = dft_run(tmp_path, "03-ham", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        empty = wannierization_without_bands(tmp_path, "03-wannier90", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([ki, empty])
+
+        message = str(caught.value)
+        assert "03-wannier90" in message
+        # The folder that did carry a band structure is not blamed for it.
+        assert "03-ham" not in message
+        assert "koopmans issue #80" in message
+        assert "Leave out the folders above" in message
+
+    def test_two_full_folders_raise_nothing(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The control: the rule fires on emptiness, not on having two folders."""
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second])
+
+        assert len(found) == 2
+
+    def test_the_only_folder_being_empty_still_reads_as_before(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """One folder and nothing in it keeps its message, without the aside.
+
+        There is no rest of the figure to draw, so telling the reader to leave
+        the folder out would leave them with no command at all.
+        """
+        empty = wannierization_without_bands(tmp_path, "03-wannier90", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([empty])
+
+        assert "Leave out the folders above" not in str(caught.value)
+        assert "koopmans issue #80" in str(caught.value)
+
+    def test_a_folder_with_no_bands_is_named(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, runner: Any, tmp_path: Path
+    ) -> None:
+        """The command fails naming the folder rather than drawing one series.
+
+        Reproduces the ZnO tutorial's invocation: the kcw.x run and the
+        wannier90 step it was built from, of which only the first has bands.
+        """
+        from koopmans.cli import cli
+
+        ham = dft_run(tmp_path, "03-ham", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        empty = wannierization_without_bands(tmp_path, "03-wannier90", aiida_localhost)
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(ham), str(empty), "-o", str(tmp_path / "out.png")],
+        )
+
+        assert result.exit_code == 1
+        assert "03-wannier90" in result.output
+        assert not (tmp_path / "out.png").exists()
 
 
 # ----------------------------------------------------------------------
