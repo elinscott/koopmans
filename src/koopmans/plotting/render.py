@@ -161,6 +161,7 @@ def draw_band_structures(
     axes: Axes,
     series: Sequence[BandSeries],
     zero: EnergyZero = EnergyZero.NONE,
+    ylim: tuple[float, float] | None = None,
 ) -> None:
     """Draw every series onto one set of axes, shifted by its own ``zero``.
 
@@ -173,6 +174,8 @@ def draw_band_structures(
     :param axes: where to draw.
     :param series: the curves, each already carrying the figure's ``zero``.
     :param zero: which energy was subtracted, which the y axis names.
+    :param ylim: the energy range to show, in the shifted energies the axis
+        is drawn in. ``None`` shows every band in full.
     """
     cell = _shared_cell(series)
     drawn_distances: list[np.ndarray] = []
@@ -205,6 +208,8 @@ def draw_band_structures(
     limits = _path_extent(drawn_distances)
     if limits is not None:
         axes.set_xlim(*limits)
+    if ylim is not None:
+        axes.set_ylim(*ylim)
 
     axes.set_ylabel(energy_axis_label(zero, series[0].units))
     # One curve needs no key to tell it from the others.
@@ -217,6 +222,7 @@ def render_band_structures(
     output_path: Path | None = None,
     show: bool = False,
     zero: EnergyZero = EnergyZero.NONE,
+    ylim: tuple[float, float] | None = None,
 ) -> None:
     """Draw the series and write or show the figure.
 
@@ -225,6 +231,8 @@ def render_band_structures(
         format. ``None`` writes nothing.
     :param show: open an interactive window.
     :param zero: which energy was subtracted, which the y axis names.
+    :param ylim: the energy range to show, in the shifted energies the axis
+        is drawn in. ``None`` shows every band in full.
     """
     import matplotlib
 
@@ -235,7 +243,7 @@ def render_band_structures(
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(figsize=(6.0, 4.5))
-    draw_band_structures(axes, series, zero=zero)
+    draw_band_structures(axes, series, zero=zero, ylim=ylim)
     figure.tight_layout()
 
     if output_path is not None:

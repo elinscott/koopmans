@@ -546,6 +546,29 @@ data_option = click.option(
 )
 
 
+def _check_ylim(
+    ctx: click.Context, param: click.Parameter, value: tuple[float, float] | None
+) -> tuple[float, float] | None:
+    """Reject a range that frames nothing."""
+    if value is not None and value[0] >= value[1]:
+        raise click.BadParameter(
+            f"MIN must be below MAX; got {value[0]} and {value[1]}.", ctx=ctx, param=param
+        )
+    return value
+
+
+ylim_option = click.option(
+    "--ylim",
+    nargs=2,
+    type=float,
+    default=None,
+    callback=_check_ylim,
+    metavar="MIN MAX",
+    help="Show only this range of the energy axis, in the units it is drawn in "
+    "and measured from the zero --zero sets. Defaults to every band in full.",
+)
+
+
 @plot.command()
 @click.argument(
     "folders",
@@ -557,6 +580,7 @@ data_option = click.option(
 @show_option
 @zero_option
 @data_option
+@ylim_option
 @click.option(
     "--label",
     "labels",
@@ -569,6 +593,7 @@ def bandstructure(
     show: bool,
     zero: str,
     data_path: Path | None,
+    ylim: tuple[float, float] | None,
     labels: tuple[str, ...],
 ) -> None:
     """Draw the band structures of finished runs on one set of axes.
@@ -615,7 +640,7 @@ def bandstructure(
         click.echo(f"Wrote {data_path} ({len(series)} series)")
 
     target = output_path if output_path is not None or show else Path("bandstructure.png")
-    render_band_structures(series, output_path=target, show=show, zero=kind)
+    render_band_structures(series, output_path=target, show=show, zero=kind, ylim=ylim)
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series, {caption})")
 

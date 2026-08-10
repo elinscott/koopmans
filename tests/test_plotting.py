@@ -798,6 +798,58 @@ class TestRenderer:
 
         assert [text.get_text() for text in axes.get_xticklabels()] == ["\u0393", "X"]
 
+    def test_the_energy_axis_spans_the_bands_by_default(self) -> None:
+        """With no range asked for, every band stays on the figure.
+
+        The control for the clipping tests below: the limits must start out
+        wide enough that a narrower window is visibly the option's doing.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")])
+
+        low, high = axes.get_ylim()
+        assert low <= -5.0 and high >= 6.0
+
+    def test_the_energy_axis_is_clipped_to_the_range_asked_for(self) -> None:
+        """A window narrower than the bands is what the axes show.
+
+        A semicore band 130 eV down otherwise compresses the gap region into
+        a sliver, which is the whole reason to ask for a range.
+        """
+        axes = blank_axes()
+        deep = series("DFT", energies=[[-130.0, 5.0], [-130.0, 5.5], [-130.0, 6.0]])
+
+        draw_band_structures(axes, [deep], ylim=(-2.0, 8.0))
+
+        assert axes.get_ylim() == pytest.approx((-2.0, 8.0))
+
+    def test_clipping_measures_the_range_from_the_zero(self) -> None:
+        """The range is read in the shifted energies the axis is drawn in.
+
+        Applying it to the raw energies would frame a different window for
+        every choice of ``--zero``, while the axis is labelled ``E - E_VBM``.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT", zero=6.0)], ylim=(-1.0, 1.0))
+
+        assert axes.get_ylim() == pytest.approx((-1.0, 1.0))
+        # -5.0 eV as computed is -11.0 eV once the zero is subtracted, so it
+        # is outside the window rather than at its lower edge.
+        assert band_lines(axes)[0].get_ydata()[0] == pytest.approx(-11.0)
+
+    def test_clipping_keeps_the_figure_conventions(self) -> None:
+        """A clipped figure still carries its rules, labels and tight x limits."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [three_corner_path()], ylim=(-4.5, -3.5))
+
+        assert divider_positions(axes) == pytest.approx([np.pi / 4])
+        assert [text.get_text() for text in axes.get_xticklabels()] == ["\u0393", "X", "M"]
+        assert axes.get_xlim() == pytest.approx((0.0, np.pi / 2))
+        assert axes.get_title() == ""
+
 
 # ----------------------------------------------------------------------
 # The command
@@ -813,6 +865,27 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(koopmans.cli, "load_koopmans_profile", lambda: None)
     return CliRunner()
+
+
+@pytest.fixture
+def drawn_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Return the axes each figure the command draws was drawn on, in order.
+
+    The command closes its figure before returning, so the axes are only
+    reachable while it runs. Drawing itself is left alone, which is what makes
+    a test on these axes a test of the figure rather than of the call.
+    """
+    from koopmans.plotting import render
+
+    seen: list[Any] = []
+    original = render.draw_band_structures
+
+    def record(axes: Any, *args: Any, **kwargs: Any) -> None:
+        seen.append(axes)
+        original(axes, *args, **kwargs)
+
+    monkeypatch.setattr(render, "draw_band_structures", record)
+    return seen
 
 
 def dft_run(tmp_path: Path, name: str, vbm: float, energies: list[list[float]]) -> Path:
@@ -886,6 +959,50 @@ class TestCommand:
             pytest.approx(6.2452),
             pytest.approx(6.2452),
         ]
+
+    def test_ylim_clips_the_figure_it_writes(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """The range reaches the axes, and the data written stays as computed."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-130.0, 6.0], [-130.0, 7.0], [-130.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--ylim",
+                "-2",
+                "8",
+                "-o",
+                str(tmp_path / "zno.png"),
+                "--data",
+                str(tmp_path / "zno.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "zno.png").is_file()
+        assert drawn_axes[-1].get_ylim() == pytest.approx((-2.0, 8.0))
+        # Clipping frames the figure; it does not discard the bands behind it.
+        payload = json.loads((tmp_path / "zno.json").read_text())
+        assert payload["series"][0]["energies"][0][0] == pytest.approx(-130.0)
+
+    def test_an_inverted_ylim_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """MIN above MAX would silently flip the axis upside down."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(cli, ["plot", "bandstructure", str(folder), "--ylim", "8", "-2"])
+
+        assert result.exit_code == 2
+        assert "MIN must be below MAX" in result.output
 
     def test_not_a_run_directory_is_reported(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
