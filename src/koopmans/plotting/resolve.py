@@ -422,6 +422,19 @@ def _nothing_plottable(empty: Sequence[tuple[Path, orm.ProcessNode]], total: int
     return PlottingError("\n".join(lines))
 
 
+def _name_after_folder(found: Sequence[tuple[BandSeries, str]], label: str) -> None:
+    """Rename every series one folder contributed after that folder.
+
+    Each keeps the qualifier telling it from its siblings. Curves told apart by
+    their series names alone carry none, and their own derived names stand in,
+    so that no two curves of one folder end up sharing a name.
+    """
+    for item, qualifier in found:
+        if not qualifier and len(found) > 1:
+            qualifier = f" ({item.label})"
+        item.label = f"{label}{qualifier}"
+
+
 def resolve_band_series(
     folders: Sequence[Path], labels: Sequence[str] = ()
 ) -> tuple[list[BandSeries], list[str]]:
@@ -430,9 +443,10 @@ def resolve_band_series(
     Series are labelled by the step that produced them, prefixed by the folder
     name when more than one folder is on the axes. ``labels`` names the folders
     instead, one per folder in the order they were given; a folder that yields
-    several series keeps the qualifier telling them apart, so one name covers a
-    per-spin or per-block fan-out. Every folder must carry a band structure:
-    drawing fewer curves than folders asked for reads as a figure of them all.
+    several series keeps whatever tells them apart, so one name covers a
+    per-spin or per-block fan-out and no two curves end up sharing a name.
+    Every folder must carry a band structure: drawing fewer curves than folders
+    asked for reads as a figure of them all.
 
     :raises ValueError: if some but not all of the folders are named.
     :raises PlottingError: if a folder is not a run directory, its run is not
@@ -458,8 +472,7 @@ def resolve_band_series(
         if not found:
             empty.append((folder, node))
         if labels:
-            for item, qualifier in found:
-                item.label = f"{labels[index]}{qualifier}"
+            _name_after_folder(found, labels[index])
         elif len(folders) > 1:
             prefix = folder.name or folder.resolve().name
             for item, _ in found:

@@ -1336,6 +1336,69 @@ class TestFolderLabels:
             "Wannier (wannierize_emp)",
         ]
 
+    def test_a_label_tells_apart_curves_of_different_series(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Curves named by their series alone still get one name each.
+
+        A run holding both a pw.x bands step and a kcw.x one needs no
+        qualifier to tell its curves apart, because their series names already
+        do; one chosen name over both would key the legend twice to the same
+        text.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="MixedRun")
+        dft = make_process(PW_BANDS, caller=root, link_label="dft_bands")
+        attach(dft, "band_structure", make_bands([[0.0, 0.0, 0.0]], [[-5.0]], cell=CUBIC))
+        ham = make_process(
+            KCW_HAM, caller=root, link_label="ham", calcjob=True, computer=aiida_localhost
+        )
+        attach(ham, "bands", make_bands([[0.0, 0.0, 0.0]], [[-3.0]], cell=CUBIC))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        plain, _ = resolve_band_series([folder])
+        named, _ = resolve_band_series([folder], ("ZnO",))
+
+        assert [item.label for item in plain] == ["DFT", "KI"]
+        assert [item.label for item in named] == ["ZnO (DFT)", "ZnO (KI)"]
+
+    def test_a_label_tells_apart_per_channel_series_names(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The optimize workchain names its channels in the series, not beside it.
+
+        Its per-spin outputs are separate declared producers, so neither is
+        disambiguated against the other and both would take the bare name.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        optimize = make_process(W90_OPTIMIZE, caller=root, link_label="wannier90")
+        for namespace in ("wannier90_optimal_up", "wannier90_optimal_down"):
+            attach(
+                optimize,
+                f"{namespace}__interpolated_bands",
+                make_bands([[0.0, 0.0, 0.0]], [[-5.0]]),
+            )
+        folder = write_run_folder(tmp_path, "fe", root)
+
+        named, _ = resolve_band_series([folder], ("Iron",))
+
+        assert len({item.label for item in named}) == len(named) > 1
+        assert [item.label for item in named] == [
+            "Iron (Wannier interpolation (up))",
+            "Iron (Wannier interpolation (down))",
+        ]
+
+    def test_one_curve_takes_the_bare_label(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The control: a folder drawn as one curve is named and nothing more.
+
+        Qualifying a lone curve would put the derived name back on a figure
+        whose whole point was to replace it.
+        """
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        found, _ = resolve_band_series([folder], ("ZnO",))
+
+        assert [item.label for item in found] == ["ZnO"]
+
     def test_fewer_labels_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
         """Padding the rest with derived names would hide the typo."""
         first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
