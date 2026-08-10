@@ -160,7 +160,10 @@ def prepare_common_inputs(
     Returns:
         Tuple of (structure, pseudo_family, overrides).
     """
-    from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
+    from koopmans.aiida.setup.pseudos import (
+        ensure_pseudo_family_installed,
+        require_norm_conserving_family,
+    )
 
     structure = atoms_input_to_structure(koopmans_input.atoms)
     parameters = input_to_pw_parameters(koopmans_input)
@@ -168,6 +171,7 @@ def prepare_common_inputs(
 
     ensure_pseudo_family_installed(pseudo_family)
 
+    require_norm_conserving_family(pseudo_family, structure)
     require_cutoffs_for_family(pseudo_family, parameters)
 
     pw_overrides: dict[str, Any] = {"parameters": parameters}

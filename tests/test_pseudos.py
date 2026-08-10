@@ -24,7 +24,13 @@ class TestEnsurePseudoFamilyInstalled:
         pseudos.ensure_pseudo_family_installed(fake_user_built_family.label)
 
     def test_uninstallable_label_reports_both_routes(self, aiida_profile_clean: Any) -> None:
-        """An unknown label names the install command and the download formats."""
+        """An unknown label names the install command and where to find the rest.
+
+        The download route points at ``koopmans pseudos`` rather than at a
+        label grammar: a grammar ending in ``/format`` invites the psp8 and
+        psml labels koopmans refuses, and leaves the reader to guess which
+        versions and protocols exist.
+        """
         from koopmans.aiida.setup import pseudos
 
         with pytest.raises(ValueError) as excinfo:
@@ -34,7 +40,8 @@ class TestEnsurePseudoFamilyInstalled:
         assert "No installed pseudopotential family has the label 'my-gaas-fr'" in message
         assert "aiida-pseudo install family <directory> my-gaas-fr\n" in message
         assert "calculator_parameters.ecutwfc" in message
-        assert "PseudoDojo/version/functional/relativistic/protocol/format" in message
+        assert "koopmans pseudos" in message
+        assert "protocol/format" not in message
 
     def test_the_install_command_asks_for_no_cutoffs_family(self, aiida_profile_clean: Any) -> None:
         """The command offered is the plain-family one, with no cutoffs to set.

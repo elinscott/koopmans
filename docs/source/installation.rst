@@ -150,13 +150,20 @@ setup, database included.
 
 You do not have to install pseudopotentials up front. The ``pseudo_library`` keyword of
 your input file names a family, and ``koopmans`` downloads that family the first time it
-is needed. It can fetch `PseudoDojo <http://www.pseudo-dojo.org/>`_, `SSSP
-<https://www.materialscloud.org/discover/sssp/table/efficiency>`_ and `SG15
+is needed. It can fetch `PseudoDojo <http://www.pseudo-dojo.org/>`_ and `SG15
 <http://www.quantum-simulation.org/potentials/sg15_oncv/>`_ families, named like
+``PseudoDojo/0.4/LDA/SR/standard/upf`` or ``SG15/1.2/PBE/SR``. To see every label it
+accepts, with the families you already have marked, run
 
-- ``PseudoDojo/0.4/LDA/SR/standard/upf``
-- ``SSSP/1.3/PBEsol/efficiency``
-- ``SG15/1.2/PBE/SR``
+.. code-block:: console
+
+    $ koopmans pseudos
+
+Every family it offers is norm-conserving and in UPF format, which is what Koopmans
+functionals and ``pw.x`` require. Libraries that mix in ultrasoft or PAW
+pseudopotentials — `SSSP
+<https://www.materialscloud.org/discover/sssp/table/efficiency>`_ among them — are
+refused.
 
 A family that you install yourself works just as well, under whatever label you give it:
 ``koopmans`` downloads a family only when no installed one carries the label you asked

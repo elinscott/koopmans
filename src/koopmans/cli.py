@@ -294,6 +294,18 @@ def install(
     click.echo("\nInstallation complete!")
 
 
+@cli.command()
+def pseudos() -> None:
+    """List the pseudopotential families `workflow.pseudo_library` accepts.
+
+    Families koopmans has installed are marked. The listing itself needs no
+    AiiDA profile, so it works before `koopmans install`.
+    """
+    from koopmans.aiida.setup.pseudos import list_pseudo_families
+
+    list_pseudo_families()
+
+
 @cli.group()
 def backend() -> None:
     """Manage the AiiDA backend."""
