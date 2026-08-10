@@ -906,6 +906,7 @@ def drawn_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
     original = render.draw_band_structures
 
     def record(axes: Any, *args: Any, **kwargs: Any) -> None:
+        """Call through to the renderer, keeping the axes it drew."""
         seen.append(axes)
         original(axes, *args, **kwargs)
 
