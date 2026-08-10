@@ -370,6 +370,40 @@ class TestOrbitalDensityDescriptor:
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
         assert not any("extract_snapshot_dataset" in name for name in names), names
 
+    def test_collinear_rejects_power_spectrum(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        installed_decompose_code: Any,
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """The same input on ``spin: collinear`` is refused, not fanned out.
+
+        Same discriminator as the route above, run with the one setting
+        changed: the descriptor is closed-shell only, so the user hears it
+        at build time rather than from a count mismatch mid-trajectory.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        o_sp3 = [{"site": "O", "ang_mtm": "sp3"}]
+        h_s = [{"site": "H", "ang_mtm": "s"}]
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["ml"]["descriptor"] = "power_spectrum"
+        d["workflow"]["spin"] = "collinear"
+        d["calculator_parameters"]["tot_magnetization"] = 0
+        d["calculator_parameters"]["wannier90"] = {
+            "up": {"projections": [o_sp3, h_s], "dis_froz_max": 1.0},
+            "down": {"projections": [o_sp3, h_s], "dis_froz_max": 1.0},
+        }
+
+        with pytest.raises(NotImplementedError, match="spin='collinear'"):
+            build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+
     def test_self_hartree_keeps_direct_read(
         self,
         aiida_profile_clean: Any,
@@ -448,6 +482,26 @@ def _fitted_model() -> dict[str, Any]:
     )
 
 
+def _fitted_power_spectrum_model() -> dict[str, Any]:
+    """Fit a stamped power-spectrum model on the ``n_max=6, l_max=6`` basis."""
+    from aiida_koopmans.ml import resolve_radial_basis
+    from aiida_koopmans.workgraphs.ml import helpers as ml_helpers
+
+    return ml_helpers.fit_screening_model(  # type: ignore[no-any-return]
+        {
+            "descriptors": [[1.0, 0.0], [0.0, 1.0]],
+            "alpha_targets": [0.6, 0.7],
+            "filled": [True, False],
+            "labels": ["orb_1", "orb_2"],
+        },
+        "linear_regression",
+        descriptor="power_spectrum",
+        correction="ki",
+        init_orbitals="mlwfs",
+        radial_basis=resolve_radial_basis({"decompose_n_max": 6, "decompose_l_max": 6}),
+    )
+
+
 class TestPredictMode:
     """``ml: {mode: predict}`` loads the model file and hands the model to every DSCF."""
 
@@ -519,20 +573,52 @@ class TestPredictMode:
         with pytest.raises(ValueError, match="requires a trained model"):
             build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
 
-    def test_predict_rejects_power_spectrum(
+    def test_predict_on_power_spectrum_reaches_every_dscf(
         self,
+        aiida_profile_clean: Any,
         tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        installed_decompose_code: Any,
+        fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """``mode: predict`` with the power-spectrum descriptor is an explicit gap."""
+        """``mode: predict`` on ``power_spectrum`` reaches every snapshot's DSCF.
+
+        The prediction runs inside the DSCF, so the discriminator is that
+        the descriptor, the code and the basis land on the DSCF task —
+        predict builds no dataset segment for them to arrive through.
+        """
+        from aiida_koopmans.ml import MLDescriptor
+
         from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
-        xyz = write_multiframe_xyz(tmp_path, 1)
-        d = _trajectory_input_dict(str(xyz))
-        d["ml"] = {"mode": "predict", "descriptor": "power_spectrum"}
+        model_path = tmp_path / "ps_model.json"
+        model_path.write_text(json.dumps(_fitted_power_spectrum_model()))
 
-        with pytest.raises(NotImplementedError, match="self_hartree"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d), codes={})
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["ml"] = {
+            "mode": "predict",
+            "descriptor": "power_spectrum",
+            "model_file": str(model_path),
+            "n_max": 6,
+            "l_max": 6,
+        }
+        workgraph = build_trajectory_workgraph(KoopmansInput.model_validate(d), trajectory_codes)
+
+        names = set(workgraph.get_task_names())
+        assert not any(name.startswith("descriptors_") for name in names), names
+        dscf = next(t for t in workgraph.tasks if t.name == "dscf_snapshot_1")
+        assert dscf.inputs["descriptor"].value == MLDescriptor.POWER_SPECTRUM
+        assert dscf.inputs["pw2wannier90_code"].value.uuid == installed_decompose_code.uuid
+        assert dict(dscf.inputs["decompose_parameters"].value) == {
+            "decompose_n_max": 6,
+            "decompose_l_max": 6,
+            "decompose_r_min": 0.5,
+            "decompose_r_max": 4.0,
+        }
 
     def test_predict_rejects_alpha_numsteps(
         self,
