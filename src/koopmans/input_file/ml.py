@@ -52,7 +52,10 @@ class MLConfig(BaseModel):
     )
     descriptor: MLDescriptor = Field(
         default=MLDescriptor.POWER_SPECTRUM,
-        description="What to use as the descriptor for the ML model",
+        description="What the ML model reads for each orbital. 'power_spectrum' expands the "
+        "orbital density in a radial and spherical basis. 'self_hartree' is a single number "
+        "per orbital: simplistic and unexpressive, and unlikely to carry enough to predict a "
+        "screening parameter",
     )
 
     @field_validator("model", mode="before")

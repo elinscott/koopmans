@@ -35,7 +35,7 @@ build:
     - rm -rf ../plumpy && git clone --depth 1 --branch patched https://github.com/elinscott/plumpy ../plumpy
     - rm -rf ../aiida-wannier90-workflows && git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
     - rm -rf ../aiida-wannierjl && git clone --depth 1 https://github.com/elinscott/aiida-wannierjl ../aiida-wannierjl
-    - git init -q ../aiida-quantumespresso && git -C ../aiida-quantumespresso fetch --depth 1 https://github.com/aiidateam/aiida-quantumespresso 0a15b8ac63d35f1422ba0b2184f420c177bd2d70 && git -C ../aiida-quantumespresso checkout -q FETCH_HEAD
+    - rm -rf ../aiida-quantumespresso && git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
     - rm -rf ../pydantic_espresso && git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
     - git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 4c81e9d64ac561325b91c7e6a18ea2cf792e0609 && git -C ../aiida-core checkout -q FETCH_HEAD
     - uv venv $READTHEDOCS_VIRTUALENV_PATH
