@@ -1,86 +1,114 @@
 """Tests for the SG15 pseudopotential family installer.
 
-The SG15 archive is never downloaded: a synthetic tarball built from the
-``fake_upf_content`` streams is served through a patched ``urlopen``, with the
-pinned checksum swapped for that tarball's own.
+The SG15 archive is never downloaded: the ``offline_sg15_archive`` fixture
+serves a synthetic tarball through a patched ``urlopen``, with the pinned
+checksum swapped for that tarball's own.
 """
 
 from __future__ import annotations
 
-import hashlib
-import io
-import tarfile
-import urllib.request
 from typing import Any
-
-import pytest
-
-from tests.fixtures import fake_upf_content
 
 SG15_LABEL = "SG15/1.2/PBE/SR"
 
-# One member per (element, version, relativistic variant) the flat archive
-# bundles, so the installer has to select the label's subset rather than take
-# whatever it finds.
-_ARCHIVE_MEMBERS = {
-    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.2.upf": ("Si", 4.0),
-    "sg15_oncv_upf_2020-02-06/O_ONCV_PBE-1.2.upf": ("O", 6.0),
-    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.0.upf": ("Si", 4.0),
-    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE_FR-1.2.upf": ("Si", 4.0),
-}
 
+def _installed(label: str) -> Any:
+    """Install the family and return it."""
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
 
-def _synthetic_archive() -> bytes:
-    """Return a gzipped tarball shaped like the published SG15 archive."""
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        for name, (element, z_valence) in _ARCHIVE_MEMBERS.items():
-            payload = fake_upf_content(element, z_valence).encode("utf-8")
-            info = tarfile.TarInfo(name)
-            info.size = len(payload)
-            tar.addfile(info, io.BytesIO(payload))
-    return buffer.getvalue()
+    from koopmans.aiida.setup.pseudos import install_pseudo_family
 
-
-@pytest.fixture
-def offline_sg15_archive(monkeypatch: pytest.MonkeyPatch) -> bytes:
-    """Serve the synthetic archive from ``urlopen`` and pin its checksum."""
-    from koopmans.aiida.setup import pseudos
-
-    archive = _synthetic_archive()
-    monkeypatch.setattr(pseudos, "_SG15_ARCHIVE_SHA256", hashlib.sha256(archive).hexdigest())
-    monkeypatch.setattr(urllib.request, "urlopen", lambda url: io.BytesIO(archive))
-    return archive
+    install_pseudo_family(label)
+    return PseudoPotentialFamily.collection.get(label=label)
 
 
 class TestInstallSg15Family:
     """The class the installer builds, and the pseudos it selects."""
 
     def test_installs_a_family_that_recommends_no_cutoffs(
-        self, aiida_profile_clean: Any, offline_sg15_archive: bytes
+        self, aiida_profile_clean: Any, offline_sg15_archive: dict[str, str]
     ) -> None:
         """SG15 publishes no cutoffs, so the family must not claim to have any."""
         from aiida_pseudo.groups.family import PseudoPotentialFamily
         from aiida_pseudo.groups.mixins import RecommendedCutoffMixin
 
-        from koopmans.aiida.setup.pseudos import install_pseudo_family
+        family = _installed(SG15_LABEL)
 
-        install_pseudo_family(SG15_LABEL)
-
-        family = PseudoPotentialFamily.collection.get(label=SG15_LABEL)
         assert type(family) is PseudoPotentialFamily
         assert not isinstance(family, RecommendedCutoffMixin)
 
     def test_installs_only_the_labelled_version_and_variant(
-        self, aiida_profile_clean: Any, offline_sg15_archive: bytes
+        self, aiida_profile_clean: Any, offline_sg15_archive: dict[str, str]
     ) -> None:
-        """The 1.0 and fully relativistic members of the archive stay out."""
-        from aiida_pseudo.groups.family import PseudoPotentialFamily
+        """The other revisions and the fully relativistic members stay out.
 
-        from koopmans.aiida.setup.pseudos import install_pseudo_family
+        1.2 is a complete release, so nothing is laid over it: the silicon it
+        installs is 1.2's own, not the 1.1 file sitting beside it.
+        """
+        family = _installed(SG15_LABEL)
 
-        install_pseudo_family(SG15_LABEL)
-
-        family = PseudoPotentialFamily.collection.get(label=SG15_LABEL)
         assert {pseudo.element for pseudo in family.nodes} == {"Si", "O"}
         assert family.count() == 2
+        assert family.get_pseudo("Si").get_content() == offline_sg15_archive["Si_ONCV_PBE-1.2.upf"]
+
+
+class TestVersion11IsComposedOver10:
+    """SG15 published 1.1 as a delta of 1.0, so the label installs both."""
+
+    def test_the_fully_relativistic_set_gains_the_elements_1_0_lacks(
+        self, aiida_profile_clean: Any, offline_sg15_archive: dict[str, str]
+    ) -> None:
+        """Silicon is fully relativistic only at 1.1, oxygen only at 1.0.
+
+        Composing is what puts the two under one label; installing 1.1 alone
+        would drop the oxygen a run also needs. The 1.0 half is the control:
+        it must stay the release SG15 published, without the silicon 1.1 adds.
+        """
+        composed = _installed("SG15/1.1/PBE/FR")
+        pure = _installed("SG15/1.0/PBE/FR")
+
+        assert set(composed.elements) == {"Si", "O"}
+        assert set(pure.elements) == {"O"}
+
+    def test_a_revised_element_comes_from_the_1_1_file(
+        self, aiida_profile_clean: Any, offline_sg15_archive: dict[str, str]
+    ) -> None:
+        """Both revisions of silicon match the label, and the newer one wins.
+
+        Element coverage cannot see this: 1.1 revises silicon rather than
+        adding it, so an overlay that kept the older file installs the same
+        69 elements carrying the pseudopotential the release replaced. Oxygen,
+        which 1.1 leaves alone, must still arrive from 1.0.
+        """
+        family = _installed("SG15/1.1/PBE/SR")
+
+        assert family.get_pseudo("Si").get_content() == offline_sg15_archive["Si_ONCV_PBE-1.1.upf"]
+        assert family.get_pseudo("O").get_content() == offline_sg15_archive["O_ONCV_PBE-1.0.upf"]
+
+    def test_the_installed_files_keep_the_names_that_date_them(
+        self, aiida_profile_clean: Any, offline_sg15_archive: dict[str, str]
+    ) -> None:
+        """A composed family holds files from two revisions, and says so.
+
+        The filename is the only place the revision survives, and `koopmans
+        pseudos` promises a 1.1 family holds ``-1.0.upf`` files as well.
+        """
+        family = _installed("SG15/1.1/PBE/SR")
+
+        assert {pseudo.filename for pseudo in family.nodes} == {
+            "Si_ONCV_PBE-1.1.upf",
+            "O_ONCV_PBE-1.0.upf",
+        }
+
+    def test_1_0_installs_its_own_revision_alone(
+        self, aiida_profile_clean: Any, offline_sg15_archive: dict[str, str]
+    ) -> None:
+        """1.0 is complete on its own terms, so nothing is laid over it.
+
+        Composition running one version too far would hand a user who asked
+        for the original revision the 1.1 silicon.
+        """
+        family = _installed("SG15/1.0/PBE/SR")
+
+        assert family.get_pseudo("Si").get_content() == offline_sg15_archive["Si_ONCV_PBE-1.0.upf"]
+        assert set(family.elements) == {"Si", "O"}

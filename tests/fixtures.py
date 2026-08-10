@@ -479,7 +479,9 @@ def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     }
 
 
-def fake_upf_content(element: str, z_valence: float, has_so: bool | None = False) -> str:
+def fake_upf_content(
+    element: str, z_valence: float, has_so: bool | None = False, info: str | None = None
+) -> str:
     """Return a synthetic UPF v2 stream for the fake test pseudos.
 
     Shaped for the line-based block extractors in aiida-wannier90-workflows'
@@ -489,11 +491,14 @@ def fake_upf_content(element: str, z_valence: float, has_so: bool | None = False
     generators always write it, and an attribute-bearing header without it
     makes the upstream sniffing crash, which the dispatcher converts into an
     error naming the pseudo. ``has_so=None`` omits the flag to exercise
-    exactly that guard.
+    exactly that guard. ``info`` fills the ``PP_INFO`` block real generators
+    write, which gives two otherwise identical streams content of their own.
     """
     has_so_line = "" if has_so is None else f'has_so="{"T" if has_so else "F"}"\n'
+    info_block = "" if info is None else f"<PP_INFO>\n{info}\n</PP_INFO>\n"
     return (
         f'<UPF version="2.0.1">\n'
+        f"{info_block}"
         f'<PP_HEADER\nelement="{element}"\n'
         f'z_valence="{z_valence}"\n{has_so_line}/>\n'
         f"<PP_PSWFC>\n"
@@ -501,6 +506,58 @@ def fake_upf_content(element: str, z_valence: float, has_so: bool | None = False
         f"</PP_PSWFC>\n"
         f"</UPF>\n"
     )
+
+
+# One member per (element, revision, relativistic variant), laid out flat under
+# a single directory as the published SG15 tarball is. The coverage mirrors the
+# real archive's: silicon is fully relativistic only at 1.1 and oxygen only at
+# 1.0, so a family holding both is one that composed 1.1 over 1.0. Every file
+# names its own revision in ``PP_INFO``, which is what lets a test say which of
+# them an installed pseudopotential is.
+SG15_ARCHIVE_MEMBERS: dict[str, tuple[str, float, bool, str]] = {
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.0.upf": ("Si", 4.0, False, "1.0"),
+    "sg15_oncv_upf_2020-02-06/O_ONCV_PBE-1.0.upf": ("O", 6.0, False, "1.0"),
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.1.upf": ("Si", 4.0, False, "1.1"),
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.2.upf": ("Si", 4.0, False, "1.2"),
+    "sg15_oncv_upf_2020-02-06/O_ONCV_PBE-1.2.upf": ("O", 6.0, False, "1.2"),
+    "sg15_oncv_upf_2020-02-06/O_ONCV_PBE_FR-1.0.upf": ("O", 6.0, True, "1.0"),
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE_FR-1.1.upf": ("Si", 4.0, True, "1.1"),
+}
+
+
+@pytest.fixture
+def offline_sg15_archive(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Serve a synthetic SG15 tarball from ``urlopen``, pinned to its own checksum.
+
+    Returns each member's UPF stream keyed by filename, so a test can assert
+    which revision an installed pseudopotential came from. The published
+    archive is never downloaded.
+    """
+    import hashlib
+    import tarfile
+    import urllib.request
+
+    from koopmans.aiida.setup import pseudos
+
+    contents = {
+        Path(name).name: fake_upf_content(
+            element, z_valence, has_so=has_so, info=f"SG15 ONCV revision {revision}"
+        )
+        for name, (element, z_valence, has_so, revision) in SG15_ARCHIVE_MEMBERS.items()
+    }
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name in SG15_ARCHIVE_MEMBERS:
+            payload = contents[Path(name).name].encode("utf-8")
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+    archive = buffer.getvalue()
+
+    monkeypatch.setattr(pseudos, "_SG15_ARCHIVE_SHA256", hashlib.sha256(archive).hexdigest())
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url: io.BytesIO(archive))
+    return contents
 
 
 @pytest.fixture

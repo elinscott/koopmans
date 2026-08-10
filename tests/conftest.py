@@ -33,6 +33,7 @@ from tests.fixtures import (  # noqa: F401
     installed_wannier_codes,
     localhost_code,
     localhost_computer,
+    offline_sg15_archive,
     replay_probes,
     serialize_workgraph,
     si_external_projector_dir,

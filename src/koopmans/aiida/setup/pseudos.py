@@ -57,11 +57,14 @@ def pseudo_family_has_cutoffs(pseudo_family: str) -> bool:
 _LIBRARY_NOTES = {
     "SG15": (
         "SG15/1.2 is the newest scalar-relativistic set and covers all 69 elements; "
-        "1.0 covers the same 69 at the original revision, and 1.1 only the 17 "
-        "revised in between.",
-        "There is no fully relativistic set at 1.2: SG15/1.0/PBE/FR carries 52 "
-        "elements and SG15/1.1/PBE/FR the other 12 (Si, P, S and nine more p-block "
-        "elements).",
+        "1.0 covers the same 69 at the original revision.",
+        "SG15 published 1.1 as a delta of 1.0, revising 17 elements, so koopmans "
+        "composes it: the 1.1 label installs the 1.0 files with the 1.1 ones over "
+        "them. Files keep their archive names, so a 1.1 family holds -1.0.upf files "
+        "as well.",
+        "Name SG15/1.1/PBE/FR for fully relativistic runs: composed it covers 64 "
+        "elements against 1.0's 52, and 1.2 publishes none. Ba, Be, Bi, Li and Ne "
+        "have no fully relativistic SG15 pseudopotential at any version.",
         "SG15 recommends no cutoffs, so set `ecutwfc` in your input file.",
     ),
 }
@@ -246,29 +249,75 @@ _SG15_ARCHIVE_URL = (
 )
 _SG15_ARCHIVE_SHA256 = "3f3bd74aa5d6e0b038218a6051bb99ed9469dc03d0f05b3ec8a523f0f7a7dff0"
 
-# SG15 revises element by element, so a version does not carry both relativistic
-# variants just because it carries one: the 2020-02-06 archive holds 69 SR
-# elements at 1.0 and at 1.2, 17 at 1.1, and fully relativistic files at 1.0 (52
-# elements) and 1.1 (12) only. A label naming a variant the archive lacks would
-# install nothing, so the offered labels are read from here.
-_SG15_VARIANTS: dict[str, tuple[str, ...]] = {
-    "1.0": ("SR", "FR"),
-    "1.1": ("SR", "FR"),
-    "1.2": ("SR",),
+# Which archive files each label installs: the version's own, and for a delta
+# release the versions it is layered on, oldest first. SG15 published 1.1 as a
+# delta of 1.0 -- 17 revised scalar-relativistic files, 12 fully relativistic --
+# so ``SG15/1.1`` is 1.0 with those files laid over it, while 1.0 and 1.2 are
+# each one complete revision. Composed, 1.1 holds 69 SR and 64 FR elements
+# against 1.0's 69 and 52.
+#
+# SG15 also revises element by element, so a version does not carry both
+# relativistic variants just because it carries one: the 2020-02-06 archive
+# publishes nothing fully relativistic at 1.2. A label naming a variant the
+# archive lacks would install nothing, so the offered labels are read from here
+# too.
+_SG15_VARIANTS: dict[str, dict[str, tuple[str, ...]]] = {
+    "1.0": {"SR": ("1.0",), "FR": ("1.0",)},
+    "1.1": {"SR": ("1.0", "1.1"), "FR": ("1.0", "1.1")},
+    "1.2": {"SR": ("1.2",)},
 }
+
+
+def _select_sg15_files(
+    archive_bytes: bytes, source_versions: tuple[str, ...], fr_suffix: str
+) -> dict[str, tuple[str, bytes]]:
+    """Return one archive file per element, keyed by element, as ``(name, content)``.
+
+    ``source_versions`` runs oldest first; where an element appears in more
+    than one, the later file wins.
+    """
+    import io
+    import re
+    import tarfile
+
+    versions = "|".join(re.escape(source) for source in source_versions)
+    filename_re = re.compile(
+        rf"^(?P<element>[A-Z][a-z]?)_ONCV_PBE{fr_suffix}-(?P<version>{versions})\.upf$"
+    )
+    revision = {source: index for index, source in enumerate(source_versions)}
+
+    selected: dict[str, tuple[int, str, bytes]] = {}
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            filename = Path(member.name).name
+            match = filename_re.match(filename)
+            if match is None:
+                continue
+            element = match.group("element")
+            index = revision[match.group("version")]
+            if element in selected and selected[element][0] > index:
+                continue
+            extracted = tar.extractfile(member)
+            if extracted is None:
+                continue
+            selected[element] = (index, filename, extracted.read())
+
+    return {element: (name, content) for element, (_, name, content) in selected.items()}
 
 
 def _install_sg15_family(label: str, parts: list[str]) -> None:
     """Install an SG15 ONCV pseudopotential family.
+
+    Each pseudopotential keeps its archive filename, which names the revision
+    it came from.
 
     Raises:
         ValueError: If the label names a functional, version or relativistic
             variant the 2020-02-06 archive does not publish.
     """
     import hashlib
-    import io
-    import re
-    import tarfile
     import urllib.request
 
     from aiida_pseudo.data.pseudo import UpfData
@@ -290,11 +339,8 @@ def _install_sg15_family(label: str, parts: list[str]) -> None:
             f"at {version} the archive carries {', '.join(relativistic_variants)}. "
             "Run `koopmans pseudos` for every label koopmans accepts."
         )
-
+    source_versions = relativistic_variants[relativistic]
     fr_suffix = "_FR" if relativistic == "FR" else ""
-    filename_re = re.compile(
-        rf"^(?P<element>[A-Z][a-z]?)_ONCV_PBE{fr_suffix}-{re.escape(version)}\.upf$"
-    )
 
     click.echo(f"  Downloading '{label}' pseudopotentials")
 
@@ -312,19 +358,12 @@ def _install_sg15_family(label: str, parts: list[str]) -> None:
                 f"{_SG15_ARCHIVE_URL}; pin a new hash after verifying the contents."
             )
 
+        selected = _select_sg15_files(archive_bytes, source_versions, fr_suffix)
+
         flat = tmp / "flat"
         flat.mkdir()
-        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
-            for member in tar.getmembers():
-                if not member.isfile():
-                    continue
-                match = filename_re.match(Path(member.name).name)
-                if match is None:
-                    continue
-                extracted = tar.extractfile(member)
-                if extracted is None:
-                    continue
-                (flat / f"{match.group('element')}.upf").write_bytes(extracted.read())
+        for filename, content in selected.values():
+            (flat / filename).write_bytes(content)
 
         if not any(flat.iterdir()):
             raise ValueError(

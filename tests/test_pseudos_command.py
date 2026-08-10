@@ -60,7 +60,7 @@ class TestTheListingIsDerived:
 
     def test_sg15_comes_from_the_installers_own_constants(self, monkeypatch: Any) -> None:
         """SG15 has no ``aiida-pseudo`` library, so its labels track the installer."""
-        monkeypatch.setattr(pseudos_mod, "_SG15_VARIANTS", {"7.7": ("SR",)})
+        monkeypatch.setattr(pseudos_mod, "_SG15_VARIANTS", {"7.7": {"SR": ("7.7",)}})
         output = _run(monkeypatch)
         assert "SG15/7.7/PBE/SR" in output
         assert "SG15/1.2/PBE/SR" not in output
@@ -118,8 +118,10 @@ class TestTheSG15NotesDescribeTheArchive:
     """The element counts printed are the ones in the pinned 2020-02-06 tarball.
 
     Enumerating that tarball by the installer's own filename pattern gives 69
-    scalar-relativistic elements at 1.0 and at 1.2, 17 at 1.1, and fully
-    relativistic files at 1.0 (52 elements) and 1.1 (12) alone.
+    scalar-relativistic elements at 1.0 and at 1.2 and 17 at 1.1, and fully
+    relativistic files at 1.0 (52 elements) and 1.1 (12) alone. Composed over
+    1.0, version 1.1 covers 69 elements scalar-relativistic and 64 fully
+    relativistic.
     """
 
     def test_no_version_is_described_as_carrying_a_handful_of_elements(
@@ -134,16 +136,28 @@ class TestTheSG15NotesDescribeTheArchive:
         assert "only H and O" not in output
         assert "1.0 covers the same 69" in output
 
+    def test_the_composition_of_1_1_is_explained(self, monkeypatch: Any) -> None:
+        """A 1.1 family holds files named -1.0.upf, and the note says why.
+
+        Nothing else tells the user that the label installs two revisions, so
+        a listing that described 1.1 as its 17 revised elements leaves them
+        reading the install as broken.
+        """
+        output = _run(monkeypatch)
+        assert "composes it" in output
+        assert "-1.0.upf" in output
+
     def test_the_fully_relativistic_coverage_is_stated(self, monkeypatch: Any) -> None:
         """Neither FR label is a whole periodic table, and users pick by element.
 
-        Silicon has no fully relativistic SG15 pseudopotential at 1.0, so a
-        note that named only 1.0 would send a spin-orbit run to a label that
-        cannot supply it.
+        Silicon has no fully relativistic SG15 pseudopotential at 1.0 and
+        oxygen none at 1.1, so a note naming either release on its own sends a
+        spin-orbit run to a label that cannot supply one of them.
         """
         output = _run(monkeypatch)
-        assert "SG15/1.0/PBE/FR carries 52 elements" in output
-        assert "SG15/1.1/PBE/FR the other 12 (Si," in output
+        assert "Name SG15/1.1/PBE/FR for fully relativistic runs" in output
+        assert "64 elements against 1.0's 52" in output
+        assert "Ba, Be, Bi, Li and Ne have no fully relativistic" in output
 
     def test_only_ecutwfc_is_asked_for(self, monkeypatch: Any) -> None:
         """``ecutrho`` follows at four times ``ecutwfc`` for norm-conserving pseudos.
