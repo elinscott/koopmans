@@ -184,6 +184,7 @@ dependencies = [
     { name = "aiida-wannierjl", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-workgraph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "node-graph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pydantic-espresso", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "wannier90-input", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
@@ -200,6 +201,7 @@ requires-dist = [
     { name = "markupsafe", marker = "extra == 'docs'", specifier = "<2.1" },
     { name = "node-graph", editable = "../node-graph" },
     { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = "~=3.5" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-espresso", specifier = ">=0.0.1" },
     { name = "sphinx", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-contentui", marker = "extra == 'docs'" },
@@ -1466,6 +1468,7 @@ dependencies = [
     { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "types-pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "upf-tools", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "wannier90-input", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
@@ -1557,6 +1560,7 @@ requires-dist = [
     { name = "tqdm" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
     { name = "typing-extensions" },
+    { name = "upf-tools", specifier = ">=0.2.0" },
     { name = "wannier90-input", specifier = ">=0.0.2" },
 ]
 
@@ -2032,6 +2036,23 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/db/338535d9b152beabeb511579598418ba0212ce77cf9718edd70262cc4370/numpy-2.4.4-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5a285b3b96f951841799528cd1f4f01cd70e7e0204b4abebac9463eecfcf2a40", size = 16681241, upload-time = "2026-03-29T13:20:09.417Z" },
     { url = "https://files.pythonhosted.org/packages/e2/a9/ad248e8f58beb7a0219b413c9c7d8151c5d285f7f946c3e26695bdbbe2df/numpy-2.4.4-cp313-cp313t-musllinux_1_2_aarch64.whl", hash = "sha256:f8474c4241bc18b750be2abea9d7a9ec84f46ef861dbacf86a4f6e043401f79e", size = 17085767, upload-time = "2026-03-29T13:20:13.126Z" },
     { url = "https://files.pythonhosted.org/packages/b5/1a/3b88ccd3694681356f70da841630e4725a7264d6a885c8d442a697e1146b/numpy-2.4.4-cp313-cp313t-musllinux_1_2_x86_64.whl", hash = "sha256:4e874c976154687c1f71715b034739b45c7711bec81db01914770373d125e392", size = 18403169, upload-time = "2026-03-29T13:20:17.096Z" },
+]
+
+[[package]]
+name = "oncvpsp-tools"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "matplotlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "more-click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "more-itertools", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/80/8e/7391b71b12f24bc330384e93737ef8bdf911c75f903c5dc61eb95aa45f73/oncvpsp_tools-0.0.4.tar.gz", hash = "sha256:be3b591517e04d3e3af88db7851423b6e40aa1cd86afa688c477032657967fc2", size = 1524096, upload-time = "2026-08-10T15:49:47.008Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/13/7811a4997ae1ff3f4cfbbe1cb46de81094ff00228ebbdbcfc5321744b9fd/oncvpsp_tools-0.0.4-py3-none-any.whl", hash = "sha256:7b1cce45f6f60bef7467ab67b11854f2b1bff7272a947de845f3e9656a2fbb7e", size = 2030416, upload-time = "2026-08-10T15:49:44.767Z" },
 ]
 
 [[package]]
@@ -3627,6 +3648,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/a8/877a300aaa06ad18c33e1b9516ceef4089780a174d76bea2d9e482e179f6/upf_to_json-0.9.5.tar.gz", hash = "sha256:57614c4c8677f04f161679ce4eddb2f55b87984605b8a5253d3d288235f56e4a", size = 9214, upload-time = "2022-05-08T15:24:01.568Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/c3/e955711782ddd27410bd220e567fcafb0aeb816f9d1e3a04136f8cea09ff/upf_to_json-0.9.5-py3-none-any.whl", hash = "sha256:7a90948afbf3bbd79d520db94389c8c85627d528d0ac71cfb827066d2c8e7d18", size = 12672, upload-time = "2022-05-08T15:23:30.255Z" },
+]
+
+[[package]]
+name = "upf-tools"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "defusedxml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "matplotlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "oncvpsp-tools", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/de/6f/04cf77e38a244a6c2ede0ccf28e93dc1c38c9179acbcc6d1ae70b6f2dd44/upf_tools-0.2.0.tar.gz", hash = "sha256:8ab8a8e0c56b6f3478d289484c0dfe327a3ee62658ee5335e68bf7eb0229134f", size = 1684821, upload-time = "2026-08-10T16:56:48.232Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/63/32144bb79ceb217f2d9294801076196cd65ea373425b471efc33f0399066/upf_tools-0.2.0-py3-none-any.whl", hash = "sha256:b6480d4d87d4a955c4f2dbc1833fd84dbc3fb2f08cbf27fc19dc5128c87cdf42", size = 2150577, upload-time = "2026-08-10T16:56:44.806Z" },
 ]
 
 [[package]]
