@@ -160,8 +160,8 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         series="DFT",
         references=_pw_bands_references,
     ),
-    # The bare bands run the wannierize routes chain off their scf density:
-    # its explicit eigenvalues along the path are what the Wannier
+    # The bare bands run a wannierize route runs off its scf density: its
+    # explicit eigenvalues along the path are what the Wannier
     # interpolation is judged against.
     BandProducer(
         process_type="aiida.workflows:quantumespresso.pw.base",

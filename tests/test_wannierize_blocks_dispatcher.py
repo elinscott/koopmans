@@ -1185,7 +1185,7 @@ class TestQualityCheckContract:
     def test_whole_manifold_route_runs_bands_and_projwfc(
         self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """The upstream-workchain route grows the same two chained steps."""
+        """The upstream-workchain route grows the same two steps."""
         wg = _build_plain(_si_auto_dict(), pdos_codes)
         names = [t.name for t in wg.tasks]
         assert names.count("bands") == 1

@@ -968,7 +968,7 @@ class TestProducerOwnership:
     def test_a_path_bands_run_is_plotted_as_dft(self, aiida_profile: Any, tmp_path: Path) -> None:
         """A bare pw.x run declaring ``calculation='bands'`` joins the DFT series.
 
-        The wannierize routes chain it off their scf density as the explicit
+        The wannierize routes run it off their scf density as the explicit
         eigenvalues the Wannier interpolation is judged against; its Fermi
         level is the one ``output_parameters`` reports back from the parent
         density's restart.
