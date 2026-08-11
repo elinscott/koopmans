@@ -118,6 +118,26 @@ class TestAdviceFor:
         assert "(" not in advice.splitlines()[1]
         assert "koopmans install" in advice
 
+    def test_duplicate_member_paths_dedupe(self) -> None:
+        """One member reported under several socket paths earns one advice line.
+
+        The trajectory route reports a missing kcp.x both as the graph
+        input and under each snapshot's nested DSCF task.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        help_text = "Needed to compute the screened Koopmans corrections."
+        exc = MissingRequiredInputsError(
+            [
+                MissingInput("graph_inputs.codes.kcp", "workgraph.code", help_text),
+                MissingInput("dscf_snapshot_1.codes.kcp", "workgraph.code", help_text),
+                MissingInput("dscf_snapshot_2.codes.kcp", "workgraph.code", help_text),
+            ]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert advice.count("`kcp@localhost`") == 1
+
     def test_missing_non_code_sockets_earn_no_advice(self) -> None:
         """An error naming only non-code sockets is not an installation problem."""
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError

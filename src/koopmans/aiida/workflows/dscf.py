@@ -107,9 +107,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
 
-    # Every NotRequired member of DscfCodes exists for the Wannier-seeded
-    # initialisation, so that route turns them all on.
-    codes = load_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
+    codes = load_codes(DscfCodes)
 
     return KoopmansDSCFWorkflow.build(
         codes=codes,

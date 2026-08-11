@@ -29,7 +29,7 @@ def tutorial_1_ozone_input(tutorials_dir: Path) -> KoopmansInput:
 
 
 def test_build_workgraph(
-    aiida_profile: Any,
+    aiida_profile_clean: Any,
     installed_pw_code: Any,
     installed_kcp_code: Any,
     fake_sg15_pseudo_family: Any,
@@ -42,6 +42,11 @@ def test_build_workgraph(
     The snapshot file (``test_tutorial_1_ozone_ki/test_build_workgraph.yml``)
     is written on first run and will need human review before being
     committed. Subsequent runs fail if the dispatcher's wiring drifts.
+
+    Requests ``aiida_profile_clean``: the pass-everything loader forwards
+    every configured code the workflow declares, so codes leaked into the
+    session profile by earlier tests would change the snapshot's graph
+    inputs.
     """
     workgraph = build_workgraph(tutorial_1_ozone_input)
 

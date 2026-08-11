@@ -85,31 +85,70 @@ def _missing_codes_message(missing: list[tuple[str, str | None]]) -> str:
     )
 
 
-def load_codes[CodesT: Mapping[str, Any]](
-    codes_spec: type[CodesT], require: Iterable[str] = ()
-) -> CodesT:
-    """Load the ``<member>@localhost`` code for each member of a workflow's codes TypedDict.
+def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
+    """Load every configured ``<member>@localhost`` code a workflow's codes TypedDict declares.
 
     ``codes_spec`` is the workflow's graph-input TypedDict, declared
     beside the workflow entry point it feeds (e.g.
     ``aiida_koopmans.workgraphs.kcp.DscfCodes``) — the single declaration
-    of which codes the workflow wires. Its required members must be
-    configured;
-    ``require`` names the ``NotRequired`` members the input at hand turns on
-    (e.g. ``wannierjl`` when ``block_wannierization_threshold`` is set), so
-    their absence raises here — with the member's declared purpose — instead
-    of surfacing as a raw ``KeyError`` inside the graph body. The remaining
-    ``NotRequired`` members are left out: what the graph receives is fixed
-    by the input file, not by which codes the profile happens to hold.
+    of which codes the workflow wires. The profile's configured codes are
+    intersected mechanically with its members — required and
+    ``NotRequired`` alike — and whatever exists is passed, so a
+    configured optional code always rides along. No requiredness logic
+    lives here: the workflow's typed ``codes`` namespace reports a
+    missing required member as a structured
+    ``MissingRequiredInputsError`` when the graph is run or submitted,
+    which :func:`advice_for` translates into install advice.
 
     Raises:
-        ValueError: Naming every missing required code and how to install it.
+        ValueError: When no member is configured at all — install advice
+            for the required members. A workaround: aiida-workgraph drops
+            an explicitly-passed empty mapping from the build inputs, so
+            an empty ``codes`` would die as a bare ``TypeError`` (missing
+            argument) instead of the structured report.
     """
     from aiida.common.exceptions import NotExistent
 
     hints = get_type_hints(codes_spec, include_extras=True)
-    # Every codes_spec argument is a TypedDict class, which carries
-    # __required_keys__ at runtime; the Mapping bound cannot say so.
+    codes: dict[str, orm.AbstractCode] = {}
+    for name in sorted(hints):
+        try:
+            codes[name] = orm.load_code(f"{name}@localhost")
+        except NotExistent:
+            continue
+    if not codes:
+        # Every codes_spec argument is a TypedDict class, which carries
+        # __required_keys__ at runtime; the Mapping bound cannot say so.
+        required_keys: frozenset[str] = codes_spec.__required_keys__  # type: ignore[attr-defined]
+        raise ValueError(
+            _missing_codes_message(
+                [(name, _socket_help(hints[name])) for name in sorted(required_keys)]
+            )
+        )
+    return cast("CodesT", codes)
+
+
+def load_codes_by_need[CodesT: Mapping[str, Any]](
+    codes_spec: type[CodesT], require: Iterable[str] = ()
+) -> CodesT:
+    """Load exactly the needed ``<member>@localhost`` codes, raising on a missing one.
+
+    The #143-shape loader, kept for the routes whose graph bodies still
+    subscript ``codes`` at build time — the wannierize graphs and the
+    eager ``get_builder_from_protocol`` bodies (``DielectricTask``) —
+    where a member missing from the mapping is a bare ``KeyError``
+    before any socket validation. Required members are always demanded;
+    ``require`` names the ``NotRequired`` members the input at hand turns
+    on (e.g. ``wannierjl`` when ``block_wannierization_threshold`` is
+    set). Once those bodies defer member access (node-graph#169), their
+    routes move to :func:`load_codes` and this loader goes.
+
+    Raises:
+        ValueError: Naming every missing needed code and how to install it.
+    """
+    from aiida.common.exceptions import NotExistent
+
+    hints = get_type_hints(codes_spec, include_extras=True)
     required_keys: frozenset[str] = codes_spec.__required_keys__  # type: ignore[attr-defined]
     needed = set(required_keys) | set(require)
     undeclared = needed - hints.keys()
@@ -331,21 +370,25 @@ def _parallelization_advice(exc: ParallelizationError) -> str:
 def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
     """Phrase graph-level missing-code sockets as install advice.
 
-    A workflow body that wires a code member it was not given surfaces
-    as unfilled ``workgraph.code`` sockets at graph validation. Every
-    codes-TypedDict member is annotated, so an entry carries its declared
-    purpose in ``help``; a bare entry is named without one. Entries of
-    other socket types are not code-installation problems, so an error
-    naming only those earns no advice.
+    The primary missing-code path: :func:`load_codes` passes whatever is
+    configured, so a required code the profile lacks surfaces as unfilled
+    ``workgraph.code`` sockets when the engine validates the graph at
+    submit. Every codes-TypedDict member is annotated, so an entry
+    carries its declared purpose in ``help``; a bare entry is named
+    without one. One member can be reported under several socket paths
+    (the graph input and the nested tasks it feeds), so entries dedupe by
+    member name. Entries of other socket types are not code-installation
+    problems, so an error naming only those earns no advice.
     """
-    missing = [
-        (entry.socket_path.rsplit(".", 1)[-1], entry.help)
-        for entry in exc.missing
-        if entry.identifier == "workgraph.code"
-    ]
+    missing: dict[str, str | None] = {}
+    for entry in exc.missing:
+        if entry.identifier != "workgraph.code":
+            continue
+        name = entry.socket_path.rsplit(".", 1)[-1]
+        missing.setdefault(name, entry.help)
     if not missing:
         return None
-    return _missing_codes_message(missing)
+    return _missing_codes_message(list(missing.items()))
 
 
 def _model_mismatch_advice(exc: ModelMismatchError) -> str:
@@ -449,11 +492,15 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "permitted singlepoint prediction — not yet ported."
         )
 
-    # Build the workgraph based on task. Each route loads its workflow's
-    # codes itself (:func:`load_codes`) once its input validation has passed.
-    # An error raised inside the plugin speaks its vocabulary (derived
-    # blocks, `num_bands`), which the user never wrote; attach the
-    # input-file advice at this boundary.
+    # Build the workgraph based on task. Each route loads whatever codes
+    # the profile holds for its workflow's TypedDict (:func:`load_codes`);
+    # a missing required code passes the build and surfaces at submit,
+    # where the CLI's run boundary attaches the same advice. The
+    # wannierize and dielectric routes still pre-check by need
+    # (:func:`load_codes_by_need`) — their graph bodies subscript codes
+    # at build time. An error raised inside the plugin speaks its
+    # vocabulary (derived blocks, `num_bands`), which the user never
+    # wrote; attach the input-file advice at this boundary.
     try:
         if task == Task.DFT_BANDS:
             from koopmans.aiida.workflows.dft import build_dft_bands_workgraph

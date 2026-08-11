@@ -104,8 +104,9 @@ def run(input_file: str) -> None:
     wg = build_workgraph(koopmans_input)
 
     # Graph validation runs when the engine takes the graph, past the build
-    # boundary where `build_workgraph` attaches advice — a missing
-    # route-conditional code surfaces here, so translate at this boundary too.
+    # boundary where `build_workgraph` attaches advice — the pass-everything
+    # loader demands nothing at build, so a required code the profile lacks
+    # surfaces here; translate at this boundary too.
     try:
         with suppress_aiida_logging():
             run_with_progress(wg)

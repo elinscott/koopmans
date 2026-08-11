@@ -98,11 +98,7 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             koopmans_input, next(iter(snapshots.values())), inputs["nbnd"]
         )
 
-    # Every NotRequired member of DscfCodes exists for the Wannier-seeded
-    # initialisation, so that route turns them all on. Loaded before the
-    # loose decompose code below, so an empty profile reports the whole
-    # workflow's missing codes at once instead of one at a time.
-    codes = load_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
+    codes = load_codes(DscfCodes)
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")

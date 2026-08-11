@@ -1,4 +1,4 @@
-n_tasks: 8
+n_tasks: 9
 raw:
   action: NONE
   connectivity:
@@ -17,12 +17,18 @@ raw:
       - ComputeScreeningParameters
       - RunFinalKI
       - graph_outputs
+      get_kcp_code:
+      - ComputeScreeningParameters
+      - RunFinalKI
+      - dft_init
+      - graph_outputs
       graph_ctx: []
       graph_inputs:
       - ComputeScreeningParameters
       - RunFinalKI
       - count_electrons_task
       - dft_init
+      - get_kcp_code
       - graph_outputs
       - resolve_pseudo_family_task
       graph_outputs: []
@@ -38,7 +44,7 @@ raw:
       - count_electrons_task
       - count_electrons_task
       - dft_init
-      - graph_inputs
+      - get_kcp_code
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -60,7 +66,7 @@ raw:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
-      - graph_inputs
+      - get_kcp_code
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -78,7 +84,7 @@ raw:
       - count_electrons_task
       - count_electrons_task
       - count_electrons_task
-      - graph_inputs
+      - get_kcp_code
       - graph_inputs
       - graph_inputs
       - graph_inputs
@@ -86,6 +92,9 @@ raw:
       - graph_inputs
       - graph_inputs
       - resolve_pseudo_family_task
+      get_kcp_code:
+      - graph_inputs
+      - graph_inputs
       graph_ctx: []
       graph_inputs: []
       graph_outputs:
@@ -127,6 +136,10 @@ raw:
       - dft_init
       dft_init:
       - ComputeScreeningParameters
+      get_kcp_code:
+      - ComputeScreeningParameters
+      - RunFinalKI
+      - dft_init
       graph_ctx: []
       graph_inputs:
       - ComputeScreeningParameters
@@ -141,8 +154,6 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
-      - ComputeScreeningParameters
-      - RunFinalKI
       - RunFinalKI
       - RunFinalKI
       - RunFinalKI
@@ -159,7 +170,8 @@ raw:
       - dft_init
       - dft_init
       - dft_init
-      - dft_init
+      - get_kcp_code
+      - get_kcp_code
       - resolve_pseudo_family_task
       - resolve_pseudo_family_task
       graph_outputs: []
@@ -174,6 +186,7 @@ raw:
         input_tasks:
         - count_electrons_task
         - dft_init
+        - get_kcp_code
         - graph_inputs
         - resolve_pseudo_family_task
       RunFinalKI:
@@ -181,6 +194,7 @@ raw:
         input_tasks:
         - ComputeScreeningParameters
         - count_electrons_task
+        - get_kcp_code
         - graph_inputs
         - resolve_pseudo_family_task
       count_electrons_task:
@@ -192,8 +206,13 @@ raw:
         children: []
         input_tasks:
         - count_electrons_task
+        - get_kcp_code
         - graph_inputs
         - resolve_pseudo_family_task
+      get_kcp_code:
+        children: []
+        input_tasks:
+        - graph_inputs
       graph_ctx:
         children: []
         input_tasks: []
@@ -221,6 +240,14 @@ raw:
     sockets: {}
     triples: []
   links:
+  - from_socket: codes.kcp
+    from_task: graph_inputs
+    to_socket: kcp
+    to_task: get_kcp_code
+  - from_socket: codes.pw
+    from_task: graph_inputs
+    to_socket: pw
+    to_task: get_kcp_code
   - from_socket: pseudo_family
     from_task: graph_inputs
     to_socket: family_label
@@ -245,8 +272,8 @@ raw:
     from_task: graph_inputs
     to_socket: tot_magnetization
     to_task: count_electrons_task
-  - from_socket: codes.kcp
-    from_task: graph_inputs
+  - from_socket: result
+    from_task: get_kcp_code
     to_socket: kcp_code
     to_task: dft_init
   - from_socket: structure
@@ -289,8 +316,8 @@ raw:
     from_task: graph_inputs
     to_socket: tot_magnetization
     to_task: dft_init
-  - from_socket: codes.kcp
-    from_task: graph_inputs
+  - from_socket: result
+    from_task: get_kcp_code
     to_socket: kcp_code
     to_task: ComputeScreeningParameters
   - from_socket: structure
@@ -361,8 +388,8 @@ raw:
     from_task: dft_init
     to_socket: dft_remote
     to_task: ComputeScreeningParameters
-  - from_socket: codes.kcp
-    from_task: graph_inputs
+  - from_socket: result
+    from_task: get_kcp_code
     to_socket: kcp_code
     to_task: RunFinalKI
   - from_socket: structure
@@ -1563,6 +1590,52 @@ raw:
       state: PLANNED
       uuid: <scrubbed:uuid>
       wait: []
+    get_kcp_code:
+      action: ''
+      children: []
+      description: ''
+      error: ''
+      execution_count: 0
+      hash: <scrubbed:hash>
+      identifier: <scrubbed:identifier>
+      input_socket_meta: {}
+      inputs:
+        key: kcp
+        metadata:
+          call_link_label: get_kcp_code
+      log: ''
+      metadata:
+        pk: <scrubbed:pk>
+      name: get_kcp_code
+      parent_task:
+      - null
+      position:
+      - 30
+      - 30
+      process: <scrubbed:process>
+      properties: {}
+      spec:
+        base_class_path: aiida_workgraph.tasks.aiida.AiiDAFunctionTask
+        catalog: null
+        executor:
+          callable_kind: null
+          callable_name: get
+          graph_data: null
+          metadata: null
+          mode: module
+          module_path: aiida_koopmans.workgraphs.utils.codes
+          pickled_callable: null
+          source_code: ''
+        identifier: <scrubbed:identifier>
+        metadata:
+          non_function_inputs:
+          - metadata
+          non_function_outputs: []
+        schema_source: handle
+        task_type: WORKFUNCTION
+      state: PLANNED
+      uuid: <scrubbed:uuid>
+      wait: []
     graph_ctx:
       action: ''
       children: []
@@ -1615,6 +1688,8 @@ raw:
         codes:
           kcp:
             __aiida_code__: kcp@localhost
+          pw:
+            __aiida_code__: pw@localhost
         correction: ki
         ecutrho: 160.0
         ecutwfc: 40.0
@@ -2615,6 +2690,7 @@ task_names:
 - RunFinalKI
 - count_electrons_task
 - dft_init
+- get_kcp_code
 - graph_ctx
 - graph_inputs
 - graph_outputs

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from koopmans.aiida.workflows import (
-    load_codes,
+    load_codes_by_need,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
@@ -46,8 +46,11 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf"])
     overrides["scf"]["pw"]["parameters"].get("SYSTEM", {}).pop("nbnd", None)
 
+    # By-need loading: DielectricTask's eager body feeds both members to
+    # get_builder_from_protocol at build time (node-graph#169), so they
+    # must exist before the build rather than surface at submit.
     return DielectricTask.build(
-        codes=load_codes(DielectricCodes),
+        codes=load_codes_by_need(DielectricCodes),
         structure=structure,
         pseudo_family=pseudo_family,
         overrides=overrides,
