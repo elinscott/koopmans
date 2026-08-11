@@ -214,20 +214,33 @@ class TestMissingCodesSurfaceAtSubmit:
             build_workgraph(inp)
         assert "koopmans install" in str(excinfo.value)
 
-    def test_wannier_route_missing_fold_codes_is_a_scope_error(
+    def test_wannier_route_missing_fold_codes_earns_install_advice(
         self,
         aiida_profile_clean: Any,
         installed_kcp_code: Any,
         installed_pw_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """The mlwfs route's conditional codes stay a build-time guard.
+        """The mlwfs route's conditional codes earn the same install advice.
 
         ``DscfCodes`` declares the Wannier-route members ``NotRequired``
         (their need follows ``init_orbitals``), so the socket layer cannot
-        demand them; the workflow's own ``_validate_scope`` raises at
-        build, naming them in prose.
+        demand them; the workflow's own guard raises the same structured
+        error at build, every absent member at once, and the build
+        boundary attaches the install advice. pw.x is configured, so no
+        advice line may demand it.
         """
+        from aiida_workgraph.errors import MissingRequiredInputsError
+
         inp = KoopmansInput.model_validate(_si_dscf_dict())
-        with pytest.raises(ValueError, match="wann2kcp/merge_evc codes"):
+        with pytest.raises(MissingRequiredInputsError) as excinfo:
             build_workgraph(inp)
+        advice = advice_for(excinfo.value)
+        assert advice is not None
+        for member in ("wannier90", "pw2wannier90", "wann2kcp", "merge_evc"):
+            assert f"`{member}@localhost`" in advice
+        assert "Needed to initialize the variational orbitals as Wannier functions." in advice
+        assert "koopmans install" in advice
+        assert "`pw@localhost`" not in advice
+        # The build boundary already attached the same advice as a note.
+        assert any("koopmans install" in note for note in getattr(excinfo.value, "__notes__", []))

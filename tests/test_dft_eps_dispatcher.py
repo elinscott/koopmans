@@ -243,17 +243,27 @@ class TestDfptAutoEps:
     def test_auto_without_ph_code_raises(
         self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """eps_inf='auto' without ph@localhost fails at build with the workflow's guard.
+        """eps_inf='auto' without ph@localhost earns install advice at build.
 
         ``ph`` is a settings-conditional ``NotRequired`` member, so the
         socket layer cannot demand it; the pass-everything loader leaves
-        it out and the workflow's own guard raises at build. Requests
+        it out and the workflow's guard raises the same structured error
+        the socket layer would, which ``advice_for`` translates. Requests
         ``aiida_profile_clean``: earlier tests may have installed a
         ``ph@localhost`` code in the session profile.
         """
+        from aiida_workgraph.errors import MissingRequiredInputsError
+
+        from koopmans.aiida.workflows import advice_for
+
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        with pytest.raises(ValueError, match=r"eps_inf='auto' requires a ph\.x code"):
+        with pytest.raises(MissingRequiredInputsError) as excinfo:
             build_singlepoint_dfpt_workgraph(inp)
+        advice = advice_for(excinfo.value)
+        assert advice is not None
+        assert "`ph@localhost`" in advice
+        assert "Needed if the dielectric constant is to be computed automatically." in advice
+        assert "koopmans install" in advice
 
     def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
         """A non-'auto' string eps_inf is rejected up front."""
