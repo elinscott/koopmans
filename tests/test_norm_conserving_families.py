@@ -154,6 +154,39 @@ class TestTheCheckReadsRealHeaders:
 
         assert _norm_conserving._pseudo_type(_Pseudo(getattr(fixtures, fixture))) == expected
 
+    def test_a_v1_header_spelling_paw_is_refused(self) -> None:
+        """A v1 PAW header is refused, as its v2 counterpart is.
+
+        The v1 type line takes ``US``, ``PAW``, ``NC`` or ``1/r`` (Quantum
+        ESPRESSO's own ``upflib/read_upf_v1.f90``), so a v1 file can say PAW
+        and koopmans cannot use it. Reading it needs upf-tools to report that
+        line's PAW as ``is_paw``, the key this check reads before the
+        ultrasoft one.
+        """
+        from koopmans.aiida.setup.pseudos._norm_conserving import _pseudo_type
+        from tests import fixtures
+
+        assert _pseudo_type(_Pseudo(fixtures.UPF_V1_PAW_HEADER)) == "PAW"
+
+    def test_a_file_whose_body_cannot_be_read_is_still_classified(self) -> None:
+        """A pseudopotential truncated below its header is refused, not admitted.
+
+        The first assertion is what makes the second mean anything: reading
+        the whole file raises on this stream, so a check that had to parse the
+        file to reach its header would report "cannot tell" and let an
+        ultrasoft pseudopotential through.
+        """
+        from upf_tools import UPFDict
+
+        from koopmans.aiida.setup.pseudos._norm_conserving import _pseudo_type
+        from tests import fixtures
+
+        stream = fixtures.UPF_V2_ULTRASOFT_WITH_UNREADABLE_BODY
+
+        with pytest.raises(SyntaxError):
+            UPFDict.from_str(stream)
+        assert _pseudo_type(_Pseudo(stream)) == "USPP"
+
     def test_an_unparseable_stream_does_not_raise(self) -> None:
         """A file that is not UPF at all reads as "cannot tell", not as a crash."""
         from koopmans.aiida.setup.pseudos._norm_conserving import _pseudo_type
