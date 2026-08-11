@@ -81,9 +81,9 @@ def _si_collinear_dscf_dict() -> dict[str, Any]:
     return d
 
 
-def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build(d: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return build_singlepoint_workgraph(inp, codes=codes)
+    return build_singlepoint_workgraph(inp)
 
 
 def _dscf_blocks(
@@ -118,11 +118,11 @@ def dscf_codes(
     installed_wannier_codes: Any,
     installed_fold_codes: Any,
 ) -> dict[str, Any]:
-    """Assemble the codes dict the dispatcher receives, plus fold-path dummies.
+    """Register every dummy code the Wannier-initialised DSCF route resolves.
 
-    Only ``pw`` and ``kcp`` are passed in (mirroring ``load_codes_for_task``);
-    the wannier / fold codes are looked up by label inside the builder, so the
-    fixtures merely register them.
+    The route loads each ``DscfCodes`` member as ``<name>@localhost``, so
+    the fixtures merely register them; the returned mapping only serves
+    tests that inspect a code directly.
     """
     return {"pw": installed_pw_code, "kcp": installed_kcp_code}
 
@@ -345,11 +345,11 @@ class TestPeriodicMlwfsBuild:
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """The periodic mlwfs input builds the Wannier-seeded workgraph."""
-        wg = _build(_si_dscf_dict(), dscf_codes)
+        wg = _build(_si_dscf_dict())
         names = wg.get_task_names()
         assert "wannier_initialization" in names, names
         assert "make_supercell" in names, names
-        # The molecular KS-init chain must NOT be present.
+        # The molecular KS-init steps must NOT be present.
         assert "dft_init_nspin1" not in names
 
     def test_disentangling_input_builds_and_validates(
@@ -365,7 +365,7 @@ class TestPeriodicMlwfsBuild:
         """
         d = _si_dscf_dict()
         d["calculator_parameters"]["pw"] = {"system": {"nbnd": 16}}
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         assert "wannier_initialization" in wg.get_task_names()
         wg.check_before_run()
 
@@ -393,7 +393,7 @@ class TestPeriodicMlwfsBuild:
 
         monkeypatch.setattr(dscf_module, "create_explicit_blocks", reversed_blocks)
         with pytest.raises(ValueError, match="ascending band order"):
-            _build(_si_dscf_dict(), dscf_codes)
+            _build(_si_dscf_dict())
 
     def test_wannier_initialization_gets_the_input_mesh(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
@@ -406,7 +406,7 @@ class TestPeriodicMlwfsBuild:
         """
         d = _si_dscf_dict()
         d["kpoints"] = {"grid": [4, 4, 4], "offset": [0, 0, 0]}
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         kpoints = wg.tasks["wannier_initialization"].inputs["kpoints"].value
         assert list(kpoints.get_kpoints_mesh()[0]) == [4, 4, 4]
 
@@ -414,7 +414,7 @@ class TestPeriodicMlwfsBuild:
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """Wannier-initialised runs resolve to self-Hartree grouping at 1e-4 eV."""
-        wg = _build(_si_dscf_dict(), dscf_codes)
+        wg = _build(_si_dscf_dict())
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol == pytest.approx(1.0e-4)
 
@@ -423,7 +423,7 @@ class TestPeriodicMlwfsBuild:
     ) -> None:
         """An explicit group_orbitals_tol overrides the criterion default."""
         d = _si_dscf_dict(group_orbitals_tol=0.05)
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol == pytest.approx(0.05)
 
@@ -432,7 +432,7 @@ class TestPeriodicMlwfsBuild:
     ) -> None:
         """group_orbitals_by='none' disables grouping even on the Wannier route."""
         d = _si_dscf_dict(group_orbitals_by="none")
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol is None
 
@@ -452,7 +452,7 @@ class TestPeriodicMlwfsBuild:
         """eps_inf='auto' is still NotImplemented for the DSCF stream."""
         d = _si_dscf_dict(eps_inf="auto")
         with pytest.raises(NotImplementedError, match="eps_inf"):
-            _build(d, dscf_codes)
+            _build(d)
 
     def test_w90_keywords_land_flat_in_overrides(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
@@ -471,7 +471,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert extra["wannier_overrides"]["wannier90"] == {"num_iter": 17}
         # Projections are consumed by the block derivation, never leaked into
         # the flat keyword override.
@@ -492,7 +492,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_1", True),
             ("emp_1", False),
@@ -512,7 +512,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_up_1", True),
             ("emp_up_1", False),
@@ -530,7 +530,7 @@ class TestPeriodicMlwfsBuild:
         filling; ``check_before_run`` is what proves the assembled graph has
         every input it declares as required.
         """
-        wg = _build(_si_collinear_dscf_dict(), dscf_codes)
+        wg = _build(_si_collinear_dscf_dict())
         assert "wannier_initialization" in wg.get_task_names()
         wg.check_before_run()
 
@@ -544,7 +544,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
 
 
@@ -563,7 +563,7 @@ class TestFrozenWindowThreading:
         d = _si_dscf_dict()
         d["calculator_parameters"]["pw"] = {"system": {"nbnd": 16}}
         d["calculator_parameters"]["wannier90"]["dis_froz_max"] = 1.0
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
 
         init = next(t for t in wg.tasks if t.name == "wannier_initialization")
         overrides = init.inputs.wannier_overrides["wannier90"].value
@@ -589,7 +589,7 @@ class TestPerStepKpointMeshRejected:
         d = _si_dscf_dict()
         d["kpoints"]["overrides"] = {step: {"grid": [4, 4, 4]}}
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
-            _build(d, codes={})
+            _build(d)
 
 
 class TestCutoffLessPseudoFamily:
@@ -624,7 +624,7 @@ class TestCutoffLessPseudoFamily:
         from tests.fixtures import pw_step_from_overrides
 
         d = _si_dscf_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         structure = self._si_structure(d)
 
         entry = wg.tasks["wannier_initialization"].inputs["wannier_overrides"][step].value
@@ -655,7 +655,7 @@ class TestCutoffLessPseudoFamily:
         d["calculator_parameters"]["kcp"] = {"system": {"ecutwfc": 20.0}}
 
         with pytest.raises(ValueError) as excinfo:
-            _build(d, dscf_codes)
+            _build(d)
 
         message = str(excinfo.value)
         assert fake_sg15_family_without_cutoffs.label in message

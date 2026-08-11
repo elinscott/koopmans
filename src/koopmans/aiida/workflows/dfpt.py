@@ -6,40 +6,36 @@ from typing import TYPE_CHECKING, Any, cast
 
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.workflows import load_code, pin_step_kpoints, prepare_common_inputs
+from koopmans.aiida.workflows import load_codes, pin_step_kpoints, prepare_common_inputs
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
 
 if TYPE_CHECKING:
     from aiida import orm
-    from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
 
 
-def build_singlepoint_dfpt_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
 
-    Assembles the full chain (scf + nscf → per-manifold wannierization →
+    Assembles the full sequence (scf + nscf → per-manifold wannierization →
     wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPTWorkflow``.
 
-    Spin regimes (``workflow.spin``): ``none`` runs the closed-shell chain;
-    ``collinear`` fans the wannierization and the kcw.x chain out per spin
-    channel (needs per-spin projections in ``w90.up`` / ``w90.down`` and a
-    ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the spinor
-    chain (all bands singly occupied, ``num_wann`` doubled).
+    Spin regimes (``workflow.spin``): ``none`` runs the closed-shell
+    sequence; ``collinear`` fans the wannierization and the kcw.x steps out
+    per spin channel (needs per-spin projections in ``w90.up`` / ``w90.down``
+    and a ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the
+    spinor variant (all bands singly occupied, ``num_wann`` doubled).
 
     Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
     periodic, MLWF/projwf variational orbitals, and explicit projections.
     A manifold may span several projection blocks; their Wannier products
     are merged back into one file set before kcw.x consumes them.
     """
-    from aiida_koopmans.workgraphs.dfpt import SinglepointDFPTWorkflow
+    from aiida_koopmans.workgraphs.dfpt import DfptCodes, SinglepointDFPTWorkflow
 
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -121,13 +117,9 @@ def build_singlepoint_dfpt_workgraph(
         else None
     )
 
-    # The wannierization steps need codes that load_codes_for_task only wires
-    # for the WANNIERIZE task; load them here until it grows a DFPT branch.
-    codes = dict(codes)
-    codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
-    codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
-    if eps_inf == "auto":
-        codes.setdefault("ph", load_code("ph", "ph.x"))
+    # DfptCodes's one NotRequired member is ph.x, which only the
+    # `eps_inf: auto` dielectric pre-computation runs.
+    codes = load_codes(DfptCodes, require=DfptCodes.__optional_keys__ if eps_inf == "auto" else ())
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
@@ -141,7 +133,7 @@ def build_singlepoint_dfpt_workgraph(
         bands_kpoints=bands_kpoints,
         pseudo_family=pseudo_family,
         overrides=overrides,
-        # 'auto' prepends the scf + ph.x dielectric chain inside
+        # 'auto' prepends the scf + ph.x dielectric steps inside
         # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
         # periodic default, on).
         eps_inf=eps_inf,
@@ -172,7 +164,7 @@ def _single_channel_dfpt_manifolds(
 ) -> dict[str, Any]:
     """Derive the single-channel ``manifolds`` input for an unpolarized or spinor DFPT run.
 
-    Both regimes run one kcw.x chain keyed ``"none"``; the spinor case
+    Both regimes run one kcw.x sequence keyed ``"none"``; the spinor case
     differs only in the manifold derivation (all bands singly occupied,
     ``num_wann`` doubled).
     """

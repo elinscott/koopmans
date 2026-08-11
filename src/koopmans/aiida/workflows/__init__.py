@@ -6,11 +6,19 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterable, Mapping
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    NotRequired,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from aiida import orm
 from aiida_koopmans.ml import MLMode
-from aiida_koopmans.workgraphs import Codes
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
@@ -19,11 +27,7 @@ from koopmans.aiida.conversion import (
     step_grid_spacing,
     step_kpoints_mesh,
 )
-from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
-    Correction,
-    Task,
-)
+from koopmans.input_file.workflow import Task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,9 +43,9 @@ if TYPE_CHECKING:
     )
     from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
     from aiida_workgraph import WorkGraph
+    from aiida_workgraph.errors import MissingRequiredInputsError
 
     from koopmans.input_file import KoopmansInput
-    from koopmans.input_file.workflow import WorkflowConfig
 
 
 def load_code(name: str, executable: str) -> orm.AbstractCode:
@@ -55,64 +59,76 @@ def load_code(name: str, executable: str) -> orm.AbstractCode:
         ) from exc
 
 
-def load_codes_for_task(workflow: WorkflowConfig) -> Codes:
-    """Load the AiiDA codes required by the workflow described in ``workflow``.
+def _socket_help(hint: Any) -> str | None:
+    """Return the ``SocketMeta`` help attached to a codes-TypedDict member annotation."""
+    if get_origin(hint) is NotRequired:
+        hint = get_args(hint)[0]
+    for meta in getattr(hint, "__metadata__", ()):
+        text = getattr(meta, "help", None)
+        if text:
+            return str(text)
+    return None
 
-    Which codes are needed depends not only on ``task`` but also on the
-    Koopmans correction (``ki`` vs ``none`` vs …) and the screening method
-    (``dscf`` needs kcp.x, ``dfpt`` would need kcw.x, etc.).
 
-    Args:
-        workflow: The ``WorkflowConfig`` block from a parsed ``KoopmansInput``.
+def _missing_codes_message(missing: list[tuple[str, str | None]]) -> str:
+    """List missing codes with their purpose, ending in the install advice."""
+    lines = []
+    for name, help_text in missing:
+        line = f"  - `{name}@localhost`"
+        if help_text:
+            line += f" ({help_text})"
+        lines.append(line)
+    return (
+        "This calculation needs codes that are not configured:\n"
+        + "\n".join(lines)
+        + "\nPlease run 'koopmans install' to set up the AiiDA backend."
+    )
 
-    Returns:
-        Dictionary mapping code names to Code instances.
+
+def load_codes[CodesT: Mapping[str, Any]](
+    codes_spec: type[CodesT], require: Iterable[str] = ()
+) -> CodesT:
+    """Load the ``<member>@localhost`` code for each member of a workflow's codes TypedDict.
+
+    ``codes_spec`` is the workflow's graph-input TypedDict, declared
+    beside the workflow entry point it feeds (e.g.
+    ``aiida_koopmans.workgraphs.kcp.DscfCodes``) — the single declaration
+    of which codes the workflow wires. Its required members must be
+    configured;
+    ``require`` names the ``NotRequired`` members the input at hand turns on
+    (e.g. ``wannierjl`` when ``block_wannierization_threshold`` is set), so
+    their absence raises here — with the member's declared purpose — instead
+    of surfacing as a raw ``KeyError`` inside the graph body. The remaining
+    ``NotRequired`` members are left out: what the graph receives is fixed
+    by the input file, not by which codes the profile happens to hold.
 
     Raises:
-        ValueError: If a required code is not found in the AiiDA profile.
-        NotImplementedError: If the requested code combination is not supported yet.
+        ValueError: Naming every missing required code and how to install it.
     """
-    task = workflow.task
-    codes: Codes = {}
+    from aiida.common.exceptions import NotExistent
 
-    # All tasks need pw.x
-    codes["pw"] = load_code("pw", "pw.x")
+    hints = get_type_hints(codes_spec, include_extras=True)
+    # Every codes_spec argument is a TypedDict class, which carries
+    # __required_keys__ at runtime; the Mapping bound cannot say so.
+    required_keys: frozenset[str] = codes_spec.__required_keys__  # type: ignore[attr-defined]
+    needed = set(required_keys) | set(require)
+    undeclared = needed - hints.keys()
+    if undeclared:
+        raise ValueError(
+            f"{sorted(undeclared)} are not members of {codes_spec.__name__}; "
+            "`require` may only name its NotRequired members."
+        )
 
-    # A corrected singlepoint — or a trajectory, which runs one DSCF
-    # singlepoint per snapshot — needs a screening-method-specific code
-    # regardless of ``calculate_alpha``: when alphas are guessed instead
-    # of computed, kcp.x/kcw.x still evaluate the corrected functional — only
-    # the screening step itself is skipped.
-    if task in (Task.SINGLEPOINT, Task.TRAJECTORY) and workflow.correction != Correction.NONE:
-        if workflow.screening_method == CalculateScreeningMethod.DSCF:
-            codes["kcp"] = load_code("kcp", "kcp.x")
-        elif workflow.screening_method == CalculateScreeningMethod.DFPT:
-            # kcw.x runs all three DFPT steps (wann2kc, screen, ham) selected
-            # via its ``control.calculation`` flag, so a single code suffices.
-            codes["kcw"] = load_code("kcw", "kcw.x")
-
-    # The dielectric-constant task runs ph.x on top of the scf
-    if task == Task.DFT_EPS:
-        codes["ph"] = load_code("ph", "ph.x")
-
-    # Wannierize task needs additional codes
-    if task == Task.WANNIERIZE:
-        codes["pw2wannier90"] = load_code("pw2wannier90", "pw2wannier90.x")
-        codes["wannier90"] = load_code("wannier90", "wannier90.x")
-
-        # Automated block splitting runs the Wannier.jl CalcJobs (the julia
-        # binary registered via aiida_wannierjl.helpers.get_wannierjl_code).
-        if workflow.block_wannierization_threshold is not None:
-            codes["wannierjl"] = load_code("wannierjl", "julia (Wannier.jl)")
-
-        # projwfc is only needed when the Wannierize flow computes a projected
-        # DOS / bandstructure, so treat it as optional rather than required.
+    codes: dict[str, orm.AbstractCode] = {}
+    missing: list[tuple[str, str | None]] = []
+    for name in sorted(needed):
         try:
-            codes["projwfc"] = orm.load_code("projwfc@localhost")
-        except Exception:  # noqa: S110
-            pass
-
-    return codes
+            codes[name] = orm.load_code(f"{name}@localhost")
+        except NotExistent:
+            missing.append((name, _socket_help(hints[name])))
+    if missing:
+        raise ValueError(_missing_codes_message(missing))
+    return cast("CodesT", codes)
 
 
 def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -> None:
@@ -312,6 +328,26 @@ def _parallelization_advice(exc: ParallelizationError) -> str:
     )
 
 
+def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
+    """Phrase graph-level missing-code sockets as install advice.
+
+    A workflow body that wires a code member it was not given surfaces
+    as unfilled ``workgraph.code`` sockets at graph validation. Every
+    codes-TypedDict member is annotated, so an entry carries its declared
+    purpose in ``help``; a bare entry is named without one. Entries of
+    other socket types are not code-installation problems, so an error
+    naming only those earns no advice.
+    """
+    missing = [
+        (entry.socket_path.rsplit(".", 1)[-1], entry.help)
+        for entry in exc.missing
+        if entry.identifier == "workgraph.code"
+    ]
+    if not missing:
+        return None
+    return _missing_codes_message(missing)
+
+
 def _model_mismatch_advice(exc: ModelMismatchError) -> str:
     """Phrase the model-mismatch advice in input-file vocabulary."""
     stamp = f" (its {exc.field!r} stamp)" if exc.field else ""
@@ -322,13 +358,15 @@ def _model_mismatch_advice(exc: ModelMismatchError) -> str:
     )
 
 
-def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str]], ...]:
+def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str | None]], ...]:
     """Return the advice table for the plugin's typed errors.
 
     One advice per class — the plugin defines each class for exactly one
     piece of advice — and the class's structured attribute (block label,
     code name, model stamp) sharpens the sentence when the raise site
-    filled it in.
+    filled it in. An advisor may decline with ``None`` when the instance
+    carries nothing its advice speaks to (missing graph inputs that are
+    not codes).
 
     Advice attaches where ``build_workgraph`` catches: the build boundary.
     ``FrozenWindowError`` and ``ModelMismatchError`` currently raise
@@ -353,8 +391,10 @@ def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str]], ...
         ProjectionSiteError,
     )
     from aiida_koopmans.workgraphs.block_wannierize import FrozenWindowError
+    from aiida_workgraph.errors import MissingRequiredInputsError
 
     return (
+        (MissingRequiredInputsError, _missing_inputs_advice),
         (ProjectionSiteError, _projection_site_advice),
         (BlockBoundaryError, _block_boundary_advice),
         (OccupiedCoverageError, _occupied_coverage_advice),
@@ -373,7 +413,8 @@ def advice_for(exc: BaseException) -> str | None:
     plugin's own plain ``ValueError``s included — passes through
     untranslated, and an error the dispatcher replaced via
     ``raise ... from exc`` is translated only if the replacement is
-    itself a typed plugin error.
+    itself a typed plugin error. A matching advisor may still decline
+    with ``None`` for an instance its advice does not speak to.
     """
     for exc_type, advise in _plugin_advice():
         if isinstance(exc, exc_type):
@@ -408,33 +449,32 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "permitted singlepoint prediction — not yet ported."
         )
 
-    # Load required codes
-    codes = load_codes_for_task(koopmans_input.workflow)
-
-    # Build the workgraph based on task. An error raised inside the plugin
-    # speaks its vocabulary (derived blocks, `num_bands`), which the user
-    # never wrote; attach the input-file advice at this boundary.
+    # Build the workgraph based on task. Each route loads its workflow's
+    # codes itself (:func:`load_codes`) once its input validation has passed.
+    # An error raised inside the plugin speaks its vocabulary (derived
+    # blocks, `num_bands`), which the user never wrote; attach the
+    # input-file advice at this boundary.
     try:
         if task == Task.DFT_BANDS:
             from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
 
-            return build_dft_bands_workgraph(koopmans_input, codes)
+            return build_dft_bands_workgraph(koopmans_input)
         elif task == Task.WANNIERIZE:
             from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
 
-            return build_wannierize_workgraph(koopmans_input, codes)
+            return build_wannierize_workgraph(koopmans_input)
         elif task == Task.SINGLEPOINT:
             from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
 
-            return build_singlepoint_workgraph(koopmans_input, codes)
+            return build_singlepoint_workgraph(koopmans_input)
         elif task == Task.TRAJECTORY:
             from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
 
-            return build_trajectory_workgraph(koopmans_input, codes)
+            return build_trajectory_workgraph(koopmans_input)
         elif task == Task.DFT_EPS:
             from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
 
-            return build_dft_eps_workgraph(koopmans_input, codes)
+            return build_dft_eps_workgraph(koopmans_input)
         else:
             raise ValueError(
                 f"Task '{task.value}' is not yet implemented. "

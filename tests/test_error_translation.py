@@ -82,6 +82,49 @@ class TestAdviceFor:
             raise ValueError("raised by the dispatcher, not the plugin")
         assert advice_for(excinfo.value) is None
 
+    def test_missing_code_socket_earns_install_advice(self) -> None:
+        """A missing ``workgraph.code`` socket is translated with its help text."""
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [
+                MissingInput(
+                    "wannierize_and_split_block_1.codes.wannierjl",
+                    "workgraph.code",
+                    "Needed for threshold-based splitting of bands into blocks.",
+                )
+            ]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert "`wannierjl@localhost`" in advice
+        assert "Needed for threshold-based splitting of bands into blocks." in advice
+        assert "koopmans install" in advice
+
+    def test_bare_code_entry_stays_generic(self) -> None:
+        """A help-less code entry is named with the install pointer and no purpose.
+
+        Every codes-TypedDict member is annotated, so a real entry carries its
+        purpose in ``help``; the advice must still not die on a bare one.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [MissingInput("some_future_step.codes.epw", "workgraph.code", None)]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert "`epw@localhost`" in advice
+        assert "(" not in advice.splitlines()[1]
+        assert "koopmans install" in advice
+
+    def test_missing_non_code_sockets_earn_no_advice(self) -> None:
+        """An error naming only non-code sockets is not an installation problem."""
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError([MissingInput("add1.x", "workgraph.int", None)])
+        assert advice_for(exc) is None
+
 
 class TestDispatchTranslation:
     """Each advice-table entry crosses ``build_workgraph`` with its advice."""
@@ -229,6 +272,44 @@ class TestDispatchTranslation:
         excinfo = _build_expecting(d, FrozenWindowError, "frozen")
         assert any(
             "`dis_froz_max`" in note and "block 'occ_1'" in note for note in excinfo.value.__notes__
+        )
+
+    def test_missing_required_inputs_error(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_kcp_code: Any,
+        fake_sg15_pseudo_family: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A graph-level missing-code socket crosses with install advice.
+
+        The route's pre-check demands what the input turns on, so a real
+        instance can only arise past it (a workflow body wiring a member the
+        route did not know it needed); the error is raised at the route's
+        plugin entry to pin the translation.
+        """
+        import aiida_koopmans.workgraphs.kcp as kcp_module
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        def build_missing_a_code(**kwargs: Any) -> Any:
+            """Raise the structured error a failed socket validation produces."""
+            raise MissingRequiredInputsError(
+                [
+                    MissingInput(
+                        "wannier_initialization.codes.wann2kcp",
+                        "workgraph.code",
+                        "Needed to initialize the variational orbitals as Wannier functions.",
+                    )
+                ]
+            )
+
+        monkeypatch.setattr(kcp_module.KoopmansDSCFWorkflow, "build", build_missing_a_code)
+        d = _si_dscf_dict(init_orbitals="kohn-sham")
+        excinfo = _build_expecting(d, MissingRequiredInputsError, "wann2kcp")
+        assert any(
+            "`wann2kcp@localhost`" in note and "koopmans install" in note
+            for note in excinfo.value.__notes__
         )
 
     def test_parallelization_error(

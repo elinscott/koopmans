@@ -10,6 +10,7 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
 from koopmans.aiida.workflows import (
+    load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
     require_cutoffs_for_family,
@@ -22,7 +23,6 @@ from koopmans.aiida.workflows.projectors import load_external_projectors
 
 if TYPE_CHECKING:
     from aiida import orm
-    from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
     from wannier90_input.models.parameters import Projection
@@ -150,10 +150,7 @@ def _external_projector_kwargs(
     }
 
 
-def build_wannierize_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for Wannierization.
 
     Two routes, both sampling the Brillouin zone on ``kpoints.grid``:
@@ -170,12 +167,11 @@ def build_wannierize_workgraph(
 
     Args:
         koopmans_input: The parsed koopmans input.
-        codes: Dictionary of loaded codes.
 
     Returns:
         The assembled WorkGraph.
     """
-    from aiida_koopmans.workgraphs.wannier90 import Wannierize
+    from aiida_koopmans.workgraphs.wannier90 import Wannierize, WannierizeCodes
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
     if koopmans_input.workflow.spin != SpinType.NONE:
@@ -186,11 +182,11 @@ def build_wannierize_workgraph(
         )
 
     if koopmans_input.workflow.block_wannierization_threshold is not None:
-        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
+        return _build_wannierize_blocks_workgraph(koopmans_input)
 
     _validate_projection_sources(koopmans_input)
     if _keywords_setting_projections(koopmans_input):
-        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
+        return _build_wannierize_blocks_workgraph(koopmans_input)
     if not koopmans_input.workflow.auto_projections:
         raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
@@ -205,8 +201,10 @@ def build_wannierize_workgraph(
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, overrides)
 
+    # WannierizeCodes's one NotRequired member is projwfc (SCDM
+    # projections), which this route never asks for.
     return Wannierize.build(
-        codes=codes,
+        codes=load_codes(WannierizeCodes),
         structure=structure,
         overrides=overrides,
         pseudo_family=pseudo_family,
@@ -219,10 +217,7 @@ def build_wannierize_workgraph(
     )
 
 
-def _build_wannierize_blocks_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build the Wannierization workgraph that Wannierizes block by block.
 
     One scf + nscf feeds a separate Wannierization per projection block.
@@ -245,7 +240,7 @@ def _build_wannierize_blocks_workgraph(
 
     Current scope: ``spin = 'none'``.
     """
-    from aiida_koopmans.workgraphs.block_wannierize import WannierizeBlocks
+    from aiida_koopmans.workgraphs.block_wannierize import WannierizeBlocks, WannierizeBlocksCodes
 
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -352,8 +347,14 @@ def _build_wannierize_blocks_workgraph(
             "split_threshold": float(threshold),
         }
 
+    # The split machinery runs the Wannier.jl CalcJobs (the julia binary
+    # registered via aiida_wannierjl.helpers.get_wannierjl_code), so the
+    # threshold turns WannierizeBlocksCodes's one NotRequired member on.
     return WannierizeBlocks.build(
-        codes=codes,
+        codes=load_codes(
+            WannierizeBlocksCodes,
+            require=WannierizeBlocksCodes.__optional_keys__ if threshold is not None else (),
+        ),
         structure=structure,
         blocks=blocks,
         kpoints=kpoints,
