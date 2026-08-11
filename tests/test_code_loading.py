@@ -110,7 +110,8 @@ class TestLoadCodes:
 
         with pytest.raises(ValueError, match="`wannier90@localhost`") as excinfo:
             load_codes(DscfCodes, require=DscfCodes.__optional_keys__)
-        assert "Needed for init_orbitals: mlwfs or projwfs." in str(excinfo.value)
+        message = str(excinfo.value)
+        assert "Needed to initialize the variational orbitals as Wannier functions." in message
 
     def test_require_rejects_undeclared_names(self, aiida_profile_clean: Any) -> None:
         """A ``require`` name outside the TypedDict is a programming error, not advice."""
@@ -166,4 +167,4 @@ class TestDispatcherPreCheck:
             build_workgraph(inp)
         message = str(excinfo.value)
         assert "`merge_evc@localhost`" in message
-        assert "Needed for init_orbitals: mlwfs or projwfs." in message
+        assert "Needed to initialize the variational orbitals as Wannier functions." in message

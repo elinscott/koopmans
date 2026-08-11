@@ -91,14 +91,14 @@ class TestAdviceFor:
                 MissingInput(
                     "wannierize_and_split_block_1.codes.wannierjl",
                     "workgraph.code",
-                    "Needed when block_wannierization_threshold is set.",
+                    "Needed for threshold-based splitting of bands into blocks.",
                 )
             ]
         )
         advice = advice_for(exc)
         assert advice is not None
         assert "`wannierjl@localhost`" in advice
-        assert "Needed when block_wannierization_threshold is set." in advice
+        assert "Needed for threshold-based splitting of bands into blocks." in advice
         assert "koopmans install" in advice
 
     def test_bare_code_entry_stays_generic(self) -> None:
@@ -299,7 +299,7 @@ class TestDispatchTranslation:
                     MissingInput(
                         "wannier_initialization.codes.wann2kcp",
                         "workgraph.code",
-                        "Needed for init_orbitals: mlwfs or projwfs.",
+                        "Needed to initialize the variational orbitals as Wannier functions.",
                     )
                 ]
             )

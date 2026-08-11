@@ -253,7 +253,8 @@ class TestDfptAutoEps:
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
         with pytest.raises(ValueError, match="`ph@localhost`") as excinfo:
             build_singlepoint_dfpt_workgraph(inp)
-        assert "Needed for eps_inf: auto." in str(excinfo.value)
+        message = str(excinfo.value)
+        assert "Needed if the dielectric constant is to be computed automatically." in message
         assert "koopmans install" in str(excinfo.value)
 
     def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:

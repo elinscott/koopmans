@@ -526,35 +526,35 @@ raw:
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
             pw:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
             pw2wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
             wann2kcp:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
             wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
           identifier: <scrubbed:identifier>
           meta:
@@ -1688,35 +1688,40 @@ raw:
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
                 pw:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
                 pw2wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
                 wann2kcp:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
                 wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
               identifier: <scrubbed:identifier>
               meta:
