@@ -89,7 +89,7 @@ class TestAdviceFor:
         exc = MissingRequiredInputsError(
             [
                 MissingInput(
-                    "WannierizeAndSplitBlock.codes.wannierjl",
+                    "wannierize_and_split_block_1.codes.wannierjl",
                     "workgraph.code",
                     "Needed when block_wannierization_threshold is set.",
                 )
@@ -101,58 +101,39 @@ class TestAdviceFor:
         assert "Needed when block_wannierization_threshold is set." in advice
         assert "koopmans install" in advice
 
-    def test_bare_code_entry_falls_back_to_the_declared_purpose(self) -> None:
-        """A help-less code entry gets the purpose its own chain declares.
+    def test_bare_code_entry_falls_back_to_the_agreed_purpose(self) -> None:
+        """A help-less code entry gets the purpose the TypedDicts agree on.
 
         Socket validation may report entries without ``help``, so the
-        advice must not depend on it. ``wannierjl`` is declared with
-        different purposes by ``WannierizeBlocksCodes`` and
-        ``SplitBlockCodes``, so only the task component (instance digits
-        stripped) can pick the right one.
+        advice must not depend on it. The task component is a call-site
+        label ("dfpt", "dscf_snapshot_1"), so it cannot pick a chain;
+        ``kcw``'s one annotated declaration (``DfptCodes``) answers by
+        agreement.
         """
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
 
-        exc = MissingRequiredInputsError(
-            [MissingInput("WannierizeBlocks2.codes.wannierjl", "workgraph.code", None)]
-        )
-        advice = advice_for(exc)
-        assert advice is not None
-        assert "`wannierjl@localhost`" in advice
-        assert "Needed when block_wannierization_threshold is set." in advice
-
-    def test_agreeing_declarations_answer_for_an_unidentified_chain(self) -> None:
-        """A task name outside the ``<ChainName>Codes`` convention still gets agreed help.
-
-        ``kcw`` is declared by ``DfptCodes`` alone, so every declaration
-        that states a purpose agrees and the union answers even though no
-        TypedDict is named ``SinglepointDFPTWorkflowCodes``.
-        """
-        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
-
-        exc = MissingRequiredInputsError(
-            [MissingInput("SinglepointDFPTWorkflow.codes.kcw", "workgraph.code", None)]
-        )
+        exc = MissingRequiredInputsError([MissingInput("dfpt.codes.kcw", "workgraph.code", None)])
         advice = advice_for(exc)
         assert advice is not None
         assert "`kcw@localhost`" in advice
         assert "Needed for the kcw.x wann2kc, screen, and ham steps." in advice
 
-    def test_disagreeing_declarations_stay_generic_without_a_chain(self) -> None:
-        """Conflicting purposes are not guessed when the chain cannot be identified.
+    def test_disagreeing_declarations_stay_generic(self) -> None:
+        """Conflicting purposes are not guessed for a bare entry.
 
-        ``kcp`` is declared with different purposes by ``DscfCodes`` and
-        ``MlwfInitCodes``, and no TypedDict is named
-        ``KoopmansDSCFWorkflowCodes``, so the member is named without a
-        purpose clause rather than with the wrong chain's.
+        ``wannierjl`` is declared with different purposes by
+        ``WannierizeBlocksCodes`` and ``SplitBlockCodes``, and the
+        call-site label cannot say which applies, so the member is named
+        without a purpose clause rather than with the wrong chain's.
         """
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
 
         exc = MissingRequiredInputsError(
-            [MissingInput("KoopmansDSCFWorkflow.codes.kcp", "workgraph.code", None)]
+            [MissingInput("wannierize.codes.wannierjl", "workgraph.code", None)]
         )
         advice = advice_for(exc)
         assert advice is not None
-        assert "`kcp@localhost`" in advice
+        assert "`wannierjl@localhost`" in advice
         assert "(" not in advice.splitlines()[1]
 
     def test_undeclared_member_stays_generic(self) -> None:
@@ -160,7 +141,7 @@ class TestAdviceFor:
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
 
         exc = MissingRequiredInputsError(
-            [MissingInput("SomeFutureChain.codes.epw", "workgraph.code", None)]
+            [MissingInput("some_future_step.codes.epw", "workgraph.code", None)]
         )
         advice = advice_for(exc)
         assert advice is not None
@@ -346,7 +327,7 @@ class TestDispatchTranslation:
             raise MissingRequiredInputsError(
                 [
                     MissingInput(
-                        "MlwfInitialization.codes.wann2kcp",
+                        "wannier_initialization.codes.wann2kcp",
                         "workgraph.code",
                         "Needed for init_orbitals: mlwfs or projwfs.",
                     )
