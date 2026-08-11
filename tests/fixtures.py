@@ -784,6 +784,28 @@ def fake_sg15_family_without_cutoffs(aiida_profile: Any) -> Any:
     )
 
 
+def count_pw_bands_runs(wg: Any) -> int:
+    """Count the graph's pw steps that declare ``calculation = 'bands'``.
+
+    Counting tasks *named* ``bands`` is vacuous: aiida-workgraph uniquifies
+    colliding task names, so a duplicated run shows up as ``bands1`` and
+    the name count stays at 1. The declared ``CONTROL.calculation`` on the
+    step's own ``pw`` namespace cannot be disguised that way.
+    """
+    count = 0
+    for graph_task in wg.tasks:
+        try:
+            parameters = graph_task.inputs["pw"]["parameters"].value
+        except (AttributeError, KeyError, TypeError):
+            continue
+        if parameters is None:
+            continue
+        parameters = parameters.get_dict() if hasattr(parameters, "get_dict") else dict(parameters)
+        if parameters.get("CONTROL", {}).get("calculation") == "bands":
+            count += 1
+    return count
+
+
 @pytest.fixture
 def fake_family_without_pswfc(aiida_profile: Any) -> Any:
     """Install a cutoffs family whose Si pseudo carries no ``PP_PSWFC`` block.

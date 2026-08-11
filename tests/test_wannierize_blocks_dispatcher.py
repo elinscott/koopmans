@@ -20,6 +20,7 @@ from koopmans.aiida.workflows.wannierize import (
     build_wannierize_workgraph,
 )
 from koopmans.input_file import KoopmansInput
+from tests.fixtures import count_pw_bands_runs
 
 
 def _si_split_dict(**workflow_updates: Any) -> dict[str, Any]:
@@ -314,7 +315,7 @@ class TestAutomaticProjections:
         wg = _build(d, split_codes)
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
-        assert names.count("bands") == 1
+        assert count_pw_bands_runs(wg) == 1
         assert names.count("detect_band_groups") == 1
         assert "wannierize_split_block_1" in names
 
@@ -911,7 +912,7 @@ class TestPlainRoute:
             "wannierize_block_2",
             "wannierize_occ_1",
         ]
-        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert count_pw_bands_runs(wg) == 1
         assert "detect_band_groups" not in names
 
         # Blocks cover consecutive bands in input order: 2 s-type Wannier
@@ -959,26 +960,6 @@ def _path_labels(kpoints: Any) -> list[str]:
     """Return the labels of an explicit k-path node, in path order."""
     assert kpoints is not None, "no k-path node reached the wannierization"
     return [label for _, label in kpoints.labels]
-
-
-def _bands_calculation_tasks(wg: Any) -> list[str]:
-    """Name the tasks whose declared pw.x parameters run ``calculation='bands'``.
-
-    Counts by the declared calculation type rather than by task name: a
-    name list cannot tell one task from two merged under the same
-    ``call_link_label``.
-    """
-    found = []
-    for graph_task in wg.tasks:
-        try:
-            parameters = graph_task.inputs["pw"]["parameters"].value
-        except (KeyError, AttributeError, TypeError, ValueError):
-            continue
-        if parameters is None:
-            continue
-        if parameters.get_dict().get("CONTROL", {}).get("calculation") == "bands":
-            found.append(graph_task.name)
-    return found
 
 
 class TestInterpolatedBands:
@@ -1208,7 +1189,7 @@ class TestQualityCheckContract:
     ) -> None:
         """The path adds one bands run and one projwfc step to the plain flow."""
         wg = _build_plain(_si_split_dict(), pdos_codes)
-        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert count_pw_bands_runs(wg) == 1
         assert [t.name for t in wg.tasks].count("projwfc") == 1
 
     def test_split_route_reuses_the_detection_bands_run(
@@ -1221,7 +1202,7 @@ class TestQualityCheckContract:
         pure waste.
         """
         wg = _build(_si_split_dict(), pdos_codes)
-        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert count_pw_bands_runs(wg) == 1
         assert [t.name for t in wg.tasks].count("projwfc") == 1
 
     def test_whole_manifold_route_runs_bands_and_projwfc(
@@ -1229,7 +1210,7 @@ class TestQualityCheckContract:
     ) -> None:
         """The upstream-workchain route grows the same two steps."""
         wg = _build_plain(_si_auto_dict(), pdos_codes)
-        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert count_pw_bands_runs(wg) == 1
         assert [t.name for t in wg.tasks].count("projwfc") == 1
 
     def test_incapable_pseudos_skip_only_the_projected_dos(
@@ -1242,7 +1223,7 @@ class TestQualityCheckContract:
         d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
         with pytest.warns(UserWarning, match="PP_PSWFC"):
             wg = _build_plain(d, pdos_codes)
-        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert count_pw_bands_runs(wg) == 1
         assert "projwfc" not in [t.name for t in wg.tasks]
 
 
@@ -1285,7 +1266,7 @@ class TestGraphBuild:
         wg = _build(_si_split_dict(), split_codes)
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
-        assert names.count("bands") == 1
+        assert count_pw_bands_runs(wg) == 1
         assert names.count("detect_band_groups") == 1
         assert "wannierize_split_block_1" in names
 
