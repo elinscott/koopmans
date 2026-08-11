@@ -36,7 +36,7 @@ Prefer Serena's symbolic tools: `get_symbols_overview`/`find_symbol` for reading
    - Chain dependencies by dict access: `outputs["remote_folder"]`, not attribute access.
    - Pop `clean_workdir` before chaining.
 5. **Drop anything that's a pure infrastructure concern of the legacy engine**: dill pickling, `HasDirectory`, file-symlink juggling, the `Status` enum, engine subprocess handling. AiiDA replaces these.
-6. **Update the dispatcher.** New tasks need a `Task` enum value (`koopmans2/src/koopmans/input_file/workflow.py`), code loading in `load_codes_for_task`, and a `build_<task>_workgraph` route module under `aiida/workflows/` wired into `build_workgraph`.
+6. **Update the dispatcher.** New tasks need a `Task` enum value (`koopmans2/src/koopmans/input_file/workflow.py`), a codes TypedDict in `aiida-koopmans2/workgraphs/codes.py` loaded via `load_chain_codes`, and a `build_<task>_workgraph` route module under `aiida/workflows/` wired into `build_workgraph`.
 7. **Add a regression test.** Pick the smallest relevant tutorial JSON in `koopmans/tutorials/` and wire it into `koopmans2/tests/regression/`.
 
 ## Hard rules

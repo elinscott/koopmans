@@ -185,8 +185,9 @@ class TestDftEps:
         ``ph@localhost`` code in the session profile.
         """
         inp = KoopmansInput.model_validate(_si_eps_dict())
-        with pytest.raises(ValueError, match=r"ph\.x"):
+        with pytest.raises(ValueError, match="`ph@localhost`") as excinfo:
             build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
 
 
 class TestDfptAutoEps:
@@ -196,7 +197,7 @@ class TestDfptAutoEps:
     def dfpt_codes(
         self, installed_pw_code: Any, installed_kcw_code: Any, installed_wannier_codes: Any
     ) -> dict[str, Any]:
-        """Assemble the DFPT code dict from the dummy-code fixtures."""
+        """Register the dummy DFPT codes the route resolves as ``<name>@localhost``."""
         return {
             "pw": installed_pw_code,
             "kcw": installed_kcw_code,
@@ -212,7 +213,7 @@ class TestDfptAutoEps:
     ) -> None:
         """A 'dielectric' task appears alongside the kcw chain."""
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        wg = build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+        wg = build_singlepoint_dfpt_workgraph(inp)
         names = wg.get_task_names()
         assert "dielectric" in names
         assert "dfpt" in names
@@ -233,7 +234,7 @@ class TestDfptAutoEps:
         needs to say so; per-step meshes are koopmans#50.
         """
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        wg = build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+        wg = build_singlepoint_dfpt_workgraph(inp)
         eps_mesh = wg.tasks["dielectric"].inputs["scf_kpoints"].value
         main_mesh = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
         assert list(eps_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
@@ -244,12 +245,16 @@ class TestDfptAutoEps:
     ) -> None:
         """eps_inf='auto' without ph@localhost fails with a setup hint.
 
-        Requests ``aiida_profile_clean``: earlier tests may have installed a
+        The pre-check names the missing code, quotes the purpose its codes
+        TypedDict declares, and points at ``koopmans install``. Requests
+        ``aiida_profile_clean``: earlier tests may have installed a
         ``ph@localhost`` code in the session profile.
         """
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        with pytest.raises(ValueError, match=r"ph\.x"):
-            build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+        with pytest.raises(ValueError, match="`ph@localhost`") as excinfo:
+            build_singlepoint_dfpt_workgraph(inp)
+        assert "Needed for eps_inf: auto." in str(excinfo.value)
+        assert "koopmans install" in str(excinfo.value)
 
     def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
         """A non-'auto' string eps_inf is rejected up front."""
@@ -257,4 +262,4 @@ class TestDfptAutoEps:
         d["workflow"]["eps_inf"] = "automatic"
         inp = KoopmansInput.model_validate(d)
         with pytest.raises(ValueError, match="not understood"):
-            build_singlepoint_dfpt_workgraph(inp, codes=dfpt_codes)
+            build_singlepoint_dfpt_workgraph(inp)

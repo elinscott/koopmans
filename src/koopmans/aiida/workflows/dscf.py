@@ -9,7 +9,11 @@ from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import load_code, reject_kpoint_overrides, require_cutoffs_for_family
+from koopmans.aiida.workflows import (
+    load_chain_codes,
+    reject_kpoint_overrides,
+    require_cutoffs_for_family,
+)
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -26,7 +30,6 @@ from koopmans.input_file.workflow import (
 
 if TYPE_CHECKING:
     from aiida import orm
-    from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
 
@@ -58,10 +61,7 @@ KPOINT_OVERRIDES_ON_TRAJECTORY = {
 }
 
 
-def build_singlepoint_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
 
     Dispatches on ``workflow.screening_method`` first (DSCF vs DFPT), then on
@@ -71,6 +71,7 @@ def build_singlepoint_workgraph(
     - DFPT + ``KI`` → ``build_singlepoint_dfpt_workgraph`` (kcw.x; KI only)
     - anything else → ``NotImplementedError``
     """
+    from aiida_koopmans.workgraphs.codes import DscfCodes
     from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
@@ -83,7 +84,7 @@ def build_singlepoint_workgraph(
     # the alpha_guess path inside the DFPT builder (screen step skipped),
     # not a reason to fall through to the kcp.x/DSCF branch.
     if workflow.screening_method == CalculateScreeningMethod.DFPT:
-        return build_singlepoint_dfpt_workgraph(koopmans_input, codes)
+        return build_singlepoint_dfpt_workgraph(koopmans_input)
 
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
     require_supported_correction(workflow.correction)
@@ -99,15 +100,20 @@ def build_singlepoint_workgraph(
 
     inputs = kcp_dscf_inputs(koopmans_input)
 
-    extra_kwargs: dict[str, Any] = {}
-    if workflow.init_orbitals in (
+    wannier_init = workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
-    ):
-        extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
+    )
+    extra_kwargs: dict[str, Any] = {}
+    if wannier_init:
+        extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
+
+    # Every NotRequired member of DscfCodes exists for the Wannier-seeded
+    # initialisation, so that route turns them all on.
+    codes = load_chain_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
 
     return KoopmansDSCFWorkflow.build(
-        code=codes["kcp"],
+        codes=codes,
         structure=structure,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
         **inputs,
@@ -118,15 +124,15 @@ def build_singlepoint_workgraph(
 def dscf_wannier_init_inputs(
     koopmans_input: KoopmansInput,
     structure: orm.StructureData,
-    codes: dict[str, orm.AbstractCode],
     nbnd: int,
 ) -> dict[str, Any]:
     """Assemble the extra ``KoopmansDSCFWorkflow`` inputs for the Wannier route.
 
-    Covers the periodic mlwfs/projwfs initialisation: the wannierize +
-    fold-to-supercell codes, the projection blocks (primitive band indices;
-    per spin channel when ``spin='collinear'``), the k-mesh, and the
-    Makov-Payne knobs. The molecular/kohn-sham route needs none of this.
+    Covers the periodic mlwfs/projwfs initialisation: the projection blocks
+    (primitive band indices; per spin channel when ``spin='collinear'``),
+    the k-mesh, and the Makov-Payne knobs. The molecular/kohn-sham route
+    needs none of this; the wannierize + fold-to-supercell codes ride the
+    caller's ``DscfCodes`` namespace.
     """
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -231,14 +237,7 @@ def dscf_wannier_init_inputs(
     if w90_user:
         wannier_overrides["wannier90"] = w90_user
 
-    wannier_codes = dict(codes)
-    wannier_codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
-    wannier_codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
-    wannier_codes.setdefault("wann2kcp", load_code("wann2kcp", "wann2kcp.x"))
-    wannier_codes.setdefault("merge_evc", load_code("merge_evc", "merge_evc.x"))
-
     return {
-        "codes": wannier_codes,
         "blocks": blocks,
         "kgrid": list(kpoints_input.grid),
         "kpoints": kpoints_input_to_kpoints_mesh(kpoints_input),

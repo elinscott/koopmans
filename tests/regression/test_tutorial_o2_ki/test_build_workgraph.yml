@@ -245,7 +245,7 @@ raw:
     from_task: graph_inputs
     to_socket: tot_magnetization
     to_task: count_electrons_task
-  - from_socket: code
+  - from_socket: codes.kcp
     from_task: graph_inputs
     to_socket: code
     to_task: dft_init
@@ -289,7 +289,7 @@ raw:
     from_task: graph_inputs
     to_socket: tot_magnetization
     to_task: dft_init
-  - from_socket: code
+  - from_socket: codes.kcp
     from_task: graph_inputs
     to_socket: code
     to_task: ComputeScreeningParameters
@@ -361,7 +361,7 @@ raw:
     from_task: dft_init
     to_socket: dft_remote
     to_task: ComputeScreeningParameters
-  - from_socket: code
+  - from_socket: codes.kcp
     from_task: graph_inputs
     to_socket: code
     to_task: RunFinalKI
@@ -510,87 +510,55 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
-        code:
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            required: true
         codes:
           dynamic: false
           fields:
-            dos:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                required: false
             kcp:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                required: false
-            kcw:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                required: false
+                required: true
             merge_evc:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                required: false
-            ph:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                required: false
-            projwfc:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
+                help: 'Needed for init_orbitals: mlwfs or projwfs.'
                 required: false
             pw:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
+                help: 'Needed for init_orbitals: mlwfs or projwfs.'
                 required: false
             pw2wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
+                help: 'Needed for init_orbitals: mlwfs or projwfs.'
                 required: false
             wann2kcp:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
+                help: 'Needed for init_orbitals: mlwfs or projwfs.'
                 required: false
             wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                required: false
-            wannierjl:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
+                help: 'Needed for init_orbitals: mlwfs or projwfs.'
                 required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
             child_default_link_limit: 1
-            required: false
+            required: true
         correction:
           default: ki
           dynamic: false
@@ -1634,8 +1602,9 @@ raw:
       inputs:
         alpha_numsteps: 2
         calculate_alpha: true
-        code:
-          __aiida_code__: kcp@localhost
+        codes:
+          kcp:
+            __aiida_code__: kcp@localhost
         correction: ki
         ecutrho: 160.0
         ecutwfc: 40.0
@@ -1693,87 +1662,55 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
-            code:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                required: true
             codes:
               dynamic: false
               fields:
-                dos:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    required: false
                 kcp:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    required: false
-                kcw:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    required: false
+                    required: true
                 merge_evc:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    required: false
-                ph:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    required: false
-                projwfc:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
+                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
                     required: false
                 pw:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
+                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
                     required: false
                 pw2wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
+                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
                     required: false
                 wann2kcp:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
+                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
                     required: false
                 wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    required: false
-                wannierjl:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
+                    help: 'Needed for init_orbitals: mlwfs or projwfs.'
                     required: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
-                required: false
+                required: true
             correction:
               default: ki
               dynamic: false

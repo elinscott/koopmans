@@ -5,31 +5,28 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from koopmans.aiida.workflows import (
+    load_chain_codes,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
 )
 
 if TYPE_CHECKING:
-    from aiida_koopmans.workgraphs import Codes
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
 
 
-def build_dft_bands_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for DFT bands calculation.
 
     Args:
         koopmans_input: The parsed koopmans input.
-        codes: Dictionary of loaded codes.
 
     Returns:
         A WorkGraph for PwBandsWorkChain.
     """
+    from aiida_koopmans.workgraphs.codes import PwBandsCodes
     from aiida_koopmans.workgraphs.pw import RunPwBands
 
     reject_kpoint_overrides(
@@ -44,7 +41,7 @@ def build_dft_bands_workgraph(
     structure, _pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "bands"])
 
     return RunPwBands.build(
-        code=codes["pw"],
+        codes=load_chain_codes(PwBandsCodes),
         structure=structure,
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,

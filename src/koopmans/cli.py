@@ -87,7 +87,7 @@ def run(input_file: str) -> None:
 
     INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
     """
-    from koopmans.aiida.workflows import build_workgraph
+    from koopmans.aiida.workflows import advice_for, build_workgraph
 
     input_path = Path(input_file)
 
@@ -103,8 +103,17 @@ def run(input_file: str) -> None:
     # Build the appropriate workgraph based on task
     wg = build_workgraph(koopmans_input)
 
-    with suppress_aiida_logging():
-        run_with_progress(wg)
+    # Graph validation runs when the engine takes the graph, past the build
+    # boundary where `build_workgraph` attaches advice — a missing
+    # route-conditional code surfaces here, so translate at this boundary too.
+    try:
+        with suppress_aiida_logging():
+            run_with_progress(wg)
+    except Exception as exc:
+        advice = advice_for(exc)
+        if advice is not None:
+            exc.add_note(advice)
+        raise
 
     if wg.process is not None:
         dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
