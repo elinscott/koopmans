@@ -911,7 +911,7 @@ class TestPlainRoute:
             "wannierize_block_2",
             "wannierize_occ_1",
         ]
-        assert names.count("bands") == 1
+        assert _bands_calculation_tasks(wg) == ["bands"]
         assert "detect_band_groups" not in names
 
         # Blocks cover consecutive bands in input order: 2 s-type Wannier
@@ -959,6 +959,26 @@ def _path_labels(kpoints: Any) -> list[str]:
     """Return the labels of an explicit k-path node, in path order."""
     assert kpoints is not None, "no k-path node reached the wannierization"
     return [label for _, label in kpoints.labels]
+
+
+def _bands_calculation_tasks(wg: Any) -> list[str]:
+    """Name the tasks whose declared pw.x parameters run ``calculation='bands'``.
+
+    Counts by the declared calculation type rather than by task name: a
+    name list cannot tell one task from two merged under the same
+    ``call_link_label``.
+    """
+    found = []
+    for graph_task in wg.tasks:
+        try:
+            parameters = graph_task.inputs["pw"]["parameters"].value
+        except (KeyError, AttributeError, TypeError, ValueError):
+            continue
+        if parameters is None:
+            continue
+        if parameters.get_dict().get("CONTROL", {}).get("calculation") == "bands":
+            found.append(graph_task.name)
+    return found
 
 
 class TestInterpolatedBands:
@@ -1097,6 +1117,28 @@ class TestProjectedDosGate:
             gated = self._gate({"projwfc": object()}, {"Si": self._upf(None)}, self._path())
         assert gated == {}
 
+    def test_unparseable_pseudo_skips_with_a_warning(self, aiida_profile: Any) -> None:
+        """A UPF body the reader cannot parse skips the pDOS, never the build.
+
+        The stream passes ``UpfData``'s own validation (its header is
+        intact) but breaks the XML reader further down — the shape of a
+        truncated or hand-edited file. The projected DOS is a side
+        analysis, so its gate degrades to skip-and-warn instead of
+        aborting the Wannierization with a raw parse error.
+        """
+        import io
+
+        from aiida_pseudo.data.pseudo.upf import UpfData
+
+        from tests.fixtures import fake_upf_content
+
+        content = fake_upf_content("Si", 4.0).replace("</UPF>", "<PP_BROKEN>\n</UPF>")
+        upf = UpfData(io.BytesIO(content.encode("utf-8")), filename="Si.upf").store()
+        with pytest.warns(UserWarning, match=r"Si.*could not be parsed"):
+            gated = self._gate({"pw": object(), "projwfc": object()}, {"Si": upf}, self._path())
+        assert "projwfc" not in gated
+        assert "pw" in gated
+
     def test_no_path_drops_the_code_silently(self, aiida_profile: Any) -> None:
         """Without a path there is no bands run to project, and nothing to warn about."""
         import warnings as warnings_module
@@ -1166,9 +1208,8 @@ class TestQualityCheckContract:
     ) -> None:
         """The path adds one bands run and one projwfc step to the plain flow."""
         wg = _build_plain(_si_split_dict(), pdos_codes)
-        names = [t.name for t in wg.tasks]
-        assert names.count("bands") == 1
-        assert names.count("projwfc") == 1
+        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
 
     def test_split_route_reuses_the_detection_bands_run(
         self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
@@ -1180,18 +1221,16 @@ class TestQualityCheckContract:
         pure waste.
         """
         wg = _build(_si_split_dict(), pdos_codes)
-        names = [t.name for t in wg.tasks]
-        assert names.count("bands") == 1
-        assert names.count("projwfc") == 1
+        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
 
     def test_whole_manifold_route_runs_bands_and_projwfc(
         self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """The upstream-workchain route grows the same two steps."""
         wg = _build_plain(_si_auto_dict(), pdos_codes)
-        names = [t.name for t in wg.tasks]
-        assert names.count("bands") == 1
-        assert names.count("projwfc") == 1
+        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
 
     def test_incapable_pseudos_skip_only_the_projected_dos(
         self,
@@ -1203,9 +1242,8 @@ class TestQualityCheckContract:
         d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
         with pytest.warns(UserWarning, match="PP_PSWFC"):
             wg = _build_plain(d, pdos_codes)
-        names = [t.name for t in wg.tasks]
-        assert names.count("bands") == 1
-        assert "projwfc" not in names
+        assert _bands_calculation_tasks(wg) == ["bands"]
+        assert "projwfc" not in [t.name for t in wg.tasks]
 
 
 class TestPseudoSocSniffing:

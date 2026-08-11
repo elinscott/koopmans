@@ -170,7 +170,9 @@ def _gate_projected_dos(
     atomic wavefunctions. Without a path there is no bands run to project;
     a pseudo whose header reports no atomic wavefunctions makes the
     projection impossible, and that case is skipped with a warning rather
-    than failed (matching the legacy behavior).
+    than failed (matching the legacy behavior). A pseudo the reader cannot
+    parse is skipped the same way: the projected DOS is a side analysis,
+    and no failure of its gate may abort the Wannierization itself.
     """
     if "projwfc" not in codes:
         return codes
@@ -180,7 +182,25 @@ def _gate_projected_dos(
         del gated["projwfc"]
         return cast("Codes", gated)
 
-    without_pswfc = sorted(kind for kind, upf in pseudos.items() if not _pseudo_reports_pswfc(upf))
+    without_pswfc: list[str] = []
+    unreadable: list[str] = []
+    for kind, upf in sorted(pseudos.items()):
+        try:
+            capable = _pseudo_reports_pswfc(upf)
+        except Exception:
+            unreadable.append(kind)
+            continue
+        if not capable:
+            without_pswfc.append(kind)
+
+    if unreadable:
+        warnings.warn(
+            f"The UPF files for {', '.join(unreadable)} could not be parsed, so whether "
+            "they carry `PP_PSWFC` atomic wavefunctions is unknown. Skipping the "
+            "projected DOS calculation.",
+            UserWarning,
+            stacklevel=3,
+        )
     if without_pswfc:
         warnings.warn(
             f"The pseudopotentials for {', '.join(without_pswfc)} have no `PP_PSWFC` "
@@ -188,6 +208,7 @@ def _gate_projected_dos(
             UserWarning,
             stacklevel=3,
         )
+    if unreadable or without_pswfc:
         del gated["projwfc"]
         return cast("Codes", gated)
 
