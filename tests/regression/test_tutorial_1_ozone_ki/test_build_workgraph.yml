@@ -644,8 +644,6 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
-            extras:
-              py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
             required: true
         codes:
           dynamic: false
@@ -655,88 +653,66 @@ raw:
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             kcp:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             kcw:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             merge_evc:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             ph:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             projwfc:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             pw:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             pw2wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             wann2kcp:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             wannierjl:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
           identifier: <scrubbed:identifier>
           meta:
@@ -877,6 +853,8 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: The label to use for the `CALL` link if the process is called
+                  by another process.
                 is_metadata: true
                 required: false
             description:
@@ -885,6 +863,7 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: Description to set on the process node.
                 is_metadata: true
                 required: false
             disable_cache:
@@ -893,6 +872,8 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: Do not consider the cache for this process, ignoring all other
+                  caching configuration rules.
                 is_metadata: true
                 required: false
             label:
@@ -901,6 +882,7 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: Label to set on the process node.
                 is_metadata: true
                 required: false
             store_provenance:
@@ -909,6 +891,7 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: If set to `False` provenance will not be stored in the database.
                 is_metadata: true
                 required: false
           identifier: <scrubbed:identifier>
@@ -1283,8 +1266,6 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
-            extras:
-              py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
             required: false
         spin_polarized:
           default: false
@@ -1991,8 +1972,6 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: true
             codes:
               dynamic: false
@@ -2002,88 +1981,66 @@ raw:
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 kcp:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 kcw:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 merge_evc:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 ph:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 projwfc:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 pw:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 pw2wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 wann2kcp:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
                 wannierjl:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                     required: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2224,6 +2181,8 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: The label to use for the `CALL` link if the process is called
+                      by another process.
                     is_metadata: true
                     required: false
                 description:
@@ -2232,6 +2191,7 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: Description to set on the process node.
                     is_metadata: true
                     required: false
                 disable_cache:
@@ -2240,6 +2200,8 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: Do not consider the cache for this process, ignoring all
+                      other caching configuration rules.
                     is_metadata: true
                     required: false
                 label:
@@ -2248,6 +2210,7 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: Label to set on the process node.
                     is_metadata: true
                     required: false
                 store_provenance:
@@ -2256,6 +2219,7 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: If set to `False` provenance will not be stored in the database.
                     is_metadata: true
                     required: false
               identifier: <scrubbed:identifier>
@@ -2630,8 +2594,6 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
                 required: false
             spin_polarized:
               default: false
