@@ -516,7 +516,9 @@ UPF_V2_PAW_HEADER = """\
 
 # A UPF v1 ultrasoft carbon (aiida-core's C_pbe_v1.2.uspp.F.UPF): no
 # ``<UPF version=...>`` wrapper and a fixed-format header whose third line
-# carries the type.
+# carries the type. Every field of the block is transcribed, because a v1
+# header is read as a whole: the fields are positional, so a reader that
+# stopped early would be reading them off a file it could not otherwise use.
 UPF_V1_ULTRASOFT_HEADER = """\
 <PP_INFO>
 Generated using Vanderbilt code, version   7  3  6
@@ -528,6 +530,37 @@ Generated using Vanderbilt code, version   7  3  6
     T                  Nonlinear Core Correction
 SLA  PW   PBE  PBE     PBE  Exchange-Correlation functional
     4.00000000000      Z valence
+  -10.81268860050      Total energy
+    0.00000    0.00000 Suggested cutoff for wfc and rho
+    1                  Max angular momentum component
+  721                  Number of points in mesh
+    2    4             Number of Wavefunctions, Number of Projectors
+ Wavefunctions         nl  l   occ
+                       2S  0  2.00
+                       2P  1  2.00
+</PP_HEADER>
+"""
+
+# The same block with the other type Quantum ESPRESSO accepts on that line.
+# Its reader takes US, PAW, NC or 1/r there (upflib/read_upf_v1.f90), so a v1
+# PAW file is a file koopmans must refuse; this one is built rather than
+# transcribed, no v1 PAW pseudopotential being at hand.
+UPF_V1_PAW_HEADER = """\
+<PP_HEADER>
+   0                   Version Number
+  C                    Element
+   PAW                 Projector augmented-wave
+    T                  Nonlinear Core Correction
+SLA  PW   PBE  PBE     PBE  Exchange-Correlation functional
+    4.00000000000      Z valence
+  -10.81268860050      Total energy
+    0.00000    0.00000 Suggested cutoff for wfc and rho
+    1                  Max angular momentum component
+  721                  Number of points in mesh
+    2    4             Number of Wavefunctions, Number of Projectors
+ Wavefunctions         nl  l   occ
+                       2S  0  2.00
+                       2P  1  2.00
 </PP_HEADER>
 """
 
@@ -563,6 +596,21 @@ UPF_V2_FLAGGED_BUT_UNNAMED = """\
      is_paw="false"
      z_valence="4.000000000000E+000"/>
 </UPF>
+"""
+
+# An ultrasoft header on a file that stops partway through its first data
+# block, as an interrupted copy does. Reading the whole file raises; the header
+# is intact and says what the pseudopotential is.
+UPF_V2_ULTRASOFT_WITH_UNREADABLE_BODY = """\
+<UPF version="2.0.1">
+  <PP_HEADER
+     element="Si"
+     pseudo_type="USPP"
+     is_ultrasoft="true"
+     is_paw="false"
+     z_valence="4.000000000000E+000"/>
+  <PP_LOCAL type="real" size="4" columns="4">
+ -1.0000000000E+00 -2.0000000000E+00
 """
 
 # SG15's ONCV silicon (Si_ONCV_PBE-1.2.upf), the norm-conserving control.
