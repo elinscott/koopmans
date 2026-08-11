@@ -782,6 +782,12 @@ def fake_ultrasoft_family(aiida_profile: Any) -> Any:
 
 
 @pytest.fixture
+def fake_coulomb_family(aiida_profile: Any) -> Any:
+    """Install a self-built family whose Si pseudopotential is a bare Coulomb potential."""
+    return _install_fake_family("MyPseudos/coulomb", {"Si": 4.0}, cutoffs=True, pseudo_type="1/r")
+
+
+@pytest.fixture
 def fake_paw_family(aiida_profile: Any) -> Any:
     """Install a self-built family whose Si pseudopotential is PAW."""
     return _install_fake_family("MyPseudos/paw", {"Si": 4.0}, cutoffs=True, pseudo_type="PAW")

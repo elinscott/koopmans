@@ -57,6 +57,17 @@ class TestTheHeaderDecides:
         assert f"Si ({pseudo_type})" in message
         assert "workflow.pseudo_library" in message
 
+    def test_a_bare_coulomb_family_is_accepted(
+        self, aiida_profile_clean: Any, fake_coulomb_family: Any
+    ) -> None:
+        """A bare Coulomb potential ("1/r") passes the check.
+
+        kcp.x and kcw.x synthesise its local potential and treat it like a
+        local-only norm-conserving potential, so there is nothing to refuse.
+        """
+        _, pseudo_family, _ = _dispatch("MyPseudos/coulomb")
+        assert pseudo_family == "MyPseudos/coulomb"
+
     def test_a_family_declaring_itself_nc_is_accepted(
         self, aiida_profile_clean: Any, fake_declared_nc_family: Any
     ) -> None:

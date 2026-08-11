@@ -18,6 +18,7 @@ from tests.fixtures import (  # noqa: F401
     clear_database_after_test,
     code_without_mpi_flag,
     compiled_binaries,
+    fake_coulomb_family,
     fake_declared_nc_family,
     fake_paw_family,
     fake_pseudodojo_lda_family,
