@@ -44,7 +44,7 @@ When in doubt, run `/map-legacy <file>` to get a current mapping report.
 
 1. Add the `@task.graph` builder in `aiida-koopmans2/src/aiida_koopmans/workgraphs/<step>.py`.
 2. Add a `TypedDict` for its outputs at the top of that module.
-3. Expose any new codes through `load_codes_for_task` in [aiida/workflows/](src/koopmans/aiida/workflows/__init__.py).
+3. Declare the workflow's codes as a TypedDict beside its entry point (e.g. `aiida-koopmans2/workgraphs/kcp.py`); the route loads it via `load_codes` in [aiida/workflows/](src/koopmans/aiida/workflows/__init__.py).
 4. Add a `build_<task>_workgraph` module under `aiida/workflows/` and wire it into `build_workgraph`.
 5. Add a regression test driven by a tutorial JSON (see `/regression-test`).
 

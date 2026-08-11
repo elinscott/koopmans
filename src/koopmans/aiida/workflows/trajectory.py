@@ -8,7 +8,7 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_code, reject_kpoint_overrides
+from koopmans.aiida.workflows import load_code, load_codes, reject_kpoint_overrides
 from koopmans.aiida.workflows.dscf import (
     KPOINT_OVERRIDES_ON_TRAJECTORY,
     dscf_wannier_init_inputs,
@@ -20,7 +20,6 @@ from koopmans.input_file.workflow import CalculateScreeningMethod, VariationalOr
 
 if TYPE_CHECKING:
     from aiida import orm
-    from aiida_koopmans.workgraphs import Codes
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
@@ -28,10 +27,7 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
-def build_trajectory_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a trajectory (machine-learning) task.
 
     Fans the snapshots out over per-snapshot ``KoopmansDSCFWorkflow`` runs via
@@ -57,7 +53,7 @@ def build_trajectory_workgraph(
     cell, composition and projection set, so the Wannier-route inputs are
     derived once from the first frame.
     """
-    from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
+    from aiida_koopmans.workgraphs.ml import DscfCodes, TrajectoryWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
@@ -92,21 +88,28 @@ def build_trajectory_workgraph(
 
     inputs = kcp_dscf_inputs(koopmans_input)
 
-    extra_kwargs: dict[str, Any] = {}
-    if workflow.init_orbitals in (
+    wannier_init = workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
-    ):
+    )
+    extra_kwargs: dict[str, Any] = {}
+    if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(
-            koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
+            koopmans_input, next(iter(snapshots.values())), inputs["nbnd"]
         )
+
+    # Every NotRequired member of DscfCodes exists for the Wannier-seeded
+    # initialisation, so that route turns them all on. Loaded before the
+    # loose decompose code below, so an empty profile reports the whole
+    # workflow's missing codes at once instead of one at a time.
+    codes = load_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
     return TrajectoryWorkflow.build(
-        code=codes["kcp"],
+        codes=codes,
         snapshots=snapshots,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
         **inputs,
