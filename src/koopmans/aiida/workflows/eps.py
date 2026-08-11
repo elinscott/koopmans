@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from koopmans.aiida.workflows import (
-    load_chain_codes,
+    load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
@@ -48,7 +48,7 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     overrides["scf"]["pw"]["parameters"].get("SYSTEM", {}).pop("nbnd", None)
 
     return DielectricTask.build(
-        codes=load_chain_codes(DielectricCodes),
+        codes=load_codes(DielectricCodes),
         structure=structure,
         pseudo_family=pseudo_family,
         overrides=overrides,

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.workflows import load_chain_codes, pin_step_kpoints, prepare_common_inputs
+from koopmans.aiida.workflows import load_codes, pin_step_kpoints, prepare_common_inputs
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
 
@@ -120,9 +120,7 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
 
     # The chain's one NotRequired member is ph.x, which only the
     # `eps_inf: auto` dielectric pre-chain runs.
-    codes = load_chain_codes(
-        DfptCodes, require=DfptCodes.__optional_keys__ if eps_inf == "auto" else ()
-    )
+    codes = load_codes(DfptCodes, require=DfptCodes.__optional_keys__ if eps_inf == "auto" else ())
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.

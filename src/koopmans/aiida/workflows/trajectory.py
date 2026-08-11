@@ -8,7 +8,7 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_chain_codes, load_code, reject_kpoint_overrides
+from koopmans.aiida.workflows import load_code, load_codes, reject_kpoint_overrides
 from koopmans.aiida.workflows.dscf import (
     KPOINT_OVERRIDES_ON_TRAJECTORY,
     dscf_wannier_init_inputs,
@@ -103,7 +103,7 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # initialisation, so that route turns them all on. Loaded before the
     # loose decompose code below, so an empty profile reports the whole
     # chain's missing codes at once instead of one at a time.
-    codes = load_chain_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
+    codes = load_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")

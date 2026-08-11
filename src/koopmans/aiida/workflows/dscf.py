@@ -10,7 +10,7 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
 from koopmans.aiida.workflows import (
-    load_chain_codes,
+    load_codes,
     reject_kpoint_overrides,
     require_cutoffs_for_family,
 )
@@ -110,7 +110,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     # Every NotRequired member of DscfCodes exists for the Wannier-seeded
     # initialisation, so that route turns them all on.
-    codes = load_chain_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
+    codes = load_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
 
     return KoopmansDSCFWorkflow.build(
         codes=codes,

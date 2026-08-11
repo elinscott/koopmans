@@ -10,7 +10,7 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
 from koopmans.aiida.workflows import (
-    load_chain_codes,
+    load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
     require_cutoffs_for_family,
@@ -205,7 +205,7 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # The chain's one NotRequired member is projwfc (SCDM projections),
     # which this route never asks for.
     return Wannierize.build(
-        codes=load_chain_codes(WannierizeCodes),
+        codes=load_codes(WannierizeCodes),
         structure=structure,
         overrides=overrides,
         pseudo_family=pseudo_family,
@@ -353,7 +353,7 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # registered via aiida_wannierjl.helpers.get_wannierjl_code), so the
     # threshold turns the chain's one NotRequired member on.
     return WannierizeBlocks.build(
-        codes=load_chain_codes(
+        codes=load_codes(
             WannierizeBlocksCodes,
             require=WannierizeBlocksCodes.__optional_keys__ if threshold is not None else (),
         ),

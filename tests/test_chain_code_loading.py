@@ -1,6 +1,6 @@
 """The dispatcher's TypedDict-driven code loading.
 
-``load_chain_codes`` reads a chain's codes TypedDict — the plugin's single
+``load_codes`` reads a chain's codes TypedDict — the plugin's single
 declaration of what each chain wires — and loads each needed member as
 ``<name>@localhost``: required members always, ``NotRequired`` members only
 when the route's ``require`` turns them on. A missing needed code raises
@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from koopmans.aiida.workflows import build_workgraph, load_chain_codes
+from koopmans.aiida.workflows import build_workgraph, load_codes
 from koopmans.input_file import KoopmansInput
 from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
 
@@ -27,7 +27,7 @@ class TestLoadChainCodes:
         from aiida_koopmans.workgraphs.codes import PwBandsCodes
 
         with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
-            load_chain_codes(PwBandsCodes)
+            load_codes(PwBandsCodes)
         assert "koopmans install" in str(excinfo.value)
 
     def test_absent_notrequired_member_is_left_out(
@@ -36,7 +36,7 @@ class TestLoadChainCodes:
         """A ``NotRequired`` member the route did not turn on is not demanded."""
         from aiida_koopmans.workgraphs.codes import DscfCodes
 
-        codes = load_chain_codes(DscfCodes)
+        codes = load_codes(DscfCodes)
         assert set(codes) == {"kcp"}
 
     def test_configured_notrequired_member_is_still_left_out(
@@ -51,7 +51,7 @@ class TestLoadChainCodes:
         """
         from aiida_koopmans.workgraphs.codes import DscfCodes
 
-        codes = load_chain_codes(DscfCodes)
+        codes = load_codes(DscfCodes)
         assert set(codes) == {"kcp"}
 
     def test_require_quotes_the_declared_purpose(
@@ -61,7 +61,7 @@ class TestLoadChainCodes:
         from aiida_koopmans.workgraphs.codes import DscfCodes
 
         with pytest.raises(ValueError, match="`wannier90@localhost`") as excinfo:
-            load_chain_codes(DscfCodes, require=DscfCodes.__optional_keys__)
+            load_codes(DscfCodes, require=DscfCodes.__optional_keys__)
         assert "Needed for init_orbitals: mlwfs or projwfs." in str(excinfo.value)
 
     def test_require_rejects_undeclared_names(self, aiida_profile_clean: Any) -> None:
@@ -69,7 +69,7 @@ class TestLoadChainCodes:
         from aiida_koopmans.workgraphs.codes import PwBandsCodes
 
         with pytest.raises(ValueError, match="not members of PwBandsCodes"):
-            load_chain_codes(PwBandsCodes, require=("bogus",))
+            load_codes(PwBandsCodes, require=("bogus",))
 
 
 class TestDispatcherPreCheck:

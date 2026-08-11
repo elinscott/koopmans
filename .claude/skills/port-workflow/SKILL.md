@@ -26,7 +26,7 @@ If missing, ask the user which class to port and list candidates from `/home/lin
 6. **Review the produced `@task.graph` with `workgraph-author`** if the wiring is non-trivial (chained SCF→NSCF→X, optimizer loops, conditional branches).
 7. **Ensure the dispatcher is updated** in `koopmans2/src/koopmans/aiida/workflows/`:
    - `Task` enum entry (if new) in `koopmans2/src/koopmans/input_file/workflow.py`.
-   - a `load_chain_codes(<Chain>Codes)` call in the route (the chain's codes TypedDict lives in `aiida-koopmans2/workgraphs/codes.py`).
+   - a `load_codes(<Chain>Codes)` call in the route (the chain's codes TypedDict lives in `aiida-koopmans2/workgraphs/codes.py`).
    - `build_<task>_workgraph` route module.
    - `build_workgraph` dispatch branch.
 8. **Add a regression test via `aiida-test-author`.** Construction-only (no QE execution) is fine for the first pass; flag to the user whether an execution-based test should follow.

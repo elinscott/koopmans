@@ -85,14 +85,14 @@ def _missing_codes_message(missing: list[tuple[str, str | None]]) -> str:
     )
 
 
-def load_chain_codes[CodesT: Mapping[str, Any]](
-    chain_codes: type[CodesT], require: Iterable[str] = ()
+def load_codes[CodesT: Mapping[str, Any]](
+    codes_spec: type[CodesT], require: Iterable[str] = ()
 ) -> CodesT:
-    """Load the ``<member>@localhost`` code for each member of a chain's codes TypedDict.
+    """Load the ``<member>@localhost`` code for each member of a workflow's codes TypedDict.
 
-    ``chain_codes`` is the chain's graph-input TypedDict from
+    ``codes_spec`` is the workflow's graph-input TypedDict from
     ``aiida_koopmans.workgraphs.codes`` — the single declaration of which
-    codes the chain wires. Its required members must be configured;
+    codes the workflow wires. Its required members must be configured;
     ``require`` names the ``NotRequired`` members the input at hand turns on
     (e.g. ``wannierjl`` when ``block_wannierization_threshold`` is set), so
     their absence raises here — with the member's declared purpose — instead
@@ -105,15 +105,15 @@ def load_chain_codes[CodesT: Mapping[str, Any]](
     """
     from aiida.common.exceptions import NotExistent
 
-    hints = get_type_hints(chain_codes, include_extras=True)
-    # Every chain_codes argument is a TypedDict class, which carries
+    hints = get_type_hints(codes_spec, include_extras=True)
+    # Every codes_spec argument is a TypedDict class, which carries
     # __required_keys__ at runtime; the Mapping bound cannot say so.
-    required_keys: frozenset[str] = chain_codes.__required_keys__  # type: ignore[attr-defined]
+    required_keys: frozenset[str] = codes_spec.__required_keys__  # type: ignore[attr-defined]
     needed = set(required_keys) | set(require)
     undeclared = needed - hints.keys()
     if undeclared:
         raise ValueError(
-            f"{sorted(undeclared)} are not members of {chain_codes.__name__}; "
+            f"{sorted(undeclared)} are not members of {codes_spec.__name__}; "
             "`require` may only name its NotRequired members."
         )
 
@@ -448,7 +448,7 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         )
 
     # Build the workgraph based on task. Each route loads its chain's codes
-    # itself (:func:`load_chain_codes`) once its input validation has passed.
+    # itself (:func:`load_codes`) once its input validation has passed.
     # An error raised inside the plugin speaks its vocabulary (derived
     # blocks, `num_bands`), which the user never wrote; attach the
     # input-file advice at this boundary.
