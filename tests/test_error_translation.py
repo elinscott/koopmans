@@ -102,24 +102,49 @@ class TestAdviceFor:
         assert "koopmans install" in advice
 
     def test_bare_code_entry_falls_back_to_the_declared_purpose(self) -> None:
-        """A help-less code entry gets the purpose its chain TypedDict declares.
+        """A help-less code entry gets the purpose its own chain declares.
 
-        Socket validation reports ``help`` only for sockets built from
-        annotated members, so today's entries arrive bare; the advice
-        must not depend on it.
+        Socket validation may report entries without ``help``, so the
+        advice must not depend on it. ``wannierjl`` is declared with
+        different purposes by ``WannierizeBlocksCodes`` and
+        ``SplitBlockCodes``, so only the task component (instance digits
+        stripped) can pick the right one.
         """
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
 
         exc = MissingRequiredInputsError(
-            [MissingInput("WannierizeBlocks.codes.wannierjl", "workgraph.code", None)]
+            [MissingInput("WannierizeBlocks2.codes.wannierjl", "workgraph.code", None)]
         )
         advice = advice_for(exc)
         assert advice is not None
         assert "`wannierjl@localhost`" in advice
         assert "Needed when block_wannierization_threshold is set." in advice
 
-    def test_code_entry_with_no_declared_purpose_stays_generic(self) -> None:
-        """A member no TypedDict annotates is named without a purpose clause."""
+    def test_agreeing_declarations_answer_for_an_unidentified_chain(self) -> None:
+        """A task name outside the ``<ChainName>Codes`` convention still gets agreed help.
+
+        ``kcw`` is declared by ``DfptCodes`` alone, so every declaration
+        that states a purpose agrees and the union answers even though no
+        TypedDict is named ``SinglepointDFPTWorkflowCodes``.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [MissingInput("SinglepointDFPTWorkflow.codes.kcw", "workgraph.code", None)]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert "`kcw@localhost`" in advice
+        assert "Needed for the kcw.x wann2kc, screen, and ham steps." in advice
+
+    def test_disagreeing_declarations_stay_generic_without_a_chain(self) -> None:
+        """Conflicting purposes are not guessed when the chain cannot be identified.
+
+        ``kcp`` is declared with different purposes by ``DscfCodes`` and
+        ``MlwfInitCodes``, and no TypedDict is named
+        ``KoopmansDSCFWorkflowCodes``, so the member is named without a
+        purpose clause rather than with the wrong chain's.
+        """
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
 
         exc = MissingRequiredInputsError(
@@ -128,6 +153,18 @@ class TestAdviceFor:
         advice = advice_for(exc)
         assert advice is not None
         assert "`kcp@localhost`" in advice
+        assert "(" not in advice.splitlines()[1]
+
+    def test_undeclared_member_stays_generic(self) -> None:
+        """A member no TypedDict declares is named without a purpose clause."""
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [MissingInput("SomeFutureChain.codes.epw", "workgraph.code", None)]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert "`epw@localhost`" in advice
         assert "(" not in advice.splitlines()[1]
 
     def test_missing_non_code_sockets_earn_no_advice(self) -> None:

@@ -518,6 +518,7 @@ raw:
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
+                help: Needed for every kcp.x step.
                 required: true
             merge_evc:
               dynamic: false
@@ -1670,6 +1671,7 @@ raw:
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
+                    help: Needed for every kcp.x step.
                     required: true
                 merge_evc:
                   dynamic: false

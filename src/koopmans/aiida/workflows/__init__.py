@@ -326,21 +326,36 @@ def _parallelization_advice(exc: ParallelizationError) -> str:
     )
 
 
-def _declared_code_help(member: str) -> str | None:
-    """Return the one purpose the chain codes TypedDicts declare for a member.
+def _declared_code_help(member: str, task: str | None = None) -> str | None:
+    """Return the purpose the chain codes TypedDicts declare for a member.
 
-    Scans every TypedDict in ``aiida_koopmans.workgraphs.codes`` for
-    ``member`` and returns its ``SocketMeta`` help when all declarations
-    that state one agree; a member with no declared purpose, or with
-    conflicting ones, returns ``None``.
+    When ``task`` (a socket path's task component) names a chain whose
+    TypedDict follows the ``<ChainName>Codes`` convention — trailing
+    instance digits stripped — that chain's declaration answers.
+    Otherwise every TypedDict in ``aiida_koopmans.workgraphs.codes`` is
+    scanned, and the ``SocketMeta`` help is returned only when all
+    declarations that state one agree; a member with no declared purpose,
+    or with conflicting ones across unidentifiable chains, returns
+    ``None``.
     """
     from aiida_koopmans.workgraphs import codes as codes_module
 
+    chains = {
+        name: attr
+        for name, attr in vars(codes_module).items()
+        if isinstance(attr, type) and hasattr(attr, "__required_keys__")
+    }
+
+    if task is not None:
+        chain = chains.get(task.rstrip("0123456789").removesuffix("_") + "Codes")
+        if chain is not None:
+            hints = get_type_hints(chain, include_extras=True)
+            if member in hints:
+                return _socket_help(hints[member])
+
     helps: set[str] = set()
-    for attr in vars(codes_module).values():
-        if not (isinstance(attr, type) and hasattr(attr, "__required_keys__")):
-            continue
-        hints = get_type_hints(attr, include_extras=True)
+    for chain in chains.values():
+        hints = get_type_hints(chain, include_extras=True)
         if member in hints:
             text = _socket_help(hints[member])
             if text:
@@ -356,18 +371,20 @@ def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
     A chain body that wires a code member it was not given surfaces as
     unfilled ``workgraph.code`` sockets at graph validation. An entry's
     ``help`` carries the member's declared purpose only when the socket
-    was built from an annotated ``NotRequired`` member, so a bare entry
-    falls back to the purpose the chain TypedDicts declare
-    (:func:`_declared_code_help`). Entries of other socket types are not
-    code-installation problems, so an error naming only those earns no
-    advice.
+    was built from an annotated member, so a bare entry falls back to the
+    purpose the chain TypedDicts declare (:func:`_declared_code_help`),
+    steered by the socket path's task component. Entries of other socket
+    types are not code-installation problems, so an error naming only
+    those earns no advice.
     """
     missing: list[tuple[str, str | None]] = []
     for entry in exc.missing:
         if entry.identifier != "workgraph.code":
             continue
-        member = entry.socket_path.rsplit(".", 1)[-1]
-        missing.append((member, entry.help or _declared_code_help(member)))
+        parts = entry.socket_path.split(".")
+        member = parts[-1]
+        task = parts[0] if len(parts) > 2 else None
+        missing.append((member, entry.help or _declared_code_help(member, task)))
     if not missing:
         return None
     return _missing_codes_message(missing)
