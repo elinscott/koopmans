@@ -26,8 +26,7 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     Returns:
         A WorkGraph for PwBandsWorkChain.
     """
-    from aiida_koopmans.workgraphs.codes import PwBandsCodes
-    from aiida_koopmans.workgraphs.pw import RunPwBands
+    from aiida_koopmans.workgraphs.pw import PwBandsCodes, RunPwBands
 
     reject_kpoint_overrides(
         koopmans_input,

@@ -1,7 +1,7 @@
 """The dispatcher's TypedDict-driven code loading.
 
-``load_codes`` reads a chain's codes TypedDict — the plugin's single
-declaration of what each chain wires — and loads each needed member as
+``load_codes`` reads a workflow's codes TypedDict — the plugin's single
+declaration of what each workflow wires — and loads each needed member as
 ``<name>@localhost``: required members always, ``NotRequired`` members only
 when the route's ``require`` turns them on. A missing needed code raises
 install advice quoting the member's declared purpose, before any graph
@@ -19,12 +19,60 @@ from koopmans.input_file import KoopmansInput
 from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
 
 
-class TestLoadChainCodes:
+class TestCodesSpecRequiredness:
+    """Pin required/optional members at every codes TypedDict's definition site.
+
+    The loader's whole contract reads off ``__required_keys__`` /
+    ``__optional_keys__``, and a ``from __future__ import annotations``
+    sneaking into a definition module silently flips every member to
+    required (python/cpython#97727). This screams instead.
+    """
+
+    def test_required_and_optional_members(self, aiida_profile: Any) -> None:
+        """Each codes TypedDict declares exactly the expected member sets.
+
+        Requests a profile: the definition modules import workflow code,
+        which loads the AiiDA configuration at import.
+        """
+        from aiida_koopmans.workgraphs.auto_wannierize import SplitBlockCodes
+        from aiida_koopmans.workgraphs.block_wannierize import (
+            WannierizeBlockCodes,
+            WannierizeBlocksCodes,
+        )
+        from aiida_koopmans.workgraphs.dfpt import DfptCodes
+        from aiida_koopmans.workgraphs.folding import FoldingCodes
+        from aiida_koopmans.workgraphs.kcp import DscfCodes
+        from aiida_koopmans.workgraphs.mlwf_init import MlwfInitCodes
+        from aiida_koopmans.workgraphs.pdos import PdosCodes
+        from aiida_koopmans.workgraphs.ph import DielectricCodes
+        from aiida_koopmans.workgraphs.pw import PwBandsCodes
+        from aiida_koopmans.workgraphs.wannier90 import WannierizeCodes
+
+        wannier = {"pw", "pw2wannier90", "wannier90"}
+        expected = {
+            PwBandsCodes: ({"pw"}, set()),
+            DielectricCodes: ({"pw", "ph"}, set()),
+            WannierizeCodes: (wannier, {"projwfc"}),
+            WannierizeBlockCodes: (wannier, set()),
+            WannierizeBlocksCodes: (wannier, {"wannierjl"}),
+            SplitBlockCodes: (wannier | {"wannierjl"}, set()),
+            MlwfInitCodes: (wannier | {"wann2kcp", "merge_evc", "kcp"}, set()),
+            FoldingCodes: ({"wann2kcp", "merge_evc"}, set()),
+            DscfCodes: ({"kcp"}, wannier | {"wann2kcp", "merge_evc"}),
+            DfptCodes: (wannier | {"kcw"}, {"ph"}),
+            PdosCodes: ({"pw", "dos", "projwfc"}, set()),
+        }
+        for spec, (required, optional) in expected.items():
+            assert set(spec.__required_keys__) == required, spec.__name__
+            assert set(spec.__optional_keys__) == optional, spec.__name__
+
+
+class TestLoadCodes:
     """Loading follows the TypedDict: requiredness, ``require``, and nothing else."""
 
     def test_missing_required_code_earns_install_advice(self, aiida_profile_clean: Any) -> None:
         """An unconfigured required member raises naming it and `koopmans install`."""
-        from aiida_koopmans.workgraphs.codes import PwBandsCodes
+        from aiida_koopmans.workgraphs.pw import PwBandsCodes
 
         with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
             load_codes(PwBandsCodes)
@@ -34,7 +82,7 @@ class TestLoadChainCodes:
         self, aiida_profile_clean: Any, installed_kcp_code: Any
     ) -> None:
         """A ``NotRequired`` member the route did not turn on is not demanded."""
-        from aiida_koopmans.workgraphs.codes import DscfCodes
+        from aiida_koopmans.workgraphs.kcp import DscfCodes
 
         codes = load_codes(DscfCodes)
         assert set(codes) == {"kcp"}
@@ -49,7 +97,7 @@ class TestLoadChainCodes:
         inputs (and their provenance) would depend on which codes a
         profile happens to hold.
         """
-        from aiida_koopmans.workgraphs.codes import DscfCodes
+        from aiida_koopmans.workgraphs.kcp import DscfCodes
 
         codes = load_codes(DscfCodes)
         assert set(codes) == {"kcp"}
@@ -58,7 +106,7 @@ class TestLoadChainCodes:
         self, aiida_profile_clean: Any, installed_kcp_code: Any
     ) -> None:
         """A turned-on ``NotRequired`` member missing raises with its SocketMeta help."""
-        from aiida_koopmans.workgraphs.codes import DscfCodes
+        from aiida_koopmans.workgraphs.kcp import DscfCodes
 
         with pytest.raises(ValueError, match="`wannier90@localhost`") as excinfo:
             load_codes(DscfCodes, require=DscfCodes.__optional_keys__)
@@ -66,7 +114,7 @@ class TestLoadChainCodes:
 
     def test_require_rejects_undeclared_names(self, aiida_profile_clean: Any) -> None:
         """A ``require`` name outside the TypedDict is a programming error, not advice."""
-        from aiida_koopmans.workgraphs.codes import PwBandsCodes
+        from aiida_koopmans.workgraphs.pw import PwBandsCodes
 
         with pytest.raises(ValueError, match="not members of PwBandsCodes"):
             load_codes(PwBandsCodes, require=("bogus",))
@@ -105,7 +153,7 @@ class TestDispatcherPreCheck:
             build_workgraph(inp)
         assert "pw@localhost" not in str(excinfo.value)
 
-    def test_wannier_route_demands_the_fold_chain(
+    def test_wannier_route_demands_the_fold_codes(
         self,
         aiida_profile_clean: Any,
         installed_kcp_code: Any,

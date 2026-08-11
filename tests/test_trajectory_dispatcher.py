@@ -383,7 +383,7 @@ class TestOrbitalDensityDescriptor:
         """The decompose pass's code is demanded before the eager build.
 
         ``pw2wannier90_code`` is a loose graph input outside ``DscfCodes``,
-        so the chain-TypedDict pre-check cannot speak for it; the route
+        so the codes-TypedDict pre-check cannot speak for it; the route
         must demand it itself when the descriptor turns the decompose pass
         on. Only wannier90 is registered here, so the failure is the
         missing code, not the Wannier route.

@@ -104,7 +104,7 @@ class TestAdviceFor:
     def test_bare_code_entry_stays_generic(self) -> None:
         """A help-less code entry is named with the install pointer and no purpose.
 
-        Every chain codes member is annotated, so a real entry carries its
+        Every codes-TypedDict member is annotated, so a real entry carries its
         purpose in ``help``; the advice must still not die on a bare one.
         """
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
@@ -285,7 +285,7 @@ class TestDispatchTranslation:
         """A graph-level missing-code socket crosses with install advice.
 
         The route's pre-check demands what the input turns on, so a real
-        instance can only arise past it (a chain body wiring a member the
+        instance can only arise past it (a workflow body wiring a member the
         route did not know it needed); the error is raised at the route's
         plugin entry to pin the translation.
         """

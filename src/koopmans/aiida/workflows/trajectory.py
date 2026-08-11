@@ -53,8 +53,7 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     cell, composition and projection set, so the Wannier-route inputs are
     derived once from the first frame.
     """
-    from aiida_koopmans.workgraphs.codes import DscfCodes
-    from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
+    from aiida_koopmans.workgraphs.ml import DscfCodes, TrajectoryWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
@@ -102,7 +101,7 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # Every NotRequired member of DscfCodes exists for the Wannier-seeded
     # initialisation, so that route turns them all on. Loaded before the
     # loose decompose code below, so an empty profile reports the whole
-    # chain's missing codes at once instead of one at a time.
+    # workflow's missing codes at once instead of one at a time.
     codes = load_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:

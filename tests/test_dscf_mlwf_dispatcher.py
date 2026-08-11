@@ -349,7 +349,7 @@ class TestPeriodicMlwfsBuild:
         names = wg.get_task_names()
         assert "wannier_initialization" in names, names
         assert "make_supercell" in names, names
-        # The molecular KS-init chain must NOT be present.
+        # The molecular KS-init steps must NOT be present.
         assert "dft_init_nspin1" not in names
 
     def test_disentangling_input_builds_and_validates(

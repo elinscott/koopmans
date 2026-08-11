@@ -32,8 +32,7 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     Returns:
         A WorkGraph chaining PwBaseWorkChain into PhBaseWorkChain.
     """
-    from aiida_koopmans.workgraphs.codes import DielectricCodes
-    from aiida_koopmans.workgraphs.ph import DielectricTask
+    from aiida_koopmans.workgraphs.ph import DielectricCodes, DielectricTask
 
     reject_kpoint_overrides(
         koopmans_input,

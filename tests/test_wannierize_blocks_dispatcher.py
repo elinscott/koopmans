@@ -250,7 +250,7 @@ class TestGuards:
         localhost_code: Any,
         fake_sg15_cutoffs_family: Any,
     ) -> None:
-        """A configured projwfc code must not reach the blocks chain.
+        """A configured projwfc code must not reach the blocks workflow.
 
         ``WannierizeBlocksCodes`` does not declare ``projwfc``, and its
         typed namespace rejects undeclared keys — a dispatcher that passes
@@ -870,7 +870,7 @@ class TestPlainRoute:
     ) -> None:
         """Nothing splits, so the julia code the splitting needs is not required.
 
-        The route only turns the chain's ``wannierjl`` member on behind the
+        The route only turns WannierizeBlocksCodes's ``wannierjl`` member on behind the
         threshold — no ``wannierjl@localhost`` is registered here, so a
         build that demanded it would fail for every user with explicit
         projections.

@@ -90,9 +90,11 @@ def load_codes[CodesT: Mapping[str, Any]](
 ) -> CodesT:
     """Load the ``<member>@localhost`` code for each member of a workflow's codes TypedDict.
 
-    ``codes_spec`` is the workflow's graph-input TypedDict from
-    ``aiida_koopmans.workgraphs.codes`` — the single declaration of which
-    codes the workflow wires. Its required members must be configured;
+    ``codes_spec`` is the workflow's graph-input TypedDict, declared
+    beside the workflow entry point it feeds (e.g.
+    ``aiida_koopmans.workgraphs.kcp.DscfCodes``) — the single declaration
+    of which codes the workflow wires. Its required members must be
+    configured;
     ``require`` names the ``NotRequired`` members the input at hand turns on
     (e.g. ``wannierjl`` when ``block_wannierization_threshold`` is set), so
     their absence raises here — with the member's declared purpose — instead
@@ -329,12 +331,12 @@ def _parallelization_advice(exc: ParallelizationError) -> str:
 def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
     """Phrase graph-level missing-code sockets as install advice.
 
-    A chain body that wires a code member it was not given surfaces as
-    unfilled ``workgraph.code`` sockets at graph validation. Every chain
-    codes member is annotated, so an entry carries its declared purpose
-    in ``help``; a bare entry is named without one. Entries of other
-    socket types are not code-installation problems, so an error naming
-    only those earns no advice.
+    A workflow body that wires a code member it was not given surfaces
+    as unfilled ``workgraph.code`` sockets at graph validation. Every
+    codes-TypedDict member is annotated, so an entry carries its declared
+    purpose in ``help``; a bare entry is named without one. Entries of
+    other socket types are not code-installation problems, so an error
+    naming only those earns no advice.
     """
     missing = [
         (entry.socket_path.rsplit(".", 1)[-1], entry.help)
@@ -447,8 +449,8 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "permitted singlepoint prediction — not yet ported."
         )
 
-    # Build the workgraph based on task. Each route loads its chain's codes
-    # itself (:func:`load_codes`) once its input validation has passed.
+    # Build the workgraph based on task. Each route loads its workflow's
+    # codes itself (:func:`load_codes`) once its input validation has passed.
     # An error raised inside the plugin speaks its vocabulary (derived
     # blocks, `num_bands`), which the user never wrote; attach the
     # input-file advice at this boundary.

@@ -71,8 +71,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     - DFPT + ``KI`` → ``build_singlepoint_dfpt_workgraph`` (kcw.x; KI only)
     - anything else → ``NotImplementedError``
     """
-    from aiida_koopmans.workgraphs.codes import DscfCodes
-    from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
+    from aiida_koopmans.workgraphs.kcp import DscfCodes, KoopmansDSCFWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
