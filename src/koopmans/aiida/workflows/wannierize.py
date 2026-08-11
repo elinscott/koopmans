@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import warnings
 from typing import TYPE_CHECKING, Any
 
 from aiida_koopmans.spin import SpinChannel
@@ -146,87 +145,20 @@ def _interpolation_path(
     return kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
 
 
-def _pseudo_reports_pswfc(upf: orm.UpfData) -> bool:
-    """Whether a pseudo's UPF header reports atomic wavefunctions.
+def _configured_projwfc() -> orm.AbstractCode | None:
+    """Return the ``projwfc@localhost`` code, or ``None`` when none is configured.
 
-    ``number_of_wfc`` counts the ``PP_PSWFC`` entries projwfc.x can project
-    onto; a header omitting the attribute promises none.
-    """
-    from upf_tools import UPFDict
-
-    header = UPFDict.from_str(upf.get_content("r"))["header"]
-    return int(header.get("number_of_wfc") or 0) > 0
-
-
-def _projected_dos_wanted(
-    pseudos: dict[str, orm.UpfData],
-    interpolation_kpoints: orm.KpointsData | None,
-) -> bool:
-    """Whether a projected DOS accompanies this run's bands calculation.
-
-    The projected DOS projects the pw.x bands run's eigenstates onto the
-    pseudopotentials' ``PP_PSWFC`` atomic wavefunctions. Without a
-    ``kpoints.path`` there is no bands run to project; a pseudo whose
-    header reports no atomic wavefunctions makes the projection
-    impossible, and that case is skipped with a warning rather than failed
-    (matching the legacy behavior). A pseudo the reader cannot parse is
-    skipped the same way: the projected DOS is a side analysis, and no
-    failure of its gate may abort the Wannierization itself.
-    """
-    if interpolation_kpoints is None:
-        return False
-
-    without_pswfc: list[str] = []
-    unreadable: list[str] = []
-    for kind, upf in sorted(pseudos.items()):
-        try:
-            capable = _pseudo_reports_pswfc(upf)
-        except Exception:
-            unreadable.append(kind)
-            continue
-        if not capable:
-            without_pswfc.append(kind)
-
-    if unreadable:
-        warnings.warn(
-            f"The UPF files for {', '.join(unreadable)} could not be parsed, so whether "
-            "they carry `PP_PSWFC` atomic wavefunctions is unknown. Skipping the "
-            "projected DOS calculation.",
-            UserWarning,
-            stacklevel=3,
-        )
-    if without_pswfc:
-        warnings.warn(
-            f"The pseudopotentials for {', '.join(without_pswfc)} have no `PP_PSWFC` "
-            "block, so a projected DOS calculation is not possible. Skipping it.",
-            UserWarning,
-            stacklevel=3,
-        )
-    return not (unreadable or without_pswfc)
-
-
-def _require_projwfc_if_configured() -> tuple[str, ...]:
-    """Return the ``load_codes`` entry for projwfc, empty if none is configured.
-
-    The projected DOS is a side analysis, so a missing code skips it with
-    a warning instead of failing the Wannierization the way a required
-    code would.
+    projwfc is an optional member of the wannierize codes namespaces:
+    whether the projected DOS runs — and the warning when it cannot — is
+    the graphs' decision, so the dispatcher only makes the code available.
     """
     from aiida import orm
     from aiida.common.exceptions import NotExistent
 
     try:
-        orm.load_code("projwfc@localhost")
+        return orm.load_code("projwfc@localhost")
     except NotExistent:
-        warnings.warn(
-            "No `projwfc@localhost` code is configured, so the projected DOS "
-            "accompanying the bands run will be skipped. Run 'koopmans install' "
-            "to set it up.",
-            UserWarning,
-            stacklevel=3,
-        )
-        return ()
-    return ("projwfc",)
+        return None
 
 
 def _external_projector_kwargs(
@@ -269,13 +201,15 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     bands path, so each Wannierization also emits ``interpolated_bands`` —
     its band structure Wannier-interpolated along that path. A pw.x bands
     run along the same path supplies the explicit eigenvalues the
-    interpolation is judged against, and projwfc.x computes a projected DOS
-    from that run when a projwfc code is configured and every
-    pseudopotential carries ``PP_PSWFC`` atomic wavefunctions
-    (:func:`_projected_dos_wanted`). The path always travels as an explicit
-    labelled k-list: the graphs run the pw.x quality check only for that
-    form — a symbolic ``kpoint_path`` leaves wannier90 to discretize the
-    path itself, with no pw.x eigenvalues to compare against.
+    interpolation is judged against. The dispatcher passes a configured
+    projwfc code along (:func:`_configured_projwfc`); whether a projected
+    DOS runs from the bands run — and the warning when the
+    pseudopotentials' missing ``PP_PSWFC`` wavefunctions make it
+    impossible — is the graphs' decision. The path always travels as an
+    explicit labelled k-list: the graphs run the pw.x quality check only
+    for that form — a symbolic ``kpoint_path`` leaves wannier90 to
+    discretize the path itself, with no pw.x eigenvalues to compare
+    against.
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -313,20 +247,19 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, overrides)
 
-    from koopmans.aiida.conversion import get_pseudos_from_family
-
     bands_kpoints = _interpolation_path(koopmans_input, structure)
 
     # WannierizeCodes's one NotRequired member is projwfc. The upstream
     # builder wires it only for SCDM projections and frozen_type
     # energy_auto, which koopmans never asks for; here it rides along for
     # the projected DOS accompanying the quality-check bands run.
-    require: tuple[str, ...] = ()
-    if _projected_dos_wanted(get_pseudos_from_family(pseudo_family, structure), bands_kpoints):
-        require = _require_projwfc_if_configured()
+    codes = load_codes(WannierizeCodes)
+    projwfc = _configured_projwfc()
+    if projwfc is not None:
+        codes["projwfc"] = projwfc
 
     return Wannierize.build(
-        codes=load_codes(WannierizeCodes, require=require),
+        codes=codes,
         structure=structure,
         overrides=overrides,
         pseudo_family=pseudo_family,
@@ -467,13 +400,17 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     interpolation_kpoints = _interpolation_path(koopmans_input, structure)
 
     # ``WannierizeBlocksCodes``'s NotRequired members are turned on one by
-    # one: wannierjl runs the split machinery (the julia binary registered
-    # via aiida_wannierjl.helpers.get_wannierjl_code) behind the threshold,
-    # and projwfc the projected DOS behind its gate — a blanket
-    # ``__optional_keys__`` require would bypass that gate.
-    require: tuple[str, ...] = ("wannierjl",) if threshold is not None else ()
-    if _projected_dos_wanted(pseudos, interpolation_kpoints):
-        require += _require_projwfc_if_configured()
+    # one: the threshold requires wannierjl (the julia binary registered
+    # via aiida_wannierjl.helpers.get_wannierjl_code) for the split
+    # machinery, while projwfc merely rides along when configured — the
+    # graph decides whether the projected DOS runs.
+    codes = load_codes(
+        WannierizeBlocksCodes,
+        require=("wannierjl",) if threshold is not None else (),
+    )
+    projwfc = _configured_projwfc()
+    if projwfc is not None:
+        codes["projwfc"] = projwfc
 
     # Without a threshold the graph splits nothing, and WannierizeBlocks
     # rejects the split-only inputs rather than ignore them.
@@ -486,7 +423,7 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
         }
 
     return WannierizeBlocks.build(
-        codes=load_codes(WannierizeBlocksCodes, require=require),
+        codes=codes,
         structure=structure,
         blocks=blocks,
         kpoints=kpoints,

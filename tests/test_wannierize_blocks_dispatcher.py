@@ -1065,163 +1065,10 @@ class TestInterpolatedBands:
         assert path.uuid == wg.tasks["bands"].inputs["kpoints"].value.uuid
 
 
-class TestProjectedDosGate:
-    """The gate deciding whether the projected DOS accompanies the bands run.
-
-    projwfc.x projects the bands run's eigenstates onto the
-    pseudopotentials' ``PP_PSWFC`` atomic wavefunctions, so the projected
-    DOS needs a k-path (for the bands run) and pseudos that carry the
-    wavefunctions. An incapable pseudo skips the pDOS with a warning, never
-    fails — matching the legacy behavior. A configured projwfc code turns
-    into a ``load_codes`` requirement; a missing one skips with a warning
-    instead of failing the way a required code would.
-    """
-
-    @staticmethod
-    def _upf(number_of_wfc: int | None) -> Any:
-        import io
-
-        from aiida_pseudo.data.pseudo.upf import UpfData
-
-        from tests.fixtures import fake_upf_content
-
-        content = fake_upf_content("Si", 4.0, number_of_wfc=number_of_wfc)
-        return UpfData(io.BytesIO(content.encode("utf-8")), filename="Si.upf").store()
-
-    @staticmethod
-    def _path() -> Any:
-        from aiida import orm
-
-        kpoints = orm.KpointsData()
-        kpoints.set_kpoints([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])  # type: ignore[no-untyped-call]
-        kpoints.labels = [(0, "GAMMA"), (1, "X")]
-        return kpoints
-
-    def _wanted(self, pseudos: dict[str, Any], path: Any) -> bool:
-        from koopmans.aiida.workflows.wannierize import _projected_dos_wanted
-
-        return _projected_dos_wanted(pseudos, path)
-
-    def test_capable_pseudos_want_the_pdos(self, aiida_profile: Any) -> None:
-        """Every pseudo reports wavefunctions, so the pDOS accompanies the run."""
-        assert self._wanted({"Si": self._upf(2)}, self._path()) is True
-
-    def test_pseudo_without_pswfc_skips_with_a_warning(self, aiida_profile: Any) -> None:
-        """A zero-wavefunction pseudo skips the pDOS, warning with its name."""
-        with pytest.warns(UserWarning, match=r"Si.*PP_PSWFC"):
-            assert self._wanted({"Si": self._upf(0)}, self._path()) is False
-
-    def test_missing_header_attribute_reads_as_incapable(self, aiida_profile: Any) -> None:
-        """A header omitting ``number_of_wfc`` promises no wavefunctions."""
-        with pytest.warns(UserWarning, match="PP_PSWFC"):
-            assert self._wanted({"Si": self._upf(None)}, self._path()) is False
-
-    def test_unparseable_pseudo_skips_with_a_warning(self, aiida_profile: Any) -> None:
-        """A UPF body the reader cannot parse skips the pDOS, never the build.
-
-        The stream passes ``UpfData``'s own validation (its header is
-        intact) but breaks the XML reader further down — the shape of a
-        truncated or hand-edited file. The projected DOS is a side
-        analysis, so its gate degrades to skip-and-warn instead of
-        aborting the Wannierization with a raw parse error.
-        """
-        import io
-
-        from aiida_pseudo.data.pseudo.upf import UpfData
-
-        from tests.fixtures import fake_upf_content
-
-        content = fake_upf_content("Si", 4.0).replace("</UPF>", "<PP_BROKEN>\n</UPF>")
-        upf = UpfData(io.BytesIO(content.encode("utf-8")), filename="Si.upf").store()
-        with pytest.warns(UserWarning, match=r"Si.*could not be parsed"):
-            assert self._wanted({"Si": upf}, self._path()) is False
-
-    def test_no_path_declines_silently(self, aiida_profile: Any) -> None:
-        """Without a path there is no bands run to project, and nothing to warn about."""
-        import warnings as warnings_module
-
-        with warnings_module.catch_warnings():
-            warnings_module.simplefilter("error")
-            assert self._wanted({"Si": self._upf(0)}, None) is False
-
-    def test_configured_projwfc_code_becomes_a_requirement(
-        self, aiida_profile_clean: Any, localhost_code: Any
-    ) -> None:
-        """A registered code is required, so ``load_codes`` passes it to the graph."""
-        from koopmans.aiida.workflows.wannierize import _require_projwfc_if_configured
-
-        localhost_code("projwfc", "quantumespresso.projwfc")
-        assert _require_projwfc_if_configured() == ("projwfc",)
-
-    def test_missing_projwfc_code_skips_with_a_warning(self, aiida_profile_clean: Any) -> None:
-        """No configured code skips the pDOS with install advice, never fails."""
-        from koopmans.aiida.workflows.wannierize import _require_projwfc_if_configured
-
-        with pytest.warns(UserWarning, match=r"projwfc@localhost.*koopmans install"):
-            assert _require_projwfc_if_configured() == ()
-
-
 @pytest.fixture
 def pdos_codes(split_codes: Any, localhost_code: Any) -> dict[str, Any]:
     """Register the split-flow codes plus a projwfc code on ``localhost``."""
     return {**split_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
-
-
-class TestProjectedDosRouting:
-    """The gate as the routes apply it, on today's graphs."""
-
-    def test_pswfc_less_family_warns_and_still_wannierizes(
-        self,
-        aiida_profile_clean: Any,
-        pdos_codes: Any,
-        fake_family_without_pswfc: Any,
-    ) -> None:
-        """A family without ``PP_PSWFC`` skips the pDOS but never the Wannierization."""
-        d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
-        with pytest.warns(UserWarning, match=r"Si.*PP_PSWFC"):
-            wg = _build_plain(d)
-        assert "wannierize_block_1" in [t.name for t in wg.tasks]
-        assert "projwfc" not in [t.name for t in wg.tasks]
-
-    def test_no_path_stays_silent(
-        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """No path means no bands run and no pDOS, with nothing to warn about."""
-        import warnings as warnings_module
-
-        d = _si_split_dict()
-        d["kpoints"].pop("path")
-        with warnings_module.catch_warnings(record=True) as caught:
-            warnings_module.simplefilter("always")
-            wg = _build_plain(d)
-        assert not [w for w in caught if "projected DOS" in str(w.message)]
-        assert "projwfc" not in [t.name for t in wg.tasks]
-        assert "bands" not in [t.name for t in wg.tasks]
-
-    def test_manifold_route_warns_without_a_projwfc_code(
-        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """Capable pseudos and a path without a projwfc code skip with install advice.
-
-        The pDOS is a side analysis: unlike the required codes, whose
-        absence fails the build naming them, a missing projwfc code must
-        leave the Wannierization to proceed.
-        """
-        with pytest.warns(UserWarning, match=r"projwfc@localhost.*koopmans install"):
-            wg = _build_plain(_si_auto_dict())
-        assert any("annier90WorkChain" in t.name for t in wg.tasks)
-
-    def test_block_route_warns_without_a_projwfc_code(
-        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """The blocks route skips with install advice when no projwfc code exists.
-
-        Same skip-never-fail contract as the whole-manifold route: the
-        Wannierization proceeds without the side analysis.
-        """
-        with pytest.warns(UserWarning, match=r"projwfc@localhost.*koopmans install"):
-            wg = _build_plain(_si_split_dict())
-        assert "wannierize_block_1" in [t.name for t in wg.tasks]
 
 
 class TestQualityCheckContract:
@@ -1229,12 +1076,11 @@ class TestQualityCheckContract:
 
     These pin the k2-side contract for the wannierization quality check: a
     pw.x ``bands`` run along ``kpoints.path`` off the scf density (the
-    explicit eigenvalues the interpolation is judged against) and, when a
-    projwfc code survives the gate, a ``projwfc`` step off that run's
-    scratch. The steps live inside the aiida-koopmans graphs; until that
-    side lands — and, for the block route, until ``WannierizeBlocksCodes``
-    declares a projwfc member the dispatcher can require — these tests
-    fail on the missing tasks.
+    explicit eigenvalues the interpolation is judged against) and, when the
+    passed-along projwfc code and the pseudopotentials' ``PP_PSWFC``
+    wavefunctions allow it, a ``projwfc`` step off that run's scratch —
+    with the graphs owning that decision and its skip warning. The steps
+    live inside the aiida-koopmans graphs.
     """
 
     def test_plain_block_route_runs_bands_and_projwfc(
