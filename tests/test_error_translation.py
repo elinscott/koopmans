@@ -101,43 +101,12 @@ class TestAdviceFor:
         assert "Needed when block_wannierization_threshold is set." in advice
         assert "koopmans install" in advice
 
-    def test_bare_code_entry_falls_back_to_the_agreed_purpose(self) -> None:
-        """A help-less code entry gets the purpose the TypedDicts agree on.
+    def test_bare_code_entry_stays_generic(self) -> None:
+        """A help-less code entry is named with the install pointer and no purpose.
 
-        Socket validation may report entries without ``help``, so the
-        advice must not depend on it. The task component is a call-site
-        label ("dfpt", "dscf_snapshot_1"), so it cannot pick a chain;
-        ``kcw``'s one annotated declaration (``DfptCodes``) answers by
-        agreement.
+        Every chain codes member is annotated, so a real entry carries its
+        purpose in ``help``; the advice must still not die on a bare one.
         """
-        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
-
-        exc = MissingRequiredInputsError([MissingInput("dfpt.codes.kcw", "workgraph.code", None)])
-        advice = advice_for(exc)
-        assert advice is not None
-        assert "`kcw@localhost`" in advice
-        assert "Needed for the kcw.x wann2kc, screen, and ham steps." in advice
-
-    def test_disagreeing_declarations_stay_generic(self) -> None:
-        """Conflicting purposes are not guessed for a bare entry.
-
-        ``wannierjl`` is declared with different purposes by
-        ``WannierizeBlocksCodes`` and ``SplitBlockCodes``, and the
-        call-site label cannot say which applies, so the member is named
-        without a purpose clause rather than with the wrong chain's.
-        """
-        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
-
-        exc = MissingRequiredInputsError(
-            [MissingInput("wannierize.codes.wannierjl", "workgraph.code", None)]
-        )
-        advice = advice_for(exc)
-        assert advice is not None
-        assert "`wannierjl@localhost`" in advice
-        assert "(" not in advice.splitlines()[1]
-
-    def test_undeclared_member_stays_generic(self) -> None:
-        """A member no TypedDict declares is named without a purpose clause."""
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
 
         exc = MissingRequiredInputsError(
@@ -147,6 +116,7 @@ class TestAdviceFor:
         assert advice is not None
         assert "`epw@localhost`" in advice
         assert "(" not in advice.splitlines()[1]
+        assert "koopmans install" in advice
 
     def test_missing_non_code_sockets_earn_no_advice(self) -> None:
         """An error naming only non-code sockets is not an installation problem."""
