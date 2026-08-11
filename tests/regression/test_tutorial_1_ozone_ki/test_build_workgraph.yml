@@ -319,7 +319,7 @@ raw:
     to_task: count_electrons_task
   - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: dft_init_nspin1
   - from_socket: structure
     from_task: graph_inputs
@@ -347,7 +347,7 @@ raw:
     to_task: dft_init_nspin1
   - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: dft_init_nspin2_dummy
   - from_socket: structure
     from_task: graph_inputs
@@ -391,7 +391,7 @@ raw:
     to_task: convert_spin1_to_spin2
   - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: dft_init_nspin2
   - from_socket: structure
     from_task: graph_inputs
@@ -431,7 +431,7 @@ raw:
     to_task: dft_init_nspin2
   - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: ComputeScreeningParameters
   - from_socket: structure
     from_task: graph_inputs
@@ -495,7 +495,7 @@ raw:
     to_task: ComputeScreeningParameters
   - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: RunFinalKI
   - from_socket: structure
     from_task: graph_inputs
