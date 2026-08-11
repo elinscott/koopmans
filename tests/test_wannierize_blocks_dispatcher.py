@@ -20,6 +20,7 @@ from koopmans.aiida.workflows.wannierize import (
     build_wannierize_workgraph,
 )
 from koopmans.input_file import KoopmansInput
+from tests.fixtures import count_pw_bands_runs
 
 
 def _si_split_dict(**workflow_updates: Any) -> dict[str, Any]:
@@ -332,7 +333,7 @@ class TestAutomaticProjections:
         wg = _build(d)
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
-        assert names.count("bands") == 1
+        assert count_pw_bands_runs(wg) == 1
         assert names.count("detect_band_groups") == 1
         assert "wannierize_split_block_1" in names
 
@@ -914,10 +915,12 @@ class TestPlainRoute:
         """Explicit projections route to one Wannierization per block, splitting nothing.
 
         Two blocks in, two Wannierizations out, off a single shared scf +
-        nscf. None of the split machinery is built: no bands step, no group
-        detection. Each task is named after its block: the two s-type
-        Wannier functions sit wholly in the occupied manifold, while the
-        six p-type ones straddle the boundary and stay provisional.
+        nscf. None of the split machinery is built: no group detection. (A
+        bands run along the input's k-path is the quality check, not split
+        machinery; ``TestQualityCheckContract`` pins it.) Each task is
+        named after its block: the two s-type Wannier functions sit wholly
+        in the occupied manifold, while the six p-type ones straddle the
+        boundary and stay provisional.
         """
         d = _si_split_dict()
         d["calculator_parameters"]["wannier90"]["projections"] = [
@@ -931,7 +934,6 @@ class TestPlainRoute:
             "wannierize_block_2",
             "wannierize_occ_1",
         ]
-        assert "bands" not in names
         assert "detect_band_groups" not in names
 
         # Blocks cover consecutive bands in input order: 2 s-type Wannier
@@ -975,6 +977,155 @@ class TestPlainRoute:
             _build_plain(_si_auto_dict(auto_projections=False))
 
 
+def _path_labels(kpoints: Any) -> list[str]:
+    """Return the labels of an explicit k-path node, in path order."""
+    assert kpoints is not None, "no k-path node reached the wannierization"
+    return [label for _, label in kpoints.labels]
+
+
+class TestInterpolatedBands:
+    """A ``kpoints.path`` in the input reaches wannier90 as its bands path.
+
+    wannier90 interpolates its band structure (the ``interpolated_bands``
+    output) only under ``bands_plot`` with a path to follow. Every input in
+    this module states ``path: "GX"``, so each route's build must carry it
+    to its wannier90 steps — and dropping the path must leave the graphs
+    path-free rather than interpolate along one nobody asked for.
+    """
+
+    def test_the_whole_manifold_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The path arrives as the wannier90 step's ``bands_kpoints``, with ``bands_plot``.
+
+        The explicit labelled k-list is the form conversion produces; the
+        eager build reaches the staged wannier90 inputs, so both the node
+        and the keyword it switches on are checked where the run reads them.
+        """
+        wg = _build_plain(_si_auto_dict())
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90 = w90_task.inputs["wannier90"]["wannier90"]
+        assert _path_labels(w90["bands_kpoints"].value) == ["GAMMA", "X"]
+        assert w90["parameters"].value.get_dict()["bands_plot"] is True
+
+    def test_the_whole_manifold_route_without_a_path_interpolates_nothing(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """No path in the input leaves the wannier90 step exactly as before."""
+        d = _si_auto_dict()
+        d["kpoints"].pop("path")
+        wg = _build_plain(d)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90 = w90_task.inputs["wannier90"]["wannier90"]
+        assert w90["bands_kpoints"].value is None
+        assert "bands_plot" not in w90["parameters"].value.get_dict()
+
+    def test_the_block_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Every per-block wannierization takes the path as ``interpolation_kpoints``."""
+        d = _si_split_dict()
+        d["calculator_parameters"]["wannier90"]["projections"] = [
+            [{"site": "Si", "ang_mtm": "s"}],
+            [{"site": "Si", "ang_mtm": "p"}],
+        ]
+        wg = _build_plain(d)
+        paths = [
+            wg.tasks[name].inputs["interpolation_kpoints"].value
+            for name in ("wannierize_occ_1", "wannierize_block_2")
+        ]
+        for path in paths:
+            assert _path_labels(path) == ["GAMMA", "X"]
+        # One node serves every block, so the interpolations cannot drift apart.
+        assert paths[0].uuid == paths[1].uuid
+
+    def test_the_block_route_without_a_path_interpolates_nothing(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """No path in the input leaves the per-block wannierizations path-free."""
+        d = _si_split_dict()
+        d["kpoints"].pop("path")
+        wg = _build_plain(d)
+        assert wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value is None
+
+    def test_the_split_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The split flow takes the path for interpolation, not just for detection.
+
+        The same node feeds the pw.x band-group detection
+        (``bands_kpoints``) and the per-block interpolation
+        (``interpolation_kpoints``): both are the input file's one
+        ``kpoints.path``.
+        """
+        wg = _build(_si_split_dict())
+        split_task = wg.tasks["wannierize_split_block_1"]
+        path = split_task.inputs["interpolation_kpoints"].value
+        assert _path_labels(path) == ["GAMMA", "X"]
+        assert path.uuid == wg.tasks["bands"].inputs["kpoints"].value.uuid
+
+
+@pytest.fixture
+def pdos_codes(split_codes: Any, localhost_code: Any) -> dict[str, Any]:
+    """Register the split-flow codes plus a projwfc code on ``localhost``."""
+    return {**split_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
+
+
+class TestQualityCheckContract:
+    """The bands-run / projwfc steps the ak2 wannierize graphs must grow.
+
+    These pin the k2-side contract for the wannierization quality check: a
+    pw.x ``bands`` run along ``kpoints.path`` off the scf density (the
+    explicit eigenvalues the interpolation is judged against) and, when the
+    passed-along projwfc code and the pseudopotentials' ``PP_PSWFC``
+    wavefunctions allow it, a ``projwfc`` step off that run's scratch —
+    with the graphs owning that decision and its skip warning. The steps
+    live inside the aiida-koopmans graphs.
+    """
+
+    def test_plain_block_route_runs_bands_and_projwfc(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The path adds one bands run and one projwfc step to the plain flow."""
+        wg = _build_plain(_si_split_dict())
+        assert count_pw_bands_runs(wg) == 1
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
+
+    def test_split_route_reuses_the_detection_bands_run(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Split mode's detection run along the same path is the quality check.
+
+        One pw.x bands run serves both the band-group detection and the
+        comparison eigenvalues; a second run along the same path would be
+        pure waste.
+        """
+        wg = _build(_si_split_dict())
+        assert count_pw_bands_runs(wg) == 1
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
+
+    def test_whole_manifold_route_runs_bands_and_projwfc(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The upstream-workchain route grows the same two steps."""
+        wg = _build_plain(_si_auto_dict())
+        assert count_pw_bands_runs(wg) == 1
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
+
+    def test_incapable_pseudos_skip_only_the_projected_dos(
+        self,
+        aiida_profile_clean: Any,
+        pdos_codes: Any,
+        fake_family_without_pswfc: Any,
+    ) -> None:
+        """The bands run does not depend on the pseudos' wavefunctions."""
+        d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
+        with pytest.warns(UserWarning, match="PP_PSWFC"):
+            wg = _build_plain(d)
+        assert count_pw_bands_runs(wg) == 1
+        assert "projwfc" not in [t.name for t in wg.tasks]
+
+
 class TestPseudoSocSniffing:
     """The ``has_so`` sniffing that gates automatic projections."""
 
@@ -1014,7 +1165,7 @@ class TestGraphBuild:
         wg = _build(_si_split_dict())
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
-        assert names.count("bands") == 1
+        assert count_pw_bands_runs(wg) == 1
         assert names.count("detect_band_groups") == 1
         assert "wannierize_split_block_1" in names
 

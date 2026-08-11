@@ -20,6 +20,7 @@ from tests.fixtures import (  # noqa: F401
     compiled_binaries,
     fake_coulomb_family,
     fake_declared_nc_family,
+    fake_family_without_pswfc,
     fake_paw_family,
     fake_pseudodojo_lda_family,
     fake_sg15_cutoffs_family,

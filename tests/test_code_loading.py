@@ -54,7 +54,7 @@ class TestCodesSpecRequiredness:
             DielectricCodes: ({"pw", "ph"}, set()),
             WannierizeCodes: (wannier, {"projwfc"}),
             WannierizeBlockCodes: (wannier, set()),
-            WannierizeBlocksCodes: (wannier, {"wannierjl"}),
+            WannierizeBlocksCodes: (wannier, {"wannierjl", "projwfc"}),
             SplitBlockCodes: (wannier | {"wannierjl"}, set()),
             MlwfInitCodes: (wannier | {"wann2kcp", "merge_evc", "kcp"}, set()),
             FoldingCodes: ({"wann2kcp", "merge_evc"}, set()),
