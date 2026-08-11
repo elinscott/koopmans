@@ -101,6 +101,35 @@ class TestAdviceFor:
         assert "Needed when block_wannierization_threshold is set." in advice
         assert "koopmans install" in advice
 
+    def test_bare_code_entry_falls_back_to_the_declared_purpose(self) -> None:
+        """A help-less code entry gets the purpose its chain TypedDict declares.
+
+        Socket validation reports ``help`` only for sockets built from
+        annotated members, so today's entries arrive bare; the advice
+        must not depend on it.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [MissingInput("WannierizeBlocks.codes.wannierjl", "workgraph.code", None)]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert "`wannierjl@localhost`" in advice
+        assert "Needed when block_wannierization_threshold is set." in advice
+
+    def test_code_entry_with_no_declared_purpose_stays_generic(self) -> None:
+        """A member no TypedDict annotates is named without a purpose clause."""
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [MissingInput("KoopmansDSCFWorkflow.codes.kcp", "workgraph.code", None)]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert "`kcp@localhost`" in advice
+        assert "(" not in advice.splitlines()[1]
+
     def test_missing_non_code_sockets_earn_no_advice(self) -> None:
         """An error naming only non-code sockets is not an installation problem."""
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError

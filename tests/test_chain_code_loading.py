@@ -73,7 +73,24 @@ class TestLoadChainCodes:
 
 
 class TestDispatcherPreCheck:
-    """The routes demand exactly what their input turns on."""
+    """The routes demand exactly what their input turns on.
+
+    Every route builds its graph eagerly, and an eager body subscripting a
+    missing code member dies with a bare ``KeyError`` before any socket
+    validation — so the pre-check is the only guard, and each test here
+    pins that the advice error fires instead of a ``KeyError``.
+    """
+
+    def test_dft_bands_missing_pw_is_advice_not_keyerror(
+        self, aiida_profile_clean: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The bands route names its missing pw.x before the eager build can trip."""
+        from tests.fixtures import silicon_pw_input
+
+        inp = KoopmansInput.model_validate(silicon_pw_input())
+        with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
 
     def test_molecular_dscf_demands_kcp_alone(
         self, aiida_profile_clean: Any, fake_sg15_pseudo_family: Any

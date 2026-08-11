@@ -243,6 +243,24 @@ class TestGuards:
         wg = _build(d)
         assert "bands" not in [t.name for t in wg.tasks]
 
+    def test_profile_projwfc_does_not_enter_the_blocks_route(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        localhost_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """A configured projwfc code must not reach the blocks chain.
+
+        ``WannierizeBlocksCodes`` does not declare ``projwfc``, and its
+        typed namespace rejects undeclared keys — a dispatcher that passes
+        along every code the profile holds would fail this build with
+        "Field 'projwfc' is not defined".
+        """
+        localhost_code("projwfc", "quantumespresso.projwfc")
+        wg = _build(_si_split_dict())
+        assert "detect_band_groups" in [t.name for t in wg.tasks]
+
     @pytest.mark.parametrize("keep_top_level", [False, True])
     def test_spin_channel_projections_not_wired(
         self,

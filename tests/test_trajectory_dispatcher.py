@@ -370,6 +370,34 @@ class TestOrbitalDensityDescriptor:
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
         assert not any("extract_snapshot_dataset" in name for name in names), names
 
+    def test_decompose_without_pw2wannier90_earns_install_advice(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        localhost_code: Any,
+        installed_fold_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """The decompose pass's code is demanded before the eager build.
+
+        ``pw2wannier90_code`` is a loose graph input outside ``DscfCodes``,
+        so the chain-TypedDict pre-check cannot speak for it; the route
+        must demand it itself when the descriptor turns the decompose pass
+        on. Only wannier90 is registered here, so the failure is the
+        missing code, not the Wannier route.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        localhost_code("wannier90", "wannier90.wannier90")
+        xyz = write_multiframe_xyz(tmp_path, 1)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["ml"]["descriptor"] = "power_spectrum"
+        with pytest.raises(ValueError, match="pw2wannier90") as excinfo:
+            build_trajectory_workgraph(KoopmansInput.model_validate(d))
+        assert "koopmans install" in str(excinfo.value)
+
     def test_collinear_rejects_power_spectrum(
         self,
         aiida_profile_clean: Any,

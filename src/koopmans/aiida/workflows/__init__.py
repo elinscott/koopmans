@@ -326,20 +326,48 @@ def _parallelization_advice(exc: ParallelizationError) -> str:
     )
 
 
+def _declared_code_help(member: str) -> str | None:
+    """Return the one purpose the chain codes TypedDicts declare for a member.
+
+    Scans every TypedDict in ``aiida_koopmans.workgraphs.codes`` for
+    ``member`` and returns its ``SocketMeta`` help when all declarations
+    that state one agree; a member with no declared purpose, or with
+    conflicting ones, returns ``None``.
+    """
+    from aiida_koopmans.workgraphs import codes as codes_module
+
+    helps: set[str] = set()
+    for attr in vars(codes_module).values():
+        if not (isinstance(attr, type) and hasattr(attr, "__required_keys__")):
+            continue
+        hints = get_type_hints(attr, include_extras=True)
+        if member in hints:
+            text = _socket_help(hints[member])
+            if text:
+                helps.add(text)
+    if len(helps) == 1:
+        return helps.pop()
+    return None
+
+
 def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
     """Phrase graph-level missing-code sockets as install advice.
 
-    A chain body that wires a ``NotRequired`` code member it was not given
-    surfaces as unfilled ``workgraph.code`` sockets at graph validation;
-    their ``help`` carries the member's declared purpose. Entries of other
-    socket types are not code-installation problems, so an error naming
-    only those earns no advice.
+    A chain body that wires a code member it was not given surfaces as
+    unfilled ``workgraph.code`` sockets at graph validation. An entry's
+    ``help`` carries the member's declared purpose only when the socket
+    was built from an annotated ``NotRequired`` member, so a bare entry
+    falls back to the purpose the chain TypedDicts declare
+    (:func:`_declared_code_help`). Entries of other socket types are not
+    code-installation problems, so an error naming only those earns no
+    advice.
     """
-    missing = [
-        (entry.socket_path.rsplit(".", 1)[-1], entry.help)
-        for entry in exc.missing
-        if entry.identifier == "workgraph.code"
-    ]
+    missing: list[tuple[str, str | None]] = []
+    for entry in exc.missing:
+        if entry.identifier != "workgraph.code":
+            continue
+        member = entry.socket_path.rsplit(".", 1)[-1]
+        missing.append((member, entry.help or _declared_code_help(member)))
     if not missing:
         return None
     return _missing_codes_message(missing)
