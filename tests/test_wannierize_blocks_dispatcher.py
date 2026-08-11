@@ -953,6 +953,94 @@ class TestPlainRoute:
             _build_plain(_si_auto_dict(auto_projections=False), split_codes)
 
 
+def _path_labels(kpoints: Any) -> list[str]:
+    """Return the labels of an explicit k-path node, in path order."""
+    assert kpoints is not None, "no k-path node reached the wannierization"
+    return [label for _, label in kpoints.labels]
+
+
+class TestInterpolatedBands:
+    """A ``kpoints.path`` in the input reaches wannier90 as its bands path.
+
+    wannier90 interpolates its band structure (the ``interpolated_bands``
+    output) only under ``bands_plot`` with a path to follow. Every input in
+    this module states ``path: "GX"``, so each route's build must carry it
+    to its wannier90 steps — and dropping the path must leave the graphs
+    path-free rather than interpolate along one nobody asked for.
+    """
+
+    def test_the_whole_manifold_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The path arrives as the wannier90 step's ``bands_kpoints``, with ``bands_plot``.
+
+        The explicit labelled k-list is the form conversion produces; the
+        eager build reaches the staged wannier90 inputs, so both the node
+        and the keyword it switches on are checked where the run reads them.
+        """
+        wg = _build_plain(_si_auto_dict(), split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90 = w90_task.inputs["wannier90"]["wannier90"]
+        assert _path_labels(w90["bands_kpoints"].value) == ["GAMMA", "X"]
+        assert w90["parameters"].value.get_dict()["bands_plot"] is True
+
+    def test_the_whole_manifold_route_without_a_path_interpolates_nothing(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """No path in the input leaves the wannier90 step exactly as before."""
+        d = _si_auto_dict()
+        d["kpoints"].pop("path")
+        wg = _build_plain(d, split_codes)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90 = w90_task.inputs["wannier90"]["wannier90"]
+        assert w90["bands_kpoints"].value is None
+        assert "bands_plot" not in w90["parameters"].value.get_dict()
+
+    def test_the_block_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Every per-block wannierization takes the path as ``interpolation_kpoints``."""
+        d = _si_split_dict()
+        d["calculator_parameters"]["wannier90"]["projections"] = [
+            [{"site": "Si", "ang_mtm": "s"}],
+            [{"site": "Si", "ang_mtm": "p"}],
+        ]
+        wg = _build_plain(d, split_codes)
+        paths = [
+            wg.tasks[name].inputs["interpolation_kpoints"].value
+            for name in ("wannierize_occ_1", "wannierize_block_2")
+        ]
+        for path in paths:
+            assert _path_labels(path) == ["GAMMA", "X"]
+        # One node serves every block, so the interpolations cannot drift apart.
+        assert paths[0].uuid == paths[1].uuid
+
+    def test_the_block_route_without_a_path_interpolates_nothing(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """No path in the input leaves the per-block wannierizations path-free."""
+        d = _si_split_dict()
+        d["kpoints"].pop("path")
+        wg = _build_plain(d, split_codes)
+        assert wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value is None
+
+    def test_the_split_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The split flow takes the path for interpolation, not just for detection.
+
+        The same node feeds the pw.x band-group detection
+        (``bands_kpoints``) and the per-block interpolation
+        (``interpolation_kpoints``): both are the input file's one
+        ``kpoints.path``.
+        """
+        wg = _build(_si_split_dict(), split_codes)
+        split_task = wg.tasks["wannierize_split_block_1"]
+        path = split_task.inputs["interpolation_kpoints"].value
+        assert _path_labels(path) == ["GAMMA", "X"]
+        assert path.uuid == wg.tasks["bands"].inputs["kpoints"].value.uuid
+
+
 class TestPseudoSocSniffing:
     """The ``has_so`` sniffing that gates automatic projections."""
 

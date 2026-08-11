@@ -171,12 +171,12 @@ _EMPTY_REASONS = {
         "path; add `kpoints: {path: ...}` to the input file and rerun"
     ),
     "Wannierize": (
-        "no route hands a k-point path to wannier90, so the Wannier "
-        "interpolation is never computed (koopmans issue #80)"
+        "wannier90 interpolates a band structure only when it is given a "
+        "k-point path; add `kpoints: {path: ...}` to the input file and rerun"
     ),
     "WannierizeBlocks": (
-        "no route hands a k-point path to wannier90, so the Wannier "
-        "interpolation is never computed (koopmans issue #80)"
+        "wannier90 interpolates a band structure only when it is given a "
+        "k-point path; add `kpoints: {path: ...}` to the input file and rerun"
     ),
     "DielectricTask": "the dielectric route computes no band structure",
 }
