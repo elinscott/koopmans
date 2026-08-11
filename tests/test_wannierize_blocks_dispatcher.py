@@ -892,10 +892,12 @@ class TestPlainRoute:
         """Explicit projections route to one Wannierization per block, splitting nothing.
 
         Two blocks in, two Wannierizations out, off a single shared scf +
-        nscf. None of the split machinery is built: no bands step, no group
-        detection. Each task is named after its block: the two s-type
-        Wannier functions sit wholly in the occupied manifold, while the
-        six p-type ones straddle the boundary and stay provisional.
+        nscf. None of the split machinery is built: no group detection, and
+        the one bands run present is the quality check along the input's
+        k-path, not a detection input. Each task is named after its block:
+        the two s-type Wannier functions sit wholly in the occupied
+        manifold, while the six p-type ones straddle the boundary and stay
+        provisional.
         """
         d = _si_split_dict()
         d["calculator_parameters"]["wannier90"]["projections"] = [
@@ -909,7 +911,7 @@ class TestPlainRoute:
             "wannierize_block_2",
             "wannierize_occ_1",
         ]
-        assert "bands" not in names
+        assert names.count("bands") == 1
         assert "detect_band_groups" not in names
 
         # Blocks cover consecutive bands in input order: 2 s-type Wannier

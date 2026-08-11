@@ -240,7 +240,10 @@ def build_wannierize_workgraph(
     interpolation is judged against, and projwfc.x computes a projected DOS
     from that run when a projwfc code is configured and every
     pseudopotential carries ``PP_PSWFC`` atomic wavefunctions
-    (:func:`_gate_projected_dos`).
+    (:func:`_gate_projected_dos`). The path always travels as an explicit
+    labelled k-list: the graphs run the pw.x quality check only for that
+    form — a symbolic ``kpoint_path`` leaves wannier90 to discretize the
+    path itself, with no pw.x eigenvalues to compare against.
 
     Args:
         koopmans_input: The parsed koopmans input.
