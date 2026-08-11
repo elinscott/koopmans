@@ -25,11 +25,12 @@ class _ReadableFile(Protocol):
 
 
 # UPF ``pseudo_type`` values that are not norm-conserving. "NC" and "SL"
-# (semilocal) are; "1/r" is a bare Coulomb potential, which pw.x takes but the
-# Koopmans codes do not. "US" is what a v1 header carries, where there are no
-# flags to fall back on; "USPP" is PSlibrary's v2 spelling, and "1/r" is
-# carried against a header that names a type without flagging itself.
-_NOT_NORM_CONSERVING = {"US", "USPP", "PAW", "1/r"}
+# (semilocal) are; "US" is what a v1 header carries, where there are no
+# flags to fall back on; "USPP" is PSlibrary's v2 spelling. A bare Coulomb
+# potential ("1/r") passes: both kcp.x and kcw.x synthesise its local
+# potential and treat it like any local-only norm-conserving potential
+# (CPV/src/pseudopot_sub.f90, upflib/vloc_mod.f90).
+_NOT_NORM_CONSERVING = {"US", "USPP", "PAW"}
 
 # UPF v2 writes the header as XML attributes. Only the first 4 kB after the
 # tag is searched, which covers the longest real header and keeps a stray
