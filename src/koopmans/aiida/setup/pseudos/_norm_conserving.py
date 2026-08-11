@@ -7,13 +7,17 @@ the answer comes from the UPF headers.
 
 Neither ``aiida-pseudo`` nor ``aiida-core`` parses the field: ``UpfData``
 reads the element and z_valence, and ``aiida.orm.nodes.data.upf.parse_upf``
-the version and element. Both layouts are read here instead.
+the version and element. ``upf_tools.header_from_str`` reads the header of
+either UPF layout and stops there, so a body no parser can read still yields
+a verdict.
 """
 
 from __future__ import annotations
 
-import re
-from typing import Protocol
+import warnings
+from typing import Any, Protocol
+
+from upf_tools import header_from_str
 
 
 class _ReadableFile(Protocol):
@@ -25,32 +29,17 @@ class _ReadableFile(Protocol):
 
 
 # UPF ``pseudo_type`` values that are not norm-conserving. "NC" and "SL"
-# (semilocal) are; "US" is what a v1 header carries, where there are no
-# flags to fall back on; "USPP" is PSlibrary's v2 spelling. A bare Coulomb
+# (semilocal) are; "US" and PSlibrary's "USPP" are the two spellings a v2
+# header gives an ultrasoft pseudopotential, and a v1 header names no type at
+# all, being judged on its ``is_ultrasoft`` flag instead. A bare Coulomb
 # potential ("1/r") passes: both kcp.x and kcw.x synthesise its local
 # potential and treat it like any local-only norm-conserving potential
 # (CPV/src/pseudopot_sub.f90, upflib/vloc_mod.f90).
 _NOT_NORM_CONSERVING = {"US", "USPP", "PAW"}
 
-# UPF v2 writes the header as XML attributes. Only the first 4 kB after the
-# tag is searched, which covers the longest real header and keeps a stray
-# match in the body out of it.
-_HEADER_V2 = re.compile(r"<PP_HEADER\b")
-_ATTRIBUTE = r'{}\s*=\s*"([^"]*)"'
-_HEADER_SCAN = 4096
-
-# UPF v1 writes a fixed-format block instead, whose third line is the type
-# followed by its prose name:
-#
-#     <PP_HEADER>
-#        0                   Version Number
-#       C                    Element
-#        US                  Ultrasoft pseudopotential
-_HEADER_V1 = re.compile(r"<PP_HEADER>(?P<block>.*?)</PP_HEADER>", re.DOTALL)
-_V1_TYPE_LINE = 2
-
 # UPF booleans are written as T/F, true/false or .true./.false. depending on
-# the generator; PSlibrary writes "true" where SG15 writes "F".
+# the generator; upf-tools reads the first two spellings as booleans and hands
+# back any other as the string it found.
 _TRUE = {"t", "true", ".true."}
 
 
@@ -74,75 +63,35 @@ def _pseudo_type(pseudo: _ReadableFile) -> str | None:
 
     ``None`` when the header calls it norm-conserving, says nothing, or
     cannot be read at all.
+
+    A v2 header names its ``pseudo_type``; a v1 header does not, and reaches
+    here as the flags ``is_paw`` and ``is_ultrasoft``. The flags decide only
+    where no name is given, which is why a v2 file naming itself ``PAW`` is
+    reported as PAW even though it raises the ultrasoft flag too.
     """
     try:
-        content = pseudo.get_content()
+        with warnings.catch_warnings():
+            # A UPF v1 file states no version, so upf-tools warns that it
+            # could not determine one for every single one of them.
+            warnings.simplefilter("ignore", UserWarning)
+            header = header_from_str(pseudo.get_content())
     except Exception:
         # Any read failure means "cannot tell", which is not grounds to refuse.
         return None
 
-    declared = _read_v2_header(content)
-    if declared is None:
-        declared = _read_v1_header(content)
-    if declared is None:
-        return None
-
-    pseudo_type, is_ultrasoft, is_paw = declared
-    if is_paw:
-        return pseudo_type or "PAW"
-    if is_ultrasoft:
-        return pseudo_type or "US"
-    if pseudo_type is not None and pseudo_type.strip().upper() in _NOT_NORM_CONSERVING:
-        return pseudo_type
+    declared = header.get("pseudo_type")
+    name = "" if declared is None else str(declared).strip()
+    if name:
+        return name if name.upper() in _NOT_NORM_CONSERVING else None
+    if _flag(header.get("is_paw")):
+        return "PAW"
+    if _flag(header.get("is_ultrasoft")):
+        return "US"
     return None
 
 
-def _read_v2_header(content: str) -> tuple[str | None, bool, bool] | None:
-    """Return ``(pseudo_type, is_ultrasoft, is_paw)`` from an XML-attribute header.
-
-    ``None`` when the file carries no such header, which is what sends a v1
-    file on to :func:`_read_v1_header`.
-    """
-    match = _HEADER_V2.search(content)
-    if match is None:
-        return None
-
-    window = content[match.end() : match.end() + _HEADER_SCAN]
-    pseudo_type = _attribute(window, "pseudo_type")
-    is_ultrasoft = _flag(_attribute(window, "is_ultrasoft"))
-    is_paw = _flag(_attribute(window, "is_paw"))
-
-    if pseudo_type is None and not is_ultrasoft and not is_paw:
-        return None
-    return pseudo_type, is_ultrasoft, is_paw
-
-
-def _read_v1_header(content: str) -> tuple[str | None, bool, bool] | None:
-    """Return ``(pseudo_type, False, False)`` from a fixed-format v1 header.
-
-    The type is the first word of the block's third line. ``None`` when there
-    is no such block or it is too short to hold one.
-    """
-    match = _HEADER_V1.search(content)
-    if match is None:
-        return None
-
-    lines = [line for line in match.group("block").splitlines() if line.strip()]
-    if len(lines) <= _V1_TYPE_LINE:
-        return None
-
-    words = lines[_V1_TYPE_LINE].split()
-    if not words:
-        return None
-    return words[0], False, False
-
-
-def _attribute(window: str, name: str) -> str | None:
-    """Return a quoted XML attribute's value, or ``None`` if it is absent."""
-    match = re.search(_ATTRIBUTE.format(re.escape(name)), window)
-    return match.group(1) if match else None
-
-
-def _flag(value: str | None) -> bool:
+def _flag(value: Any) -> bool:
     """Read a UPF boolean, which generators spell T, true or .true.."""
-    return value is not None and value.strip().lower() in _TRUE
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() in _TRUE

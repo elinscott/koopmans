@@ -184,6 +184,7 @@ dependencies = [
     { name = "aiida-wannierjl", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-workgraph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "node-graph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pydantic-espresso", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "wannier90-input", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
@@ -200,6 +201,7 @@ requires-dist = [
     { name = "markupsafe", marker = "extra == 'docs'", specifier = "<2.1" },
     { name = "node-graph", editable = "../node-graph" },
     { name = "pre-commit", marker = "extra == 'pre-commit'", specifier = "~=3.5" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-espresso", specifier = ">=0.0.1" },
     { name = "sphinx", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-contentui", marker = "extra == 'docs'" },

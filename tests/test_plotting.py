@@ -2,7 +2,8 @@
 
 The resolver tests build process nodes directly rather than running
 workflows: what is under test is which producer/socket pairs count as a band
-structure, and that is decided by ``process_type`` alone.
+structure, and that is decided by ``process_type`` plus, for the pw.x base
+run, the calculation type its own inputs declare.
 """
 
 from __future__ import annotations
@@ -79,8 +80,13 @@ def make_process(
     exit_message: str | None = None,
     calcjob: bool = False,
     computer: orm.Computer | None = None,
+    inputs: dict[str, orm.Data] | None = None,
 ) -> orm.ProcessNode:
-    """Return a stored, finished process node of the given ``process_type``."""
+    """Return a stored, finished process node of the given ``process_type``.
+
+    ``inputs`` links data nodes as the process's inputs, keyed by link label
+    (``__`` separating namespace levels, e.g. ``pw__parameters``).
+    """
     node: orm.ProcessNode = orm.CalcJobNode() if calcjob else orm.WorkflowNode()
     node.process_type = process_type
     node.label = label
@@ -90,6 +96,9 @@ def make_process(
     if caller is not None:
         link_type = LinkType.CALL_CALC if calcjob else LinkType.CALL_WORK
         node.base.links.add_incoming(caller, link_type=link_type, link_label=link_label)
+    for name, data in (inputs or {}).items():
+        input_type = LinkType.INPUT_CALC if calcjob else LinkType.INPUT_WORK
+        node.base.links.add_incoming(data.store(), link_type=input_type, link_label=name)
     node.store()
     node.set_process_state(ProcessState.FINISHED)
     node.set_exit_status(exit_status)
@@ -955,6 +964,54 @@ class TestProducerOwnership:
         found, _ = resolve_band_series([folder])
 
         assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_a_path_bands_run_is_plotted_as_dft(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A bare pw.x run declaring ``calculation='bands'`` joins the DFT series.
+
+        The wannierize routes run it off their scf density as the explicit
+        eigenvalues the Wannier interpolation is judged against; its Fermi
+        level is the one ``output_parameters`` reports back from the parent
+        density's restart.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={"pw__parameters": orm.Dict({"CONTROL": {"calculation": "bands"}})},  # type: ignore[no-untyped-call]
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        attach(run, "output_parameters", orm.Dict({"fermi_energy": 1.25}))  # type: ignore[no-untyped-call]
+        base = make_process(W90_BASE, caller=root, link_label="wannier90")
+        attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.1]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT", "Wannier interpolation"]
+        assert found[0].fermi == pytest.approx(1.25)
+
+    def test_a_mesh_run_with_declared_inputs_is_not_plotted(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """An scf run's ``output_band`` stays off the axes even with inputs present.
+
+        Same process type, same socket, same shape of data as the path
+        run: only the declared ``calculation`` type separates the mesh
+        eigenvalues from the path eigenvalues.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="scf",
+            inputs={"pw__parameters": orm.Dict({"CONTROL": {"calculation": "scf"}})},  # type: ignore[no-untyped-call]
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_scf", root)
+
+        with pytest.raises(PlottingError, match="No band structure to plot"):
+            resolve_band_series([folder])
 
     def test_the_optimize_scan_yields_one_series(self, aiida_profile: Any, tmp_path: Path) -> None:
         """Only the optimize workchain's own output counts, not its trials.
