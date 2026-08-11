@@ -76,6 +76,19 @@ def _pw_bands_references(
     return _vbm_from_occupations(bands), fermi
 
 
+def _pw_base_bands_references(
+    node: orm.ProcessNode, bands: orm.BandsData
+) -> tuple[float | None, float | None]:
+    """Return the band edge and Fermi level a bare pw.x bands run reports.
+
+    A bands calculation recomputes no occupations; the Fermi level it
+    reports in ``output_parameters`` is the one read back from the parent
+    density's restart.
+    """
+    fermi = _output_dict(node, "output_parameters").get("fermi_energy")
+    return _vbm_from_occupations(bands), fermi
+
+
 def _kcw_ham_references(
     node: orm.ProcessNode, bands: orm.BandsData
 ) -> tuple[float | None, float | None]:
@@ -90,6 +103,20 @@ def _no_references(
     return None, None
 
 
+def _is_path_bands_run(node: orm.ProcessNode) -> bool:
+    """Whether a pw.x base run declared ``calculation = 'bands'`` in its inputs.
+
+    An scf or nscf run publishes the same ``output_band`` socket for its
+    mesh eigenvalues; only the declared calculation type says a run sampled
+    a path.
+    """
+    try:
+        parameters = node.inputs.pw.parameters.get_dict()
+    except AttributeError:
+        return False
+    return bool(parameters.get("CONTROL", {}).get("calculation") == "bands")
+
+
 @dataclass(frozen=True)
 class BandProducer:
     """A step whose output socket holds a band structure along a k-path.
@@ -97,7 +124,9 @@ class BandProducer:
     Membership is declared, not inferred. An scf mesh, the explicit
     eigenvalues split-mode wannierization detects its band groups on, and an
     interpolated path are all the same shape of data; only the step that
-    produced a socket says which it is.
+    produced a socket says which it is. Where one process type covers
+    several of those shapes, ``applies`` narrows membership by what the run
+    itself declared in its inputs.
 
     ``socket`` is a dotted output path, so a workflow that publishes its result
     under a namespace can name it.
@@ -107,6 +136,7 @@ class BandProducer:
     socket: str
     series: str
     references: References
+    applies: Callable[[orm.ProcessNode], bool] | None = None
 
 
 #: The optimize workchain's own wannierization outputs, and the series each
@@ -129,6 +159,16 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         socket="band_structure",
         series="DFT",
         references=_pw_bands_references,
+    ),
+    # The bare bands run the wannierize routes chain off their scf density:
+    # its explicit eigenvalues along the path are what the Wannier
+    # interpolation is judged against.
+    BandProducer(
+        process_type="aiida.workflows:quantumespresso.pw.base",
+        socket="output_band",
+        series="DFT",
+        references=_pw_base_bands_references,
+        applies=_is_path_bands_run,
     ),
     BandProducer(
         process_type="aiida.calculations:koopmans.kcw_ham",
@@ -153,7 +193,16 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
     ),
 )
 
-_PRODUCER_TYPES = frozenset(producer.process_type for producer in BAND_PRODUCERS)
+
+def _producers_for(step: orm.ProcessNode) -> list[BandProducer]:
+    """Return the producers whose declared membership ``step`` satisfies."""
+    return [
+        producer
+        for producer in BAND_PRODUCERS
+        if producer.process_type == step.process_type
+        and (producer.applies is None or producer.applies(step))
+    ]
+
 
 #: Why a route can finish and still have no band structure to draw, keyed by
 #: the name of the workgraph the run built.
@@ -337,7 +386,7 @@ def _producing_steps(root: orm.ProcessNode) -> list[orm.ProcessNode]:
     frontier = [root]
     while frontier:
         step = frontier.pop()
-        if step.process_type in _PRODUCER_TYPES:
+        if _producers_for(step):
             found.append(step)
         else:
             frontier += step.called
@@ -348,9 +397,7 @@ def _series_from_node(node: orm.ProcessNode) -> list[BandSeries]:
     """Return every declared band structure a run produced, in run order."""
     matches = []
     for step in _producing_steps(node):
-        for producer in BAND_PRODUCERS:
-            if producer.process_type != step.process_type:
-                continue
+        for producer in _producers_for(step):
             bands = _output_at(step, producer.socket)
             if bands is not None:
                 matches.append((step, producer, bands))

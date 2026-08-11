@@ -585,6 +585,7 @@ def fake_upf_content(
     has_so: bool | None = False,
     info: str | None = None,
     pseudo_type: str | None = None,
+    number_of_wfc: int | None = 2,
 ) -> str:
     """Return a synthetic UPF v2 stream for the fake test pseudos.
 
@@ -601,6 +602,9 @@ def fake_upf_content(
     what kind of pseudopotential this is ("NC", "US", "PAW"), along with the
     ``is_ultrasoft``/``is_paw`` flags that agree with it; omitted by default,
     which is the header that says nothing.
+    ``number_of_wfc`` is the header's count of ``PP_PSWFC`` wavefunctions
+    (2, matching the s+p block); ``0`` writes an empty-valence pseudo with
+    the block dropped, ``None`` omits the attribute while keeping the block.
     """
     has_so_line = "" if has_so is None else f'has_so="{"T" if has_so else "F"}"\n'
     info_block = "" if info is None else f"<PP_INFO>\n{info}\n</PP_INFO>\n"
@@ -610,14 +614,18 @@ def fake_upf_content(
         ultrasoft = "T" if pseudo_type.upper() in {"US", "USPP"} else "F"
         paw = "T" if pseudo_type.upper() == "PAW" else "F"
         type_lines = f'pseudo_type="{pseudo_type}"\nis_ultrasoft="{ultrasoft}"\nis_paw="{paw}"\n'
+    wfc_line = "" if number_of_wfc is None else f'number_of_wfc="{number_of_wfc}"\n'
+    pswfc_block = (
+        ""
+        if number_of_wfc == 0
+        else '<PP_PSWFC>\n<PP_CHI.1 l="0"/>\n<PP_CHI.2 l="1"/>\n</PP_PSWFC>\n'
+    )
     return (
         f'<UPF version="2.0.1">\n'
         f"{info_block}"
         f'<PP_HEADER\nelement="{element}"\n'
-        f'z_valence="{z_valence}"\n{type_lines}{has_so_line}/>\n'
-        f"<PP_PSWFC>\n"
-        f'<PP_CHI.1 l="0"/>\n<PP_CHI.2 l="1"/>\n'
-        f"</PP_PSWFC>\n"
+        f'z_valence="{z_valence}"\n{type_lines}{wfc_line}{has_so_line}/>\n'
+        f"{pswfc_block}"
         f"</UPF>\n"
     )
 
@@ -698,6 +706,7 @@ def _install_fake_family(
     has_so: bool = False,
     recommended_cutoffs: bool = True,
     pseudo_type: str | None = None,
+    number_of_wfc: int | None = 2,
 ) -> Any:
     """Install (or fetch) a fake pseudopotential family with synthetic UPF streams.
 
@@ -711,6 +720,8 @@ def _install_fake_family(
     defined, the shape ``-F pseudo.family.cutoffs`` produces on its own.
     ``has_so=True`` marks every pseudo fully relativistic.
     ``pseudo_type`` writes that kind into every pseudo's header.
+    ``number_of_wfc=0`` gives every pseudo a header reporting no ``PP_PSWFC``
+    atomic wavefunctions.
     """
     from aiida.common.exceptions import NotExistent
     from aiida_pseudo.data.pseudo.upf import UpfData
@@ -729,7 +740,9 @@ def _install_fake_family(
     family.store()
     pseudos = []
     for element, z_valence in elements.items():
-        content = fake_upf_content(element, z_valence, has_so=has_so, pseudo_type=pseudo_type)
+        content = fake_upf_content(
+            element, z_valence, has_so=has_so, pseudo_type=pseudo_type, number_of_wfc=number_of_wfc
+        )
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
         pseudos.append(upf.store())
     family.add_nodes(pseudos)
@@ -769,6 +782,17 @@ def fake_sg15_family_without_cutoffs(aiida_profile: Any) -> Any:
     return _install_fake_family(
         "SG15/1.1/PBE/FR", {"Si": 4.0}, cutoffs=True, recommended_cutoffs=False
     )
+
+
+@pytest.fixture
+def fake_family_without_pswfc(aiida_profile: Any) -> Any:
+    """Install a cutoffs family whose Si pseudo carries no ``PP_PSWFC`` block.
+
+    The shape projwfc.x cannot project onto: the header reports
+    ``number_of_wfc="0"`` and the block is absent, so the projected DOS
+    must be skipped with a warning rather than attempted.
+    """
+    return _install_fake_family("MyPseudos/no-pswfc", {"Si": 4.0}, cutoffs=True, number_of_wfc=0)
 
 
 @pytest.fixture

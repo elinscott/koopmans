@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Any
+import warnings
+from typing import TYPE_CHECKING, Any, cast
 
 from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
@@ -145,6 +146,54 @@ def _interpolation_path(
     return kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
 
 
+def _pseudo_reports_pswfc(upf: orm.UpfData) -> bool:
+    """Whether a pseudo's UPF header reports atomic wavefunctions.
+
+    ``number_of_wfc`` counts the ``PP_PSWFC`` entries projwfc.x can project
+    onto; a header omitting the attribute promises none.
+    """
+    from upf_tools import UPFDict
+
+    header = UPFDict.from_str(upf.get_content("r"))["header"]
+    return int(header.get("number_of_wfc") or 0) > 0
+
+
+def _gate_projected_dos(
+    codes: Codes,
+    pseudos: dict[str, orm.UpfData],
+    interpolation_kpoints: orm.KpointsData | None,
+) -> Codes:
+    """Return ``codes`` with ``projwfc`` kept only where the projected DOS can run.
+
+    The projected DOS accompanies the pw.x bands run along ``kpoints.path``,
+    projecting that run's eigenstates onto the pseudopotentials' ``PP_PSWFC``
+    atomic wavefunctions. Without a path there is no bands run to project;
+    a pseudo whose header reports no atomic wavefunctions makes the
+    projection impossible, and that case is skipped with a warning rather
+    than failed (matching the legacy behavior).
+    """
+    if "projwfc" not in codes:
+        return codes
+
+    gated = dict(codes)
+    if interpolation_kpoints is None:
+        del gated["projwfc"]
+        return cast("Codes", gated)
+
+    without_pswfc = sorted(kind for kind, upf in pseudos.items() if not _pseudo_reports_pswfc(upf))
+    if without_pswfc:
+        warnings.warn(
+            f"The pseudopotentials for {', '.join(without_pswfc)} have no `PP_PSWFC` "
+            "block, so a projected DOS calculation is not possible. Skipping it.",
+            UserWarning,
+            stacklevel=3,
+        )
+        del gated["projwfc"]
+        return cast("Codes", gated)
+
+    return codes
+
+
 def _external_projector_kwargs(
     koopmans_input: KoopmansInput, structure: orm.StructureData
 ) -> dict[str, Any]:
@@ -186,7 +235,12 @@ def build_wannierize_workgraph(
 
     On both routes a ``kpoints.path`` in the input reaches wannier90 as its
     bands path, so each Wannierization also emits ``interpolated_bands`` —
-    its band structure Wannier-interpolated along that path.
+    its band structure Wannier-interpolated along that path. A pw.x bands
+    run along the same path supplies the explicit eigenvalues the
+    interpolation is judged against, and projwfc.x computes a projected DOS
+    from that run when a projwfc code is configured and every
+    pseudopotential carries ``PP_PSWFC`` atomic wavefunctions
+    (:func:`_gate_projected_dos`).
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -225,6 +279,13 @@ def build_wannierize_workgraph(
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, overrides)
 
+    from koopmans.aiida.conversion import get_pseudos_from_family
+
+    bands_kpoints = _interpolation_path(koopmans_input, structure)
+    codes = _gate_projected_dos(
+        codes, get_pseudos_from_family(pseudo_family, structure), bands_kpoints
+    )
+
     return Wannierize.build(
         codes=codes,
         structure=structure,
@@ -235,7 +296,7 @@ def build_wannierize_workgraph(
         scf_kpoints=scf_kpoints,
         kpoints=kpoints,
         mp_grid=mp_grid,
-        bands_kpoints=_interpolation_path(koopmans_input, structure),
+        bands_kpoints=bands_kpoints,
         **extra_kwargs,
     )
 
@@ -368,6 +429,7 @@ def _build_wannierize_blocks_workgraph(
     # detection samples it with pw.x, and every wannier90 run interpolates
     # its band structure along it.
     interpolation_kpoints = _interpolation_path(koopmans_input, structure)
+    codes = _gate_projected_dos(codes, pseudos, interpolation_kpoints)
 
     # Without a threshold the graph splits nothing, and WannierizeBlocks
     # rejects the split-only inputs rather than ignore them.

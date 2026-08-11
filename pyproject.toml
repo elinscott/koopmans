@@ -73,6 +73,7 @@ dependencies = [
     "aiida-quantumespresso",
     "qe-tools", # QE's own unit-conversion constants
     "matplotlib", # `koopmans plot`
+    "upf-tools>=0.2", # UPF header fields (PP_PSWFC availability)
     # Constraint only (not imported directly, but aiida-workgraph imports it):
     # every *released* aiida-shell subclasses the Code.Model API that
     # aiida-core removed after v2.8.0 (#6990), so this rides git master (see

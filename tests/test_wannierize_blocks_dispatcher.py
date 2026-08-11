@@ -1041,6 +1041,171 @@ class TestInterpolatedBands:
         assert path.uuid == wg.tasks["bands"].inputs["kpoints"].value.uuid
 
 
+class TestProjectedDosGate:
+    """The projwfc gate: pass the code through only where the pDOS can run.
+
+    projwfc.x projects the bands run's eigenstates onto the
+    pseudopotentials' ``PP_PSWFC`` atomic wavefunctions, so the projected
+    DOS needs a k-path (for the bands run) and pseudos that carry the
+    wavefunctions. An incapable pseudo skips the pDOS with a warning, never
+    fails — matching the legacy behavior.
+    """
+
+    @staticmethod
+    def _upf(number_of_wfc: int | None) -> Any:
+        import io
+
+        from aiida_pseudo.data.pseudo.upf import UpfData
+
+        from tests.fixtures import fake_upf_content
+
+        content = fake_upf_content("Si", 4.0, number_of_wfc=number_of_wfc)
+        return UpfData(io.BytesIO(content.encode("utf-8")), filename="Si.upf").store()
+
+    @staticmethod
+    def _path() -> Any:
+        from aiida import orm
+
+        kpoints = orm.KpointsData()
+        kpoints.set_kpoints([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]])  # type: ignore[no-untyped-call]
+        kpoints.labels = [(0, "GAMMA"), (1, "X")]
+        return kpoints
+
+    def _gate(self, codes: dict[str, Any], pseudos: dict[str, Any], path: Any) -> dict[str, Any]:
+        from koopmans.aiida.workflows.wannierize import _gate_projected_dos
+
+        return dict(_gate_projected_dos(codes, pseudos, path))
+
+    def test_capable_pseudos_keep_the_code(self, aiida_profile: Any) -> None:
+        """Every pseudo reports wavefunctions, so the code passes through untouched."""
+        codes = {"pw": object(), "projwfc": object()}
+        assert self._gate(codes, {"Si": self._upf(2)}, self._path()) == codes
+
+    def test_pseudo_without_pswfc_drops_the_code_with_a_warning(self, aiida_profile: Any) -> None:
+        """A zero-wavefunction pseudo skips the pDOS, warning with its name."""
+        codes = {"pw": object(), "projwfc": object()}
+        with pytest.warns(UserWarning, match=r"Si.*PP_PSWFC"):
+            gated = self._gate(codes, {"Si": self._upf(0)}, self._path())
+        assert "projwfc" not in gated
+        assert "pw" in gated
+
+    def test_missing_header_attribute_reads_as_incapable(self, aiida_profile: Any) -> None:
+        """A header omitting ``number_of_wfc`` promises no wavefunctions."""
+        with pytest.warns(UserWarning, match="PP_PSWFC"):
+            gated = self._gate({"projwfc": object()}, {"Si": self._upf(None)}, self._path())
+        assert gated == {}
+
+    def test_no_path_drops_the_code_silently(self, aiida_profile: Any) -> None:
+        """Without a path there is no bands run to project, and nothing to warn about."""
+        import warnings as warnings_module
+
+        with warnings_module.catch_warnings():
+            warnings_module.simplefilter("error")
+            gated = self._gate({"pw": object(), "projwfc": object()}, {"Si": self._upf(0)}, None)
+        assert "projwfc" not in gated
+
+    def test_no_projwfc_code_passes_through(self, aiida_profile: Any) -> None:
+        """Without a projwfc code the gate reads no headers and changes nothing."""
+        codes = {"pw": object()}
+        assert self._gate(codes, {"Si": self._upf(0)}, self._path()) == codes
+
+
+@pytest.fixture
+def pdos_codes(split_codes: Any, localhost_code: Any) -> dict[str, Any]:
+    """Extend the split codes with a projwfc code for the projected-DOS flows."""
+    return {**split_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
+
+
+class TestProjectedDosRouting:
+    """The gate as the routes apply it, on today's graphs."""
+
+    def test_pswfc_less_family_warns_and_still_wannierizes(
+        self,
+        aiida_profile_clean: Any,
+        pdos_codes: Any,
+        fake_family_without_pswfc: Any,
+    ) -> None:
+        """A family without ``PP_PSWFC`` skips the pDOS but never the Wannierization."""
+        d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
+        with pytest.warns(UserWarning, match=r"Si.*PP_PSWFC"):
+            wg = _build_plain(d, pdos_codes)
+        assert "wannierize_block_1" in [t.name for t in wg.tasks]
+        assert "projwfc" not in [t.name for t in wg.tasks]
+
+    def test_no_path_stays_silent(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """No path means no bands run and no pDOS, with nothing to warn about."""
+        import warnings as warnings_module
+
+        d = _si_split_dict()
+        d["kpoints"].pop("path")
+        with warnings_module.catch_warnings(record=True) as caught:
+            warnings_module.simplefilter("always")
+            wg = _build_plain(d, pdos_codes)
+        assert not [w for w in caught if "PP_PSWFC" in str(w.message)]
+        assert "projwfc" not in [t.name for t in wg.tasks]
+        assert "bands" not in [t.name for t in wg.tasks]
+
+
+class TestQualityCheckContract:
+    """The bands-run / projwfc steps the ak2 wannierize graphs must grow.
+
+    These pin the k2-side contract for the wannierization quality check: a
+    pw.x ``bands`` run along ``kpoints.path`` off the scf density (the
+    explicit eigenvalues the interpolation is judged against) and, when a
+    projwfc code survives the gate, a ``projwfc`` step off that run's
+    scratch. The steps live inside the aiida-koopmans graphs; until that
+    side lands these tests fail on the missing tasks.
+    """
+
+    def test_plain_block_route_runs_bands_and_projwfc(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The path adds one bands run and one projwfc step to the plain flow."""
+        wg = _build_plain(_si_split_dict(), pdos_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("bands") == 1
+        assert names.count("projwfc") == 1
+
+    def test_split_route_reuses_the_detection_bands_run(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Split mode's detection run along the same path is the quality check.
+
+        One pw.x bands run serves both the band-group detection and the
+        comparison eigenvalues; a second run along the same path would be
+        pure waste.
+        """
+        wg = _build(_si_split_dict(), pdos_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("bands") == 1
+        assert names.count("projwfc") == 1
+
+    def test_whole_manifold_route_runs_bands_and_projwfc(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The upstream-workchain route grows the same two chained steps."""
+        wg = _build_plain(_si_auto_dict(), pdos_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("bands") == 1
+        assert names.count("projwfc") == 1
+
+    def test_incapable_pseudos_skip_only_the_projected_dos(
+        self,
+        aiida_profile_clean: Any,
+        pdos_codes: Any,
+        fake_family_without_pswfc: Any,
+    ) -> None:
+        """The bands run does not depend on the pseudos' wavefunctions."""
+        d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
+        with pytest.warns(UserWarning, match="PP_PSWFC"):
+            wg = _build_plain(d, pdos_codes)
+        names = [t.name for t in wg.tasks]
+        assert names.count("bands") == 1
+        assert "projwfc" not in names
+
+
 class TestPseudoSocSniffing:
     """The ``has_so`` sniffing that gates automatic projections."""
 
