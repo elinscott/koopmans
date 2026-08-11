@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import copy
 import warnings
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
 from koopmans.aiida.workflows import (
+    load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
     require_cutoffs_for_family,
@@ -23,7 +24,6 @@ from koopmans.aiida.workflows.projectors import load_external_projectors
 
 if TYPE_CHECKING:
     from aiida import orm
-    from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
     from wannier90_input.models.parameters import Projection
@@ -158,29 +158,23 @@ def _pseudo_reports_pswfc(upf: orm.UpfData) -> bool:
     return int(header.get("number_of_wfc") or 0) > 0
 
 
-def _gate_projected_dos(
-    codes: Codes,
+def _projected_dos_wanted(
     pseudos: dict[str, orm.UpfData],
     interpolation_kpoints: orm.KpointsData | None,
-) -> Codes:
-    """Return ``codes`` with ``projwfc`` kept only where the projected DOS can run.
+) -> bool:
+    """Whether a projected DOS accompanies this run's bands calculation.
 
-    The projected DOS accompanies the pw.x bands run along ``kpoints.path``,
-    projecting that run's eigenstates onto the pseudopotentials' ``PP_PSWFC``
-    atomic wavefunctions. Without a path there is no bands run to project;
-    a pseudo whose header reports no atomic wavefunctions makes the
-    projection impossible, and that case is skipped with a warning rather
-    than failed (matching the legacy behavior). A pseudo the reader cannot
-    parse is skipped the same way: the projected DOS is a side analysis,
-    and no failure of its gate may abort the Wannierization itself.
+    The projected DOS projects the pw.x bands run's eigenstates onto the
+    pseudopotentials' ``PP_PSWFC`` atomic wavefunctions. Without a
+    ``kpoints.path`` there is no bands run to project; a pseudo whose
+    header reports no atomic wavefunctions makes the projection
+    impossible, and that case is skipped with a warning rather than failed
+    (matching the legacy behavior). A pseudo the reader cannot parse is
+    skipped the same way: the projected DOS is a side analysis, and no
+    failure of its gate may abort the Wannierization itself.
     """
-    if "projwfc" not in codes:
-        return codes
-
-    gated = dict(codes)
     if interpolation_kpoints is None:
-        del gated["projwfc"]
-        return cast("Codes", gated)
+        return False
 
     without_pswfc: list[str] = []
     unreadable: list[str] = []
@@ -208,11 +202,31 @@ def _gate_projected_dos(
             UserWarning,
             stacklevel=3,
         )
-    if unreadable or without_pswfc:
-        del gated["projwfc"]
-        return cast("Codes", gated)
+    return not (unreadable or without_pswfc)
 
-    return codes
+
+def _require_projwfc_if_configured() -> tuple[str, ...]:
+    """Return the ``load_codes`` entry for projwfc, empty if none is configured.
+
+    The projected DOS is a side analysis, so a missing code skips it with
+    a warning instead of failing the Wannierization the way a required
+    code would.
+    """
+    from aiida import orm
+    from aiida.common.exceptions import NotExistent
+
+    try:
+        orm.load_code("projwfc@localhost")
+    except NotExistent:
+        warnings.warn(
+            "No `projwfc@localhost` code is configured, so the projected DOS "
+            "accompanying the bands run will be skipped. Run 'koopmans install' "
+            "to set it up.",
+            UserWarning,
+            stacklevel=3,
+        )
+        return ()
+    return ("projwfc",)
 
 
 def _external_projector_kwargs(
@@ -236,10 +250,7 @@ def _external_projector_kwargs(
     }
 
 
-def build_wannierize_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for Wannierization.
 
     Two routes, both sampling the Brillouin zone on ``kpoints.grid``:
@@ -261,19 +272,18 @@ def build_wannierize_workgraph(
     interpolation is judged against, and projwfc.x computes a projected DOS
     from that run when a projwfc code is configured and every
     pseudopotential carries ``PP_PSWFC`` atomic wavefunctions
-    (:func:`_gate_projected_dos`). The path always travels as an explicit
+    (:func:`_projected_dos_wanted`). The path always travels as an explicit
     labelled k-list: the graphs run the pw.x quality check only for that
     form — a symbolic ``kpoint_path`` leaves wannier90 to discretize the
     path itself, with no pw.x eigenvalues to compare against.
 
     Args:
         koopmans_input: The parsed koopmans input.
-        codes: Dictionary of loaded codes.
 
     Returns:
         The assembled WorkGraph.
     """
-    from aiida_koopmans.workgraphs.wannier90 import Wannierize
+    from aiida_koopmans.workgraphs.wannier90 import Wannierize, WannierizeCodes
     from aiida_wannier90_workflows.common.types import WannierProjectionType
 
     if koopmans_input.workflow.spin != SpinType.NONE:
@@ -284,11 +294,11 @@ def build_wannierize_workgraph(
         )
 
     if koopmans_input.workflow.block_wannierization_threshold is not None:
-        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
+        return _build_wannierize_blocks_workgraph(koopmans_input)
 
     _validate_projection_sources(koopmans_input)
     if _keywords_setting_projections(koopmans_input):
-        return _build_wannierize_blocks_workgraph(koopmans_input, codes)
+        return _build_wannierize_blocks_workgraph(koopmans_input)
     if not koopmans_input.workflow.auto_projections:
         raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
@@ -306,12 +316,17 @@ def build_wannierize_workgraph(
     from koopmans.aiida.conversion import get_pseudos_from_family
 
     bands_kpoints = _interpolation_path(koopmans_input, structure)
-    codes = _gate_projected_dos(
-        codes, get_pseudos_from_family(pseudo_family, structure), bands_kpoints
-    )
+
+    # WannierizeCodes's one NotRequired member is projwfc. The upstream
+    # builder wires it only for SCDM projections and frozen_type
+    # energy_auto, which koopmans never asks for; here it rides along for
+    # the projected DOS accompanying the quality-check bands run.
+    require: tuple[str, ...] = ()
+    if _projected_dos_wanted(get_pseudos_from_family(pseudo_family, structure), bands_kpoints):
+        require = _require_projwfc_if_configured()
 
     return Wannierize.build(
-        codes=codes,
+        codes=load_codes(WannierizeCodes, require=require),
         structure=structure,
         overrides=overrides,
         pseudo_family=pseudo_family,
@@ -325,10 +340,7 @@ def build_wannierize_workgraph(
     )
 
 
-def _build_wannierize_blocks_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build the Wannierization workgraph that Wannierizes block by block.
 
     One scf + nscf feeds a separate Wannierization per projection block.
@@ -355,7 +367,7 @@ def _build_wannierize_blocks_workgraph(
 
     Current scope: ``spin = 'none'``.
     """
-    from aiida_koopmans.workgraphs.block_wannierize import WannierizeBlocks
+    from aiida_koopmans.workgraphs.block_wannierize import WannierizeBlocks, WannierizeBlocksCodes
 
     from koopmans.aiida.conversion import get_pseudos_from_family
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
@@ -453,7 +465,17 @@ def _build_wannierize_blocks_workgraph(
     # detection samples it with pw.x, and every wannier90 run interpolates
     # its band structure along it.
     interpolation_kpoints = _interpolation_path(koopmans_input, structure)
-    codes = _gate_projected_dos(codes, pseudos, interpolation_kpoints)
+    if _projected_dos_wanted(pseudos, interpolation_kpoints):
+        # ``WannierizeBlocksCodes`` declares no projwfc member yet, so this
+        # route cannot request the code the projected DOS needs; once it
+        # does, this becomes a `require` entry like the whole-manifold
+        # route's.
+        warnings.warn(
+            "The projected DOS is not yet wired into the block-by-block "
+            "Wannierize route. Skipping it.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # Without a threshold the graph splits nothing, and WannierizeBlocks
     # rejects the split-only inputs rather than ignore them.
@@ -465,8 +487,14 @@ def _build_wannierize_blocks_workgraph(
             "split_threshold": float(threshold),
         }
 
+    # The split machinery runs the Wannier.jl CalcJobs (the julia binary
+    # registered via aiida_wannierjl.helpers.get_wannierjl_code), so the
+    # threshold turns WannierizeBlocksCodes's one NotRequired member on.
     return WannierizeBlocks.build(
-        codes=codes,
+        codes=load_codes(
+            WannierizeBlocksCodes,
+            require=WannierizeBlocksCodes.__optional_keys__ if threshold is not None else (),
+        ),
         structure=structure,
         blocks=blocks,
         kpoints=kpoints,

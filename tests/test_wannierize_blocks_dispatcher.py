@@ -71,7 +71,7 @@ def _si_split_dict(**workflow_updates: Any) -> dict[str, Any]:
 def split_codes(
     installed_pw_code: Any, installed_wannier_codes: Any, localhost_code: Any
 ) -> dict[str, Any]:
-    """Assemble the code dict for the split flow (incl. the julia code)."""
+    """Register the dummy split-flow codes (incl. the julia one) on ``localhost``."""
     return {
         "pw": installed_pw_code,
         "wannierjl": localhost_code("wannierjl", "wannierjl.check_neighbors"),
@@ -79,15 +79,15 @@ def split_codes(
     }
 
 
-def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build(d: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return _build_wannierize_blocks_workgraph(inp, codes)
+    return _build_wannierize_blocks_workgraph(inp)
 
 
-def _build_via_route(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build_via_route(d: dict[str, Any]) -> Any:
     """Build through the route selection, which is where the guards live."""
     inp = KoopmansInput.model_validate(d)
-    return build_wannierize_workgraph(inp, codes)
+    return build_wannierize_workgraph(inp)
 
 
 @pytest.fixture
@@ -210,7 +210,7 @@ class TestGuards:
     ) -> None:
         """Collinear spin is not wired into any Wannierization route yet."""
         with pytest.raises(NotImplementedError, match="spin='none'"):
-            _build_via_route(_si_split_dict(spin="collinear"), split_codes)
+            _build_via_route(_si_split_dict(spin="collinear"))
 
     def test_collinear_not_implemented_without_the_threshold(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -223,7 +223,7 @@ class TestGuards:
         d = _si_split_dict(spin="collinear")
         del d["workflow"]["block_wannierization_threshold"]
         with pytest.raises(NotImplementedError, match="spin='none'"):
-            _build_via_route(d, split_codes)
+            _build_via_route(d)
 
     def test_missing_kpath_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -232,7 +232,7 @@ class TestGuards:
         d = _si_split_dict()
         d["kpoints"].pop("path")
         with pytest.raises(ValueError, match="k-point path"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_missing_kpath_is_fine_without_the_threshold(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -241,8 +241,26 @@ class TestGuards:
         d = _si_split_dict()
         del d["workflow"]["block_wannierization_threshold"]
         d["kpoints"].pop("path")
-        wg = _build(d, split_codes)
+        wg = _build(d)
         assert "bands" not in [t.name for t in wg.tasks]
+
+    def test_profile_projwfc_does_not_enter_the_blocks_route(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        localhost_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """A configured projwfc code must not reach the blocks workflow.
+
+        ``WannierizeBlocksCodes`` does not declare ``projwfc``, and its
+        typed namespace rejects undeclared keys — a dispatcher that passes
+        along every code the profile holds would fail this build with
+        "Field 'projwfc' is not defined".
+        """
+        localhost_code("projwfc", "quantumespresso.projwfc")
+        wg = _build(_si_split_dict())
+        assert "detect_band_groups" in [t.name for t in wg.tasks]
 
     @pytest.mark.parametrize("keep_top_level", [False, True])
     def test_spin_channel_projections_not_wired(
@@ -265,7 +283,7 @@ class TestGuards:
         d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
         d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
         with pytest.raises(NotImplementedError, match=r"w90.up.projections.*block-by-block"):
-            _build(d, split_codes)
+            _build(d)
 
 
 def _si_auto_dict(**workflow_updates: Any) -> dict[str, Any]:
@@ -291,7 +309,7 @@ class TestAutomaticProjections:
         """The flag and explicit projections each define the full projection set."""
         d = _si_split_dict(auto_projections=True)
         with pytest.raises(ValueError, match=r"auto_projections.*were both given"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_no_projection_source_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -299,7 +317,7 @@ class TestAutomaticProjections:
         """Dropping the projections without opting into the flag is an error."""
         d = _si_auto_dict(auto_projections=False)
         with pytest.raises(ValueError, match="Nothing defines the Wannier projections"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_automatic_route_builds(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -312,7 +330,7 @@ class TestAutomaticProjections:
         d = _si_auto_dict()
         assert "nbnd" not in d["calculator_parameters"]
         assert "pw" not in d["calculator_parameters"]
-        wg = _build(d, split_codes)
+        wg = _build(d)
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
         assert count_pw_bands_runs(wg) == 1
@@ -376,7 +394,7 @@ class TestAutomaticProjections:
         d = _si_auto_dict()
         d["calculator_parameters"]["nbnd"] = 12
         with pytest.raises(NotImplementedError, match="disentangle"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_nbnd_below_projector_count_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -385,7 +403,7 @@ class TestAutomaticProjections:
         d = _si_auto_dict()
         d["calculator_parameters"]["nbnd"] = 6
         with pytest.raises(ValueError, match="smaller than the 8 atomic projectors"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_fully_relativistic_family_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_fr_cutoffs_family: Any
@@ -394,7 +412,7 @@ class TestAutomaticProjections:
         d = _si_auto_dict()
         d["workflow"]["pseudo_library"] = fake_sg15_fr_cutoffs_family.label
         with pytest.raises(NotImplementedError, match="fully relativistic"):
-            _build(d, split_codes)
+            _build(d)
 
 
 def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, Any]:
@@ -515,7 +533,7 @@ class TestExternalProjectors:
         """
         from tests.fixtures import si_external_projector_tables
 
-        wg = _build(_si_external_dict(si_external_projector_dir), split_codes)
+        wg = _build(_si_external_dict(si_external_projector_dir))
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
         assert names.count("detect_band_groups") == 1
@@ -587,7 +605,7 @@ class TestExternalProjectors:
         }
         expected = "w90.up.projections" if channels else "w90.projections"
         with pytest.raises(ValueError, match=rf"{expected}.*Drop one of the two"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_external_projectors_require_the_flag(
         self,
@@ -604,7 +622,7 @@ class TestExternalProjectors:
         """
         d = _si_external_dict(si_external_projector_dir, auto_projections=False)
         with pytest.raises(ValueError, match=r"atom_proj_ext.*without `workflow.auto_projections`"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_missing_dat_file_raises(
         self,
@@ -616,7 +634,7 @@ class TestExternalProjectors:
         """A directory without the element's `.dat` file is rejected naming it."""
         (si_external_projector_dir / "Si.dat").unlink()
         with pytest.raises(ValueError, match=r"missing the projector files \['Si.dat'\]"):
-            _build(_si_external_dict(si_external_projector_dir), split_codes)
+            _build(_si_external_dict(si_external_projector_dir))
 
     def test_missing_atom_proj_dir_raises(
         self,
@@ -628,7 +646,7 @@ class TestExternalProjectors:
         d = _si_auto_dict()
         d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
         with pytest.raises(ValueError, match="atom_proj_dir"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_nbnd_above_external_projector_count_not_implemented(
         self,
@@ -641,7 +659,7 @@ class TestExternalProjectors:
         d = _si_external_dict(si_external_projector_dir)
         d["calculator_parameters"]["nbnd"] = 12
         with pytest.raises(NotImplementedError, match="external projector files"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_plain_route_stages_the_projector_inputs(
         self,
@@ -664,7 +682,7 @@ class TestExternalProjectors:
         d = _si_external_dict(si_external_projector_dir)
         del d["workflow"]["block_wannierization_threshold"]
         inp = KoopmansInput.model_validate(d)
-        wg = build_wannierize_workgraph(inp, split_codes)
+        wg = build_wannierize_workgraph(inp)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         p2w = w90_task.inputs["pw2wannier90"]["pw2wannier90"]
         inputpp = p2w["parameters"].value.get_dict()["INPUTPP"]
@@ -678,11 +696,11 @@ class TestExternalProjectors:
         assert p2w["external_projectors_list"].value.get_dict() == {"Si": "Si"}
 
 
-def _build_plain(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build_plain(d: dict[str, Any]) -> Any:
     """Build through the route selection with the threshold dropped."""
     del d["workflow"]["block_wannierization_threshold"]
     inp = KoopmansInput.model_validate(d)
-    return build_wannierize_workgraph(inp, codes)
+    return build_wannierize_workgraph(inp)
 
 
 #: The mesh every input in this module asks for, and the k-point count a
@@ -715,7 +733,7 @@ class TestKpointMesh:
         derives all three from its protocol unless the mesh is supplied;
         a 2x2x2 input then silently ran on the protocol's much denser mesh.
         """
-        wg = _build_plain(_si_auto_dict(), split_codes)
+        wg = _build_plain(_si_auto_dict())
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
 
         _assert_scf_mesh(w90_task.inputs["scf"]["kpoints"].value)
@@ -735,7 +753,7 @@ class TestKpointMesh:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """The block route takes the same grid for its shared scf and nscf."""
-        wg = _build_plain(_si_split_dict(), split_codes)
+        wg = _build_plain(_si_split_dict())
         scf_nscf = wg.tasks["scf_nscf"]
         _assert_scf_mesh(scf_nscf.inputs["scf_kpoints"].value)
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
@@ -745,7 +763,7 @@ class TestKpointMesh:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """Setting the threshold does not change which mesh the run samples."""
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         scf_nscf = wg.tasks["scf_nscf"]
         _assert_scf_mesh(scf_nscf.inputs["scf_kpoints"].value)
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
@@ -766,7 +784,7 @@ class TestPerStepKpointMesh:
         """The scf entry reaches the scf; nscf and ``mp_grid`` keep the top-level grid."""
         d = _si_split_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid": [4, 4, 4]}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         scf_nscf = wg.tasks["scf_nscf"]
         assert [int(x) for x in scf_nscf.inputs["scf_kpoints"].value.get_kpoints_mesh()[0]] == [
             4,
@@ -787,7 +805,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_split_dict()
         d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         scf_nscf = wg.tasks["scf_nscf"]
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == 27
         assert wg.tasks["wannierize_block_1"].inputs["mp_grid"].value == [3, 3, 3]
@@ -805,7 +823,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_auto_dict()
         d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
 
         assert len(w90_task.inputs["nscf"]["kpoints"].value.get_kpoints()) == 27
@@ -819,7 +837,7 @@ class TestPerStepKpointMesh:
         """The block route carries the spacing in the scf overrides, with no mesh."""
         d = _si_split_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         scf_nscf = wg.tasks["scf_nscf"]
         assert scf_nscf.inputs["scf_kpoints"].value is None
         assert scf_nscf.inputs["overrides"].value["scf"]["kpoints_distance"] == pytest.approx(0.11)
@@ -835,7 +853,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_auto_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         assert w90_task.inputs["scf"]["kpoints"].value is None
         assert float(w90_task.inputs["scf"]["kpoints_distance"].value) == pytest.approx(0.11)
@@ -853,13 +871,17 @@ class TestPlainRoute:
     ) -> None:
         """Nothing splits, so the julia code the splitting needs is not required.
 
-        ``load_codes_for_task`` only loads it behind the threshold, so a
-        build that demanded it here would fail for every user with
-        explicit projections.
+        The route only turns WannierizeBlocksCodes's ``wannierjl`` member on behind the
+        threshold — no ``wannierjl@localhost`` is registered here, so a
+        build that demanded it would fail for every user with explicit
+        projections.
         """
-        codes = {"pw": installed_pw_code, **installed_wannier_codes}
-        assert "wannierjl" not in codes
-        wg = _build_plain(_si_split_dict(), codes)
+        from aiida.common.exceptions import NotExistent
+        from aiida.orm import load_code
+
+        with pytest.raises(NotExistent):
+            load_code("wannierjl@localhost")
+        wg = _build_plain(_si_split_dict())
         assert "wannierize_block_1" in [t.name for t in wg.tasks]
 
     def test_flag_builds_the_qe_projector_route(
@@ -871,7 +893,7 @@ class TestPlainRoute:
         ``auto_projections`` in the wannier90 parameters and ``atom_proj``
         in pw2wannier90 are upstream's own automatic-projection switches.
         """
-        wg = _build_plain(_si_auto_dict(), split_codes)
+        wg = _build_plain(_si_auto_dict())
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         w90_params = w90_task.inputs["wannier90"]["wannier90"]["parameters"].value.get_dict()
         assert w90_params["auto_projections"] is True
@@ -885,7 +907,7 @@ class TestPlainRoute:
     ) -> None:
         """The flag-vs-explicit conflict applies on this route too."""
         with pytest.raises(ValueError, match=r"auto_projections.*were both given"):
-            _build_plain(_si_split_dict(auto_projections=True), split_codes)
+            _build_plain(_si_split_dict(auto_projections=True))
 
     def test_explicit_projections_wannierize_block_by_block(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -893,26 +915,25 @@ class TestPlainRoute:
         """Explicit projections route to one Wannierization per block, splitting nothing.
 
         Two blocks in, two Wannierizations out, off a single shared scf +
-        nscf. None of the split machinery is built: no group detection, and
-        the one bands run present is the quality check along the input's
-        k-path, not a detection input. Each task is named after its block:
-        the two s-type Wannier functions sit wholly in the occupied
-        manifold, while the six p-type ones straddle the boundary and stay
-        provisional.
+        nscf. None of the split machinery is built: no group detection. (A
+        bands run along the input's k-path is the quality check, not split
+        machinery; ``TestQualityCheckContract`` pins it.) Each task is
+        named after its block: the two s-type Wannier functions sit wholly
+        in the occupied manifold, while the six p-type ones straddle the
+        boundary and stay provisional.
         """
         d = _si_split_dict()
         d["calculator_parameters"]["wannier90"]["projections"] = [
             [{"site": "Si", "ang_mtm": "s"}],
             [{"site": "Si", "ang_mtm": "p"}],
         ]
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
         assert sorted(n for n in names if n.startswith("wannierize_")) == [
             "wannierize_block_2",
             "wannierize_occ_1",
         ]
-        assert count_pw_bands_runs(wg) == 1
         assert "detect_band_groups" not in names
 
         # Blocks cover consecutive bands in input order: 2 s-type Wannier
@@ -934,7 +955,7 @@ class TestPlainRoute:
         d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
         d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
         with pytest.raises(NotImplementedError, match=r"w90.up.projections.*block-by-block"):
-            _build_plain(d, split_codes)
+            _build_plain(d)
 
     def test_external_projectors_require_the_flag(
         self,
@@ -946,14 +967,14 @@ class TestPlainRoute:
         """The flag requirement holds on this route too, before the route's own gates."""
         d = _si_external_dict(si_external_projector_dir, auto_projections=False)
         with pytest.raises(ValueError, match=r"atom_proj_ext.*without `workflow.auto_projections`"):
-            _build_plain(d, split_codes)
+            _build_plain(d)
 
     def test_no_projection_source_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """Without any projection source the route fails naming the options."""
         with pytest.raises(ValueError, match="Nothing defines the Wannier projections"):
-            _build_plain(_si_auto_dict(auto_projections=False), split_codes)
+            _build_plain(_si_auto_dict(auto_projections=False))
 
 
 def _path_labels(kpoints: Any) -> list[str]:
@@ -981,7 +1002,7 @@ class TestInterpolatedBands:
         eager build reaches the staged wannier90 inputs, so both the node
         and the keyword it switches on are checked where the run reads them.
         """
-        wg = _build_plain(_si_auto_dict(), split_codes)
+        wg = _build_plain(_si_auto_dict())
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         w90 = w90_task.inputs["wannier90"]["wannier90"]
         assert _path_labels(w90["bands_kpoints"].value) == ["GAMMA", "X"]
@@ -993,7 +1014,7 @@ class TestInterpolatedBands:
         """No path in the input leaves the wannier90 step exactly as before."""
         d = _si_auto_dict()
         d["kpoints"].pop("path")
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         w90 = w90_task.inputs["wannier90"]["wannier90"]
         assert w90["bands_kpoints"].value is None
@@ -1008,7 +1029,7 @@ class TestInterpolatedBands:
             [{"site": "Si", "ang_mtm": "s"}],
             [{"site": "Si", "ang_mtm": "p"}],
         ]
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         paths = [
             wg.tasks[name].inputs["interpolation_kpoints"].value
             for name in ("wannierize_occ_1", "wannierize_block_2")
@@ -1024,7 +1045,7 @@ class TestInterpolatedBands:
         """No path in the input leaves the per-block wannierizations path-free."""
         d = _si_split_dict()
         d["kpoints"].pop("path")
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         assert wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value is None
 
     def test_the_split_route_carries_the_path(
@@ -1037,7 +1058,7 @@ class TestInterpolatedBands:
         (``interpolation_kpoints``): both are the input file's one
         ``kpoints.path``.
         """
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         split_task = wg.tasks["wannierize_split_block_1"]
         path = split_task.inputs["interpolation_kpoints"].value
         assert _path_labels(path) == ["GAMMA", "X"]
@@ -1045,13 +1066,15 @@ class TestInterpolatedBands:
 
 
 class TestProjectedDosGate:
-    """The projwfc gate: pass the code through only where the pDOS can run.
+    """The gate deciding whether the projected DOS accompanies the bands run.
 
     projwfc.x projects the bands run's eigenstates onto the
     pseudopotentials' ``PP_PSWFC`` atomic wavefunctions, so the projected
     DOS needs a k-path (for the bands run) and pseudos that carry the
     wavefunctions. An incapable pseudo skips the pDOS with a warning, never
-    fails — matching the legacy behavior.
+    fails — matching the legacy behavior. A configured projwfc code turns
+    into a ``load_codes`` requirement; a missing one skips with a warning
+    instead of failing the way a required code would.
     """
 
     @staticmethod
@@ -1074,29 +1097,24 @@ class TestProjectedDosGate:
         kpoints.labels = [(0, "GAMMA"), (1, "X")]
         return kpoints
 
-    def _gate(self, codes: dict[str, Any], pseudos: dict[str, Any], path: Any) -> dict[str, Any]:
-        from koopmans.aiida.workflows.wannierize import _gate_projected_dos
+    def _wanted(self, pseudos: dict[str, Any], path: Any) -> bool:
+        from koopmans.aiida.workflows.wannierize import _projected_dos_wanted
 
-        return dict(_gate_projected_dos(codes, pseudos, path))
+        return _projected_dos_wanted(pseudos, path)
 
-    def test_capable_pseudos_keep_the_code(self, aiida_profile: Any) -> None:
-        """Every pseudo reports wavefunctions, so the code passes through untouched."""
-        codes = {"pw": object(), "projwfc": object()}
-        assert self._gate(codes, {"Si": self._upf(2)}, self._path()) == codes
+    def test_capable_pseudos_want_the_pdos(self, aiida_profile: Any) -> None:
+        """Every pseudo reports wavefunctions, so the pDOS accompanies the run."""
+        assert self._wanted({"Si": self._upf(2)}, self._path()) is True
 
-    def test_pseudo_without_pswfc_drops_the_code_with_a_warning(self, aiida_profile: Any) -> None:
+    def test_pseudo_without_pswfc_skips_with_a_warning(self, aiida_profile: Any) -> None:
         """A zero-wavefunction pseudo skips the pDOS, warning with its name."""
-        codes = {"pw": object(), "projwfc": object()}
         with pytest.warns(UserWarning, match=r"Si.*PP_PSWFC"):
-            gated = self._gate(codes, {"Si": self._upf(0)}, self._path())
-        assert "projwfc" not in gated
-        assert "pw" in gated
+            assert self._wanted({"Si": self._upf(0)}, self._path()) is False
 
     def test_missing_header_attribute_reads_as_incapable(self, aiida_profile: Any) -> None:
         """A header omitting ``number_of_wfc`` promises no wavefunctions."""
         with pytest.warns(UserWarning, match="PP_PSWFC"):
-            gated = self._gate({"projwfc": object()}, {"Si": self._upf(None)}, self._path())
-        assert gated == {}
+            assert self._wanted({"Si": self._upf(None)}, self._path()) is False
 
     def test_unparseable_pseudo_skips_with_a_warning(self, aiida_profile: Any) -> None:
         """A UPF body the reader cannot parse skips the pDOS, never the build.
@@ -1116,28 +1134,36 @@ class TestProjectedDosGate:
         content = fake_upf_content("Si", 4.0).replace("</UPF>", "<PP_BROKEN>\n</UPF>")
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename="Si.upf").store()
         with pytest.warns(UserWarning, match=r"Si.*could not be parsed"):
-            gated = self._gate({"pw": object(), "projwfc": object()}, {"Si": upf}, self._path())
-        assert "projwfc" not in gated
-        assert "pw" in gated
+            assert self._wanted({"Si": upf}, self._path()) is False
 
-    def test_no_path_drops_the_code_silently(self, aiida_profile: Any) -> None:
+    def test_no_path_declines_silently(self, aiida_profile: Any) -> None:
         """Without a path there is no bands run to project, and nothing to warn about."""
         import warnings as warnings_module
 
         with warnings_module.catch_warnings():
             warnings_module.simplefilter("error")
-            gated = self._gate({"pw": object(), "projwfc": object()}, {"Si": self._upf(0)}, None)
-        assert "projwfc" not in gated
+            assert self._wanted({"Si": self._upf(0)}, None) is False
 
-    def test_no_projwfc_code_passes_through(self, aiida_profile: Any) -> None:
-        """Without a projwfc code the gate reads no headers and changes nothing."""
-        codes = {"pw": object()}
-        assert self._gate(codes, {"Si": self._upf(0)}, self._path()) == codes
+    def test_configured_projwfc_code_becomes_a_requirement(
+        self, aiida_profile_clean: Any, localhost_code: Any
+    ) -> None:
+        """A registered code is required, so ``load_codes`` passes it to the graph."""
+        from koopmans.aiida.workflows.wannierize import _require_projwfc_if_configured
+
+        localhost_code("projwfc", "quantumespresso.projwfc")
+        assert _require_projwfc_if_configured() == ("projwfc",)
+
+    def test_missing_projwfc_code_skips_with_a_warning(self, aiida_profile_clean: Any) -> None:
+        """No configured code skips the pDOS with install advice, never fails."""
+        from koopmans.aiida.workflows.wannierize import _require_projwfc_if_configured
+
+        with pytest.warns(UserWarning, match=r"projwfc@localhost.*koopmans install"):
+            assert _require_projwfc_if_configured() == ()
 
 
 @pytest.fixture
 def pdos_codes(split_codes: Any, localhost_code: Any) -> dict[str, Any]:
-    """Extend the split codes with a projwfc code for the projected-DOS flows."""
+    """Register the split-flow codes plus a projwfc code on ``localhost``."""
     return {**split_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
 
 
@@ -1153,7 +1179,7 @@ class TestProjectedDosRouting:
         """A family without ``PP_PSWFC`` skips the pDOS but never the Wannierization."""
         d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
         with pytest.warns(UserWarning, match=r"Si.*PP_PSWFC"):
-            wg = _build_plain(d, pdos_codes)
+            wg = _build_plain(d)
         assert "wannierize_block_1" in [t.name for t in wg.tasks]
         assert "projwfc" not in [t.name for t in wg.tasks]
 
@@ -1167,10 +1193,35 @@ class TestProjectedDosRouting:
         d["kpoints"].pop("path")
         with warnings_module.catch_warnings(record=True) as caught:
             warnings_module.simplefilter("always")
-            wg = _build_plain(d, pdos_codes)
-        assert not [w for w in caught if "PP_PSWFC" in str(w.message)]
+            wg = _build_plain(d)
+        assert not [w for w in caught if "projected DOS" in str(w.message)]
         assert "projwfc" not in [t.name for t in wg.tasks]
         assert "bands" not in [t.name for t in wg.tasks]
+
+    def test_manifold_route_warns_without_a_projwfc_code(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Capable pseudos and a path without a projwfc code skip with install advice.
+
+        The pDOS is a side analysis: unlike the required codes, whose
+        absence fails the build naming them, a missing projwfc code must
+        leave the Wannierization to proceed.
+        """
+        with pytest.warns(UserWarning, match=r"projwfc@localhost.*koopmans install"):
+            wg = _build_plain(_si_auto_dict())
+        assert any("annier90WorkChain" in t.name for t in wg.tasks)
+
+    def test_block_route_pdos_awaits_its_codes_member(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The blocks route says the pDOS is not wired rather than drop it silently.
+
+        Interim behavior: ``WannierizeBlocksCodes`` declares no projwfc
+        member yet, so the route cannot request the code. This test is
+        replaced by the projwfc contract tests once it does.
+        """
+        with pytest.warns(UserWarning, match="not yet wired"):
+            _build_plain(_si_split_dict())
 
 
 class TestQualityCheckContract:
@@ -1181,14 +1232,16 @@ class TestQualityCheckContract:
     explicit eigenvalues the interpolation is judged against) and, when a
     projwfc code survives the gate, a ``projwfc`` step off that run's
     scratch. The steps live inside the aiida-koopmans graphs; until that
-    side lands these tests fail on the missing tasks.
+    side lands — and, for the block route, until ``WannierizeBlocksCodes``
+    declares a projwfc member the dispatcher can require — these tests
+    fail on the missing tasks.
     """
 
     def test_plain_block_route_runs_bands_and_projwfc(
         self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """The path adds one bands run and one projwfc step to the plain flow."""
-        wg = _build_plain(_si_split_dict(), pdos_codes)
+        wg = _build_plain(_si_split_dict())
         assert count_pw_bands_runs(wg) == 1
         assert [t.name for t in wg.tasks].count("projwfc") == 1
 
@@ -1201,7 +1254,7 @@ class TestQualityCheckContract:
         comparison eigenvalues; a second run along the same path would be
         pure waste.
         """
-        wg = _build(_si_split_dict(), pdos_codes)
+        wg = _build(_si_split_dict())
         assert count_pw_bands_runs(wg) == 1
         assert [t.name for t in wg.tasks].count("projwfc") == 1
 
@@ -1209,7 +1262,7 @@ class TestQualityCheckContract:
         self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """The upstream-workchain route grows the same two steps."""
-        wg = _build_plain(_si_auto_dict(), pdos_codes)
+        wg = _build_plain(_si_auto_dict())
         assert count_pw_bands_runs(wg) == 1
         assert [t.name for t in wg.tasks].count("projwfc") == 1
 
@@ -1222,7 +1275,7 @@ class TestQualityCheckContract:
         """The bands run does not depend on the pseudos' wavefunctions."""
         d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
         with pytest.warns(UserWarning, match="PP_PSWFC"):
-            wg = _build_plain(d, pdos_codes)
+            wg = _build_plain(d)
         assert count_pw_bands_runs(wg) == 1
         assert "projwfc" not in [t.name for t in wg.tasks]
 
@@ -1263,7 +1316,7 @@ class TestGraphBuild:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """scf+nscf, bands, detection and one nested per-block graph."""
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
         assert count_pw_bands_runs(wg) == 1
@@ -1287,7 +1340,7 @@ class TestGraphBuild:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """The scf override drops nbnd; only the nscf override carries it."""
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
         assert "nbnd" not in overrides["scf"]["pw"]["parameters"].get("SYSTEM", {})
         assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
@@ -1298,7 +1351,7 @@ class TestGraphBuild:
         """The pw parallelization block threads into the split graph's pw steps."""
         d = _si_split_dict()
         d["parallelization"] = {"pw": {"ntasks": 3, "npool": 2}}
-        wg = _build(d, split_codes)
+        wg = _build(d)
 
         bands_pw = wg.tasks["bands"].inputs["pw"]
         assert bands_pw["metadata"]["options"]["resources"].value["num_mpiprocs_per_machine"] == 3
@@ -1316,7 +1369,7 @@ class TestGraphBuild:
         k-point distance, so the calculation would not be the one the
         input file describes.
         """
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
         assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
         # The nscf keeps the unreduced expansion of the same grid.
@@ -1355,7 +1408,7 @@ class TestCutoffLessPseudoFamily:
         from tests.fixtures import pw_step_from_overrides
 
         d = _si_split_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
-        wg = _build(d, split_codes)
+        wg = _build(d)
         structure = self._si_structure(d)
 
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
@@ -1384,7 +1437,7 @@ class TestCutoffLessPseudoFamily:
         del d["calculator_parameters"]["ecutwfc"]
 
         with pytest.raises(ValueError) as excinfo:
-            _build(d, split_codes)
+            _build(d)
 
         message = str(excinfo.value)
         assert fake_sg15_family_without_cutoffs.label in message

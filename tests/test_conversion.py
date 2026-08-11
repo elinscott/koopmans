@@ -376,7 +376,9 @@ class TestParallelizationWiring:
 class TestDispatcherThreadsParallelization:
     """The dispatcher forwards the per-code mapping to the workgraph builder."""
 
-    def test_mapping_reaches_the_builder(self, aiida_profile: Any, monkeypatch: Any) -> None:
+    def test_mapping_reaches_the_builder(
+        self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
+    ) -> None:
         """A configured block is passed as the graph's ``parallelization`` kwarg."""
         import aiida_koopmans.workgraphs.pw as pw_module
 
@@ -401,10 +403,12 @@ class TestDispatcherThreadsParallelization:
         inp = KoopmansInput.model_validate(
             _pw_input(parallelization={"pw": {"npool": 4}, "kcw": {"ntasks": 8}})
         )
-        build_dft_bands_workgraph(inp, {"pw": object()})
+        build_dft_bands_workgraph(inp)
         assert captured["parallelization"] == {"pw": {"npool": 4}, "kcw": {"ntasks": 8}}
 
-    def test_no_config_passes_none(self, aiida_profile: Any, monkeypatch: Any) -> None:
+    def test_no_config_passes_none(
+        self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
+    ) -> None:
         """With nothing configured the builder receives ``parallelization=None``."""
         import aiida_koopmans.workgraphs.pw as pw_module
 
@@ -420,7 +424,7 @@ class TestDispatcherThreadsParallelization:
             pw_module.RunPwBands, "build", staticmethod(lambda **kw: captured.update(kw))
         )
 
-        build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()), {"pw": object()})
+        build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()))
         assert captured["parallelization"] is None
 
 
