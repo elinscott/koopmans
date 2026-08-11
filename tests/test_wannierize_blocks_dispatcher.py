@@ -1211,17 +1211,17 @@ class TestProjectedDosRouting:
             wg = _build_plain(_si_auto_dict())
         assert any("annier90WorkChain" in t.name for t in wg.tasks)
 
-    def test_block_route_pdos_awaits_its_codes_member(
-        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    def test_block_route_warns_without_a_projwfc_code(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """The blocks route says the pDOS is not wired rather than drop it silently.
+        """The blocks route skips with install advice when no projwfc code exists.
 
-        Interim behavior: ``WannierizeBlocksCodes`` declares no projwfc
-        member yet, so the route cannot request the code. This test is
-        replaced by the projwfc contract tests once it does.
+        Same skip-never-fail contract as the whole-manifold route: the
+        Wannierization proceeds without the side analysis.
         """
-        with pytest.warns(UserWarning, match="not yet wired"):
-            _build_plain(_si_split_dict())
+        with pytest.warns(UserWarning, match=r"projwfc@localhost.*koopmans install"):
+            wg = _build_plain(_si_split_dict())
+        assert "wannierize_block_1" in [t.name for t in wg.tasks]
 
 
 class TestQualityCheckContract:

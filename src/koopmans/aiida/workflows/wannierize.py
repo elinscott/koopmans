@@ -465,17 +465,15 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # detection samples it with pw.x, and every wannier90 run interpolates
     # its band structure along it.
     interpolation_kpoints = _interpolation_path(koopmans_input, structure)
+
+    # ``WannierizeBlocksCodes``'s NotRequired members are turned on one by
+    # one: wannierjl runs the split machinery (the julia binary registered
+    # via aiida_wannierjl.helpers.get_wannierjl_code) behind the threshold,
+    # and projwfc the projected DOS behind its gate — a blanket
+    # ``__optional_keys__`` require would bypass that gate.
+    require: tuple[str, ...] = ("wannierjl",) if threshold is not None else ()
     if _projected_dos_wanted(pseudos, interpolation_kpoints):
-        # ``WannierizeBlocksCodes`` declares no projwfc member yet, so this
-        # route cannot request the code the projected DOS needs; once it
-        # does, this becomes a `require` entry like the whole-manifold
-        # route's.
-        warnings.warn(
-            "The projected DOS is not yet wired into the block-by-block "
-            "Wannierize route. Skipping it.",
-            UserWarning,
-            stacklevel=2,
-        )
+        require += _require_projwfc_if_configured()
 
     # Without a threshold the graph splits nothing, and WannierizeBlocks
     # rejects the split-only inputs rather than ignore them.
@@ -487,14 +485,8 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
             "split_threshold": float(threshold),
         }
 
-    # The split machinery runs the Wannier.jl CalcJobs (the julia binary
-    # registered via aiida_wannierjl.helpers.get_wannierjl_code), so the
-    # threshold turns WannierizeBlocksCodes's one NotRequired member on.
     return WannierizeBlocks.build(
-        codes=load_codes(
-            WannierizeBlocksCodes,
-            require=WannierizeBlocksCodes.__optional_keys__ if threshold is not None else (),
-        ),
+        codes=load_codes(WannierizeBlocksCodes, require=require),
         structure=structure,
         blocks=blocks,
         kpoints=kpoints,
