@@ -518,7 +518,8 @@ raw:
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                help: Needed for every kcp.x step.
+                help: Needed to perform explicitly orbital-density-dependent functional
+                  calculations.
                 required: true
             merge_evc:
               dynamic: false
@@ -1226,6 +1227,14 @@ raw:
                   extras:
                     py_type: aiida.orm.nodes.data.singlefile.SinglefileData
                   required: true
+              interpolated_bands:
+                dynamic: false
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  extras:
+                    py_type: aiida.orm.nodes.data.array.bands.BandsData
+                  required: false
               nnkp_file:
                 dynamic: false
                 identifier: <scrubbed:identifier>
@@ -1671,7 +1680,8 @@ raw:
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    help: Needed for every kcp.x step.
+                    help: Needed to perform explicitly orbital-density-dependent functional
+                      calculations.
                     required: true
                 merge_evc:
                   dynamic: false
@@ -2410,6 +2420,14 @@ raw:
                       extras:
                         py_type: aiida.orm.nodes.data.singlefile.SinglefileData
                       required: true
+                  interpolated_bands:
+                    dynamic: false
+                    identifier: <scrubbed:identifier>
+                    meta:
+                      child_default_link_limit: 1
+                      extras:
+                        py_type: aiida.orm.nodes.data.array.bands.BandsData
+                      required: false
                   nnkp_file:
                     dynamic: false
                     identifier: <scrubbed:identifier>
