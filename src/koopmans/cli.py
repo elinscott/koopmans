@@ -14,8 +14,12 @@ executed twice:
     https://click.palletsprojects.com/en/8.1.x/setuptools/#setuptools-integration
 """
 
+from __future__ import annotations
+
 import logging
+from datetime import UTC
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
@@ -42,6 +46,9 @@ from koopmans.aiida.setup.profile import load_koopmans_profile, setup_profile
 from koopmans.aiida.utils import suppress_aiida_logging
 from koopmans.input_file import read_input_file
 from koopmans.plotting.series import EnergyZero
+
+if TYPE_CHECKING:
+    from aiida import orm
 
 __all__ = [
     "cli",
@@ -123,6 +130,171 @@ def run(input_file: str) -> None:
                 f"Trained model stored as node {model_node.pk} ({model_node.uuid}) — "
                 f"reference it via `ml: {{model: {model_node.pk}}}`."
             )
+
+
+@cli.command()
+@click.argument("input_file", type=click.Path(exists=True))
+def submit(input_file: str) -> None:
+    """Submit a koopmans calculation to the daemon without waiting for it.
+
+    INPUT_FILE is the path to a YAML or JSON input file describing the
+    calculation. Records the submission in `<stem>.run.yaml`, next to the
+    input file, appending rather than overwriting if it already exists;
+    `koopmans status` and `koopmans attach` read that file to find the
+    calculation again.
+    """
+    from datetime import datetime
+
+    from koopmans.aiida.anchor import AnchorEntry, anchor_path_for_input, append_anchor_entry
+    from koopmans.aiida.setup.profile import PROFILE_NAME
+    from koopmans.aiida.workflows import advice_for, build_workgraph
+    from koopmans.api import launch
+
+    input_path = Path(input_file)
+    koopmans_input = read_input_file(input_path)
+
+    load_koopmans_profile()
+    wg = build_workgraph(koopmans_input)
+
+    # Graph validation runs when the engine takes the graph, past the build
+    # boundary where `build_workgraph` attaches advice — translate here too.
+    try:
+        with suppress_aiida_logging():
+            node = launch(wg, blocking=False, wait=False)
+    except Exception as exc:
+        advice = advice_for(exc)
+        if advice is not None:
+            exc.add_note(advice)
+        raise
+
+    if node.pk is None:
+        raise click.ClickException("The submitted process was never stored, so it has no id.")
+
+    anchor_path = anchor_path_for_input(input_path)
+    entry = AnchorEntry(
+        uuid=node.uuid,
+        pk=node.pk,
+        input=input_path.name,
+        profile=PROFILE_NAME,
+        submitted=datetime.now(UTC).isoformat(),
+    )
+    try:
+        append_anchor_entry(anchor_path, entry)
+    except OSError as exc:
+        # The daemon already has the job; losing the run file only loses
+        # the *shortcut* back to it, not the submission itself.
+        raise click.ClickException(
+            f"Workflow submitted as pk {node.pk} ({node.uuid}), but {anchor_path} could "
+            f"not be written ({exc}). Recover with `koopmans status --uuid {node.uuid}`."
+        ) from exc
+
+    click.echo("🚀 Workflow submitted")
+
+
+def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None) -> orm.ProcessNode:
+    """Resolve and load the process a status/attach target refers to.
+
+    Loads the koopmans AiiDA profile as a side effect, since resolution
+    only touches the filesystem but loading the node needs the profile.
+    """
+    from aiida import orm
+    from aiida.common.exceptions import NotExistent
+
+    from koopmans.aiida.anchor import resolve_target
+
+    try:
+        resolved = resolve_target(target, uuid=uuid_, pk=pk_)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    load_koopmans_profile()
+    try:
+        node = (
+            orm.load_node(uuid=resolved.uuid)
+            if resolved.uuid is not None
+            else orm.load_node(pk=resolved.pk)
+        )
+    except NotExistent as exc:
+        identifier = resolved.uuid if resolved.uuid is not None else resolved.pk
+        raise click.ClickException(
+            f"No AiiDA node found for {identifier!r}. It may have been deleted; check "
+            "`verdi process list -a` for what is still in the database."
+        ) from exc
+    if not isinstance(node, orm.ProcessNode):
+        raise click.ClickException(
+            f"Node {node.pk} is not a calculation; it holds a {type(node).__name__}."
+        )
+    return node
+
+
+# Shared options for `status`/`attach`
+target_argument = click.argument("target", required=False)
+uuid_option = click.option(
+    "--uuid",
+    "uuid_",
+    default=None,
+    metavar="UUID",
+    help="Load the process by its AiiDA node UUID directly, bypassing any run file.",
+)
+pk_option = click.option(
+    "--pk",
+    "pk_",
+    type=int,
+    default=None,
+    metavar="PK",
+    help="Load the process by its AiiDA node pk directly, bypassing any run file.",
+)
+
+
+@cli.command(name="status")
+@target_argument
+@uuid_option
+@pk_option
+def show_status(target: str | None, uuid_: str | None, pk_: int | None) -> None:
+    """Show the current state of a submitted calculation, once.
+
+    TARGET is a `<stem>.run.yaml` file, the input file next to one, or
+    omitted to use the single such file in the current directory. Prints
+    the workflow tree with each step's state, and the exit status and
+    message of any step that failed. Exits nonzero if the calculation's
+    root process failed.
+    """
+    from koopmans.aiida.progress import render_process_once
+
+    node = _load_target_process(target, uuid_, pk_)
+
+    with suppress_aiida_logging():
+        render_process_once(node)
+
+    if node.is_terminated and not node.is_finished_ok:
+        raise SystemExit(1)
+
+
+@cli.command()
+@target_argument
+@uuid_option
+@pk_option
+def attach(target: str | None, uuid_: str | None, pk_: int | None) -> None:
+    """Attach the live progress display to an already-submitted calculation.
+
+    TARGET is resolved exactly as for `koopmans status`. Displays the
+    same live-updating table `koopmans run` shows, until the calculation
+    terminates; a calculation that has already terminated is shown once,
+    as `koopmans status` would. Exits nonzero if the calculation's root
+    process failed.
+    """
+    from koopmans.aiida.progress import render_process_once, watch_process
+
+    node = _load_target_process(target, uuid_, pk_)
+
+    with suppress_aiida_logging():
+        if node.is_terminated:
+            render_process_once(node)
+        else:
+            node = watch_process(node)
+
+    if node.is_terminated and not node.is_finished_ok:
+        raise SystemExit(1)
 
 
 # Shared option for caching

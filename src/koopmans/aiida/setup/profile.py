@@ -9,12 +9,13 @@ from __future__ import annotations
 import atexit
 import logging
 from pathlib import Path
+from typing import Final
 
 import click
 
 logger = logging.getLogger(__name__)
 
-PROFILE_NAME = "koopmans"
+PROFILE_NAME: Final = "koopmans"
 
 _CLOSE_HOOK_REGISTERED = False
 
