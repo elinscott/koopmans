@@ -1431,6 +1431,33 @@ class TestProducerOwnership:
 
         assert [item.label for item in found] == ["DFT"]
 
+    def test_a_declared_system_of_none_does_not_crash_the_collapse_check(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A malformed ``SYSTEM: None`` is read as no declared inputs, not a crash.
+
+        Not a shape QE itself would ever validate through, but the resolver
+        reads the declared inputs of whatever process the profile holds, and
+        should not raise for a namelist it cannot make sense of.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {"CONTROL": {"calculation": "bands"}, "SYSTEM": None}
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-4.0, 6.0]]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == ["DFT (down)", "DFT (up)"]
+
     def test_the_optimize_scan_yields_one_series(self, aiida_profile: Any, tmp_path: Path) -> None:
         """Only the optimize workchain's own output counts, not its trials.
 

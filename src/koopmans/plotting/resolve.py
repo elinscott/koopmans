@@ -418,7 +418,7 @@ def _declared_pw_system(node: orm.ProcessNode) -> dict[str, Any]:
     """Return the pw.x ``&SYSTEM`` namelist ``node`` declared, if any."""
     try:
         return dict(node.inputs.pw.parameters.get_dict().get("SYSTEM", {}))
-    except AttributeError:
+    except (AttributeError, TypeError):
         return {}
 
 
