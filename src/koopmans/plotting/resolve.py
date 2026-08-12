@@ -182,6 +182,17 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         series="Wannier interpolation",
         references=_no_references,
     ),
+    # A dump writes a folder per calculation, so the calculation is the only
+    # wannier90 step a folder can name; the base workchain above it owns the
+    # walk whenever a whole run is plotted, so the two never both match.
+    # aiida-wannier90 registers no reverse-resolvable entry point, so AiiDA
+    # stores its class path rather than an ``aiida.calculations:`` name.
+    BandProducer(
+        process_type="aiida_wannier90.calculations.wannier90.Wannier90Calculation",
+        socket="interpolated_bands",
+        series="Wannier interpolation",
+        references=_no_references,
+    ),
     *(
         BandProducer(
             process_type="aiida.workflows:wannier90_workflows.optimize",
@@ -204,29 +215,33 @@ def _producers_for(step: orm.ProcessNode) -> list[BandProducer]:
     ]
 
 
+#: Why a ΔSCF route draws a blank.
+_SUPERCELL_REASON = (
+    "the ΔSCF route computes on a supercell, and recovering primitive-cell "
+    "bands from it needs unfold-and-interpolate, which no route calls"
+)
+
+#: Why a wannierization draws a blank, whether the folder names the koopmans
+#: workgraph or the calculation under it.
+_NO_WANNIER_PATH_REASON = (
+    "wannier90 writes an interpolated band structure only when the input "
+    "provides a k-point path; add `kpoints: {path: ...}` to the input file "
+    "and rerun"
+)
+
 #: Why a route can finish and still have no band structure to draw, keyed by
-#: the name of the workgraph the run built.
+#: the name of the workgraph the run built, or the process label of the
+#: calculation a folder inside it names.
 _EMPTY_REASONS = {
-    "KoopmansDSCFWorkflow": (
-        "the ΔSCF route computes on a supercell, and recovering primitive-cell "
-        "bands from it needs unfold-and-interpolate, which no route calls"
-    ),
-    "TrajectoryWorkflow": (
-        "the ΔSCF route computes on a supercell, and recovering primitive-cell "
-        "bands from it needs unfold-and-interpolate, which no route calls"
-    ),
+    "KoopmansDSCFWorkflow": _SUPERCELL_REASON,
+    "TrajectoryWorkflow": _SUPERCELL_REASON,
     "SinglepointDFPTWorkflow": (
         "kcw.x interpolates a band structure only when it is given a k-point "
         "path; add `kpoints: {path: ...}` to the input file and rerun"
     ),
-    "Wannierize": (
-        "wannier90 interpolates a band structure only when it is given a "
-        "k-point path; add `kpoints: {path: ...}` to the input file and rerun"
-    ),
-    "WannierizeBlocks": (
-        "wannier90 interpolates a band structure only when it is given a "
-        "k-point path; add `kpoints: {path: ...}` to the input file and rerun"
-    ),
+    "Wannierize": _NO_WANNIER_PATH_REASON,
+    "WannierizeBlocks": _NO_WANNIER_PATH_REASON,
+    "Wannier90Calculation": _NO_WANNIER_PATH_REASON,
     "DielectricTask": "the dielectric route computes no band structure",
 }
 
@@ -329,32 +344,40 @@ def _cell_of(bands: orm.BandsData) -> list[list[float]] | None:
 
 
 def _series_from_bands(
-    node: orm.ProcessNode, producer: BandProducer, bands: orm.BandsData, name: str
-) -> list[BandSeries]:
+    node: orm.ProcessNode,
+    producer: BandProducer,
+    bands: orm.BandsData,
+    name: str,
+    qualifier: str,
+) -> list[tuple[BandSeries, str]]:
     """Return the series a single ``BandsData`` output contributes.
 
     A collinear calculation stores one table per spin channel and becomes one
-    series per channel.
+    series per channel. Each series is paired with the qualifier that tells it
+    from its siblings within the run, which a name the caller chose keeps.
     """
     vbm, fermi = producer.references(node, bands)
     energies = np.asarray(bands.get_bands(), dtype=np.float64)  # type: ignore[no-untyped-call]
     channels: list[tuple[str, np.ndarray[Any, Any]]] = (
-        [(f"{name} ({label})", energies[index]) for index, label in enumerate(("up", "down"))]
+        [(f"{qualifier} ({label})", energies[index]) for index, label in enumerate(("up", "down"))]
         if energies.ndim == 3
-        else [(name, energies)]
+        else [(qualifier, energies)]
     )
     return [
-        BandSeries(
-            label=label,
-            kpoints=[list(map(float, kpoint)) for kpoint in bands.get_kpoints()],  # type: ignore[no-untyped-call]
-            energies=table.tolist(),
-            cell=_cell_of(bands),
-            path_labels=[(int(index), str(text)) for index, text in (bands.labels or [])],
-            units=str(getattr(bands, "units", None) or "eV"),
-            vbm=vbm,
-            fermi=fermi,
+        (
+            BandSeries(
+                label=f"{name}{suffix}",
+                kpoints=[list(map(float, kpoint)) for kpoint in bands.get_kpoints()],  # type: ignore[no-untyped-call]
+                energies=table.tolist(),
+                cell=_cell_of(bands),
+                path_labels=[(int(index), str(text)) for index, text in (bands.labels or [])],
+                units=str(getattr(bands, "units", None) or "eV"),
+                vbm=vbm,
+                fermi=fermi,
+            ),
+            suffix,
         )
-        for label, table in channels
+        for suffix, table in channels
     ]
 
 
@@ -393,8 +416,13 @@ def _producing_steps(root: orm.ProcessNode) -> list[orm.ProcessNode]:
     return sorted(found, key=lambda step: (step.ctime, step.pk))
 
 
-def _series_from_node(node: orm.ProcessNode) -> list[BandSeries]:
-    """Return every declared band structure a run produced, in run order."""
+def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
+    """Return every declared band structure a run produced, in run order.
+
+    Each series is paired with its qualifier: the parenthesised text that tells
+    it from the other series of the same run, empty when the run produced only
+    one.
+    """
     matches = []
     for step in _producing_steps(node):
         for producer in _producers_for(step):
@@ -408,12 +436,10 @@ def _series_from_node(node: orm.ProcessNode) -> list[BandSeries]:
     for _, producer, _ in matches:
         counts[producer.series] = counts.get(producer.series, 0) + 1
 
-    series: list[BandSeries] = []
+    series: list[tuple[BandSeries, str]] = []
     for step, producer, bands in matches:
-        name = producer.series
-        if counts[name] > 1:
-            name = f"{name} ({_step_name(step)})"
-        series += _series_from_bands(step, producer, bands, name)
+        qualifier = f" ({_step_name(step)})" if counts[producer.series] > 1 else ""
+        series += _series_from_bands(step, producer, bands, producer.series, qualifier)
     return series
 
 
@@ -423,43 +449,82 @@ def _plotted_sockets() -> str:
     return ", ".join(names)
 
 
-def _nothing_plottable(folders: Sequence[Path], nodes: Sequence[orm.ProcessNode]) -> PlottingError:
-    """Return the error naming each route that ran and why it drew a blank."""
-    lines = [f"No band structure to plot in {', '.join(str(folder) for folder in folders)}."]
-    for folder, node in zip(folders, nodes, strict=True):
+def _nothing_plottable(empty: Sequence[tuple[Path, orm.ProcessNode]], total: int) -> PlottingError:
+    """Return the error naming each route that ran and why it drew a blank.
+
+    ``total`` is how many folders were asked for, so that the message can say
+    whether any of the others carry a band structure.
+    """
+    lines = [f"No band structure to plot in {', '.join(str(folder) for folder, _ in empty)}."]
+    for folder, node in empty:
         route = _route_name(node)
         reason = _EMPTY_REASONS.get(
             route,
             f"no step of it produced one of the outputs koopmans plots ({_plotted_sockets()})",
         )
         lines.append(f"  {folder} ran {route}, and {reason}.")
+    if len(empty) < total:
+        lines.append("Leave out the folders above to draw the rest.")
     return PlottingError("\n".join(lines))
 
 
-def resolve_band_series(folders: Sequence[Path]) -> tuple[list[BandSeries], list[str]]:
+def _name_after_folder(found: Sequence[tuple[BandSeries, str]], label: str) -> None:
+    """Rename every series one folder contributed after that folder.
+
+    Each keeps the qualifier telling it from its siblings. Curves told apart by
+    their series names alone carry none, and their own derived names stand in,
+    so that no two curves of one folder end up sharing a name.
+    """
+    for item, qualifier in found:
+        if not qualifier and len(found) > 1:
+            qualifier = f" ({item.label})"
+        item.label = f"{label}{qualifier}"
+
+
+def resolve_band_series(
+    folders: Sequence[Path], labels: Sequence[str] = ()
+) -> tuple[list[BandSeries], list[str]]:
     """Return the band structures of the given runs, and any warnings.
 
     Series are labelled by the step that produced them, prefixed by the folder
-    name when more than one folder is on the axes.
+    name when more than one folder is on the axes. ``labels`` names the folders
+    instead, one per folder in the order they were given; a folder that yields
+    several series keeps whatever tells them apart, so one name covers a
+    per-spin or per-block fan-out and no two curves end up sharing a name.
+    Every folder must carry a band structure: drawing fewer curves than folders
+    asked for reads as a figure of them all.
 
+    :raises ValueError: if some but not all of the folders are named.
     :raises PlottingError: if a folder is not a run directory, its run is not
-        in this profile, or nothing plottable was found in any of them.
+        in this profile, or any of them holds nothing plottable.
     """
+    if labels and len(labels) != len(folders):
+        raise ValueError(
+            f"{len(labels)} --label value(s) were given for {len(folders)} folder(s). "
+            "Give one --label per folder, in the order the folders are listed, or "
+            "none at all."
+        )
+
     nodes = [run_node(folder) for folder in folders]
 
     series: list[BandSeries] = []
     warnings: list[str] = []
-    for folder, node in zip(folders, nodes, strict=True):
+    empty: list[tuple[Path, orm.ProcessNode]] = []
+    for index, (folder, node) in enumerate(zip(folders, nodes, strict=True)):
         warning = _failure_warning(folder, node)
         if warning is not None:
             warnings.append(warning)
         found = _series_from_node(node)
-        if len(folders) > 1:
+        if not found:
+            empty.append((folder, node))
+        if labels:
+            _name_after_folder(found, labels[index])
+        elif len(folders) > 1:
             prefix = folder.name or folder.resolve().name
-            for item in found:
+            for item, _ in found:
                 item.label = f"{prefix}: {item.label}"
-        series += found
+        series += [item for item, _ in found]
 
-    if not series:
-        raise _nothing_plottable(folders, nodes)
+    if empty:
+        raise _nothing_plottable(empty, len(folders))
     return series, warnings
