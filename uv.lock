@@ -186,6 +186,7 @@ dependencies = [
     { name = "node-graph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pydantic-espresso", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "upf-tools", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "wannier90-input", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
@@ -206,6 +207,7 @@ requires-dist = [
     { name = "sphinx", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-contentui", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-details-directive", marker = "extra == 'docs'" },
+    { name = "upf-tools", editable = "../upf-tools" },
     { name = "wannier90-input", specifier = ">=0.0.2" },
 ]
 provides-extras = ["docs", "pre-commit"]
