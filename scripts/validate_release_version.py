@@ -1,11 +1,14 @@
 """Validate a release version before `just tag-release` tags it.
 
 Checks that the version is a final PEP 440 release (no dev/pre/post/local
-segment) and strictly newer than the latest existing `vX.Y.Z` tag (if any).
-Exits non-zero with an explanatory message on failure.
+segment), strictly newer than the latest existing `vX.Y.Z` tag (if any),
+and matches the version CITATION.cff declares. Exits non-zero with an
+explanatory message on failure.
 """
 
+import re
 import sys
+from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
@@ -35,6 +38,17 @@ def main() -> None:
 
     if latest_tag and version <= Version(latest_tag):
         sys.exit(f"{version_str} is not newer than the latest tag v{latest_tag}.")
+
+    citation = Path("CITATION.cff")
+    match = re.search(r"^version:\s*(\S+)\s*$", citation.read_text(), re.MULTILINE)
+    if match is None:
+        sys.exit(f"CITATION.cff declares no version; add `version: {version_str}` before tagging.")
+    if Version(match.group(1)) != version:
+        sys.exit(
+            f"CITATION.cff declares version {match.group(1)}, not "
+            f"{version_str} — update it (and commit) before tagging, so the "
+            "citation matches the release."
+        )
 
 
 if __name__ == "__main__":
