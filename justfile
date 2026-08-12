@@ -114,6 +114,15 @@ build:
 # safely instead of landing on PyPI. There is no version file to bump after
 # a release — the next commit's version increments on its own.
 #
+# Tagging and publishing are deliberately two separate, both-manual steps:
+# `tag-release` only validates and tags — it never builds or uploads.
+# Publishing (`release`/`release-via-env` below) is always a second, explicit
+# command a human runs afterwards; nothing here reacts to a tag being pushed,
+# and no CI workflow watches for one either. A future GitHub Actions release
+# workflow, gated on a manual `workflow_dispatch` trigger, is tracked as k2
+# issue #154 — it does not exist yet, so today publishing only ever happens
+# from a developer's own machine.
+#
 # In order to make a release to PyPI, you'll need to take the following steps:
 #
 # 1. Navigate to https://pypi.org/account/register/ to register for Test PyPI
@@ -125,8 +134,16 @@ build:
 # 6. Install keyring with `uv tool install keyring`
 # 7. Add your token to keyring with `keyring set https://upload.pypi.org/legacy/ __token__`
 
-[doc("Tag the current commit as a release")]
+[doc("Validate `version` (PEP 440, newer than every existing tag) and tag the current commit as a release. Never builds or publishes anything — see the note above and k2 issue #154.")]
 tag-release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Working tree is not clean; commit or stash before tagging a release." >&2
+        exit 1
+    fi
+    latest_tag=$(git tag --list 'v*' | sed 's/^v//' | sort -V | tail -n1)
+    uv run --with packaging python3 scripts/validate_release_version.py "{{ version }}" "$latest_tag"
     git tag -a "v{{ version }}" -m "Release {{ version }}"
     git push --tags
 
@@ -140,11 +157,6 @@ release:
 release-via-env:
     just build
     uv publish --publish-url https://upload.pypi.org/legacy/
-
-[doc("Tag `version` as a release and publish it to PyPI")]
-finish version:
-    just tag-release {{ version }}
-    just release
 
 #################
 # Test Releases #
@@ -166,8 +178,3 @@ test-release:
     just build
     uv tool install --quiet keyring
     uv publish --username __token__ --keyring-provider subprocess --publish-url https://test.pypi.org/legacy/
-
-[doc("Tag `version` as a release and publish it to Test PyPI")]
-test-finish version:
-    just tag-release {{ version }}
-    just test-release
