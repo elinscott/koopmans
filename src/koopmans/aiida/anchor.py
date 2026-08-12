@@ -18,11 +18,12 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import yaml
 from pydantic import Field, RootModel, ValidationError
 
+from koopmans.aiida.setup.profile import PROFILE_NAME
 from koopmans.base import BaseModel
 
 __all__ = [
@@ -42,7 +43,13 @@ class AnchorEntry(BaseModel):
     uuid: str = Field(description="the submitted process's AiiDA node UUID")
     pk: int = Field(description="the submitted process's AiiDA node pk")
     input: str = Field(description="the input file's name, relative to the anchor file")
-    profile: str = Field(description="the AiiDA profile the process was submitted under")
+    # mypy does not support a Final variable inside Literal[...] (PEP 586
+    # permits it; mypy has not implemented it — python/mypy#10403), hence
+    # the ignore. Referencing PROFILE_NAME rather than a copied string
+    # keeps the allowed value in one place.
+    profile: Literal[PROFILE_NAME] = Field(  # type: ignore[valid-type]
+        description="the AiiDA profile the process was submitted under"
+    )
     submitted: str = Field(description="an ISO-8601 timestamp of the submission")
 
 

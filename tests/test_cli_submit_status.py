@@ -301,6 +301,37 @@ class TestStatus:
         assert node_uuid in result.output
         assert "deleted" in result.output
 
+    def test_an_entry_for_a_foreign_profile_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A run file naming a different profile than this install's own is refused.
+
+        ``AnchorEntry.profile`` is typed ``Literal[PROFILE_NAME]``, so
+        pydantic itself rejects a foreign value at validation — there is
+        no separate guard to test, only that its error reaches the user
+        naming both the value found and the one required.
+        """
+        anchor_path = tmp_path / "si.run.yaml"
+        anchor_path.write_text(
+            yaml.safe_dump(
+                [
+                    {
+                        "uuid": "some-uuid",
+                        "pk": 1,
+                        "input": "si.yaml",
+                        "profile": "someone-elses-profile",
+                        "submitted": "2026-08-11T12:00:00+00:00",
+                    }
+                ]
+            )
+        )
+
+        result = CliRunner().invoke(cli, ["status", str(anchor_path)])
+
+        assert result.exit_code != 0
+        assert "someone-elses-profile" in result.output
+        assert PROFILE_NAME in result.output
+
     def test_no_target_and_no_run_file_is_a_clean_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
