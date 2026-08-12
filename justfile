@@ -143,7 +143,7 @@ tag-release version:
         exit 1
     fi
     latest_tag=$(git tag --list 'v*' | sed 's/^v//' | sort -V | tail -n1)
-    uv run --with packaging python3 scripts/validate_release_version.py "{{ version }}" "$latest_tag"
+    uv run --no-project --with packaging python3 scripts/validate_release_version.py "{{ version }}" "$latest_tag"
     git tag -a "v{{ version }}" -m "Release {{ version }}"
     git push --tags
 
