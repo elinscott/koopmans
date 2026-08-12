@@ -14,10 +14,16 @@ explicit ``--uuid``/``--pk`` — into the identity of one process.
 
 from __future__ import annotations
 
+import os
+import tempfile
+import time
 from pathlib import Path
-from typing import NamedTuple, TypedDict
+from typing import NamedTuple
 
 import yaml
+from pydantic import Field, RootModel, ValidationError
+
+from koopmans.base import BaseModel
 
 __all__ = [
     "AnchorEntry",
@@ -30,14 +36,18 @@ __all__ = [
 ]
 
 
-class AnchorEntry(TypedDict):
+class AnchorEntry(BaseModel):
     """One submission recorded in an anchor file."""
 
-    uuid: str
-    pk: int
-    input: str
-    profile: str
-    submitted: str
+    uuid: str = Field(description="the submitted process's AiiDA node UUID")
+    pk: int = Field(description="the submitted process's AiiDA node pk")
+    input: str = Field(description="the input file's name, relative to the anchor file")
+    profile: str = Field(description="the AiiDA profile the process was submitted under")
+    submitted: str = Field(description="an ISO-8601 timestamp of the submission")
+
+
+class _AnchorFile(RootModel[list[AnchorEntry]]):
+    """The list of submissions an anchor file holds, oldest first."""
 
 
 class ResolvedTarget(NamedTuple):
@@ -56,30 +66,112 @@ def anchor_path_for_input(input_path: Path) -> Path:
     return input_path.with_name(f"{input_path.stem}.run.yaml")
 
 
+def _lock_path_for(anchor_path: Path) -> Path:
+    return anchor_path.with_name(anchor_path.name + ".lock")
+
+
+def _acquire_lock(lock_path: Path, timeout: float = 10.0) -> None:
+    """Block until ``lock_path`` can be created exclusively, or time out.
+
+    Anchor entries are appended by whole-file read-modify-write; two
+    writers racing on the same anchor file — concurrent `koopmans submit`
+    processes, or threads within one process — would otherwise each read
+    the same "before" list and each write it back with only their own
+    entry added, silently losing the other's. ``os.O_EXCL`` makes lock
+    creation atomic across processes, unlike an in-process
+    ``threading.Lock``.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.close(os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return
+        except FileExistsError:
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"Could not acquire the anchor lock {lock_path} within {timeout}s. "
+                    "Delete it by hand if an earlier `koopmans submit` crashed while "
+                    "holding it."
+                ) from None
+            time.sleep(0.01)
+
+
+def _write_entries(anchor_path: Path, entries: list[AnchorEntry]) -> None:
+    """Atomically replace ``anchor_path``'s contents with ``entries``.
+
+    Writes to a temp file in the same directory and ``os.replace``s it
+    over the target, so a reader never observes a half-written file — a
+    crash mid-write leaves either the old file or the new one, never a
+    truncated hybrid.
+    """
+    payload = yaml.safe_dump([entry.model_dump() for entry in entries], sort_keys=False)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=anchor_path.parent, prefix=f".{anchor_path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(payload)
+        os.replace(tmp_name, anchor_path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
 def read_anchor_entries(anchor_path: Path) -> list[AnchorEntry]:
     """Return the submissions recorded in ``anchor_path``, oldest first.
 
-    An anchor file that does not exist yet has no submissions.
+    An anchor file that does not exist yet has no submissions. Anything
+    else wrong with the file — a directory in its place, invalid YAML, a
+    shape that is not a list, or an entry missing a field or holding the
+    wrong type — raises ``ValueError`` naming the file, so every
+    malformed anchor becomes one error the caller can show the user
+    instead of a bare parser or OS traceback.
     """
     if not anchor_path.exists():
         return []
-    data = yaml.safe_load(anchor_path.read_text())
+    try:
+        text = anchor_path.read_text()
+    except OSError as exc:
+        raise ValueError(
+            f"Could not read {anchor_path} ({exc}). Delete or repair the file."
+        ) from exc
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f"{anchor_path} is not valid YAML ({exc}). Delete or repair the file."
+        ) from exc
     if data is None:
         return []
     if not isinstance(data, list):
         raise ValueError(f"{anchor_path} does not hold a list of run entries.")
-    return list(data)
+    try:
+        return _AnchorFile.model_validate(data).root
+    except ValidationError as exc:
+        raise ValueError(
+            f"{anchor_path} holds a malformed run entry ({exc}). Delete or repair the file."
+        ) from exc
 
 
 def append_anchor_entry(anchor_path: Path, entry: AnchorEntry) -> None:
     """Record ``entry`` as the newest submission in ``anchor_path``.
 
     Earlier entries are kept, so resubmitting from the same input file
-    never loses the record of a previous run.
+    never loses the record of a previous run. The read-modify-write is
+    serialized by a lock file next to the anchor (see :func:`_acquire_lock`)
+    so concurrent appends never race; each write itself is also atomic
+    (see :func:`_write_entries`), so a crash mid-write cannot corrupt the
+    file even if the lock is somehow bypassed.
     """
-    entries = read_anchor_entries(anchor_path)
-    entries.append(entry)
-    anchor_path.write_text(yaml.safe_dump(entries, sort_keys=False))
+    validated = entry if isinstance(entry, AnchorEntry) else AnchorEntry.model_validate(entry)
+    lock_path = _lock_path_for(anchor_path)
+    _acquire_lock(lock_path)
+    try:
+        entries = read_anchor_entries(anchor_path)
+        entries.append(validated)
+        _write_entries(anchor_path, entries)
+    finally:
+        lock_path.unlink(missing_ok=True)
 
 
 def newest_anchor_entry(anchor_path: Path) -> AnchorEntry:
@@ -109,8 +201,8 @@ def resolve_target(
     the single ``*.run.yaml`` in ``cwd`` is used. Every case but a direct
     ``--uuid``/``--pk`` resolves to the anchor's newest entry.
 
-    Raises ``ValueError``, naming the ambiguity or the missing file, for
-    anything the caller should turn into a user-facing error.
+    Raises ``ValueError``, naming the ambiguity or the missing/malformed
+    file, for anything the caller should turn into a user-facing error.
     """
     if uuid is not None and pk is not None:
         raise ValueError("Pass only one of --uuid or --pk, not both.")
@@ -148,4 +240,4 @@ def resolve_target(
             raise ValueError(f"No run file found at {anchor_path}.")
 
     entry = newest_anchor_entry(anchor_path)
-    return ResolvedTarget(uuid=str(entry["uuid"]), pk=int(entry["pk"]))
+    return ResolvedTarget(uuid=entry.uuid, pk=entry.pk)
