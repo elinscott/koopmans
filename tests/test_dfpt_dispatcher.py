@@ -386,3 +386,64 @@ class TestWannier90Overrides:
         wg = _build(_si_dfpt_dict())
         w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides.get("num_iter") != 17
+
+
+@pytest.fixture
+def dfpt_pdos_codes(dfpt_codes: Any, localhost_code: Any) -> dict[str, Any]:
+    """Register ``dfpt_codes`` plus a projwfc code on ``localhost``."""
+    return {**dfpt_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
+
+
+class TestProjwfcQualityCheck:
+    """A ``kpoints.path`` and a configured projwfc code reach the wannierize step.
+
+    ``SinglepointDFPTWorkflow`` wraps ``WannierizeBlocks`` as a single nested
+    task (``wannierize``), so the pw.x quality-check bands / projwfc steps
+    it grows do not surface in the outer graph's own task list — only the
+    wiring into and out of that task does. The graphs' own contract for
+    what the path/code combination grows is pinned on the ak2 side.
+    """
+
+    def test_configured_projwfc_reaches_wannierize_and_dfpt(
+        self, aiida_profile_clean: Any, dfpt_pdos_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A configured projwfc code is passed into the wannierize step's codes.
+
+        Its projected-DOS output then reaches ``dfpt``, which forwards it
+        (as ``ChannelResults.projwfc``) into the run's provenance for the
+        plotter to pick up.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+        codes_socket = wg.tasks["wannierize"].inputs["codes"]["projwfc"]
+        assert codes_socket._links
+        assert wg.tasks["dfpt"].inputs["projwfc"]._links
+
+    def test_unconfigured_projwfc_leaves_dfpt_unwired(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: without a projwfc code, ``dfpt`` gets no projwfc input.
+
+        The bands path alone (no projwfc code in ``dfpt_codes``) still
+        threads ``wannierize_bands``; only the projected-DOS wiring depends
+        on the code.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+        assert wg.tasks["dfpt"].inputs["wannierize_bands"]._links
+        assert not wg.tasks["dfpt"].inputs["projwfc"]._links
+
+    def test_no_path_skips_the_wannierize_quality_check(
+        self, aiida_profile_clean: Any, dfpt_pdos_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: without ``kpoints.path``, no quality-check wiring exists.
+
+        A configured projwfc code alone does not run the quality check —
+        the bands path does (``WannierizeBlocks``' own gate).
+        """
+        wg = _build(_si_dfpt_dict())
+        assert not wg.tasks["wannierize"].inputs["interpolation_kpoints"]._links
+        assert not wg.tasks["dfpt"].inputs["wannierize_bands"]._links
+        assert not wg.tasks["dfpt"].inputs["projwfc"]._links

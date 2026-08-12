@@ -131,6 +131,21 @@ def load_codes[CodesT: Mapping[str, Any]](
     return cast("CodesT", codes)
 
 
+def configured_projwfc() -> orm.AbstractCode | None:
+    """Return the ``projwfc@localhost`` code, or ``None`` when none is configured.
+
+    projwfc is an optional member of the wannierize / DFPT codes namespaces:
+    whether the projected DOS runs — and the warning when it cannot — is the
+    graphs' decision, so the dispatcher only makes the code available.
+    """
+    from aiida.common.exceptions import NotExistent
+
+    try:
+        return orm.load_code("projwfc@localhost")
+    except NotExistent:
+        return None
+
+
 def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -> None:
     """Reject an input that names no cutoffs against a family recommending none.
 
