@@ -276,6 +276,21 @@ fallback_version = "0.0.0+unknown"
 [tool.hatch.build.targets.wheel]
 packages = ["src/koopmans"]
 
+[tool.hatch.build.targets.sdist]
+# Hatchling's default sdist ships the whole repo (.claude/, .github/,
+# CLAUDE.md, agent configs, ...) since nothing here uses a MANIFEST-style
+# opt-out list. Scope it to what a source install or a from-sdist test run
+# actually needs.
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CITATION.cff",
+    "/.git_archival.txt",
+    "/.gitattributes",
+]
+
 [tool.uv]
 # QE-driven workflows only run on unix; without this, universal resolution
 # also solves for windows splits, where parts of the AiiDA stack have no
