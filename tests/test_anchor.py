@@ -242,6 +242,7 @@ class TestConcurrentAppends:
         barrier = threading.Barrier(n)
 
         def worker(i: int) -> None:
+            """Append one entry after every thread has reached the barrier."""
             barrier.wait()
             append_anchor_entry(anchor, _entry(uuid=f"uuid-{i}", pk=i))
 
