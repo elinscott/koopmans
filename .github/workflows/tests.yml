@@ -31,6 +31,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          # hatch-vcs needs full history (incl. tags) to compute the git-derived package version.
+          fetch-depth: 0
       - name: Clone fork dependencies next to the checkout
         # The [tool.uv.sources] path dependencies point at sibling checkouts
         # of forks carrying features still working their way upstream. Drop
@@ -74,6 +76,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          # hatch-vcs needs full history (incl. tags) to compute the git-derived package version.
+          fetch-depth: 0
       - name: Clone fork dependencies next to the checkout
         # The [tool.uv.sources] path dependencies point at sibling checkouts
         # of forks carrying features still working their way upstream. Drop
@@ -125,6 +129,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          # hatch-vcs needs full history (incl. tags) to compute the git-derived package version.
+          fetch-depth: 0
       - name: Clone fork dependencies next to the checkout
         # The [tool.uv.sources] path dependencies point at sibling checkouts
         # of forks carrying features still working their way upstream. Drop

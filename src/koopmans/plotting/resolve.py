@@ -303,14 +303,91 @@ def _route_name(node: orm.ProcessNode) -> str:
     return label
 
 
-def _step_name(node: orm.ProcessNode) -> str:
-    """Return the name the run's caller gave this step."""
+def _incoming_call(node: orm.ProcessNode) -> tuple[str, orm.ProcessNode] | None:
+    """Return the link label and caller of the CALL link that produced ``node``."""
+    from aiida import orm
     from aiida.common.links import LinkType
 
     incoming = node.base.links.get_incoming(
         link_type=(LinkType.CALL_WORK, LinkType.CALL_CALC)
     ).all()
-    return str(incoming[0].link_label) if incoming else str(node.process_label)
+    if not incoming:
+        return None
+    link = incoming[0]
+    if not isinstance(link.node, orm.ProcessNode):  # pragma: no cover
+        # AiiDA's own link validation requires a CALL_WORK/CALL_CALC source to
+        # already be a ProcessNode, so this never fires; it exists to narrow
+        # the type rather than to guard against a reachable state.
+        raise TypeError(f"{node} has a CALL link from {link.node}, which is not a process.")
+    return str(link.link_label), link.node
+
+
+def _step_name(node: orm.ProcessNode) -> str:
+    """Return the name the run's caller gave this step."""
+    found = _incoming_call(node)
+    return found[0] if found else str(node.process_label)
+
+
+def _call_chain(step: orm.ProcessNode, root: orm.ProcessNode) -> list[str]:
+    """Return the CALL link labels from ``step`` up to ``root``, nearest first."""
+    chain: list[str] = []
+    node = step
+    while node.pk != root.pk:
+        found = _incoming_call(node)
+        if found is None:  # pragma: no cover
+            # ``_producing_steps`` only ever finds steps by walking down from
+            # ``root`` via ``.called``, the same CALL links this walks back up
+            # through, so the walk is guaranteed to reach ``root`` first.
+            break
+        label, node = found
+        chain.append(label)
+    return chain
+
+
+def _shared_prefix(labels: Sequence[str]) -> str:
+    """Return the longest string every one of ``labels`` starts with."""
+    shortest = min(labels, key=len)
+    for length in range(len(shortest), 0, -1):
+        prefix = shortest[:length]
+        if all(label.startswith(prefix) for label in labels):
+            return prefix
+    return ""
+
+
+def _prettify_link_label(label: str) -> str:
+    """Render a call link label for a legend: underscores become spaces."""
+    return label.replace("_", " ")
+
+
+def _disambiguating_labels(steps: Sequence[orm.ProcessNode], root: orm.ProcessNode) -> list[str]:
+    """Return one distinguishing legend suffix per step in a tied group.
+
+    Walks each step's chain of CALL links toward ``root`` and stops at the
+    first depth where every step's label there is distinct from the rest.
+    The immediate call label, when it already distinguishes the group, is
+    used as-is: the run's caller named that step directly. Escalating past
+    it means every branch shares that immediate label (a sub-graph that
+    calls the same producer under the same name once per block), so the
+    prefix the group shares at the depth that does distinguish them (e.g.
+    the ``wannierize_`` common to a set of per-block sub-graph calls) is
+    stripped before the label is rendered, leaving the block token. Falls
+    back to plain numbering when no depth distinguishes every step.
+    """
+    chains = [_call_chain(step, root) for step in steps]
+    depth = 0
+    while all(depth < len(chain) for chain in chains):
+        labels = [chain[depth] for chain in chains]
+        if len(set(labels)) == len(labels):
+            if depth == 0:
+                return list(labels)
+            prefix = _shared_prefix(labels)
+            if "_" in prefix:
+                prefix = prefix.rsplit("_", 1)[0] + "_"
+            else:
+                prefix = ""
+            return [_prettify_link_label(label[len(prefix) :] or label) for label in labels]
+        depth += 1
+    return [str(index) for index in range(1, len(steps) + 1)]
 
 
 def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
@@ -343,6 +420,32 @@ def _cell_of(bands: orm.BandsData) -> list[list[float]] | None:
         return None
 
 
+def _declared_pw_system(node: orm.ProcessNode) -> dict[str, Any]:
+    """Return the pw.x ``&SYSTEM`` namelist ``node`` declared, if any."""
+    try:
+        return dict(node.inputs.pw.parameters.get_dict().get("SYSTEM", {}))
+    except (AttributeError, TypeError):
+        return {}
+
+
+def _spin_channels_are_degenerate(node: orm.ProcessNode) -> bool:
+    """Whether ``node`` declared nspin=2 with no nonzero starting magnetization.
+
+    A run that inherits its density from a magnetic-capable restart can carry
+    two identical channels without itself declaring any magnetic moment; the
+    channels are not compared numerically, so declared inputs are the only
+    way to tell a real spin split from an inherited one. A magnetization that
+    cannot be determined from the declared inputs keeps both channels.
+    """
+    system = _declared_pw_system(node)
+    if system.get("nspin") != 2:
+        return False
+    magnetization = system.get("starting_magnetization", {})
+    if not isinstance(magnetization, dict):
+        return False
+    return all(float(value) == 0.0 for value in magnetization.values())
+
+
 def _series_from_bands(
     node: orm.ProcessNode,
     producer: BandProducer,
@@ -353,16 +456,22 @@ def _series_from_bands(
     """Return the series a single ``BandsData`` output contributes.
 
     A collinear calculation stores one table per spin channel and becomes one
-    series per channel. Each series is paired with the qualifier that tells it
-    from its siblings within the run, which a name the caller chose keeps.
+    series per channel, unless the declared inputs show the channels are
+    degenerate by construction, in which case one series carries channel 0.
+    Each series is paired with the qualifier that tells it from its siblings
+    within the run, which a name the caller chose keeps.
     """
     vbm, fermi = producer.references(node, bands)
     energies = np.asarray(bands.get_bands(), dtype=np.float64)  # type: ignore[no-untyped-call]
-    channels: list[tuple[str, np.ndarray[Any, Any]]] = (
-        [(f"{qualifier} ({label})", energies[index]) for index, label in enumerate(("up", "down"))]
-        if energies.ndim == 3
-        else [(qualifier, energies)]
-    )
+    if energies.ndim == 3 and _spin_channels_are_degenerate(node):
+        channels: list[tuple[str, np.ndarray[Any, Any]]] = [(qualifier, energies[0])]
+    elif energies.ndim == 3:
+        channels = [
+            (f"{qualifier} ({label})", energies[index])
+            for index, label in enumerate(("up", "down"))
+        ]
+    else:
+        channels = [(qualifier, energies)]
     return [
         (
             BandSeries(
@@ -431,14 +540,21 @@ def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
                 matches.append((step, producer, bands))
 
     # One step per series name needs no disambiguation; several — a per-spin
-    # or per-block fan-out — are told apart by the name each step runs under.
-    counts: dict[str, int] = {}
-    for _, producer, _ in matches:
-        counts[producer.series] = counts.get(producer.series, 0) + 1
+    # or per-block fan-out — are told apart by the call chain that led there.
+    grouped: dict[str, list[int]] = {}
+    for index, (_, producer, _) in enumerate(matches):
+        grouped.setdefault(producer.series, []).append(index)
+
+    qualifiers = [""] * len(matches)
+    for indices in grouped.values():
+        if len(indices) < 2:
+            continue
+        suffixes = _disambiguating_labels([matches[i][0] for i in indices], node)
+        for index, suffix in zip(indices, suffixes, strict=True):
+            qualifiers[index] = f" ({suffix})"
 
     series: list[tuple[BandSeries, str]] = []
-    for step, producer, bands in matches:
-        qualifier = f" ({_step_name(step)})" if counts[producer.series] > 1 else ""
+    for (step, producer, bands), qualifier in zip(matches, qualifiers, strict=True):
         series += _series_from_bands(step, producer, bands, producer.series, qualifier)
     return series
 

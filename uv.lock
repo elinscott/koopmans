@@ -1443,7 +1443,6 @@ wheels = [
 
 [[package]]
 name = "koopmans"
-version = "0.0.1.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "aiida-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
