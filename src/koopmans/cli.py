@@ -180,12 +180,7 @@ def submit(input_file: str) -> None:
     }
     append_anchor_entry(anchor_path, entry)
 
-    label = node.process_label or node.__class__.__name__
-    click.echo(f"Submitted {label} as pk {node.pk} ({node.uuid}).")
-    click.echo(
-        f"Track it with `koopmans status {anchor_path.name}` or "
-        f"`koopmans attach {anchor_path.name}`."
-    )
+    click.echo("🚀 Workflow submitted")
 
 
 def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None) -> orm.ProcessNode:

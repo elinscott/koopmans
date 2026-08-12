@@ -62,17 +62,6 @@ class FakeProcessNode:
         self.process_label = label
 
 
-@pytest.mark.xfail(
-    reason=(
-        "build_workgraph(dft_bands) imports aiida_koopmans.workgraphs.pw.PwBandsCodes, "
-        "which the ../aiida-koopmans2 checkout paired with this branch does not have "
-        "yet (k2 #143's per-chain Codes TypedDicts are ahead of ak2 main). Pre-existing "
-        "cross-repo pairing gap, not a submit/anchor defect — see tests/test_code_loading.py "
-        "for the same ImportError on unmodified main. Remove once the sibling repo lands "
-        "the matching Codes TypedDict."
-    ),
-    strict=True,
-)
 class TestSubmit:
     """The command up to (not including) the real daemon hand-off."""
 
@@ -112,7 +101,7 @@ class TestSubmit:
         assert result.exit_code == 0, result.output
         assert captured == {"blocking": False, "wait": False}
 
-    def test_the_output_names_the_submitted_process(
+    def test_the_output_is_one_clean_line(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -120,14 +109,15 @@ class TestSubmit:
         installed_pw_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """The submitted process's pk and uuid are both printed."""
+        """The user sees one line; the identifiers live in the run file."""
         input_path = _write_input_file(tmp_path)
         fake_node = FakeProcessNode(pk=42, uuid="abc-123", label="WorkGraph<DftBands>")
 
         result, _ = self._invoke(monkeypatch, input_path, fake_node)
 
-        assert "42" in result.output
-        assert "abc-123" in result.output
+        assert "Workflow submitted" in result.output
+        assert "abc-123" not in result.output
+        assert "42" not in result.output
 
     def test_the_anchor_entry_matches_the_submitted_node(
         self,
