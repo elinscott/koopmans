@@ -455,6 +455,112 @@ def make_progress_table(process_node: ProcessNode) -> Table | Group:
     return Group(table, *hint_lines)
 
 
+def _walk_failed_descendants(
+    node: ProcessNode,
+) -> list[tuple[int | None, str, int | None, str | None, str]]:
+    """Collect every terminated-not-ok process in the tree, including ``node`` itself.
+
+    Returns ``(pk, process_label, exit_status, message, state)`` tuples in
+    creation order. ``state`` is ``"excepted"``, ``"killed"``, or
+    ``"failed"`` (a normal finished-not-ok exit); ``message`` is the
+    exception text for an excepted process, the exit message for a
+    failed one, and usually ``None`` for a killed one. A cascading
+    failure can appear more than once (a wrapper and the child that
+    actually failed), which is expected: the failed leaf carries the
+    real cause. As with :func:`_walk_paused_descendants`, PyFunction
+    nodes the progress table hides still appear here — a failure is
+    diagnostic information whether or not it has a row.
+    """
+    out: list[tuple[int | None, str, int | None, str | None, str]] = []
+
+    def _visit(n: ProcessNode) -> None:
+        if n.is_terminated and not n.is_finished_ok:
+            if n.is_excepted:
+                state, message = "excepted", n.exception
+            elif n.is_killed:
+                state, message = "killed", n.exit_message
+            else:
+                state, message = "failed", n.exit_message
+            out.append(
+                (n.pk, n.process_label or n.__class__.__name__, n.exit_status, message, state)
+            )
+        try:
+            children = sorted(n.called, key=lambda child: (child.ctime, child.pk or 0))
+        except Exception:
+            return
+        for child in children:
+            _visit(child)
+
+    _visit(node)
+    return out
+
+
+def _print_outcome_banner(console: Console, process_node: ProcessNode) -> None:
+    """Print the closing line for a process that has terminated."""
+    if process_node.is_finished_ok:
+        console.print("\n[bold green]Workflow completed successfully![/bold green]")
+    elif process_node.is_excepted:
+        console.print("\n[bold red]Workflow excepted![/bold red]")
+    elif process_node.is_killed:
+        console.print("\n[bold red]Workflow was killed![/bold red]")
+    else:
+        console.print(
+            f"\n[bold red]Workflow finished with status: {process_node.exit_status}[/bold red]"
+        )
+
+
+def render_process_once(process_node: ProcessNode, console: Console | None = None) -> None:
+    """Print a process's current state once: the step tree, and any failure detail.
+
+    Unlike :func:`watch_process` this does not wait — it renders whatever
+    state the process is in right now, which may still be running. Used
+    by ``koopmans status``, and by ``koopmans attach`` when the process
+    it was pointed at has already terminated.
+    """
+    console = Console() if console is None else console
+    console.print()
+    console.print(make_progress_table(process_node))
+
+    for pk, label, exit_status, message, state in _walk_failed_descendants(process_node):
+        detail = f"exit status {exit_status}" if state == "failed" else state
+        if message:
+            detail += f": {message}"
+        console.print(f"  [red]{prettify_label(label)}[/red] (pk {pk}) — {detail}")
+
+    if process_node.is_terminated:
+        _print_outcome_banner(console, process_node)
+
+
+def watch_process(
+    process_node: ProcessNode, refresh_interval: float = 2.0, console: Console | None = None
+) -> ProcessNode:
+    """Drive the live progress display against an already-running process.
+
+    Reloads ``process_node`` on ``refresh_interval`` until it terminates,
+    the same schedule :func:`run_with_progress` uses for a process it has
+    just submitted itself. Used by ``koopmans attach`` to pick up a
+    calculation ``koopmans submit`` started earlier.
+
+    Returns the final, reloaded process node.
+    """
+    from aiida.orm import load_node
+
+    console = Console() if console is None else console
+    pk = process_node.pk
+    with Live(make_progress_table(process_node), console=console, refresh_per_second=1) as live:
+        while not process_node.is_terminated:
+            sleep(refresh_interval)
+            # Reload the process node to get fresh state
+            process_node = cast("ProcessNode", load_node(pk))
+            live.update(make_progress_table(process_node))
+
+        # Final update to show completed status
+        live.update(make_progress_table(process_node))
+
+    _print_outcome_banner(console, process_node)
+    return process_node
+
+
 def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     """Submit and run a workgraph with a live progress display.
 
@@ -484,27 +590,7 @@ def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     # Display live progress by querying actual process nodes
     pk = wg.process.pk
     process_node = cast("ProcessNode", load_node(pk))
-    with Live(make_progress_table(process_node), console=console, refresh_per_second=1) as live:
-        while not process_node.is_terminated:
-            sleep(refresh_interval)
-            # Reload the process node to get fresh state
-            process_node = cast("ProcessNode", load_node(pk))
-            live.update(make_progress_table(process_node))
-
-        # Final update to show completed status
-        live.update(make_progress_table(process_node))
-
-    # Print final status
-    if process_node.is_finished_ok:
-        console.print("\n[bold green]Workflow completed successfully![/bold green]")
-    elif process_node.is_excepted:
-        console.print("\n[bold red]Workflow excepted![/bold red]")
-    elif process_node.is_killed:
-        console.print("\n[bold red]Workflow was killed![/bold red]")
-    else:
-        console.print(
-            f"\n[bold red]Workflow finished with status: {process_node.exit_status}[/bold red]"
-        )
+    process_node = watch_process(process_node, refresh_interval=refresh_interval, console=console)
 
     # Update the original wg object so callers can access the results
     wg.process = process_node

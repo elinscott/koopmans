@@ -964,6 +964,58 @@ def pw_step_from_overrides(code: Any, structure: Any, overrides: dict[str, Any])
     ).pw
 
 
+def make_process(
+    process_type: str = "",
+    caller: Any = None,
+    link_label: str = "step",
+    label: str = "",
+    exit_status: int = 0,
+    exit_message: str | None = None,
+    calcjob: bool = False,
+    computer: Any = None,
+    process_label: str | None = None,
+    inputs: dict[str, Any] | None = None,
+) -> Any:
+    """Return a stored, finished process node of the given ``process_type``.
+
+    ``process_type`` is the formal AiiDA process type string (what
+    resolvers like ``koopmans.plotting`` key off); ``process_label`` is
+    the display name the live progress table and ``koopmans status``
+    read instead (``node.process_label``, left unset by default). Link
+    ``caller`` in as this node's parent via a real ``CALL_WORK``/
+    ``CALL_CALC`` link, under ``link_label``, so callers that walk the
+    process tree by its call links see this node as a child. ``inputs``
+    links data nodes as the process's own inputs, keyed by link label
+    (``__`` separating namespace levels, e.g. ``pw__parameters``), so
+    resolvers that key off a run's declared inputs (rather than its
+    process type) have something to read.
+    """
+    from aiida import orm
+    from aiida.common.links import LinkType
+    from plumpy.process_states import ProcessState
+
+    node: Any = orm.CalcJobNode() if calcjob else orm.WorkflowNode()
+    node.process_type = process_type
+    node.label = label
+    if calcjob:
+        node.computer = computer
+        node.set_option("resources", {"num_machines": 1})
+    if caller is not None:
+        link_type = LinkType.CALL_CALC if calcjob else LinkType.CALL_WORK
+        node.base.links.add_incoming(caller, link_type=link_type, link_label=link_label)
+    for name, data in (inputs or {}).items():
+        input_type = LinkType.INPUT_CALC if calcjob else LinkType.INPUT_WORK
+        node.base.links.add_incoming(data.store(), link_type=input_type, link_label=name)
+    node.store()
+    if process_label is not None:
+        node.set_process_label(process_label)
+    node.set_process_state(ProcessState.FINISHED)
+    node.set_exit_status(exit_status)
+    if exit_message is not None:
+        node.set_exit_message(exit_message)
+    return node
+
+
 def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:
     """Return the tables the dispatcher synthesizes from the fixture's ``Si.dat``.
 
