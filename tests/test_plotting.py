@@ -546,6 +546,32 @@ class TestResolver:
             "Wannier interpolation (2)",
         ]
 
+    def test_labels_with_no_shared_prefix_are_rendered_unstripped(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """Distinguishing labels that share no lead-in are used exactly as they are.
+
+        Prefix-stripping only fires on the part the tied group's labels
+        actually share; two sub-graph calls named without any common
+        lead-in still disambiguate correctly once the shared immediate
+        ``wannier90`` label forces the walk to escalate.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
+        for block in ("north", "south"):
+            sub_graph = make_process(
+                "aiida.workflows:workgraph.engine", caller=root, link_label=block
+            )
+            base = make_process(W90_BASE, caller=sub_graph, link_label="wannier90")
+            attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == [
+            "Wannier interpolation (north)",
+            "Wannier interpolation (south)",
+        ]
+
     def test_not_a_run_directory(self, aiida_profile: Any, tmp_path: Path) -> None:
         """A folder with no metadata file is named, along with what to pass."""
         folder = tmp_path / "somewhere"
@@ -591,6 +617,33 @@ class TestResolver:
         assert len(warnings) == 1
         assert "scf failed" in warnings[0]
         assert "Out of walltime" in warnings[0]
+
+    def test_a_root_level_failure_with_no_failed_step_blames_the_run_itself(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A run that fails with no failed descendant blames the run, not a step.
+
+        The engine can except before any child it started went on to fail —
+        every descendant still finishes fine, so the run's own root is the
+        only node left to name. The root carries no CALL link of its own, so
+        the step-naming fallback has to use its process label instead.
+        """
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            label="RunPwBands",
+            exit_status=500,
+            exit_message="WorkGraph excepted",
+        )
+        chain = make_process(PW_BANDS, caller=root, link_label="bands")
+        attach(chain, "band_structure", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_excepted", root)
+
+        found, warnings = resolve_band_series([folder])
+
+        assert len(found) == 1
+        assert len(warnings) == 1
+        assert "did not finish" in warnings[0]
+        assert "WorkGraph excepted" in warnings[0]
 
     def test_nothing_plottable_names_the_route_and_the_reason(
         self, aiida_profile: Any, tmp_path: Path
@@ -1407,6 +1460,36 @@ class TestProducerOwnership:
             inputs={
                 "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
                     {"CONTROL": {"calculation": "bands"}, "SYSTEM": None}
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-4.0, 6.0]]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == ["DFT (down)", "DFT (up)"]
+
+    def test_a_non_dict_magnetization_keeps_the_spin_split(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A malformed, non-dict ``starting_magnetization`` keeps both channels.
+
+        Not a shape QE itself would ever validate through, but the resolver
+        should not guess at degeneracy when it cannot make sense of the
+        declared inputs.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {
+                        "CONTROL": {"calculation": "bands"},
+                        "SYSTEM": {"nspin": 2, "starting_magnetization": [0.0, 0.0]},
+                    }
                 )
             },
         )

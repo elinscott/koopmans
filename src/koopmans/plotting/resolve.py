@@ -314,7 +314,10 @@ def _incoming_call(node: orm.ProcessNode) -> tuple[str, orm.ProcessNode] | None:
     if not incoming:
         return None
     link = incoming[0]
-    if not isinstance(link.node, orm.ProcessNode):
+    if not isinstance(link.node, orm.ProcessNode):  # pragma: no cover
+        # AiiDA's own link validation requires a CALL_WORK/CALL_CALC source to
+        # already be a ProcessNode, so this never fires; it exists to narrow
+        # the type rather than to guard against a reachable state.
         raise TypeError(f"{node} has a CALL link from {link.node}, which is not a process.")
     return str(link.link_label), link.node
 
@@ -331,7 +334,10 @@ def _call_chain(step: orm.ProcessNode, root: orm.ProcessNode) -> list[str]:
     node = step
     while node.pk != root.pk:
         found = _incoming_call(node)
-        if found is None:
+        if found is None:  # pragma: no cover
+            # ``_producing_steps`` only ever finds steps by walking down from
+            # ``root`` via ``.called``, the same CALL links this walks back up
+            # through, so the walk is guaranteed to reach ``root`` first.
             break
         label, node = found
         chain.append(label)
