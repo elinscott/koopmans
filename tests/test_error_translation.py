@@ -125,6 +125,41 @@ class TestAdviceFor:
         exc = MissingRequiredInputsError([MissingInput("add1.x", "workgraph.int", None)])
         assert advice_for(exc) is None
 
+    def test_fanned_out_code_collapses_to_one_line(self) -> None:
+        """A code missing at several sockets is named once, not once per socket.
+
+        A route's own top-level ``codes.pw`` reaches several nested
+        tasks; each socket the missing code leaves unlinked is reported
+        separately by the framework — one of them under a consumer's own
+        ``pw_code`` kwarg name rather than ``pw``. Modelled on a live
+        DFPT build missing pw (``graph_inputs.codes.pw`` +
+        ``scf_nscf.pw_code`` + ``wannierize.codes.pw``): the advice must
+        normalize the ``_code``-suffixed name back to the member name and
+        collapse the three entries into one line, preferring the
+        caller's own top-level help text over a downstream task's.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [
+                MissingInput(
+                    "graph_inputs.codes.pw",
+                    "workgraph.code",
+                    "Needed to compute DFT ground state properties.",
+                ),
+                MissingInput("scf_nscf.pw_code", "workgraph.code", None),
+                MissingInput(
+                    "wannierize.codes.pw",
+                    "workgraph.code",
+                    "Needed to compute DFT ground state properties.",
+                ),
+            ]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert advice.count("pw@localhost") == 1
+        assert "Needed to compute DFT ground state properties." in advice
+
 
 class TestDispatchTranslation:
     """Each advice-table entry crosses ``build_workgraph`` with its advice."""

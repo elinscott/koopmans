@@ -37,6 +37,7 @@ When in doubt, run `/map-legacy <file>` to get a current mapping report.
 5. **`koopmans2/aiida/workflows/` stays thin.** The package `__init__` dispatches on `Task` enum (translating plugin errors into input-file advice via `advice_for`); each route builder lives in its own module (`dft`, `eps`, `wannierize`, `dscf`, `dfpt`, `trajectory`), with `blocks`, `grouping` and `projectors` as shared helpers. All real logic belongs in `aiida-koopmans2/workgraphs/`.
 6. **Input translation is centralized in `koopmans2/aiida/conversion.py`.** Functions like `atoms_input_to_structure`, `input_to_pw_parameters` are the only place Pydantic models touch AiiDA ORM.
 7. **No dill, no pickle checkpoints.** Provenance comes from AiiDA's database.
+8. **Codes are passed as configured, not as required.** `load_codes` loads every codes-TypedDict member — required and `NotRequired` alike — that has a `<member>@localhost` code, and leaves the rest out; it never decides from the input file which codes a route needs. Requiredness lives on the plugin graphs' own TypedDict specs. A route missing a code its input actually turns on surfaces at submission as `MissingRequiredInputsError`, translated to install advice at the CLI boundary (`advice_for`), not as a build-time check in the dispatcher.
 
 ## Canonical patterns
 
