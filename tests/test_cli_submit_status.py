@@ -24,7 +24,7 @@ import yaml
 from click.testing import CliRunner
 
 import koopmans.cli as cli_mod
-from koopmans.aiida.anchor import append_anchor_entry, read_anchor_entries
+from koopmans.aiida.anchor import AnchorEntry, append_anchor_entry, read_anchor_entries
 from koopmans.aiida.setup.profile import PROFILE_NAME
 from koopmans.cli import cli
 from tests.fixtures import make_process, silicon_pw_input
@@ -137,12 +137,46 @@ class TestSubmit:
         entries = read_anchor_entries(anchor_path)
         assert len(entries) == 1
         entry = entries[0]
-        assert entry["uuid"] == "abc-123"
-        assert entry["pk"] == 42
-        assert entry["input"] == "si.yaml"
-        assert entry["profile"] == PROFILE_NAME
+        assert entry.uuid == "abc-123"
+        assert entry.pk == 42
+        assert entry.input == "si.yaml"
+        assert entry.profile == PROFILE_NAME
         # Round-trips as a real timestamp; raises otherwise.
-        datetime.fromisoformat(entry["submitted"])
+        datetime.fromisoformat(entry.submitted)
+
+    def test_a_failed_anchor_write_still_reports_the_recoverable_identifiers(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """The daemon already has the job; a run-file write failure must not hide it.
+
+        A read-only directory makes ``append_anchor_entry`` raise
+        ``OSError`` after the (stubbed) launch has already "happened";
+        the CLI must still surface the pk/uuid so the user can find the
+        process by ``koopmans status --uuid``.
+        """
+        import os
+        import stat
+
+        input_path = _write_input_file(tmp_path)
+        fake_node = FakeProcessNode(pk=4242, uuid="recoverable-uuid-4242")
+        _skip_profile_loading(monkeypatch)
+        monkeypatch.setattr("koopmans.api.launch", lambda wg, *, blocking, wait=False: fake_node)
+
+        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IXUSR)
+        try:
+            result = CliRunner().invoke(cli, ["submit", str(input_path)])
+        finally:
+            os.chmod(tmp_path, stat.S_IRWXU)
+
+        assert result.exit_code != 0
+        assert "4242" in result.output
+        assert "recoverable-uuid-4242" in result.output
+        assert not (tmp_path / "si.run.yaml").exists()
 
     def test_a_resubmission_appends_rather_than_overwrites(
         self,
@@ -159,7 +193,7 @@ class TestSubmit:
         self._invoke(monkeypatch, input_path, FakeProcessNode(pk=2, uuid="second"))
 
         entries = read_anchor_entries(tmp_path / "si.run.yaml")
-        assert [e["uuid"] for e in entries] == ["first", "second"]
+        assert [e.uuid for e in entries] == ["first", "second"]
 
 
 class TestStatus:
@@ -173,13 +207,13 @@ class TestStatus:
         node = make_process(process_label="WorkGraph<Tiny>")
         append_anchor_entry(
             tmp_path / "si.run.yaml",
-            {
-                "uuid": node.uuid,
-                "pk": node.pk,
-                "input": "si.yaml",
-                "profile": PROFILE_NAME,
-                "submitted": "2026-08-11T12:00:00+00:00",
-            },
+            AnchorEntry(
+                uuid=node.uuid,
+                pk=node.pk,
+                input="si.yaml",
+                profile=PROFILE_NAME,
+                submitted="2026-08-11T12:00:00+00:00",
+            ),
         )
 
         result = CliRunner().invoke(cli, ["status", str(tmp_path / "si.run.yaml")])
@@ -199,13 +233,13 @@ class TestStatus:
         anchor_path = tmp_path / "si.run.yaml"
         append_anchor_entry(
             anchor_path,
-            {
-                "uuid": node.uuid,
-                "pk": node.pk,
-                "input": "si.yaml",
-                "profile": PROFILE_NAME,
-                "submitted": "2026-08-11T12:00:00+00:00",
-            },
+            AnchorEntry(
+                uuid=node.uuid,
+                pk=node.pk,
+                input="si.yaml",
+                profile=PROFILE_NAME,
+                submitted="2026-08-11T12:00:00+00:00",
+            ),
         )
 
         result = CliRunner().invoke(cli, ["status", str(anchor_path)])
@@ -239,6 +273,34 @@ class TestStatus:
         # other process label the progress table renders.
         assert "By Pk" in result.output
 
+    def test_a_deleted_node_is_a_clean_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any
+    ) -> None:
+        """The anchor names a node that no longer exists in the profile."""
+        from aiida.tools import delete_nodes
+
+        _skip_profile_loading(monkeypatch)
+        node = make_process(process_label="WorkGraph<Tiny>")
+        node_pk, node_uuid = node.pk, node.uuid
+        anchor_path = tmp_path / "si.run.yaml"
+        append_anchor_entry(
+            anchor_path,
+            AnchorEntry(
+                uuid=node_uuid,
+                pk=node_pk,
+                input="si.yaml",
+                profile=PROFILE_NAME,
+                submitted="2026-08-11T12:00:00+00:00",
+            ),
+        )
+        delete_nodes([node_pk], dry_run=False)
+
+        result = CliRunner().invoke(cli, ["status", str(anchor_path)])
+
+        assert result.exit_code != 0
+        assert node_uuid in result.output
+        assert "deleted" in result.output
+
     def test_no_target_and_no_run_file_is_a_clean_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -263,13 +325,13 @@ class TestAttach:
         anchor_path = tmp_path / "si.run.yaml"
         append_anchor_entry(
             anchor_path,
-            {
-                "uuid": node.uuid,
-                "pk": node.pk,
-                "input": "si.yaml",
-                "profile": PROFILE_NAME,
-                "submitted": "2026-08-11T12:00:00+00:00",
-            },
+            AnchorEntry(
+                uuid=node.uuid,
+                pk=node.pk,
+                input="si.yaml",
+                profile=PROFILE_NAME,
+                submitted="2026-08-11T12:00:00+00:00",
+            ),
         )
 
         result = CliRunner().invoke(cli, ["attach", str(anchor_path)])

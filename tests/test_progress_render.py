@@ -57,10 +57,11 @@ class TestWalkFailedDescendants:
         failures = progress._walk_failed_descendants(root)
 
         assert len(failures) == 1
-        _pk, label, exit_status, message = failures[0]
+        _pk, label, exit_status, message, state = failures[0]
         assert label == "PwBaseWorkChain"
         assert exit_status == 402
         assert message == "pw.x did not converge"
+        assert state == "failed"
 
     def test_the_root_itself_can_be_the_failure(self, aiida_profile_clean: Any) -> None:
         """A failure with no failed descendant still gets reported once."""
@@ -71,6 +72,7 @@ class TestWalkFailedDescendants:
         failures = progress._walk_failed_descendants(root)
 
         assert [f[1:3] for f in failures] == [("WorkGraph<Tiny>", 1)]
+        assert failures[0][4] == "failed"
 
     def test_a_cascading_failure_reports_both_wrapper_and_cause(
         self, aiida_profile_clean: Any
@@ -92,7 +94,7 @@ class TestWalkFailedDescendants:
 
         failures = progress._walk_failed_descendants(root)
 
-        assert [label for _, label, _, _ in failures] == ["WorkGraph<Tiny>", "PwBaseWorkChain"]
+        assert [label for _, label, _, _, _ in failures] == ["WorkGraph<Tiny>", "PwBaseWorkChain"]
 
 
 class TestRenderProcessOnce:
@@ -133,6 +135,42 @@ class TestRenderProcessOnce:
         assert "402" in output
         assert "pw.x did not converge" in output
         assert "finished with status: 1" in output
+
+    def test_a_killed_step_says_killed_not_excepted(self, aiida_profile_clean: Any) -> None:
+        """A killed descendant has no exit status, but it was not excepted either.
+
+        Both a killed and an excepted process have ``exit_status is None``;
+        the per-step detail line must tell them apart by process state,
+        not treat "no exit status" as synonymous with "excepted".
+        """
+        from aiida import orm
+        from aiida.common.links import LinkType
+        from plumpy.process_states import ProcessState
+
+        root = orm.WorkflowNode()
+        root.store()
+        root.set_process_label("WorkGraph<Tiny>")
+
+        child = orm.WorkflowNode()
+        child.base.links.add_incoming(root, link_type=LinkType.CALL_WORK, link_label="scf")
+        child.store()
+        child.set_process_label("PwBaseWorkChain")
+        child.set_process_state(ProcessState.KILLED)
+
+        root.set_process_state(ProcessState.KILLED)
+        console, buffer = _capturing_console()
+
+        progress.render_process_once(root, console=console)
+
+        output = buffer.getvalue()
+        assert "Workflow was killed!" in output
+        # The step's own detail line says killed, above the closing banner.
+        killed_line_index = output.index("Pw Base Work Chain")
+        banner_index = output.index("Workflow was killed!")
+        assert killed_line_index < banner_index
+        detail_line = output[killed_line_index:banner_index]
+        assert "killed" in detail_line
+        assert "excepted" not in detail_line
 
     def test_a_still_running_process_gets_no_outcome_banner(self, aiida_profile_clean: Any) -> None:
         """A process that has not terminated has no outcome to report yet."""

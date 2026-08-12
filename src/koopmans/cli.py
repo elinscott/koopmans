@@ -171,14 +171,22 @@ def submit(input_file: str) -> None:
         raise click.ClickException("The submitted process was never stored, so it has no id.")
 
     anchor_path = anchor_path_for_input(input_path)
-    entry: AnchorEntry = {
-        "uuid": node.uuid,
-        "pk": node.pk,
-        "input": input_path.name,
-        "profile": PROFILE_NAME,
-        "submitted": datetime.now(UTC).isoformat(),
-    }
-    append_anchor_entry(anchor_path, entry)
+    entry = AnchorEntry(
+        uuid=node.uuid,
+        pk=node.pk,
+        input=input_path.name,
+        profile=PROFILE_NAME,
+        submitted=datetime.now(UTC).isoformat(),
+    )
+    try:
+        append_anchor_entry(anchor_path, entry)
+    except OSError as exc:
+        # The daemon already has the job; losing the run file only loses
+        # the *shortcut* back to it, not the submission itself.
+        raise click.ClickException(
+            f"Workflow submitted as pk {node.pk} ({node.uuid}), but {anchor_path} could "
+            f"not be written ({exc}). Recover with `koopmans status --uuid {node.uuid}`."
+        ) from exc
 
     click.echo("🚀 Workflow submitted")
 
@@ -190,6 +198,7 @@ def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None)
     only touches the filesystem but loading the node needs the profile.
     """
     from aiida import orm
+    from aiida.common.exceptions import NotExistent
 
     from koopmans.aiida.anchor import resolve_target
 
@@ -199,11 +208,18 @@ def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None)
         raise click.ClickException(str(exc)) from exc
 
     load_koopmans_profile()
-    node = (
-        orm.load_node(uuid=resolved.uuid)
-        if resolved.uuid is not None
-        else orm.load_node(pk=resolved.pk)
-    )
+    try:
+        node = (
+            orm.load_node(uuid=resolved.uuid)
+            if resolved.uuid is not None
+            else orm.load_node(pk=resolved.pk)
+        )
+    except NotExistent as exc:
+        identifier = resolved.uuid if resolved.uuid is not None else resolved.pk
+        raise click.ClickException(
+            f"No AiiDA node found for {identifier!r}. It may have been deleted; check "
+            "`verdi process list -a` for what is still in the database."
+        ) from exc
     if not isinstance(node, orm.ProcessNode):
         raise click.ClickException(
             f"Node {node.pk} is not a calculation; it holds a {type(node).__name__}."

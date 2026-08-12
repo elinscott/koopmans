@@ -457,24 +457,33 @@ def make_progress_table(process_node: ProcessNode) -> Table | Group:
 
 def _walk_failed_descendants(
     node: ProcessNode,
-) -> list[tuple[int | None, str, int | None, str | None]]:
+) -> list[tuple[int | None, str, int | None, str | None, str]]:
     """Collect every terminated-not-ok process in the tree, including ``node`` itself.
 
-    Returns ``(pk, process_label, exit_status, message)`` tuples in
-    creation order — ``message`` is the exit message for a
-    finished-not-ok process, or the exception text for an excepted one.
-    A cascading failure can appear more than once (a wrapper and the
-    child that actually failed), which is expected: the failed leaf
-    carries the real cause. As with :func:`_walk_paused_descendants`,
-    PyFunction nodes the progress table hides still appear here — a
-    failure is diagnostic information whether or not it has a row.
+    Returns ``(pk, process_label, exit_status, message, state)`` tuples in
+    creation order. ``state`` is ``"excepted"``, ``"killed"``, or
+    ``"failed"`` (a normal finished-not-ok exit); ``message`` is the
+    exception text for an excepted process, the exit message for a
+    failed one, and usually ``None`` for a killed one. A cascading
+    failure can appear more than once (a wrapper and the child that
+    actually failed), which is expected: the failed leaf carries the
+    real cause. As with :func:`_walk_paused_descendants`, PyFunction
+    nodes the progress table hides still appear here — a failure is
+    diagnostic information whether or not it has a row.
     """
-    out: list[tuple[int | None, str, int | None, str | None]] = []
+    out: list[tuple[int | None, str, int | None, str | None, str]] = []
 
     def _visit(n: ProcessNode) -> None:
         if n.is_terminated and not n.is_finished_ok:
-            message = n.exception if n.is_excepted else n.exit_message
-            out.append((n.pk, n.process_label or n.__class__.__name__, n.exit_status, message))
+            if n.is_excepted:
+                state, message = "excepted", n.exception
+            elif n.is_killed:
+                state, message = "killed", n.exit_message
+            else:
+                state, message = "failed", n.exit_message
+            out.append(
+                (n.pk, n.process_label or n.__class__.__name__, n.exit_status, message, state)
+            )
         try:
             children = sorted(n.called, key=lambda child: (child.ctime, child.pk or 0))
         except Exception:
@@ -512,8 +521,8 @@ def render_process_once(process_node: ProcessNode, console: Console | None = Non
     console.print()
     console.print(make_progress_table(process_node))
 
-    for pk, label, exit_status, message in _walk_failed_descendants(process_node):
-        detail = f"exit status {exit_status}" if exit_status is not None else "excepted"
+    for pk, label, exit_status, message, state in _walk_failed_descendants(process_node):
+        detail = f"exit status {exit_status}" if state == "failed" else state
         if message:
             detail += f": {message}"
         console.print(f"  [red]{prettify_label(label)}[/red] (pk {pk}) — {detail}")
