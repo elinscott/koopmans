@@ -19,7 +19,6 @@ __all__ = [
     "NoEnergyZeroError",
     "PathMismatchError",
     "apply_energy_zero",
-    "apply_labels",
     "check_paths_agree",
     "describe_energy_zero",
     "energy_axis_label",
@@ -127,20 +126,6 @@ def check_paths_agree(series: Sequence[BandSeries], tolerance: float = PATH_TOLE
             f"  {item.label}: {_describe_path(item)}\n"
             "Plot them separately, or give both runs the same `kpoints: {path: ...}`."
         )
-
-
-def apply_labels(series: Sequence[BandSeries], labels: Sequence[str]) -> None:
-    """Rename the leading series, in order.
-
-    :raises ValueError: if more labels are given than there are series.
-    """
-    if len(labels) > len(series):
-        raise ValueError(
-            f"{len(labels)} --label values were given but only {len(series)} band "
-            f"structure(s) were found; labels are applied in order."
-        )
-    for item, label in zip(series, labels, strict=False):
-        item.label = label
 
 
 #: What each choice of zero is called in prose.
