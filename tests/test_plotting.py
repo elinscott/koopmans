@@ -55,12 +55,16 @@ CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
 
 def make_bands(
     kpoints: list[list[float]],
-    energies: list[list[float]],
+    energies: list[list[float]] | list[list[list[float]]],
     cell: list[list[float]] | None = None,
     labels: list[tuple[int, str]] | None = None,
     occupations: list[list[float]] | None = None,
 ) -> orm.BandsData:
-    """Return an unstored ``BandsData`` holding the given eigenvalues."""
+    """Return an unstored ``BandsData`` holding the given eigenvalues.
+
+    ``energies`` is ``[N_kpoints, N_bands]``, or ``[N_spin, N_kpoints,
+    N_bands]`` for a collinear calculation's two channels.
+    """
     bands = orm.BandsData()
     if cell is not None:
         bands.set_cell(cell)  # type: ignore[no-untyped-call]
@@ -497,6 +501,76 @@ class TestResolver:
         found, _ = resolve_band_series([folder])
 
         assert sorted(item.label for item in found) == ["DFT (ham_down)", "DFT (ham_up)"]
+
+    def test_call_chain_disambiguates_a_per_block_fan_out(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A per-block Wannierization names every wannier90 call the same.
+
+        Each block's wannier90 run sits under a sub-graph call named after
+        the block; wannier90 itself is always called "wannier90", so the
+        immediate step name ties and disambiguation has to walk up to the
+        sub-graph call that actually names the block.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
+        for block in ("wannierize_emp", "wannierize_occ_1"):
+            sub_graph = make_process(
+                "aiida.workflows:workgraph.engine", caller=root, link_label=block
+            )
+            base = make_process(W90_BASE, caller=sub_graph, link_label="wannier90")
+            attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == [
+            "Wannier interpolation (emp)",
+            "Wannier interpolation (occ 1)",
+        ]
+
+    def test_nested_single_producer_stays_unqualified(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The same sub-graph nesting with only one producer needs no suffix.
+
+        Disambiguation is triggered by a tied series name, not by sitting
+        under a sub-graph call.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        sub_graph = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize_occ"
+        )
+        base = make_process(W90_BASE, caller=sub_graph, link_label="wannier90")
+        attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_no_common_depth_falls_back_to_numbering(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A tied pair with no depth in common everywhere is told apart by number.
+
+        One producer is called directly by the run root; another with the
+        same immediate call label sits one level deeper. No depth compares
+        across the whole group, so nothing structural distinguishes them.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        direct = make_process(W90_BASE, caller=root, link_label="wannier90")
+        attach(direct, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        mid = make_process("aiida.workflows:workgraph.engine", caller=root, link_label="mid")
+        nested = make_process(W90_BASE, caller=mid, link_label="wannier90")
+        attach(nested, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.1]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == [
+            "Wannier interpolation (1)",
+            "Wannier interpolation (2)",
+        ]
 
     def test_not_a_run_directory(self, aiida_profile: Any, tmp_path: Path) -> None:
         """A folder with no metadata file is named, along with what to pass."""
@@ -1012,6 +1086,85 @@ class TestProducerOwnership:
 
         with pytest.raises(PlottingError, match="No band structure to plot"):
             resolve_band_series([folder])
+
+    def test_degenerate_spin_channels_collapse_to_one_series(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """nspin=2 with no declared magnetization draws one channel, not two.
+
+        A quality-check bands run can inherit nspin=2 from a magnetic-capable
+        restart density without declaring any magnetic moment of its own; the
+        two channels are then identical by construction, so only one belongs
+        on the legend. The two channels are not compared numerically — the
+        declared inputs are the only evidence used.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {
+                        "CONTROL": {"calculation": "bands"},
+                        "SYSTEM": {"nspin": 2, "starting_magnetization": {"Zn": 0.0, "O": 0.0}},
+                    }
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-5.0, 5.0]]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT"]
+
+    def test_declared_magnetization_keeps_the_spin_split(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A run that declares a nonzero moment keeps its (up)/(down) split."""
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {
+                        "CONTROL": {"calculation": "bands"},
+                        "SYSTEM": {"nspin": 2, "starting_magnetization": {"Fe": 0.5}},
+                    }
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-4.0, 6.0]]]))
+        folder = write_run_folder(tmp_path, "fe", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == ["DFT (down)", "DFT (up)"]
+
+    def test_nspin_one_is_unaffected_by_the_collapse_rule(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A plain nspin=1 run stays single-channel; the rule never fires."""
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {"CONTROL": {"calculation": "bands"}, "SYSTEM": {"nspin": 1}}
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 5.0]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT"]
 
     def test_the_optimize_scan_yields_one_series(self, aiida_profile: Any, tmp_path: Path) -> None:
         """Only the optimize workchain's own output counts, not its trials.
