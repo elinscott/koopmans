@@ -12,6 +12,13 @@ sphinx:
 # Set the version of Python and other tools you might need
 build:
   os: ubuntu-22.04
+  jobs:
+    post_checkout:
+      # Read the Docs shallow-clones this repo by default; hatch-vcs needs
+      # the full history (including tags) to compute the git-derived
+      # package version installed below. `|| true` covers the git-archive
+      # fallback build path, where there is no history to unshallow.
+      - git fetch --unshallow || true
   apt_packages:
     - graphviz
   tools:

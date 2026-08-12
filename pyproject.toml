@@ -1,10 +1,10 @@
 [build-system]
-requires = ["uv_build>=0.11.2,<1.0"]
-build-backend = "uv_build"
+requires = ["hatchling>=1.27", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
 
 [project]
 name = "koopmans"
-version = "0.0.1-dev"
+dynamic = ["version"]
 description = "Automated Koopmans functional calculations and workflows"
 readme = "README.md"
 authors = [
@@ -239,8 +239,6 @@ ignore = [
 
 # See https://docs.astral.sh/ruff/settings/#per-file-ignores
 [tool.ruff.lint.per-file-ignores]
-# Ignore security issues in the version.py, which are inconsistent
-"src/koopmans/version.py" = ["S603", "S607"]
 # Ignore commented out code in Sphinx configuration file
 "docs/source/conf.py" = ["ERA001"]
 # Prints are okay in notebooks
@@ -267,45 +265,16 @@ known-first-party = [
 # see https://docs.astral.sh/ruff/settings/#format_docstring-code-format
 docstring-code-format = true
 
-[tool.bumpversion]
-current_version = "0.0.1-dev"
-parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(?:-(?P<release>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+(?P<build>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?"
-serialize = [
-    "{major}.{minor}.{patch}-{release}+{build}",
-    "{major}.{minor}.{patch}+{build}",
-    "{major}.{minor}.{patch}-{release}",
-    "{major}.{minor}.{patch}",
-]
-commit = true
-tag = false
+[tool.hatch.version]
+source = "vcs"
 
-[tool.bumpversion.parts.release]
-optional_value = "production"
-first_value = "dev"
-values = [
-    "dev",
-    "production",
-]
+[tool.hatch.version.raw-options]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+fallback_version = "0.0.0+unknown"
 
-[[tool.bumpversion.files]]
-filename = "pyproject.toml"
-search = "version = \"{current_version}\""
-replace = "version = \"{new_version}\""
-
-[[tool.bumpversion.files]]
-filename = "docs/source/conf.py"
-search = "release = \"{current_version}\""
-replace = "release = \"{new_version}\""
-
-[[tool.bumpversion.files]]
-filename = "src/koopmans/version.py"
-search = "VERSION = \"{current_version}\""
-replace = "VERSION = \"{new_version}\""
-
-[[tool.bumpversion.files]]
-filename = "CITATION.cff"
-search = "version: {current_version}"
-replace = "version: {new_version}"
+[tool.hatch.build.targets.wheel]
+packages = ["src/koopmans"]
 
 [tool.uv]
 # QE-driven workflows only run on unix; without this, universal resolution

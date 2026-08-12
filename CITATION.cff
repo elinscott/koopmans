@@ -3,6 +3,9 @@ message: "If you use this software, please cite it as below."
 title: "koopmans"
 authors:
   - name: "Edward Linscott"
+# The installed package version is git-derived (see [tool.hatch.version] in
+# pyproject.toml); this field is no longer bumpversion-synced and is instead
+# updated by hand at each tagged release.
 version: 0.0.1-dev
 doi:
 url: "https://github.com/elinscott/koopmans"

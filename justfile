@@ -99,14 +99,6 @@ docs-test:
 # Deployment tools #
 ####################
 
-[doc("run `bumpversion` with a given subcommand")]
-@bumpversion command:
-    uvx bump-my-version bump {{ command }}
-
-[doc("make a release")]
-bumpversion-release:
-    uvx bump-my-version bump release --tag
-
 [doc("build an sdist and wheel")]
 build:
     uv build --sdist --wheel --clear
@@ -115,6 +107,13 @@ build:
 # Releases #
 ############
 
+# The package version is git-derived (see [tool.hatch.version] in
+# pyproject.toml): an exact "vX.Y.Z" tag on the current commit gives a clean,
+# PyPI-publishable version; anything else carries a `.devN+g<sha>` local
+# segment, which PyPI refuses, so publishing from an untagged commit fails
+# safely instead of landing on PyPI. There is no version file to bump after
+# a release — the next commit's version increments on its own.
+#
 # In order to make a release to PyPI, you'll need to take the following steps:
 #
 # 1. Navigate to https://pypi.org/account/register/ to register for Test PyPI
@@ -125,6 +124,11 @@ build:
 # 5. Get an API token from https://pypi.org/manage/account/token/
 # 6. Install keyring with `uv tool install keyring`
 # 7. Add your token to keyring with `keyring set https://upload.pypi.org/legacy/ __token__`
+
+[doc("Tag the current commit as a release")]
+tag-release version:
+    git tag -a "v{{ version }}" -m "Release {{ version }}"
+    git push --tags
 
 [doc("Release the code to PyPI so users can pip install it, using credentials from keyring")]
 release:
@@ -137,13 +141,10 @@ release-via-env:
     just build
     uv publish --publish-url https://upload.pypi.org/legacy/
 
-[doc("Run a workflow that removes -dev from the version, creates a tagged release on GitHub, creates a release on PyPI, and bumps the version again.")]
-finish:
-    just bumpversion-release
+[doc("Tag `version` as a release and publish it to PyPI")]
+finish version:
+    just tag-release {{ version }}
     just release
-    git push --tags
-    uvx bump-my-version bump patch
-    git push
 
 #################
 # Test Releases #
@@ -166,10 +167,7 @@ test-release:
     uv tool install --quiet keyring
     uv publish --username __token__ --keyring-provider subprocess --publish-url https://test.pypi.org/legacy/
 
-[doc("Run a workflow that removes -dev from the version, creates a tagged release on GitHub, creates a release on Test PyPI, and bumps the version again.")]
-test-finish:
-    just bumpversion-release
+[doc("Tag `version` as a release and publish it to Test PyPI")]
+test-finish version:
+    just tag-release {{ version }}
     just test-release
-    git push --tags
-    uvx bump-my-version bump patch
-    git push
