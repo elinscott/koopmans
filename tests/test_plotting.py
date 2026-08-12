@@ -1495,9 +1495,9 @@ class TestFolderLabels:
 def wannierization_without_bands(tmp_path: Path, name: str, computer: orm.Computer) -> Path:
     """Write a folder naming a wannier90 calculation that interpolated nothing.
 
-    What the ZnO tutorial leaves on disk: no route sets `bands_plot` or hands
-    wannier90 a k-path, so the calculation finishes and publishes no
-    ``interpolated_bands``.
+    What a wannierize run without a k-point path leaves on disk: wannier90
+    is never asked to interpolate, so the calculation finishes and publishes
+    no ``interpolated_bands``.
     """
     calculation = make_process(
         W90_CALC, calcjob=True, computer=computer, process_label="Wannier90Calculation"
@@ -1527,7 +1527,7 @@ class TestEveryFolderContributes:
         assert "03-wannier90" in message
         # The folder that did carry a band structure is not blamed for it.
         assert "03-ham" not in message
-        assert "koopmans issue #80" in message
+        assert "kpoints: {path: ...}" in message
         assert "Leave out the folders above" in message
 
     def test_two_full_folders_raise_nothing(
@@ -1555,10 +1555,8 @@ class TestEveryFolderContributes:
             resolve_band_series([empty])
 
         assert "Leave out the folders above" not in str(caught.value)
-        assert "koopmans issue #80" in str(caught.value)
-        # Both keywords are missing, and naming only the k-path would send the
-        # reader off to set one thing and find the bands still absent.
-        assert "bands_plot" in str(caught.value)
+        # The advice names the one thing to change: give the input a k-path.
+        assert "kpoints: {path: ...}" in str(caught.value)
         assert "k-point path" in str(caught.value)
 
     def test_a_folder_with_no_bands_is_named(

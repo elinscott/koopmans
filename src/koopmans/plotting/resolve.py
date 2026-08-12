@@ -224,9 +224,9 @@ _SUPERCELL_REASON = (
 #: Why a wannierization draws a blank, whether the folder names the koopmans
 #: workgraph or the calculation under it.
 _NO_WANNIER_PATH_REASON = (
-    "wannier90 writes an interpolated band structure only when it is given "
-    "both `bands_plot` and a k-point path, and no route sets either "
-    "(koopmans issue #80)"
+    "wannier90 writes an interpolated band structure only when the input "
+    "provides a k-point path; add `kpoints: {path: ...}` to the input file "
+    "and rerun"
 )
 
 #: Why a route can finish and still have no band structure to draw, keyed by
