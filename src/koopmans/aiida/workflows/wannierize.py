@@ -10,6 +10,7 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
 from koopmans.aiida.workflows import (
+    configured_projwfc,
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
@@ -145,22 +146,6 @@ def _interpolation_path(
     return kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
 
 
-def _configured_projwfc() -> orm.AbstractCode | None:
-    """Return the ``projwfc@localhost`` code, or ``None`` when none is configured.
-
-    projwfc is an optional member of the wannierize codes namespaces:
-    whether the projected DOS runs — and the warning when it cannot — is
-    the graphs' decision, so the dispatcher only makes the code available.
-    """
-    from aiida import orm
-    from aiida.common.exceptions import NotExistent
-
-    try:
-        return orm.load_code("projwfc@localhost")
-    except NotExistent:
-        return None
-
-
 def _external_projector_kwargs(
     koopmans_input: KoopmansInput, structure: orm.StructureData
 ) -> dict[str, Any]:
@@ -202,8 +187,8 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     its band structure Wannier-interpolated along that path. A pw.x bands
     run along the same path supplies the explicit eigenvalues the
     interpolation is judged against. The dispatcher passes a configured
-    projwfc code along (:func:`_configured_projwfc`); whether a projected
-    DOS runs from the bands run — and the warning when the
+    projwfc code along (:func:`~koopmans.aiida.workflows.configured_projwfc`);
+    whether a projected DOS runs from the bands run — and the warning when the
     pseudopotentials' missing ``PP_PSWFC`` wavefunctions make it
     impossible — is the graphs' decision. The path always travels as an
     explicit labelled k-list: the graphs run the pw.x quality check only
@@ -254,7 +239,7 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # energy_auto, which koopmans never asks for; here it rides along for
     # the projected DOS accompanying the quality-check bands run.
     codes = load_codes(WannierizeCodes)
-    projwfc = _configured_projwfc()
+    projwfc = configured_projwfc()
     if projwfc is not None:
         codes["projwfc"] = projwfc
 
@@ -408,7 +393,7 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
         WannierizeBlocksCodes,
         require=("wannierjl",) if threshold is not None else (),
     )
-    projwfc = _configured_projwfc()
+    projwfc = configured_projwfc()
     if projwfc is not None:
         codes["projwfc"] = projwfc
 

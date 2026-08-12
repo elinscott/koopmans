@@ -59,7 +59,7 @@ class TestCodesSpecRequiredness:
             MlwfInitCodes: (wannier | {"wann2kcp", "merge_evc", "kcp"}, set()),
             FoldingCodes: ({"wann2kcp", "merge_evc"}, set()),
             DscfCodes: ({"kcp"}, wannier | {"wann2kcp", "merge_evc"}),
-            DfptCodes: (wannier | {"kcw"}, {"ph"}),
+            DfptCodes: (wannier | {"kcw"}, {"ph", "projwfc"}),
             PdosCodes: ({"pw", "dos", "projwfc"}, set()),
         }
         for spec, (required, optional) in expected.items():
