@@ -407,6 +407,7 @@ def _split_by_call_chain(
     unresolved: dict[int, int] = {}
 
     def resolve(indices: list[int], depth: int, path: list[str]) -> None:
+        """Assign each of ``indices`` a history in ``histories`` or a rank in ``unresolved``."""
         if len(indices) == 1:
             histories[indices[0]] = path
             return
