@@ -128,17 +128,26 @@ def _require_nbnd_matches_projections(
     num_occ_bands: int,
     spin_label: str = "",
 ) -> None:
-    """Reject an ``nbnd`` inconsistent with the given projections.
+    """Reject an ``nbnd`` or a projection set inconsistent with each other.
 
     The merged evc_occupied/evc_empty files that seed the supercell kcp.x
-    run carry one orbital per projected Wannier function, so kcp.x's
-    ``nbnd`` must equal the projections' total, no more and no fewer.
-    Mirrors legacy's ``KoopmansDSCFWorkflow.__init__`` nbnd check
+    run carry one orbital per projected Wannier function, so the
+    projections must cover the whole occupied manifold and kcp.x's
+    ``nbnd`` must equal their total, no more and no fewer. Mirrors
+    legacy's ``KoopmansDSCFWorkflow.__init__`` nbnd check
     (``koopmans/workflows/_koopmans_dscf.py``).
     """
     from aiida_koopmans.projections import projection_num_wann
 
     nwann = sum(projection_num_wann(structure, p) for block in projection_blocks for p in block)
+    if nwann < num_occ_bands:
+        raise ValueError(
+            f"The {spin_label}projections in `calculator_parameters.w90.projections` "
+            f"describe only {nwann} Wannier functions, fewer than the {num_occ_bands} "
+            f"{spin_label}occupied bands. Every occupied band needs a Wannier function to "
+            "seed the supercell kcp.x initialisation; add projections covering the whole "
+            "occupied manifold."
+        )
     if nbnd < num_occ_bands:
         raise ValueError(
             f"nbnd = {nbnd} is less than the number of {spin_label}occupied bands "

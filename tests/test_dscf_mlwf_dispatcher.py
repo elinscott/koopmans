@@ -607,6 +607,38 @@ class TestNbndProjectionValidation:
         with pytest.raises(ValueError, match="spin up projections"):
             _build(d)
 
+    def test_collinear_genuine_nscf_shortfall_still_raises_pw_guard(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The nscf guard still fires for a genuine shortfall on the collinear branch.
+
+        Both channels' projections match ``nbnd`` = 8 exactly, so the new
+        per-channel checks pass; only ``pw.system.nbnd`` is too small.
+        """
+        d = _si_collinear_dscf_dict()
+        d["calculator_parameters"]["pw"] = {"system": {"nbnd": 6}}
+        with pytest.raises(ValueError, match=r"The nscf runs 6 bands but the kcp\.x steps need 8"):
+            _build(d)
+
+    def test_projections_short_of_occupied_bands_names_the_shortfall(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Projections that undercount the occupied manifold report that directly.
+
+        ``nocc`` = 4, but this input's single occupied-only block covers
+        only 2 bands, leaving `nbnd` = 8 to compare against 2 Wannier
+        functions. The message must name the shortfall, not print the
+        negative "empty Wannier functions" count that a plain nbnd/nwann
+        comparison would produce here.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["wannier90"]["projections"] = [
+            [{"site": "Si", "ang_mtm": "l=0"}]
+        ]
+        with pytest.raises(ValueError, match=r"describe only 2 Wannier functions") as excinfo:
+            _build(d)
+        assert "-" not in str(excinfo.value)
+
 
 class TestFrozenWindowThreading:
     """The disentanglement window reaches the wannier-initialization inputs."""
