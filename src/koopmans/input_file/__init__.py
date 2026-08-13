@@ -22,6 +22,7 @@ from koopmans.input_file.cell_parameters import (
 from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.parallelization import ParallelizationInput
+from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
@@ -47,6 +48,7 @@ __all__ = [
     "KpointsOverridesInput",
     "MLConfig",
     "NoOffset",
+    "PHInputParameters",
     "PW2Wannier90InputParameters",
     "PWInputParameters",
     "ParallelizationInput",
@@ -324,6 +326,7 @@ class CalculatorParametersInput(BaseModel):
     ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
     tot_magnetization: float | None = None
+    ph: PHInputParameters = Field(default_factory=lambda: PHInputParameters())
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(
         default_factory=lambda: PW2Wannier90InputParameters()
@@ -336,37 +339,34 @@ class CalculatorParametersInput(BaseModel):
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
 
-    @model_validator(mode="after")
-    def check_cutoffs_agree(self) -> CalculatorParametersInput:
-        """Validate that the stated wavefunction cutoffs agree, and the density ones.
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_per_calculator_cutoffs(cls, data: Any) -> Any:
+        """Point a per-calculator cutoff at the single ``ecutwfc`` field.
 
-        pw.x and kcp.x read their cutoffs from different keys, so two stated
-        values that differ put the two codes on different grids. A
-        ``kcp.system`` cutoff of zero is unset rather than a stated zero.
+        ``pw.system``/``kcp.system`` no longer carry their own
+        ``ecutwfc``/``ecutrho``: pw.x and kcp.x always share one grid, derived
+        from ``calculator_parameters.ecutwfc``. Runs before field validation,
+        so it reports the removed spelling instead of the generic
+        "extra_forbidden" error the nested model would otherwise raise.
 
         Raises:
-            ValueError: If two keys state the same cutoff at different values.
+            ValueError: If any of the four removed keys is present.
         """
-        wavefunction = {
-            "calculator_parameters.ecutwfc": self.ecutwfc,
-            "calculator_parameters.pw.system.ecutwfc": self.pw.system.ecutwfc,
-            "calculator_parameters.kcp.system.ecutwfc": self.kcp.system.ecutwfc or None,
-        }
-        density = {
-            "calculator_parameters.pw.system.ecutrho": self.pw.system.ecutrho,
-            "calculator_parameters.kcp.system.ecutrho": self.kcp.system.ecutrho or None,
-        }
-
-        for cutoff, keys in (("wavefunction", wavefunction), ("density", density)):
-            stated = {key: value for key, value in keys.items() if value is not None}
-            if len(set(stated.values())) > 1:
-                listed = [f"`{key}` = {value:g} Ry" for key, value in stated.items()]
-                raise ValueError(
-                    f"{', '.join(listed[:-1])} and {listed[-1]} disagree. pw.x and kcp.x "
-                    f"must run on the same grid, so state one {cutoff} cutoff: give these "
-                    "keys the same value, or drop all but one of them."
-                )
-        return self
+        if not isinstance(data, dict):
+            return data
+        for calc in ("pw", "kcp"):
+            system = data.get(calc)
+            if not isinstance(system, dict) or not isinstance(system.get("system"), dict):
+                continue
+            for key in ("ecutwfc", "ecutrho"):
+                if key in system["system"]:
+                    raise ValueError(
+                        f"`calculator_parameters.{calc}.system.{key}` no longer exists. "
+                        "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four "
+                        "times it."
+                    )
+        return data
 
 
 class KoopmansInput(BaseModel):
