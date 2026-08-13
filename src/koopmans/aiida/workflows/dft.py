@@ -41,10 +41,12 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     structure, _pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "bands"])
 
+    # A gamma-only input's fixed path names the zone centre alone, so it
+    # defines no segment to sample: leave the step on its protocol default.
     bands_kpoints = (
-        kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
-        if koopmans_input.kpoints.path is not None
-        else None
+        None
+        if koopmans_input.kpoints.gamma_only or koopmans_input.kpoints.path is None
+        else kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
     )
 
     return RunPwBands.build(

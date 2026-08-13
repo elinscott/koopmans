@@ -569,6 +569,29 @@ class TestDftBandsScfMesh:
         assert task_inputs["bands_kpoints"].value is None
         assert task_inputs["bands_kpoints_distance"].value is not None
 
+    def test_gamma_only_leaves_seekpath_in_charge(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A gamma-only input's fixed ``path: "G"`` names no segment to sample.
+
+        ``GammaOnlyKpointsInput.path`` defaults to the literal ``"G"`` and
+        can never be ``None``, so a bare ``kpoints.path is not None`` guard
+        would always fire here and hand the single-label path to
+        ``kpoints_input_to_kpoints_path``, which raises building an empty
+        k-point list. The route must fall back to the protocol's own
+        ``bands_kpoints_distance`` instead, exactly as with no path at all.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(pseudo_library="SG15/1.0/PBE/SR", kpoints={"gamma_only": True})
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        assert task_inputs["bands_kpoints"].value is None
+        assert task_inputs["bands_kpoints_distance"].value is not None
+
 
 class TestStepKpointsMesh:
     """A step's mesh is its own attributes laid over the top-level ones."""
