@@ -167,6 +167,20 @@ def _external_projector_kwargs(
     }
 
 
+def _user_wannier90_overrides(koopmans_input: KoopmansInput) -> dict[str, Any]:
+    """Return the wannier90 keywords the user set, flat and unwrapped.
+
+    Disentanglement windows, iteration counts, convergence tolerances — every
+    field of ``calculator_parameters.w90`` the user gave a value, keyed by its
+    wannier90 name. Excludes ``projections``/``up``/``down``: the routes
+    derive or reject those themselves rather than forward them as wannier90
+    parameters.
+    """
+    return koopmans_input.calculator_parameters.wannier90.model_dump(
+        exclude_unset=True, exclude={"projections", "up", "down"}
+    )
+
+
 def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for Wannierization.
 
@@ -222,6 +236,15 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
+
+    # User wannier90 keywords (disentanglement windows, iteration counts, ...)
+    # feed the single Wannier90WorkChain this route runs. The upstream
+    # builder reads them from a nested wannier90.wannier90.parameters
+    # namespace, unlike the flat dict the per-block route's plugin builder
+    # expects.
+    w90_user = _user_wannier90_overrides(koopmans_input)
+    if w90_user:
+        overrides["wannier90"] = {"wannier90": {"parameters": w90_user}}
 
     # The automatically derived projections are the pseudopotentials' atomic
     # orbitals (upstream's ATOMIC_PROJECTORS_QE mechanism) unless external
@@ -371,9 +394,7 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
     # feed every per-block wannierisation; flat by design (see
     # ``WannierizeOverrides``).
-    w90_user = calc_params.wannier90.model_dump(
-        exclude_unset=True, exclude={"projections", "up", "down"}
-    )
+    w90_user = _user_wannier90_overrides(koopmans_input)
     if w90_user:
         wannier_overrides["wannier90"] = w90_user
 

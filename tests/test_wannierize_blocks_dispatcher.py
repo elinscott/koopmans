@@ -977,6 +977,67 @@ class TestPlainRoute:
             _build_plain(_si_auto_dict(auto_projections=False))
 
 
+class TestUserWannier90Overrides:
+    """``calculator_parameters.w90`` keywords must reach whichever route runs.
+
+    Regression test for koopmans2#166: the whole-manifold route built its
+    overrides from ``prepare_common_inputs``, which only ever emits
+    ``pseudo_family``/``pw`` entries, so every wannier90 keyword the user
+    wrote (window, iteration counts, convergence tolerances, ...) was
+    silently dropped.
+    """
+
+    def test_whole_manifold_route_forwards_dis_froz_max(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The reported case: the frozen window reaches the built wannier90 parameters."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["wannier90"]["dis_froz_max"] = 10.6
+        wg = _build_plain(d)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        params = w90_task.inputs["wannier90"]["wannier90"]["parameters"].value.get_dict()
+        assert params["dis_froz_max"] == pytest.approx(10.6)
+
+    def test_block_route_control_also_forwards_it(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Control: the block route already forwards the same keyword.
+
+        The two routes assemble their overrides independently (one nests
+        into ``wannier90.wannier90.parameters``, the other stays flat), so
+        a future refactor that breaks the whole-manifold route again is not
+        free to leave this test green too.
+        """
+        d = _si_split_dict()
+        d["calculator_parameters"]["wannier90"]["dis_froz_max"] = 10.6
+        wg = _build_plain(d)
+        overrides = wg.tasks["wannierize_block_1"].inputs["overrides"]["wannier90"].value
+        assert overrides["dis_froz_max"] == pytest.approx(10.6)
+
+    def test_every_declared_keyword_is_forwarded(self, aiida_profile: Any) -> None:
+        """No wannier90 schema field is silently excluded from the override dict.
+
+        Marks every field of the schema as user-set (value left at its
+        default -- only field-name completeness is at stake here) and checks
+        the flat override dict :func:`_user_wannier90_overrides` builds
+        carries exactly that key set, minus ``projections``/``up``/``down``
+        (handled separately). A keyword the schema grows that this dump
+        silently excludes -- the way ``dis_froz_max`` did before this fix --
+        fails here without needing one parametrized case per field.
+        """
+        from koopmans.aiida.workflows.wannierize import _user_wannier90_overrides
+        from koopmans.input_file import KoopmansInput, Wannier90InputParametersWithUpDown
+
+        excluded = {"projections", "up", "down"}
+        declared = set(Wannier90InputParametersWithUpDown.model_fields) - excluded
+
+        inp = KoopmansInput.model_validate(_si_auto_dict())
+        w90 = inp.calculator_parameters.wannier90
+        object.__setattr__(w90, "__pydantic_fields_set__", set(type(w90).model_fields))
+
+        assert set(_user_wannier90_overrides(inp)) == declared
+
+
 def _path_labels(kpoints: Any) -> list[str]:
     """Return the labels of an explicit k-path node, in path order."""
     assert kpoints is not None, "no k-path node reached the wannierization"
