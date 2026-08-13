@@ -133,9 +133,7 @@ def _require_nbnd_matches_projections(
     The merged evc_occupied/evc_empty files that seed the supercell kcp.x
     run carry one orbital per projected Wannier function, so the
     projections must cover the whole occupied manifold and kcp.x's
-    ``nbnd`` must equal their total, no more and no fewer. Mirrors
-    legacy's ``KoopmansDSCFWorkflow.__init__`` nbnd check
-    (``koopmans/workflows/_koopmans_dscf.py``).
+    ``nbnd`` must equal their total, no more and no fewer.
     """
     from aiida_koopmans.projections import projection_num_wann
 
