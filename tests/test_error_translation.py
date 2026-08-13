@@ -160,6 +160,46 @@ class TestAdviceFor:
         assert advice.count("pw@localhost") == 1
         assert "Needed to compute DFT ground state properties." in advice
 
+    def test_a_plainly_named_code_socket_earns_no_advice(self) -> None:
+        """A socket named just ``code`` names nothing to install, so it is skipped.
+
+        A wrapped WorkChain's own input is often called ``code`` rather than
+        after the member it takes, and the last path segment is all the
+        advice has to go on. Naming it would render ``code@localhost``,
+        which the reader cannot act on; declining leaves the framework's own
+        error, which at least names the socket.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError([MissingInput("scf.pw.code", "workgraph.code", None)])
+        assert advice_for(exc) is None
+
+    def test_a_later_entry_supplies_the_purpose_a_bare_one_lacks(self) -> None:
+        """A code's purpose is taken from whichever entry carries one.
+
+        Discriminates first-seen-wins from any-help-wins: the framework
+        reports sockets in graph order, so a nested consumer that declares
+        no ``help`` can be seen before the one that does, and no route-level
+        entry need exist to break the tie. Taking the first entry's ``None``
+        would drop a purpose that was there to be shown.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [
+                MissingInput("scf_nscf.pw_code", "workgraph.code", None),
+                MissingInput(
+                    "wannierize.codes.pw",
+                    "workgraph.code",
+                    "Needed to compute DFT ground state properties.",
+                ),
+            ]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert advice.count("pw@localhost") == 1
+        assert "Needed to compute DFT ground state properties." in advice
+
 
 class TestDispatchTranslation:
     """Each advice-table entry crosses ``build_workgraph`` with its advice."""

@@ -353,20 +353,26 @@ def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
     downstream task it feeds). Grouped here by member name, read off each
     socket path's last segment (dropping a ``_code`` suffix a task's own
     kwarg may add): every entry for the same code names the same
-    ``<name>@localhost``, so one line covers all of them. The purpose shown
-    is whichever ``help`` is found, preferring an entry under the route's
-    own top-level ``graph_inputs.codes.*`` namespace when one carries it,
-    since that names the code in the vocabulary of the route the user asked
-    for. Entries of other socket types are not code-installation problems,
-    so an error naming only those earns no advice.
+    ``<name>@localhost``, so one line covers all of them. A segment of
+    plain ``code`` names no member and is skipped, since ``code@localhost``
+    would tell the reader nothing to install. The purpose shown is any
+    ``help`` an entry carries, preferring one under the route's own
+    top-level ``graph_inputs.codes.*`` namespace, since that names the code
+    in the vocabulary of the route the user asked for. Entries of other
+    socket types are not code-installation problems, so an error naming
+    only those earns no advice.
     """
     help_by_name: dict[str, str | None] = {}
     for entry in exc.missing:
         if entry.identifier != "workgraph.code":
             continue
         name = entry.socket_path.rsplit(".", 1)[-1].removesuffix("_code")
-        help_by_name.setdefault(name, entry.help)
-        if entry.socket_path.startswith("graph_inputs.codes.") and entry.help:
+        if name == "code":
+            continue
+        route_level = entry.socket_path.startswith("graph_inputs.codes.")
+        if name not in help_by_name:
+            help_by_name[name] = entry.help
+        elif entry.help and (route_level or help_by_name[name] is None):
             help_by_name[name] = entry.help
     if not help_by_name:
         return None

@@ -144,9 +144,14 @@ class TestPreFlightAdvice:
     called right after :func:`~koopmans.aiida.workflows.load_codes` in every
     route module) raises the same install advice ``advice_for`` renders from
     a structural ``MissingRequiredInputsError``, before the route's own
-    ``@task.graph`` body ever gets a chance to run. The entry-graph bind
-    that *would* have crashed underneath still exists in every case; the
-    pre-flight is what intercepts first now, not a fix to that bind:
+    ``@task.graph`` body ever gets a chance to run.
+
+    On five of the six the pre-flight is load-bearing: an eager bind
+    underneath still crashes without it, so it intercepts rather than fixes.
+    DFPT is the exception — with the pre-flight stubbed out it builds and
+    ``check_before_run`` names ``pw@localhost`` unaided, because dfpt.py's
+    binds already defer through ``ref()``. Its call is redundant outright
+    and is the first that can go. The five that are not:
 
     * ``aiida_koopmans.workgraphs.pw.RunPwBands`` (``pw``) and
       ``aiida_koopmans.workgraphs.ph.DielectricTask`` (``pw``/``ph``, also
@@ -277,8 +282,13 @@ class TestPreFlightAdvice:
         """Intercept pw before its several sockets can fan out.
 
         ``pw`` is required in ``DfptCodes``, so the pre-flight fires before
-        the fan-out forms at all. What a genuinely deferred, ``NotRequired``
-        member's fan-out looks like is covered synthetically in
+        the fan-out forms at all. Unlike the five routes above, DFPT would
+        cope without it: stub the pre-flight out and the build succeeds,
+        leaving ``graph_inputs.codes.pw``, ``scf_nscf.pw_code`` and
+        ``wannierize.codes.pw`` unlinked for ``check_before_run`` to collapse
+        into the same one-line advice. So this pins the earlier moment, not
+        the message — and DFPT's call is the first the routes can drop. What
+        that fan-out looks like is covered synthetically in
         ``test_error_translation.py``.
         """
         from tests.test_dfpt_dispatcher import _si_dfpt_dict
