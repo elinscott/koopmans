@@ -8,7 +8,11 @@ from aiida_koopmans.projections import validate_projection_block_sequence
 from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
+from koopmans.aiida.conversion import (
+    NORM_CONSERVING_DUAL,
+    atoms_input_to_structure,
+    input_to_pw_parameters,
+)
 from koopmans.aiida.workflows import (
     load_codes,
     reject_kpoint_overrides,
@@ -299,23 +303,23 @@ def _initial_alpha_from_guess(alpha_guess: float | list[float]) -> float:
 def kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
     """Assemble the scalar kwargs shared by the kcp.x DSCF builders.
 
-    ``ecutwfc``/``nbnd`` prefer the top-level ``calculator_parameters``
-    convenience fields and fall back to the ``kcp.system`` Pydantic block;
-    ``ecutrho`` has no top-level field — read from ``kcp.system`` and default
-    to ``4 * ecutwfc`` when unset.
+    ``ecutwfc`` comes from ``calculator_parameters.ecutwfc``, with ``ecutrho``
+    derived at :data:`NORM_CONSERVING_DUAL` times it; ``nbnd`` prefers the
+    top-level ``calculator_parameters`` convenience field and falls back to
+    the ``kcp.system`` Pydantic block.
     """
     workflow = koopmans_input.workflow
     calc_params = koopmans_input.calculator_parameters
     kcp_system = calc_params.kcp.system
 
-    ecutwfc = calc_params.ecutwfc if calc_params.ecutwfc is not None else kcp_system.ecutwfc
+    ecutwfc = calc_params.ecutwfc
     if not ecutwfc:
         raise ValueError(
-            "ecutwfc is required for a Koopmans singlepoint calculation. Set it in "
-            "``calculator_parameters.ecutwfc`` or ``calculator_parameters.kcp.system.ecutwfc``."
+            "ecutwfc is required for a Koopmans singlepoint calculation. Set "
+            "``calculator_parameters.ecutwfc``."
         )
 
-    ecutrho = kcp_system.ecutrho if kcp_system.ecutrho else 4.0 * ecutwfc
+    ecutrho = NORM_CONSERVING_DUAL * ecutwfc
 
     nbnd_raw = calc_params.nbnd if calc_params.nbnd is not None else kcp_system.nbnd
     if nbnd_raw is None:

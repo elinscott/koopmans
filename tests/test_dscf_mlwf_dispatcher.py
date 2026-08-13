@@ -634,29 +634,3 @@ class TestCutoffLessPseudoFamily:
         assert pw.parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
         expected = fake_sg15_family_without_cutoffs.get_pseudos(structure=structure)
         assert pw.pseudos["Si"].uuid == expected["Si"].uuid
-
-    def test_no_cutoffs_at_all_names_the_family_and_the_keyword(
-        self,
-        aiida_profile_clean: Any,
-        dscf_codes: Any,
-        fake_sg15_family_without_cutoffs: Any,
-    ) -> None:
-        """A cutoff stated for kcp.x alone leaves the pw.x steps with none.
-
-        ``calculator_parameters.kcp.system.ecutwfc`` satisfies the kcp.x
-        requirement but never reaches the pw.x parameters, so this is the
-        input that arrives at the family with nothing to state. The route
-        reaches ``require_cutoffs_for_family`` nowhere else: drop the call and
-        the graph builds without complaint, carrying no wavefunction cutoff at
-        all into its pw.x steps.
-        """
-        d = _si_dscf_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
-        del d["calculator_parameters"]["ecutwfc"]
-        d["calculator_parameters"]["kcp"] = {"system": {"ecutwfc": 20.0}}
-
-        with pytest.raises(ValueError) as excinfo:
-            _build(d)
-
-        message = str(excinfo.value)
-        assert fake_sg15_family_without_cutoffs.label in message
-        assert "calculator_parameters.ecutwfc" in message

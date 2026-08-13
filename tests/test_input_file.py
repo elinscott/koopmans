@@ -170,8 +170,6 @@ class TestRemovedKeywordsRejected:
 
 
 _CUTOFF_KEYS = [
-    ("calculator_parameters.pw.system", "ecutwfc"),
-    ("calculator_parameters.pw.system", "ecutrho"),
     ("calculator_parameters", "ecutwfc"),
 ]
 
@@ -210,106 +208,49 @@ def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object
     return d
 
 
-_DISAGREEING_CUTOFFS = [
-    (
-        "pw and kcp state different wavefunction cutoffs",
-        {"pw": {"system": {"ecutwfc": 45.0}}, "kcp": {"system": {"ecutwfc": 20.0}}},
-        ["calculator_parameters.pw.system.ecutwfc", "calculator_parameters.kcp.system.ecutwfc"],
-    ),
-    (
-        "pw and kcp state different density cutoffs",
-        {
-            "ecutwfc": 45.0,
-            "pw": {"system": {"ecutrho": 180.0}},
-            "kcp": {"system": {"ecutrho": 300.0}},
-        },
-        ["calculator_parameters.pw.system.ecutrho", "calculator_parameters.kcp.system.ecutrho"],
-    ),
-    (
-        "a pw block overrides the shorthand kcp falls back to",
-        {"ecutwfc": 20.0, "nbnd": 8, "pw": {"system": {"ecutwfc": 45.0}}},
-        ["calculator_parameters.ecutwfc", "calculator_parameters.pw.system.ecutwfc"],
-    ),
-    (
-        "a kcp block states what the shorthand overrides",
-        {"ecutwfc": 20.0, "kcp": {"system": {"ecutwfc": 30.0}}},
-        ["calculator_parameters.ecutwfc", "calculator_parameters.kcp.system.ecutwfc"],
-    ),
-]
-
-_AGREEING_CUTOFFS = [
-    ("the shorthand alone", {"ecutwfc": 20.0}),
-    ("a pw block restating the shorthand", {"ecutwfc": 20.0, "pw": {"system": {"ecutwfc": 20.0}}}),
-    (
-        "pw and kcp stating one wavefunction cutoff",
-        {"pw": {"system": {"ecutwfc": 45.0}}, "kcp": {"system": {"ecutwfc": 45.0}}},
-    ),
-    (
-        "pw and kcp stating one density cutoff",
-        {
-            "ecutwfc": 45.0,
-            "pw": {"system": {"ecutrho": 180.0}},
-            "kcp": {"system": {"ecutrho": 180.0}},
-        },
-    ),
-    ("a pw cutoff with no kcp block", {"pw": {"system": {"ecutwfc": 45.0}}}),
-    (
-        "a kcp density cutoff with no pw block",
-        {"ecutwfc": 40.0, "kcp": {"system": {"ecutrho": 160.0}}},
-    ),
+_REMOVED_PER_CALCULATOR_CUTOFFS = [
+    ("pw", "ecutwfc"),
+    ("pw", "ecutrho"),
+    ("kcp", "ecutwfc"),
+    ("kcp", "ecutrho"),
 ]
 
 
-class TestCutoffsMustAgreeAcrossBlocks:
-    """pw.x and kcp.x read their cutoffs from different keys, and must get one grid."""
+class TestPerCalculatorCutoffsRemoved:
+    """pw.x and kcp.x always share one grid, stated once via ``ecutwfc``."""
 
     @pytest.mark.parametrize(
-        ("label", "calculator_parameters", "keys"),
-        _DISAGREEING_CUTOFFS,
-        ids=[case[0] for case in _DISAGREEING_CUTOFFS],
+        ("calculator", "keyword"),
+        _REMOVED_PER_CALCULATOR_CUTOFFS,
+        ids=[f"{calc}.{kw}" for calc, kw in _REMOVED_PER_CALCULATOR_CUTOFFS],
     )
-    def test_disagreeing_cutoffs_are_rejected(
-        self,
-        label: str,
-        calculator_parameters: dict[str, object],
-        keys: list[str],
-        tmp_path: Path,
+    def test_a_removed_key_names_its_replacement(
+        self, calculator: str, keyword: str, tmp_path: Path
     ) -> None:
-        """The message names every key that stated a value, so the user can pick one.
-
-        The shorthand cases are the reproduced defect: an input naming only
-        ``pw.system.ecutwfc`` beside the shorthand ran pw.x at 45 Ry and kcp.x
-        at 20 Ry, and neither block stated the cutoff twice.
-        """
+        """Each retired spelling points the reader at ``calculator_parameters.ecutwfc``."""
         input_file = tmp_path / "input.json"
-        input_file.write_text(json.dumps(_si_input_with(calculator_parameters)))
+        input_file.write_text(json.dumps(_si_input_with({calculator: {"system": {keyword: 45.0}}})))
 
         with pytest.raises(ValueError) as excinfo:
             read_input_file(input_file)
 
         message = str(excinfo.value)
-        for key in keys:
-            assert f"`{key}`" in message
-        assert "must run on the same grid" in message
+        assert f"`calculator_parameters.{calculator}.system.{keyword}`" in message
+        assert "`calculator_parameters.ecutwfc`" in message
 
-    @pytest.mark.parametrize(
-        ("label", "calculator_parameters"),
-        _AGREEING_CUTOFFS,
-        ids=[case[0] for case in _AGREEING_CUTOFFS],
-    )
-    def test_agreeing_cutoffs_are_accepted(
-        self, label: str, calculator_parameters: dict[str, object], tmp_path: Path
-    ) -> None:
-        """Restating a cutoff, and leaving one block silent, both stay legal.
+    def test_a_single_ecutwfc_reaches_both_pw_and_kcp(self, tmp_path: Path) -> None:
+        """One stated cutoff derives both codes' grids, at the norm-conserving ratio."""
+        from koopmans.aiida.conversion import input_to_pw_parameters
+        from koopmans.aiida.workflows.dscf import kcp_dscf_inputs
 
-        Separates disagreement from mere repetition: a rule keyed on "two
-        blocks mention it" rather than on the values would reject these, and
-        the last case is the shape the O2 tutorial ships.
-        """
         input_file = tmp_path / "input.json"
-        input_file.write_text(json.dumps(_si_input_with(calculator_parameters)))
+        input_file.write_text(json.dumps(_si_input_with({"ecutwfc": 45.0, "nbnd": 8})))
+        inp = read_input_file(input_file)
 
-        read_input_file(input_file)
+        pw_system = input_to_pw_parameters(inp)["SYSTEM"]
+        kcp = kcp_dscf_inputs(inp)
+        assert (pw_system["ecutwfc"], pw_system["ecutrho"]) == pytest.approx((45.0, 180.0))
+        assert (kcp["ecutwfc"], kcp["ecutrho"]) == pytest.approx((45.0, 180.0))
 
 
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
