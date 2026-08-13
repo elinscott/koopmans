@@ -650,6 +650,23 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     return parameters
 
 
+def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
+    """Convert ``calculator_parameters.ph`` into a ph.x ``INPUTPH`` namelist dict.
+
+    The dielectric-constant (dft_eps) route merges this underneath its own
+    ``epsil``/``trans``/q-mesh keys, so every key present here is a plain
+    user override (route-owned keys are rejected at parse time; see
+    ``koopmans.input_file.ph``).
+    """
+    parameters: dict[str, dict[str, Any]] = {
+        "INPUTPH": koopmans_input.calculator_parameters.ph.model_dump(
+            exclude_none=True, exclude_defaults=True
+        ),
+    }
+    parameters = _convert_paths_to_strings(parameters)
+    return parameters
+
+
 def get_pseudos_from_family(
     pseudo_family: str,
     structure: orm.StructureData,
