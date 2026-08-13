@@ -631,7 +631,12 @@ _KCW_ROUTE_OWNED_KEYS = [
     ("calculator_parameters.kcw.control", "spin_component", 2, "workflow.spin"),
     ("calculator_parameters.kcw.control", "kcw_at_ks", False, "workflow.init_orbitals"),
     ("calculator_parameters.kcw.control", "read_unitary_matrix", True, "workflow.init_orbitals"),
-    ("calculator_parameters.kcw.wannier", "seedname", "wann", "wannier90 seedname"),
+    (
+        "calculator_parameters.kcw.wannier",
+        "seedname",
+        "wann",
+        "block Wannierization's product files",
+    ),
     (
         "calculator_parameters.kcw.wannier",
         "num_wann_occ",
@@ -660,6 +665,32 @@ _KCW_ROUTE_OWNED_KEYS = [
     ("calculator_parameters.kcw.screen", "check_spread", True, "workflow.group_orbitals_by"),
     ("calculator_parameters.kcw.screen", "eps_inf", 5.0, "workflow.eps_inf"),
     ("calculator_parameters.kcw.ham", "do_bands", True, "kpoints.path"),
+]
+
+
+# Every remaining field of every kcw.x namelist model, with a non-default
+# value: together with ``_KCW_ROUTE_OWNED_KEYS`` this is the full field list
+# of ``ControlNamelist``/``WannierNamelist``/``ScreenNamelist``/``HamNamelist``
+# (checked by the ``python3 -c "...model_fields..."`` audit in koopmans2#164),
+# so every field is exercised as either owned or pass-through.
+_KCW_PASSTHROUGH_KEYS = [
+    ("calculator_parameters.kcw.control", "kcw_iverbosity", 2),
+    ("calculator_parameters.kcw.control", "lrpa", True),
+    ("calculator_parameters.kcw.control", "assume_isolated", "martyna-tuckerman"),
+    ("calculator_parameters.kcw.control", "homo_only", True),
+    ("calculator_parameters.kcw.control", "spread_thr", 0.01),
+    ("calculator_parameters.kcw.control", "io_sp", True),
+    ("calculator_parameters.kcw.control", "io_real_space", True),
+    ("calculator_parameters.kcw.control", "irr_bz", True),
+    ("calculator_parameters.kcw.control", "use_wct", True),
+    ("calculator_parameters.kcw.wannier", "check_ks", False),
+    ("calculator_parameters.kcw.wannier", "alpha_mix", [0.5, 0.5]),
+    ("calculator_parameters.kcw.screen", "niter", 50),
+    ("calculator_parameters.kcw.screen", "nmix", 6),
+    ("calculator_parameters.kcw.screen", "tr2", 1.0e-16),
+    ("calculator_parameters.kcw.ham", "use_ws_distance", False),
+    ("calculator_parameters.kcw.ham", "write_hr", False),
+    ("calculator_parameters.kcw.ham", "on_site_only", True),
 ]
 
 
@@ -709,25 +740,66 @@ class TestKcwCalculatorParameters:
         inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
         KoopmansInput.model_validate(inp.model_dump())
 
-    def test_non_owned_keywords_pass_through(self) -> None:
-        """A user-set expert keyword outside the owned set is accepted as-is."""
-        d = _si_input_with(
-            {
-                "ecutwfc": 20.0,
-                "kcw": {
-                    "control": {"lrpa": True},
-                    "wannier": {"alpha_mix": [0.5, 0.5]},
-                    "screen": {"tr2": 1.0e-16, "nmix": 6},
-                    "ham": {"on_site_only": True},
-                },
-            }
-        )
+    @pytest.mark.parametrize(
+        ("section", "keyword", "value"),
+        _KCW_PASSTHROUGH_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[1]}" for case in _KCW_PASSTHROUGH_KEYS],
+    )
+    def test_pass_through_keyword_is_accepted_as_stated(
+        self, section: str, keyword: str, value: object
+    ) -> None:
+        """Every field the DFPT route does not own is settable and comes back unchanged.
+
+        Together with ``test_route_owned_key_is_rejected``, this covers
+        every field of every kcw.x namelist model — see the module docstrings
+        of ``ControlNamelist`` / ``WannierNamelist`` / ``ScreenNamelist`` /
+        ``HamNamelist`` for why each of these is a genuine pass-through.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, value)
+
         inp = KoopmansInput.model_validate(d)
-        calc_params = inp.calculator_parameters
-        assert calc_params.kcw.control.lrpa is True
-        assert calc_params.kcw.wannier.alpha_mix == [0.5, 0.5]
-        assert calc_params.kcw.screen.tr2 == pytest.approx(1.0e-16)
-        assert calc_params.kcw.ham.on_site_only is True
+
+        namelist = inp.calculator_parameters.kcw
+        for part in section.split(".")[2:]:  # drop "calculator_parameters", "kcw"
+            namelist = getattr(namelist, part)
+        assert getattr(namelist, keyword) == value
+
+    def test_every_namelist_field_is_owned_or_passthrough(self) -> None:
+        """Every declared field of every kcw.x namelist model is accounted for.
+
+        Guards the koopmans2#164 completeness audit: a pydantic-espresso
+        model regenerated with a new field must land in
+        ``_KCW_ROUTE_OWNED_KEYS`` or ``_KCW_PASSTHROUGH_KEYS`` before it can
+        silently reach, or be silently overwritten by, the DFPT route.
+        """
+        from pydantic import BaseModel as PydanticBaseModel
+
+        from koopmans.input_file.kcw import (
+            ControlNamelist,
+            HamNamelist,
+            ScreenNamelist,
+            WannierNamelist,
+        )
+
+        models: dict[str, type[PydanticBaseModel]] = {
+            "calculator_parameters.kcw.control": ControlNamelist,
+            "calculator_parameters.kcw.wannier": WannierNamelist,
+            "calculator_parameters.kcw.screen": ScreenNamelist,
+            "calculator_parameters.kcw.ham": HamNamelist,
+        }
+        accounted: dict[str, set[str]] = {section: set() for section in models}
+        for section, keyword, *_rest in _KCW_ROUTE_OWNED_KEYS:
+            accounted[section].add(keyword)
+        for section, keyword, _value in _KCW_PASSTHROUGH_KEYS:
+            accounted[section].add(keyword)
+
+        for section, model in models.items():
+            declared = set(model.model_fields)
+            assert accounted[section] == declared, (
+                f"{section}: {declared - accounted[section]} are neither rejected nor "
+                "exercised as pass-through."
+            )
 
     def test_defaults_leave_every_namelist_unset(self) -> None:
         """With no ``kcw`` block, every namelist states nothing explicitly."""
