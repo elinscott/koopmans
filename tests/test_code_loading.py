@@ -12,7 +12,7 @@ translates to install advice naming the code and its declared purpose.
 
 That structural check is not the whole story, though: some entry graphs
 still bind a *required* code by direct dict subscript rather than through
-``node_graph.ref`` — a plain ``codes["name"]`` inside an ``@task.graph`` body
+``node_graph.reference`` — a plain ``codes["name"]`` inside an ``@task.graph`` body
 executes immediately, during ``build()``, so an absent key would be a bare
 ``KeyError`` (or, for one route, an upstream library's own eager
 ``ValueError``) with no unlinked socket for ``check_before_run`` to ever

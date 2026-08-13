@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
+from koopmans.aiida.conversion import (
+    atoms_input_to_structure,
+    input_to_pw_parameters,
+    kpoints_input_to_interpolation_path,
+)
 from koopmans.aiida.workflows import (
     load_codes,
     pin_step_kpoints,
@@ -130,22 +134,6 @@ def _kpoint_sampling(
     return scf_kpoints, get_explicit_kpoints(mesh), mp_grid
 
 
-def _interpolation_path(
-    koopmans_input: KoopmansInput, structure: orm.StructureData
-) -> orm.KpointsData | None:
-    """Return the input's k-path as a labelled explicit k-list, or ``None``.
-
-    ``None`` when the input states no ``kpoints.path``, and for a gamma-only
-    input, whose fixed ``path`` names the zone centre alone and so defines no
-    segment to interpolate along.
-    """
-    from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
-
-    if koopmans_input.kpoints.gamma_only or koopmans_input.kpoints.path is None:
-        return None
-    return kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
-
-
 def _external_projector_kwargs(
     koopmans_input: KoopmansInput, structure: orm.StructureData
 ) -> dict[str, Any]:
@@ -232,7 +220,7 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, overrides)
 
-    bands_kpoints = _interpolation_path(koopmans_input, structure)
+    bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
     # load_codes loads projwfc, WannierizeCodes's one NotRequired member,
     # whenever it is configured. The upstream builder wires it only for
@@ -387,7 +375,7 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # One node serves both uses of the input's k-path: the split-mode band
     # detection samples it with pw.x, and every wannier90 run interpolates
     # its band structure along it.
-    interpolation_kpoints = _interpolation_path(koopmans_input, structure)
+    interpolation_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
     # load_codes loads every configured member of WannierizeBlocksCodes.
     # wannierjl (the julia binary registered via
@@ -397,8 +385,8 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # run does need is fatal, is the graph's own structural requirement.
     #
     # The quality-check-bands helper (entered whenever a k-path is given)
-    # binds pw eagerly (aiida-koopmans#88/#90: not yet converted to
-    # node_graph.ref); the pre-flight catches a missing required member
+    # binds pw eagerly (aiida-koopmans#97: not yet converted to
+    # node_graph.reference); the pre-flight catches a missing required member
     # before that bare subscript can raise a bare KeyError.
     codes = load_codes(WannierizeBlocksCodes)
     require_configured_codes(WannierizeBlocksCodes, codes)

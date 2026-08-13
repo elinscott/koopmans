@@ -48,7 +48,6 @@ def _trajectory_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str,
         "calculator_parameters": {
             "ecutwfc": 65.0,
             "nbnd": 6,
-            "kcp": {"system": {"ecutrho": 260.0}},
         },
         "ml": {
             "mode": "train",

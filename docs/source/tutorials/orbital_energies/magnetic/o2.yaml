@@ -31,6 +31,3 @@ calculator_parameters:
   ecutwfc: 40.0
   nbnd: 8
   tot_magnetization: 2            # two unpaired electrons
-  kcp:
-    system:
-      ecutrho: 160.0

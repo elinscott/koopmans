@@ -125,7 +125,7 @@ def require_configured_codes[CodesT: Mapping[str, Any]](
     already enforces at submit (:func:`advice_for`'s translation of
     ``MissingRequiredInputsError``) — redundant by design, and only worth
     keeping because some entry graphs still bind a required code by direct
-    dict subscript rather than through ``node_graph.ref``, which dies as a
+    dict subscript rather than through ``node_graph.reference``, which dies as a
     bare ``KeyError`` mid-``build()`` with no chance for the structural
     check to run at all (see ``tests/test_code_loading.py``'s
     ``TestPreFlightAdvice`` for which routes currently need this). Safe to
@@ -167,8 +167,7 @@ def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -
         raise ValueError(
             f"The pseudopotential family `{pseudo_family}` publishes no recommended "
             "cutoffs, so they must come from the input file: set "
-            "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it "
-            "unless `calculator_parameters.pw.system.ecutrho` states otherwise."
+            "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it."
         )
 
 

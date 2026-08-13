@@ -854,6 +854,12 @@ def count_pw_bands_runs(wg: Any) -> int:
     return count
 
 
+def path_labels(kpoints: Any) -> list[str]:
+    """Return the labels of an explicit k-path node, in path order."""
+    assert kpoints is not None, "no k-path node reached the calculation"
+    return [label for _, label in kpoints.labels]
+
+
 @pytest.fixture
 def fake_family_without_pswfc(aiida_profile: Any) -> Any:
     """Install a cutoffs family whose Si pseudo carries no ``PP_PSWFC`` block.

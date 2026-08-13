@@ -109,10 +109,9 @@ class TestDftEps:
             [0.0, 0.0, 0.0],
         )
 
-        # The legacy eps scf passes nbnd=None: no empty bands, but the rest
-        # of the user's PW parameters survive.
+        # `nbnd` survives to the scf step like on every other route (koopmans2#162).
         system = wg.tasks["scf"].inputs["pw"]["parameters"].value.get_dict()["SYSTEM"]
-        assert "nbnd" not in system
+        assert system["nbnd"] == 10
         assert system["ecutwfc"] == pytest.approx(20.0)
 
     def test_scf_samples_the_input_mesh(
@@ -184,7 +183,7 @@ class TestDftEps:
         ``DielectricTask`` — the dft_eps route's own entry graph — feeds
         ``codes["ph"]`` (and ``codes["pw"]``) straight into an eager
         ``get_builder_from_protocol`` call, which needs a concrete
-        ``orm.Code`` and cannot take a lazy ``node_graph.ref()``; left to
+        ``orm.Code`` and cannot take a lazy ``node_graph.reference()``; left to
         its own devices that bind would die as a bare ``KeyError`` mid-trace
         (known gap on the plugin side: aiida-koopmans#88, tracking upstream
         node-graph#169; #90 has not reached this call site yet — not a k2
@@ -258,7 +257,7 @@ class TestDfptAutoEps:
         """eps_inf='auto' without ph@localhost builds fine and fails at check/submit.
 
         ``SinglepointDFPTWorkflow`` threads ``ph`` into its dielectric
-        pre-computation step through ``node_graph.ref``, so a missing
+        pre-computation step through ``node_graph.reference``, so a missing
         code leaves an unlinked socket rather than dying in the eager
         trace: the build succeeds, and ``check_before_run`` — what
         ``run``/``submit`` call before doing anything else — is what
@@ -290,3 +289,33 @@ class TestDfptAutoEps:
         inp = KoopmansInput.model_validate(d)
         with pytest.raises(ValueError, match="not understood"):
             build_singlepoint_dfpt_workgraph(inp)
+
+
+class TestPhCalculatorParameters:
+    """``calculator_parameters.ph`` reaches the ph.x step (koopmans2#162)."""
+
+    def test_tr2_ph_reaches_the_ph_task(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """A user-tightened ``tr2_ph`` lands in the ph.x ``INPUTPH`` namelist.
+
+        The route's own ``epsil``/``trans`` keys still win underneath it.
+        """
+        d = _si_eps_dict()
+        d["calculator_parameters"]["ph"] = {"tr2_ph": 1.0e-14}
+        wg = build_workgraph(KoopmansInput.model_validate(d))
+        inputph = wg.tasks["ph"].inputs["ph"]["parameters"].value.get_dict()["INPUTPH"]
+        assert inputph["tr2_ph"] == pytest.approx(1.0e-14)
+        assert inputph["epsil"] is True
+        assert inputph["trans"] is False
+
+    def test_epsil_is_rejected_at_parse(self) -> None:
+        """A user-set ``epsil`` disagreeing with the route fails at parse, naming the owner."""
+        d = _si_eps_dict()
+        d["calculator_parameters"]["ph"] = {"epsil": False}
+        with pytest.raises(ValueError, match=r"calculator_parameters\.ph\.epsil.*dft_eps route"):
+            KoopmansInput.model_validate(d)
