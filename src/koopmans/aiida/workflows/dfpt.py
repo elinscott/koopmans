@@ -10,6 +10,7 @@ from koopmans.aiida.workflows import (
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
+    require_configured_codes,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
@@ -126,8 +127,11 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     # and projwfc only for the quality-check projected DOS; whether either
     # runs, and whether a missing code the run does need is fatal, is now
     # the graph's own structural requirement — checked at graph validation,
-    # not here.
+    # not here. require_configured_codes only ever looks at pw/kcw (the
+    # required members): it has no notion of eps_inf, so ph never gets
+    # demanded here.
     codes = load_codes(DfptCodes)
+    require_configured_codes(DfptCodes, codes)
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.

@@ -10,7 +10,10 @@ from collections.abc import Mapping
 from typing import (
     TYPE_CHECKING,
     Any,
+    NotRequired,
     cast,
+    get_args,
+    get_origin,
     get_type_hints,
 )
 
@@ -80,6 +83,67 @@ def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
         except NotExistent:
             pass
     return cast("CodesT", codes)
+
+
+def _socket_help(hint: Any) -> str | None:
+    """Return the ``SocketMeta`` help attached to a codes-TypedDict member annotation."""
+    if get_origin(hint) is NotRequired:
+        hint = get_args(hint)[0]
+    for meta in getattr(hint, "__metadata__", ()):
+        text = getattr(meta, "help", None)
+        if text:
+            return str(text)
+    return None
+
+
+def _render_missing_codes_advice(help_by_name: Mapping[str, str | None]) -> str:
+    """Render a ``name -> declared help`` mapping as the shared install-advice message.
+
+    The one rendering both :func:`_missing_inputs_advice` (the submit-time
+    translation of a structural ``MissingRequiredInputsError``) and
+    :func:`require_configured_codes` (the build-time pre-flight) use, so the
+    two call sites can never drift into two different wordings for the same
+    fact.
+    """
+    lines = [
+        f"  - `{name}@localhost`" + (f" ({help_text})" if help_text else "")
+        for name, help_text in sorted(help_by_name.items())
+    ]
+    return (
+        "This calculation needs codes that are not configured:\n"
+        + "\n".join(lines)
+        + "\nPlease run 'koopmans install' to set up the AiiDA backend."
+    )
+
+
+def require_configured_codes[CodesT: Mapping[str, Any]](
+    codes_spec: type[CodesT], codes: CodesT
+) -> None:
+    """Raise install advice for any of ``codes_spec``'s required members absent from ``codes``.
+
+    A build-time fast path for what the graph's own structural check
+    already enforces at submit (:func:`advice_for`'s translation of
+    ``MissingRequiredInputsError``) — redundant by design, and only worth
+    keeping because some entry graphs still bind a required code by direct
+    dict subscript rather than through ``node_graph.ref``, which dies as a
+    bare ``KeyError`` mid-``build()`` with no chance for the structural
+    check to run at all (see ``tests/test_code_loading.py``'s
+    ``TestPreFlightAdvice`` for which routes currently need this). Safe to
+    delete once every such body defers instead.
+
+    Checks ``__required_keys__`` alone, never ``NotRequired`` members: which
+    of those a particular input additionally turns on is conditional
+    knowledge this function does not have and must not guess at (e.g.
+    DFPT's ``ph``, needed only under ``eps_inf: auto``) — that stays the
+    structural check's job, at submit.
+    """
+    hints = get_type_hints(codes_spec, include_extras=True)
+    # Every codes_spec argument is a TypedDict class, which carries
+    # __required_keys__ at runtime; the Mapping bound cannot say so.
+    required_keys: frozenset[str] = codes_spec.__required_keys__  # type: ignore[attr-defined]
+    missing = {name: _socket_help(hints[name]) for name in required_keys if name not in codes}
+    if missing:
+        raise ValueError(_render_missing_codes_advice(missing))
 
 
 def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -> None:
@@ -306,16 +370,7 @@ def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
             help_by_name[name] = entry.help
     if not help_by_name:
         return None
-
-    lines = [
-        f"  - `{name}@localhost`" + (f" ({help_text})" if help_text else "")
-        for name, help_text in sorted(help_by_name.items())
-    ]
-    return (
-        "This calculation needs codes that are not configured:\n"
-        + "\n".join(lines)
-        + "\nPlease run 'koopmans install' to set up the AiiDA backend."
-    )
+    return _render_missing_codes_advice(help_by_name)
 
 
 def _model_mismatch_advice(exc: ModelMismatchError) -> str:

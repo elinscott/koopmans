@@ -176,28 +176,30 @@ class TestDftEps:
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_eps"):
             build_workgraph(KoopmansInput.model_validate(d))
 
-    def test_missing_ph_code_keyerrors_at_build(
+    def test_missing_ph_code_earns_preflight_advice(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Without a ph@localhost code the build dies mid-trace, not with install advice.
+        """Without a ph@localhost code, the dispatcher's pre-flight names it before build.
 
         ``DielectricTask`` — the dft_eps route's own entry graph — feeds
         ``codes["ph"]`` (and ``codes["pw"]``) straight into an eager
         ``get_builder_from_protocol`` call, which needs a concrete
-        ``orm.Code`` and cannot take a lazy ``node_graph.ref()``. A
-        missing code is therefore a bare ``KeyError`` during
-        ``build_workgraph``'s eager trace, with no unlinked socket left
-        for ``check_before_run`` to catch structurally. Known gap on the
-        plugin side (aiida-koopmans#88, tracking upstream
-        node-graph#169; aiida-koopmans#90 has not reached this call site
-        yet) — not a k2 defect. See ``tests/test_code_loading.py``'s
-        ``TestKnownEntryPointGap``. Requests ``aiida_profile_clean``:
-        earlier tests may have installed a ``ph@localhost`` code in the
-        session profile.
+        ``orm.Code`` and cannot take a lazy ``node_graph.ref()``; left to
+        its own devices that bind would die as a bare ``KeyError`` mid-trace
+        (known gap on the plugin side: aiida-koopmans#88, tracking upstream
+        node-graph#169; #90 has not reached this call site yet — not a k2
+        defect). ``require_configured_codes``, called right after
+        ``load_codes`` in ``eps.py``, intercepts first: ``ph`` is required
+        in ``DielectricCodes``, so the dispatcher's own pre-flight raises
+        the install advice before ``DielectricTask.build()`` ever runs. See
+        ``tests/test_code_loading.py``'s ``TestPreFlightAdvice``. Requests
+        ``aiida_profile_clean``: earlier tests may have installed a
+        ``ph@localhost`` code in the session profile.
         """
         inp = KoopmansInput.model_validate(_si_eps_dict())
-        with pytest.raises(KeyError, match="ph"):
+        with pytest.raises(ValueError, match="`ph@localhost`") as excinfo:
             build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
 
 
 class TestDfptAutoEps:

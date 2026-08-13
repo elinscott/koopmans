@@ -793,7 +793,7 @@ class TestModelNodeRoute:
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "model": wrong.pk, "descriptor": "self_hartree"}
 
-        with pytest.raises(ValueError, match="must name the stored trained-model Dict"):
+        with pytest.raises(TypeError, match="must name the stored trained-model Dict"):
             build_trajectory_workgraph(KoopmansInput.model_validate(d))
 
     def test_model_and_model_file_are_exclusive(self) -> None:

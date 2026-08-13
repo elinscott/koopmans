@@ -10,15 +10,23 @@ it was never given surfaces ``MissingRequiredInputsError`` at graph
 validation (``check_before_run`` / submission), which ``advice_for``
 translates to install advice naming the code and its declared purpose.
 
-That translation only fires where the plugin graph actually structures the
-missing code as an unlinked socket. Some entry graphs still bind their own
-codes eagerly (a plain ``codes["name"]`` subscript inside an ``@task.graph``
-body executes immediately, during ``build()``, so an absent key is a bare
-``KeyError`` there — not a socket the framework ever gets to validate); one
-route hands its whole codes namespace to an *upstream* builder that raises
-its own eager ``ValueError`` instead. ``TestKnownEntryPointGap`` pins these
-as known gaps — some fixable in aiida-koopmans alone, one only upstream, one
-a deliberate permanent choice — not a k2 defect.
+That structural check is not the whole story, though: some entry graphs
+still bind a *required* code by direct dict subscript rather than through
+``node_graph.ref`` — a plain ``codes["name"]`` inside an ``@task.graph`` body
+executes immediately, during ``build()``, so an absent key would be a bare
+``KeyError`` (or, for one route, an upstream library's own eager
+``ValueError``) with no unlinked socket for ``check_before_run`` to ever
+catch. ``require_configured_codes`` is a build-time pre-flight against
+exactly this: checking a codes TypedDict's ``__required_keys__`` alone (never
+``NotRequired`` — that conditional knowledge stays the socket layer's job at
+submit) against the loaded mapping, and raising the same install advice
+``advice_for`` would have produced, before any eager body gets the chance to
+crash. ``TestPreFlightAdvice`` reproduces every route this currently
+intercepts, each noting where the underlying eager bind still lives and
+whether that is aiida-koopmans' to fix, upstream's, or a deliberate,
+permanent choice. ``TestStructuralAdvice`` covers what is left: genuinely
+``NotRequired``, input-conditional codes, which still only fail at
+``check_before_run`` / submit, exactly as before.
 """
 
 from __future__ import annotations
@@ -35,9 +43,11 @@ from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
 class TestCodesSpecRequiredness:
     """Pin required/optional members at every codes TypedDict's definition site.
 
-    ``load_codes`` no longer reads these sets — every member is loaded when
-    configured, regardless — but the plugin graphs' own structural checks
-    do, so a ``from __future__ import annotations`` sneaking into a
+    Neither ``load_codes`` nor ``require_configured_codes`` care about this
+    split at the loading step — every member is loaded when configured,
+    regardless — but ``require_configured_codes`` reads ``__required_keys__``
+    for its pre-flight and the plugin graphs' own structural checks read it
+    too, so a ``from __future__ import annotations`` sneaking into a
     definition module (which silently flips every member to required,
     python/cpython#97727) is still worth screaming about here.
     """
@@ -94,13 +104,15 @@ class TestLoadCodes:
         assert set(codes) == {"kcp", "pw"}
 
     def test_unconfigured_member_is_left_out_silently(self, aiida_profile_clean: Any) -> None:
-        """An unconfigured member — required or not — is left out, never raised.
+        """An unconfigured member — required or not — is left out, never raised by the loader.
 
         The discriminating case against the pre-migration contract:
         ``load_codes`` used to raise for a missing *required* member
-        before a graph ever saw it. That check is gone; an empty profile
-        now gets an empty mapping back, and whichever member the graph
-        actually needed finds out on its own.
+        itself, before a graph ever saw it. That check moved out of the
+        loader entirely — an empty profile now gets an empty mapping
+        back from ``load_codes`` alone (the pre-flight, a separate call
+        the routes make next, is what raises now; see
+        ``TestPreFlightAdvice``).
         """
         from aiida_koopmans.workgraphs.pw import PwBandsCodes
 
@@ -124,49 +136,198 @@ class TestLoadCodes:
         assert "pw" in codes
 
 
-class TestStructuralAdvice:
-    """Codes the plugin graphs wire structurally: builds fine, fails at check/submit.
+class TestPreFlightAdvice:
+    """Every route below reaches its ``require_configured_codes`` pre-flight before ``build()``.
 
-    Each case here reaches its ``MissingRequiredInputsError`` because the
-    consuming ``@task.graph`` threads the missing member through
-    ``node_graph.ref`` rather than subscripting it directly — the socket
-    stays unlinked instead of a Python dict access dying immediately.
+    Each is a *required* codes-TypedDict member missing entirely — so the
+    dispatcher's pre-flight (:func:`~koopmans.aiida.workflows.require_configured_codes`,
+    called right after :func:`~koopmans.aiida.workflows.load_codes` in every
+    route module) raises the same install advice ``advice_for`` renders from
+    a structural ``MissingRequiredInputsError``, before the route's own
+    ``@task.graph`` body ever gets a chance to run. The entry-graph bind
+    that *would* have crashed underneath still exists in every case; the
+    pre-flight is what intercepts first now, not a fix to that bind:
+
+    * ``aiida_koopmans.workgraphs.pw.RunPwBands`` (``pw``) and
+      ``aiida_koopmans.workgraphs.ph.DielectricTask`` (``pw``/``ph``, also
+      covered by ``tests/test_dft_eps_dispatcher.py``'s
+      ``test_missing_ph_code_earns_preflight_advice``) feed the code
+      straight into their own eager ``get_builder_from_protocol`` call.
+      Fixable in aiida-koopmans alone (working precedent: ``pw.py``'s own
+      ``RunScfNscf``/``assemble_pw_base_step`` pair, and aiida-koopmans#90's
+      own ``RunProjwfc``, both wrap that call in a small ``@task.graph`` so
+      the *caller* can ``ref()`` the code in). This is the gap
+      aiida-koopmans#88 flagged against upstream node-graph#169 and said
+      would "convert in a follow-up"; #90 (the ``ref()`` migration this PR
+      pairs with) has not reached these call sites yet.
+    * ``block_wannierize.py``'s optional quality-check-bands helper (entered
+      only when a ``kpoints.path`` is given) has the identical eager-builder
+      shape; without a path it is never entered, but the pre-flight still
+      demands ``pw`` up front, since ``pw`` is unconditionally required by
+      ``WannierizeBlocksCodes`` regardless of whether that helper runs.
+    * ``aiida_koopmans.workgraphs.kcp.KoopmansDSCFWorkflow``'s ``kcp_code =
+      codes["kcp"]`` bind — reached by both the singlepoint and the
+      trajectory routes — is aiida-koopmans#90's own deliberate, permanent
+      choice: ``kcp`` is never route-conditional, so the maintainer judged
+      threading a ``ref()`` through 11 sibling functions not worth it for a
+      value that never varies.
+    * ``aiida_koopmans.workgraphs.wannier90.Wannierize`` (whole-manifold
+      ``auto_projections``) hands its entire ``codes`` namespace to
+      ``Wannier90WorkChain.get_builder_from_protocol(codes=codes, ...)`` in
+      upstream ``aiida-wannier90-workflows``, whose own eager membership
+      check would otherwise raise a plain ``ValueError`` before any
+      aiida-koopmans or koopmans2 code runs again — not fixable in either
+      repo alone.
     """
 
-    def test_dfpt_missing_pw_fans_out_and_collapses_to_one_line(
+    def test_dft_bands_missing_pw_earns_preflight_advice(
+        self, aiida_profile_clean: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """``RunPwBands`` binds ``codes["pw"]`` eagerly; the pre-flight names it first."""
+        from tests.fixtures import silicon_pw_input
+
+        inp = KoopmansInput.model_validate(silicon_pw_input())
+        with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+
+    def test_molecular_dscf_missing_kcp_earns_preflight_advice(
+        self, aiida_profile_clean: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """``KoopmansDSCFWorkflow`` binds ``codes["kcp"]`` eagerly; the pre-flight is first."""
+        inp = KoopmansInput.model_validate(_si_dscf_dict(init_orbitals="kohn-sham"))
+        with pytest.raises(ValueError, match="`kcp@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+
+    def test_trajectory_missing_kcp_earns_preflight_advice(
+        self,
+        aiida_profile_clean: Any,
+        fake_sg15_pseudo_family: Any,
+        tmp_path: Any,
+        write_multiframe_xyz: Any,
+    ) -> None:
+        """The trajectory route forwards codes into the same eager kcp bind."""
+        from tests.test_trajectory_dispatcher import _trajectory_input_dict
+
+        inp = KoopmansInput.model_validate(
+            _trajectory_input_dict(str(write_multiframe_xyz(tmp_path, 1)))
+        )
+        with pytest.raises(ValueError, match="`kcp@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+
+    def test_wannierize_blocks_with_path_missing_pw_earns_preflight_advice(
+        self,
+        aiida_profile_clean: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """A ``kpoints.path`` reaches the quality-check-bands helper, which bare-binds pw."""
+        from tests.test_wannierize_blocks_dispatcher import _si_split_dict
+
+        d = _si_split_dict(block_wannierization_threshold=None)
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+
+    def test_wannierize_blocks_without_path_missing_pw_earns_preflight_advice(
+        self,
+        aiida_profile_clean: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """Demand pw even where the eager bind is unreachable.
+
+        ``pw`` is unconditionally required by ``WannierizeBlocksCodes``, so
+        the pre-flight fires whether or not the optional quality-check-bands
+        helper — the site that actually bare-binds it — would ever run.
+        """
+        from tests.test_wannierize_blocks_dispatcher import _si_split_dict
+
+        d = _si_split_dict(block_wannierization_threshold=None)
+        d["kpoints"].pop("path")
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+
+    def test_wannierize_whole_auto_missing_pw_earns_preflight_advice(
+        self, aiida_profile_clean: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The pre-flight gets here before upstream's own eager ValueError can."""
+        from tests.test_wannierize_blocks_dispatcher import _si_auto_dict
+
+        d = _si_auto_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+        assert "does not contain the required key" not in str(excinfo.value)
+
+    def test_dfpt_missing_pw_earns_preflight_advice(
         self,
         aiida_profile_clean: Any,
         installed_kcw_code: Any,
         installed_wannier_codes: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """Pw feeds several nested sockets; the advice still names it once.
+        """Intercept pw before its several sockets can fan out.
 
-        Live reproduction of the fan-out ``advice_for`` has to collapse:
-        the missing top-level ``codes.pw``, the shared scf/nscf step's own
-        ``pw_code`` kwarg, and the nested wannierize sub-graph's
-        ``codes.pw`` all trace back to the one unconfigured code.
+        ``pw`` is required in ``DfptCodes``, so the pre-flight fires before
+        the fan-out forms at all. What a genuinely deferred, ``NotRequired``
+        member's fan-out looks like is covered synthetically in
+        ``test_error_translation.py``.
         """
         from tests.test_dfpt_dispatcher import _si_dfpt_dict
 
         inp = KoopmansInput.model_validate(_si_dfpt_dict())
+        with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+
+
+class TestStructuralAdvice:
+    """Codes the plugin graphs wire structurally: ``NotRequired``, input-conditional.
+
+    ``require_configured_codes`` never looks at these — only
+    ``__required_keys__`` — so they still build fine and fail only where the
+    ``@task.graph`` body's own ``ref()``-threaded socket goes unfilled, at
+    ``check_before_run`` / submit.
+    """
+
+    def test_dfpt_eps_auto_missing_ph_passes_preflight_fails_at_submit(
+        self,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        installed_kcw_code: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """``ph`` is ``NotRequired`` in ``DfptCodes``: the pre-flight has no opinion on it.
+
+        Pins the design boundary the user drew explicitly: the pre-flight
+        must not demand a settings-conditional member (``ph`` is only
+        actually needed because this input sets ``eps_inf: auto``), so the
+        build succeeds and the structural check at submit is still what
+        catches it — unchanged by this PR's pre-flight addition.
+        """
+        from tests.test_dfpt_dispatcher import _si_dfpt_dict
+
+        inp = KoopmansInput.model_validate(_si_dfpt_dict(eps_inf="auto"))
         wg = build_workgraph(inp)
 
         from aiida_workgraph.errors import MissingRequiredInputsError
 
         with pytest.raises(MissingRequiredInputsError) as excinfo:
             wg.check_before_run()
-        paths = {entry.socket_path for entry in excinfo.value.missing}
-        assert len(paths) > 1, "the fan-out this test exists to collapse did not happen"
 
         advice = advice_for(excinfo.value)
         assert advice is not None
-        assert advice.count("pw@localhost") == 1
+        assert "`ph@localhost`" in advice
         assert "koopmans install" in advice
-
-    # eps_inf='auto' missing ph is the same mechanism, one hop simpler (no
-    # fan-out): see test_dft_eps_dispatcher.py's
-    # test_auto_without_ph_code_builds_then_fails_at_check.
 
     def test_wannierize_blocks_missing_wannierjl_and_projwfc(
         self,
@@ -177,8 +338,10 @@ class TestStructuralAdvice:
     ) -> None:
         """The split threshold turns on wannierjl; both missing codes are named, not merged.
 
-        Discriminates the dedup against over-merging: wannierjl and
-        projwfc are two distinct missing codes and must earn two advice
+        Both ``wannierjl`` and ``projwfc`` are ``NotRequired`` in
+        ``WannierizeBlocksCodes``, so the pre-flight passes and this still
+        reaches ``check_before_run``. Discriminates the dedup against
+        over-merging: two distinct missing codes must earn two advice
         lines, not one.
         """
         from tests.test_wannierize_blocks_dispatcher import _si_split_dict
@@ -196,145 +359,3 @@ class TestStructuralAdvice:
         assert "`wannierjl@localhost`" in advice
         assert "`projwfc@localhost`" in advice
         assert advice.count("wannierjl@localhost") == 1
-
-    def test_wannierize_blocks_missing_pw_without_a_path(
-        self,
-        aiida_profile_clean: Any,
-        installed_wannier_codes: Any,
-        fake_sg15_cutoffs_family: Any,
-    ) -> None:
-        """Without a quality-check bands run, the whole block route defers pw safely.
-
-        Discriminates the block route's *own* per-block Wannierization
-        wiring (already ``ref()``-threaded) from its optional
-        quality-check-bands add-on (:class:`TestKnownEntryPointGap`'s
-        ``test_wannierize_blocks_with_path_missing_pw_keyerrors_at_build`,
-        the same input with a ``kpoints.path`` added): dropping the path
-        removes the only bare ``codes["pw"]`` subscript on this route, and
-        the build reaches ``check_before_run`` cleanly, fanning out across
-        the same three sockets as ``test_dfpt_missing_pw_fans_out_...``.
-        """
-        from tests.test_wannierize_blocks_dispatcher import _si_split_dict
-
-        d = _si_split_dict(block_wannierization_threshold=None)
-        d["kpoints"].pop("path")
-        inp = KoopmansInput.model_validate(d)
-        wg = build_workgraph(inp)
-
-        from aiida_workgraph.errors import MissingRequiredInputsError
-
-        with pytest.raises(MissingRequiredInputsError) as excinfo:
-            wg.check_before_run()
-
-        advice = advice_for(excinfo.value)
-        assert advice is not None
-        assert advice.count("pw@localhost") == 1
-        assert "koopmans install" in advice
-
-
-class TestKnownEntryPointGap:
-    """A route whose entry graph binds its own code eagerly still crashes at build.
-
-    Not a k2 defect: the dispatcher builds a plain mapping and hands it to
-    the graph exactly as designed (:func:`load_codes`); what a route's
-    *own* top-level ``@task.graph`` body — or an upstream builder it calls
-    into — does with that mapping is out of the dispatcher's hands. Three
-    different reasons, each pinned here so a future fix on the other side
-    shows up as an unexpected pass rather than going unnoticed:
-
-    * **ak2's own eager builder call, fixable there alone.**
-      ``aiida_koopmans.workgraphs.pw.RunPwBands`` and
-      ``aiida_koopmans.workgraphs.ph.DielectricTask`` (the latter also
-      covered by ``tests/test_dft_eps_dispatcher.py``'s
-      ``test_missing_ph_code_keyerrors_at_build``) feed the code straight
-      into an eager ``get_builder_from_protocol`` call in their *own*
-      body, which needs a concrete ``orm.Code`` and cannot take a lazy
-      ``ref()``. ``block_wannierize.py``'s optional quality-check-bands
-      helper (entered only when a ``kpoints.path`` is given — see
-      ``test_wannierize_blocks_with_path_missing_pw_keyerrors_at_build``
-      below, and contrast ``TestStructuralAdvice``'s
-      ``test_wannierize_blocks_missing_pw_without_a_path``, where the
-      same route without that add-on defers safely) has the identical
-      shape. All of these already have a working precedent in the same
-      codebase — ``pw.py``'s own ``RunScfNscf`` / ``assemble_pw_base_step``
-      pair, and aiida-koopmans#90's own ``RunProjwfc`` — wrapping the
-      ``get_builder_from_protocol`` call in its own small ``@task.graph``
-      so the *caller* can ``ref()`` the code into it. This is the gap
-      aiida-koopmans#88 flagged against upstream node-graph#169 and said
-      would "convert in a follow-up"; #90 (the ``ref()`` migration this PR
-      pairs with) has not reached these call sites yet.
-    * **ak2's own choice, deliberate and permanent.**
-      ``aiida_koopmans.workgraphs.kcp.KoopmansDSCFWorkflow``'s own
-      ``kcp_code = codes["kcp"]`` bind is different in kind, not just in
-      permanence: unlike the sites above, its ~25 downstream consumers
-      already accept a plain ``kcp_code: orm.AbstractCode`` parameter —
-      the same shape ``RunScfNscf.pw_code`` takes a working ``ref()``
-      value into elsewhere in this codebase — so swapping this one bind to
-      ``ref(codes, "kcp")`` looks mechanically available with no consumer
-      changes. aiida-koopmans#90's own description nonetheless treats it
-      as settled: ``kcp`` is never route-conditional, so the maintainer
-      judged the extra indirection not worth carrying across 11 sibling
-      functions for a value that never varies. A user call, not a
-      technical wall — flagged as such rather than asserted as fixed.
-    * **Blocked upstream, not ak2's or k2's code at all.**
-      ``aiida_koopmans.workgraphs.wannier90.Wannierize`` (the whole-manifold
-      ``auto_projections`` route) hands its entire ``codes`` namespace to
-      ``Wannier90WorkChain.get_builder_from_protocol(codes=codes, ...)`` —
-      upstream ``aiida-wannier90-workflows``. That library's own
-      ``utils/workflows/builder/submit.py`` does an eager membership check
-      and raises a plain ``ValueError`` (``codes does not contain the
-      required key: pw``) — not even a bare ``KeyError``, and not a line
-      either k2 or aiida-koopmans owns. Closing this needs either an
-      upstream change accepting a lazy code reference, or wrapping ak2's
-      own call to that upstream builder in an indirection ``@task.graph``
-      the same way the ak2-side sites above would.
-    """
-
-    def test_dft_bands_missing_pw_keyerrors_at_build(
-        self, aiida_profile_clean: Any, fake_sg15_pseudo_family: Any
-    ) -> None:
-        """RunPwBands binds ``codes["pw"]`` directly; a missing pw dies in build()."""
-        from tests.fixtures import silicon_pw_input
-
-        inp = KoopmansInput.model_validate(silicon_pw_input())
-        with pytest.raises(KeyError, match="pw"):
-            build_workgraph(inp)
-
-    def test_molecular_dscf_missing_kcp_keyerrors_at_build(
-        self, aiida_profile_clean: Any, fake_sg15_pseudo_family: Any
-    ) -> None:
-        """KoopmansDSCFWorkflow binds ``codes["kcp"]`` directly — a deliberate, permanent choice."""
-        inp = KoopmansInput.model_validate(_si_dscf_dict(init_orbitals="kohn-sham"))
-        with pytest.raises(KeyError, match="kcp"):
-            build_workgraph(inp)
-
-    def test_wannierize_blocks_with_path_missing_pw_keyerrors_at_build(
-        self,
-        aiida_profile_clean: Any,
-        installed_wannier_codes: Any,
-        fake_sg15_cutoffs_family: Any,
-    ) -> None:
-        """A kpoints.path reaches the quality-check-bands helper, which bare-binds pw."""
-        from tests.test_wannierize_blocks_dispatcher import _si_split_dict
-
-        d = _si_split_dict(block_wannierization_threshold=None)
-        inp = KoopmansInput.model_validate(d)
-        with pytest.raises(KeyError, match="pw"):
-            build_workgraph(inp)
-
-    def test_wannierize_whole_auto_missing_pw_raises_upstream_valueerror(
-        self, aiida_profile_clean: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """Wannierize hands upstream its whole codes namespace; upstream's own check fires first.
-
-        Not a ``KeyError`` like the other sites here: upstream
-        aiida-wannier90-workflows raises its own ``ValueError`` before
-        ak2 or k2 code runs again.
-        """
-        from tests.test_wannierize_blocks_dispatcher import _si_auto_dict
-
-        d = _si_auto_dict()
-        del d["workflow"]["block_wannierization_threshold"]
-        inp = KoopmansInput.model_validate(d)
-        with pytest.raises(ValueError, match="does not contain the required key"):
-            build_workgraph(inp)

@@ -13,6 +13,7 @@ from koopmans.aiida.workflows import (
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
+    require_configured_codes,
     require_cutoffs_for_family,
 )
 from koopmans.aiida.workflows.blocks import (
@@ -239,7 +240,13 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # asks for; here it rides along for the projected DOS accompanying the
     # quality-check bands run — whether that run actually happens is the
     # graph's own decision.
+    #
+    # Wannierize hands its whole codes namespace to an upstream
+    # get_builder_from_protocol call, which raises its own eager error on
+    # a missing required member; the pre-flight gets there first with the
+    # same install advice every other route gives.
     codes = load_codes(WannierizeCodes)
+    require_configured_codes(WannierizeCodes, codes)
 
     return Wannierize.build(
         codes=codes,
@@ -388,7 +395,13 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # behind the threshold, and projwfc only for the quality-check
     # projected DOS; whether either runs, and whether a missing code the
     # run does need is fatal, is the graph's own structural requirement.
+    #
+    # The quality-check-bands helper (entered whenever a k-path is given)
+    # binds pw eagerly (aiida-koopmans#88/#90: not yet converted to
+    # node_graph.ref); the pre-flight catches a missing required member
+    # before that bare subscript can raise a bare KeyError.
     codes = load_codes(WannierizeBlocksCodes)
+    require_configured_codes(WannierizeBlocksCodes, codes)
 
     # Without a threshold the graph splits nothing, and WannierizeBlocks
     # rejects the split-only inputs rather than ignore them.

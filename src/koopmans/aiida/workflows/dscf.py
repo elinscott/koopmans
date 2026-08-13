@@ -12,6 +12,7 @@ from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_para
 from koopmans.aiida.workflows import (
     load_codes,
     reject_kpoint_overrides,
+    require_configured_codes,
     require_cutoffs_for_family,
 )
 from koopmans.aiida.workflows.blocks import (
@@ -110,8 +111,12 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # load_codes loads every configured member of DscfCodes. Every
     # NotRequired member exists for the Wannier-seeded initialisation;
     # whether the route needs them, and whether a missing one is fatal, is
-    # the graph's own structural requirement.
+    # the graph's own structural requirement. KoopmansDSCFWorkflow binds
+    # kcp eagerly (aiida-koopmans#90: a deliberate, permanent choice, not
+    # a follow-up); the pre-flight catches a missing kcp before that bare
+    # subscript can raise a bare KeyError.
     codes = load_codes(DscfCodes)
+    require_configured_codes(DscfCodes, codes)
 
     return KoopmansDSCFWorkflow.build(
         codes=codes,
