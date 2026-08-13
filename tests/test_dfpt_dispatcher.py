@@ -420,20 +420,25 @@ class TestProjwfcQualityCheck:
         assert codes_socket._links
         assert wg.tasks["dfpt"].inputs["projwfc"]._links
 
-    def test_unconfigured_projwfc_leaves_dfpt_unwired(
+    def test_unconfigured_projwfc_still_wires_dfpt_from_the_pseudos_alone(
         self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """Negative control: without a projwfc code, ``dfpt`` gets no projwfc input.
+        """A missing projwfc code no longer gates the projwfc data wiring.
 
-        The bands path alone (no projwfc code in ``dfpt_codes``) still
-        threads ``wannierize_bands``; only the projected-DOS wiring depends
-        on the code.
+        WannierizeBlocks' projwfc entry is decided by
+        projected_dos_supported(...) alone — fake_sg15_pseudo_family
+        supports it — so the projwfc data link into dfpt exists regardless
+        of whether dfpt_codes carries a projwfc code. A code that's
+        actually missing surfaces as the framework's structural
+        missing-input error at submission (aiida-koopmans' own contract,
+        pinned in its test_codes_by_need.py and test_wannierize_workgraph.py),
+        not a build-time absence of this link.
         """
         d = _si_dfpt_dict()
         d["kpoints"]["path"] = "GX"
         wg = _build(d)
         assert wg.tasks["dfpt"].inputs["wannierize_bands"]._links
-        assert not wg.tasks["dfpt"].inputs["projwfc"]._links
+        assert wg.tasks["dfpt"].inputs["projwfc"]._links
 
     def test_no_path_skips_the_wannierize_quality_check(
         self, aiida_profile_clean: Any, dfpt_pdos_codes: Any, fake_sg15_pseudo_family: Any

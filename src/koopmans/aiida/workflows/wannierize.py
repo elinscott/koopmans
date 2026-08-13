@@ -14,10 +14,10 @@ from koopmans.aiida.conversion import (
     kpoints_input_to_interpolation_path,
 )
 from koopmans.aiida.workflows import (
-    configured_projwfc,
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
+    require_configured_codes,
     require_cutoffs_for_family,
 )
 from koopmans.aiida.workflows.blocks import (
@@ -188,11 +188,11 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     bands path, so each Wannierization also emits ``interpolated_bands`` —
     its band structure Wannier-interpolated along that path. A pw.x bands
     run along the same path supplies the explicit eigenvalues the
-    interpolation is judged against. The dispatcher passes a configured
-    projwfc code along (:func:`~koopmans.aiida.workflows.configured_projwfc`);
-    whether a projected DOS runs from the bands run — and the warning when the
-    pseudopotentials' missing ``PP_PSWFC`` wavefunctions make it
-    impossible — is the graphs' decision. The path always travels as an
+    interpolation is judged against. A configured projwfc code rides along
+    whenever ``load_codes`` finds one; whether a projected DOS runs from the
+    bands run — and the warning when the pseudopotentials' missing
+    ``PP_PSWFC`` wavefunctions make it impossible — is the graphs'
+    decision. The path always travels as an
     explicit labelled k-list: the graphs run the pw.x quality check only
     for that form — a symbolic ``kpoint_path`` leaves wannier90 to
     discretize the path itself, with no pw.x eigenvalues to compare
@@ -245,14 +245,19 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
-    # WannierizeCodes's one NotRequired member is projwfc. The upstream
-    # builder wires it only for SCDM projections and frozen_type
-    # energy_auto, which koopmans never asks for; here it rides along for
-    # the projected DOS accompanying the quality-check bands run.
+    # load_codes loads projwfc, WannierizeCodes's one NotRequired member,
+    # whenever it is configured. The upstream builder wires it only for
+    # SCDM projections and frozen_type energy_auto, which koopmans never
+    # asks for; here it rides along for the projected DOS accompanying the
+    # quality-check bands run — whether that run actually happens is the
+    # graph's own decision.
+    #
+    # Wannierize hands its whole codes namespace to an upstream
+    # get_builder_from_protocol call, which raises its own eager error on
+    # a missing required member; the pre-flight gets there first with the
+    # same install advice every other route gives.
     codes = load_codes(WannierizeCodes)
-    projwfc = configured_projwfc()
-    if projwfc is not None:
-        codes["projwfc"] = projwfc
+    require_configured_codes(WannierizeCodes, codes)
 
     return Wannierize.build(
         codes=codes,
@@ -393,18 +398,19 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # its band structure along it.
     interpolation_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
-    # ``WannierizeBlocksCodes``'s NotRequired members are turned on one by
-    # one: the threshold requires wannierjl (the julia binary registered
-    # via aiida_wannierjl.helpers.get_wannierjl_code) for the split
-    # machinery, while projwfc merely rides along when configured — the
-    # graph decides whether the projected DOS runs.
-    codes = load_codes(
-        WannierizeBlocksCodes,
-        require=("wannierjl",) if threshold is not None else (),
-    )
-    projwfc = configured_projwfc()
-    if projwfc is not None:
-        codes["projwfc"] = projwfc
+    # load_codes loads every configured member of WannierizeBlocksCodes.
+    # wannierjl (the julia binary registered via
+    # aiida_wannierjl.helpers.get_wannierjl_code) is only actually needed
+    # behind the threshold, and projwfc only for the quality-check
+    # projected DOS; whether either runs, and whether a missing code the
+    # run does need is fatal, is the graph's own structural requirement.
+    #
+    # The quality-check-bands helper (entered whenever a k-path is given)
+    # binds pw eagerly (aiida-koopmans#97: not yet converted to
+    # node_graph.reference); the pre-flight catches a missing required member
+    # before that bare subscript can raise a bare KeyError.
+    codes = load_codes(WannierizeBlocksCodes)
+    require_configured_codes(WannierizeBlocksCodes, codes)
 
     # Without a threshold the graph splits nothing, and WannierizeBlocks
     # rejects the split-only inputs rather than ignore them.

@@ -175,12 +175,24 @@ class TestDftEps:
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_eps"):
             build_workgraph(KoopmansInput.model_validate(d))
 
-    def test_missing_ph_code_raises(
+    def test_missing_ph_code_earns_preflight_advice(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Without a ph@localhost code the dispatcher fails with a setup hint.
+        """Without a ph@localhost code, the dispatcher's pre-flight names it before build.
 
-        Requests ``aiida_profile_clean``: earlier tests may have installed a
+        ``DielectricTask`` — the dft_eps route's own entry graph — feeds
+        ``codes["ph"]`` (and ``codes["pw"]``) straight into an eager
+        ``get_builder_from_protocol`` call, which needs a concrete
+        ``orm.Code`` and cannot take a lazy ``node_graph.reference()``; left to
+        its own devices that bind would die as a bare ``KeyError`` mid-trace
+        (known gap on the plugin side: aiida-koopmans#88, tracking upstream
+        node-graph#169; #90 has not reached this call site yet — not a k2
+        defect). ``require_configured_codes``, called right after
+        ``load_codes`` in ``eps.py``, intercepts first: ``ph`` is required
+        in ``DielectricCodes``, so the dispatcher's own pre-flight raises
+        the install advice before ``DielectricTask.build()`` ever runs. See
+        ``tests/test_code_loading.py``'s ``TestPreFlightAdvice``. Requests
+        ``aiida_profile_clean``: earlier tests may have installed a
         ``ph@localhost`` code in the session profile.
         """
         inp = KoopmansInput.model_validate(_si_eps_dict())
@@ -239,22 +251,36 @@ class TestDfptAutoEps:
         assert list(eps_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
         assert list(main_mesh.get_kpoints_mesh()[0]) == [2, 2, 2]
 
-    def test_auto_without_ph_code_raises(
+    def test_auto_without_ph_code_builds_then_fails_at_check(
         self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """eps_inf='auto' without ph@localhost fails with a setup hint.
+        """eps_inf='auto' without ph@localhost builds fine and fails at check/submit.
 
-        The pre-check names the missing code, quotes the purpose its codes
-        TypedDict declares, and points at ``koopmans install``. Requests
+        ``SinglepointDFPTWorkflow`` threads ``ph`` into its dielectric
+        pre-computation step through ``node_graph.reference``, so a missing
+        code leaves an unlinked socket rather than dying in the eager
+        trace: the build succeeds, and ``check_before_run`` — what
+        ``run``/``submit`` call before doing anything else — is what
+        raises. ``advice_for`` then names the code and quotes the
+        purpose its codes TypedDict declares. Requests
         ``aiida_profile_clean``: earlier tests may have installed a
         ``ph@localhost`` code in the session profile.
         """
+        from aiida_workgraph.errors import MissingRequiredInputsError
+
+        from koopmans.aiida.workflows import advice_for
+
         inp = KoopmansInput.model_validate(_si_dfpt_auto_dict())
-        with pytest.raises(ValueError, match="`ph@localhost`") as excinfo:
-            build_singlepoint_dfpt_workgraph(inp)
-        message = str(excinfo.value)
-        assert "Needed if the dielectric constant is to be computed automatically." in message
-        assert "koopmans install" in str(excinfo.value)
+        wg = build_singlepoint_dfpt_workgraph(inp)
+
+        with pytest.raises(MissingRequiredInputsError) as excinfo:
+            wg.check_before_run()
+
+        advice = advice_for(excinfo.value)
+        assert advice is not None
+        assert "`ph@localhost`" in advice
+        assert "Needed to compute the dielectric constant." in advice
+        assert "koopmans install" in advice
 
     def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
         """A non-'auto' string eps_inf is rejected up front."""

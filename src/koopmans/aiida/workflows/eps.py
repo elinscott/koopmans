@@ -9,6 +9,7 @@ from koopmans.aiida.workflows import (
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
+    require_configured_codes,
 )
 
 if TYPE_CHECKING:
@@ -52,8 +53,14 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf"])
     overrides["ph"] = {"ph": {"parameters": input_to_ph_parameters(koopmans_input)}}
 
+    # DielectricTask binds both codes eagerly (aiida-koopmans#97: not
+    # yet converted to node_graph.reference); the pre-flight catches a missing
+    # pw or ph before that bare subscript can raise a bare KeyError.
+    codes = load_codes(DielectricCodes)
+    require_configured_codes(DielectricCodes, codes)
+
     return DielectricTask.build(
-        codes=load_codes(DielectricCodes),
+        codes=codes,
         structure=structure,
         pseudo_family=pseudo_family,
         overrides=overrides,

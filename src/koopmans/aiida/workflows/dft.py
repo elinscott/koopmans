@@ -9,6 +9,7 @@ from koopmans.aiida.workflows import (
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
+    require_configured_codes,
 )
 
 if TYPE_CHECKING:
@@ -41,10 +42,16 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     structure, _pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "bands"])
 
+    # RunPwBands binds its code eagerly (aiida-koopmans#97: not yet
+    # converted to node_graph.reference); the pre-flight catches a missing pw
+    # before that bare subscript can raise a bare KeyError.
+    codes = load_codes(PwBandsCodes)
+    require_configured_codes(PwBandsCodes, codes)
+
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
     return RunPwBands.build(
-        codes=load_codes(PwBandsCodes),
+        codes=codes,
         structure=structure,
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,

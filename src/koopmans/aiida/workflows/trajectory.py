@@ -8,7 +8,12 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_code, load_codes, reject_kpoint_overrides
+from koopmans.aiida.workflows import (
+    load_code,
+    load_codes,
+    reject_kpoint_overrides,
+    require_configured_codes,
+)
 from koopmans.aiida.workflows.dscf import (
     KPOINT_OVERRIDES_ON_TRAJECTORY,
     dscf_wannier_init_inputs,
@@ -98,11 +103,16 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             koopmans_input, next(iter(snapshots.values())), inputs["nbnd"]
         )
 
-    # Every NotRequired member of DscfCodes exists for the Wannier-seeded
-    # initialisation, so that route turns them all on. Loaded before the
-    # loose decompose code below, so an empty profile reports the whole
-    # workflow's missing codes at once instead of one at a time.
-    codes = load_codes(DscfCodes, require=DscfCodes.__optional_keys__ if wannier_init else ())
+    # load_codes loads every configured member of DscfCodes. Every
+    # NotRequired member exists for the Wannier-seeded initialisation;
+    # whether the route needs them, and whether a missing one is fatal, is
+    # the graph's own structural requirement. TrajectoryWorkflow forwards
+    # codes into the same KoopmansDSCFWorkflow machinery, whose kcp bind
+    # is eager (aiida-koopmans#90: a deliberate, permanent choice); the
+    # pre-flight catches a missing kcp before that bare subscript can
+    # raise a bare KeyError.
+    codes = load_codes(DscfCodes)
+    require_configured_codes(DscfCodes, codes)
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
@@ -173,7 +183,7 @@ def _load_model_node(identifier: int | str) -> orm.Dict:
     raw = str(identifier)
     node = orm.load_node(int(raw) if raw.isdigit() else raw)
     if not isinstance(node, orm.Dict):
-        raise ValueError(
+        raise TypeError(
             f"ml:model must name the stored trained-model Dict node (the `model` "
             f"output of a mode='train' run); node {raw} is a {type(node).__name__}."
         )
