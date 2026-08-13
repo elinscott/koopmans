@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from aiida import orm
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
+    from wannier90_input.models.parameters import Projection
 
     from koopmans.input_file import KoopmansInput
 
@@ -120,6 +121,53 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     )
 
 
+def _require_nbnd_matches_projections(
+    nbnd: int,
+    structure: orm.StructureData,
+    projection_blocks: list[list[Projection]],
+    num_occ_bands: int,
+    spin_label: str = "",
+) -> None:
+    """Reject an ``nbnd`` inconsistent with the given projections.
+
+    The merged evc_occupied/evc_empty files that seed the supercell kcp.x
+    run carry one orbital per projected Wannier function, so kcp.x's
+    ``nbnd`` must equal the projections' total, no more and no fewer.
+    Mirrors legacy's ``KoopmansDSCFWorkflow.__init__`` nbnd check
+    (``koopmans/workflows/_koopmans_dscf.py``).
+    """
+    from aiida_koopmans.projections import projection_num_wann
+
+    nwann = sum(projection_num_wann(structure, p) for block in projection_blocks for p in block)
+    if nbnd < num_occ_bands:
+        raise ValueError(
+            f"nbnd = {nbnd} is less than the number of {spin_label}occupied bands "
+            f"({num_occ_bands}). Increase `calculator_parameters.nbnd` (or "
+            f"`calculator_parameters.kcp.system.nbnd`) to at least {num_occ_bands}."
+        )
+    if nbnd != nwann:
+        raise ValueError(
+            f"nbnd = {nbnd} is inconsistent with the {spin_label}projections in "
+            "`calculator_parameters.w90.projections`:\n"
+            f"  empty bands implied by nbnd = {nbnd - num_occ_bands}\n"
+            f"  empty Wannier functions in the projections = {nwann - num_occ_bands}\n"
+            "Set `calculator_parameters.nbnd` (or `calculator_parameters.kcp.system.nbnd`) "
+            f"to {nwann}, the total number of Wannier functions the projections describe, "
+            "or add or remove projections to match."
+        )
+
+
+def _require_nscf_covers_nbnd(nscf_nbnd: int, nbnd: int) -> None:
+    """Reject an nscf band count too small to feed kcp.x's ``nbnd`` orbitals."""
+    if nscf_nbnd < nbnd:
+        raise ValueError(
+            f"The nscf runs {nscf_nbnd} bands but the kcp.x steps need {nbnd} "
+            "variational orbitals, which the Wannier functions cannot span. Raise "
+            "``calculator_parameters.pw.system.nbnd`` to at least "
+            f"{nbnd}."
+        )
+
+
 def dscf_wannier_init_inputs(
     koopmans_input: KoopmansInput,
     structure: orm.StructureData,
@@ -159,13 +207,6 @@ def dscf_wannier_init_inputs(
     # instead leaves the bands above it neither included nor excluded, and
     # wannier90 rejects the mmn it is then handed.
     nscf_nbnd = int(parameters.get("SYSTEM", {}).get("nbnd") or nbnd)
-    if nscf_nbnd < nbnd:
-        raise ValueError(
-            f"The nscf runs {nscf_nbnd} bands but the kcp.x steps need {nbnd} "
-            "variational orbitals, which the Wannier functions cannot span. Raise "
-            "``calculator_parameters.pw.system.nbnd`` to at least "
-            f"{nbnd}."
-        )
 
     if workflow.spin == SpinType.COLLINEAR:
         w90 = calc_params.wannier90
@@ -188,6 +229,18 @@ def dscf_wannier_init_inputs(
             )
         nocc_up = (nelec + magnetization) // 2
         nocc_down = (nelec - magnetization) // 2
+        # nbnd must equal the number of Wannier functions the projections
+        # describe: the merged evc_occupied/evc_empty files carry one
+        # kcp.x orbital per projected Wannier function, so a mismatch here
+        # is wrong regardless of how many bands the nscf computes. Checked
+        # against the raw projections, ahead of the nscf guard below, so
+        # an oversized nbnd is diagnosed by name instead of surfacing as
+        # an nscf shortfall.
+        _require_nbnd_matches_projections(nbnd, structure, w90.up.projections, nocc_up, "spin up ")
+        _require_nbnd_matches_projections(
+            nbnd, structure, w90.down.projections, nocc_down, "spin down "
+        )
+        _require_nscf_covers_nbnd(nscf_nbnd, nbnd)
         up_blocks = create_explicit_blocks(
             structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
         )
@@ -208,6 +261,8 @@ def dscf_wannier_init_inputs(
                 "Wannier-initialised DSCF route."
             )
         nocc = nelec // 2
+        _require_nbnd_matches_projections(nbnd, structure, calc_params.wannier90.projections, nocc)
+        _require_nscf_covers_nbnd(nscf_nbnd, nbnd)
         blocks = create_explicit_blocks(
             structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
         )
