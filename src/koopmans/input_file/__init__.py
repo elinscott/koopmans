@@ -22,6 +22,7 @@ from koopmans.input_file.cell_parameters import (
 from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.parallelization import ParallelizationInput
+from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
@@ -47,6 +48,7 @@ __all__ = [
     "KpointsOverridesInput",
     "MLConfig",
     "NoOffset",
+    "PHInputParameters",
     "PW2Wannier90InputParameters",
     "PWInputParameters",
     "ParallelizationInput",
@@ -324,6 +326,7 @@ class CalculatorParametersInput(BaseModel):
     ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
     tot_magnetization: float | None = None
+    ph: PHInputParameters = Field(default_factory=lambda: PHInputParameters())
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(
         default_factory=lambda: PW2Wannier90InputParameters()

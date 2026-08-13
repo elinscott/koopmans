@@ -11,6 +11,7 @@ from koopmans.aiida.conversion import (
     _calculate_kpoints_along_path,
     _parse_kpoints_path_string,
     atoms_input_to_structure,
+    input_to_ph_parameters,
     input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
@@ -280,6 +281,28 @@ class TestInputToPwParameters:
             parameters = input_to_pw_parameters(inp)
 
         assert parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
+
+
+class TestInputToPhParameters:
+    """``input_to_ph_parameters`` carries user overrides, nothing else."""
+
+    def test_empty_by_default(self, aiida_profile: Any) -> None:
+        """With no ``ph`` block, ``INPUTPH`` states nothing explicitly."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        parameters = input_to_ph_parameters(inp)
+        assert parameters == {"INPUTPH": {}}
+
+    def test_user_value_survives(self, aiida_profile: Any) -> None:
+        """A tightened ``tr2_ph`` reaches the ``INPUTPH`` dict."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(calculator_parameters={"ecutwfc": 20.0, "ph": {"tr2_ph": 1.0e-14}})
+        )
+        parameters = input_to_ph_parameters(inp)
+        assert parameters["INPUTPH"]["tr2_ph"] == pytest.approx(1.0e-14)
 
 
 class TestCodeParallelizationHelper:
