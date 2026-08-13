@@ -616,3 +616,124 @@ class TestPathDensityRename:
             _si_input_with_kpoints(grid=[2, 2, 2], path="GX", path_density=20.0)
         )
         assert inp.kpoints.path_density == 20.0
+
+
+# (section, keyword, a value the DFPT route would never accept from the user,
+# a substring of the input-file setting that actually owns it).
+_KCW_ROUTE_OWNED_KEYS = [
+    ("calculator_parameters.kcw.control", "calculation", "wann2kcw", "kcw.x step being run"),
+    ("calculator_parameters.kcw.control", "prefix", "custom", "koopmans"),
+    ("calculator_parameters.kcw.control", "outdir", "custom_outdir", "koopmans"),
+    ("calculator_parameters.kcw.control", "mp1", 4, "kpoints"),
+    ("calculator_parameters.kcw.control", "mp2", 4, "kpoints"),
+    ("calculator_parameters.kcw.control", "mp3", 4, "kpoints"),
+    ("calculator_parameters.kcw.control", "l_vcut", True, "workflow.gb_correction"),
+    ("calculator_parameters.kcw.control", "spin_component", 2, "workflow.spin"),
+    ("calculator_parameters.kcw.control", "kcw_at_ks", False, "workflow.init_orbitals"),
+    ("calculator_parameters.kcw.control", "read_unitary_matrix", True, "workflow.init_orbitals"),
+    ("calculator_parameters.kcw.wannier", "seedname", "wann", "wannier90 seedname"),
+    (
+        "calculator_parameters.kcw.wannier",
+        "num_wann_occ",
+        4,
+        "calculator_parameters.wannier90.projections",
+    ),
+    (
+        "calculator_parameters.kcw.wannier",
+        "num_wann_emp",
+        2,
+        "calculator_parameters.wannier90.projections",
+    ),
+    (
+        "calculator_parameters.kcw.wannier",
+        "have_empty",
+        True,
+        "calculator_parameters.wannier90.projections",
+    ),
+    (
+        "calculator_parameters.kcw.wannier",
+        "has_disentangle",
+        True,
+        "disentanglement window",
+    ),
+    ("calculator_parameters.kcw.screen", "i_orb", 3, "workflow.group_orbitals_by"),
+    ("calculator_parameters.kcw.screen", "check_spread", True, "workflow.group_orbitals_by"),
+    ("calculator_parameters.kcw.screen", "eps_inf", 5.0, "workflow.eps_inf"),
+    ("calculator_parameters.kcw.ham", "do_bands", True, "kpoints.path"),
+]
+
+
+class TestKcwCalculatorParameters:
+    """``calculator_parameters.kcw`` mounts the kcw.x namelists (koopmans2#164)."""
+
+    @pytest.mark.parametrize(
+        ("section", "keyword", "value", "owner_snippet"),
+        _KCW_ROUTE_OWNED_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[1]}" for case in _KCW_ROUTE_OWNED_KEYS],
+    )
+    def test_route_owned_key_is_rejected(
+        self, section: str, keyword: str, value: object, owner_snippet: str
+    ) -> None:
+        """A user-set route-owned key fails at parse, naming the key and its owner."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, value)
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}`" in message
+        assert owner_snippet in message
+
+    def test_restating_the_default_is_accepted(self) -> None:
+        """A route-owned key stated at its own default is not rejected.
+
+        The check compares against the field's default, not whether it was
+        written: ``KoopmansInput.model_dump()`` states every field
+        explicitly (e.g. the shallow ``model_copy`` pattern
+        ``TestKcpDscfInputs`` uses elsewhere), so a "was it written" check
+        would misfire on any such round trip.
+        """
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"control": {"l_vcut": False}}})
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.kcw.control.l_vcut is False
+
+    def test_dump_and_revalidate_roundtrips(self) -> None:
+        """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks.
+
+        The regression this reproduces: dumping populates every kcw namelist
+        field (including the route-owned ones, at their defaults), and a
+        ``model_fields_set``-based check saw all of them as "written" on
+        re-validation.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        KoopmansInput.model_validate(inp.model_dump())
+
+    def test_non_owned_keywords_pass_through(self) -> None:
+        """A user-set expert keyword outside the owned set is accepted as-is."""
+        d = _si_input_with(
+            {
+                "ecutwfc": 20.0,
+                "kcw": {
+                    "control": {"lrpa": True},
+                    "wannier": {"alpha_mix": [0.5, 0.5]},
+                    "screen": {"tr2": 1.0e-16, "nmix": 6},
+                    "ham": {"on_site_only": True},
+                },
+            }
+        )
+        inp = KoopmansInput.model_validate(d)
+        calc_params = inp.calculator_parameters
+        assert calc_params.kcw.control.lrpa is True
+        assert calc_params.kcw.wannier.alpha_mix == [0.5, 0.5]
+        assert calc_params.kcw.screen.tr2 == pytest.approx(1.0e-16)
+        assert calc_params.kcw.ham.on_site_only is True
+
+    def test_defaults_leave_every_namelist_unset(self) -> None:
+        """With no ``kcw`` block, every namelist states nothing explicitly."""
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        kcw = inp.calculator_parameters.kcw
+        assert kcw.control.model_fields_set == set()
+        assert kcw.wannier.model_fields_set == set()
+        assert kcw.screen.model_fields_set == set()
+        assert kcw.ham.model_fields_set == set()

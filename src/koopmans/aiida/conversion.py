@@ -679,6 +679,30 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     return parameters
 
 
+def input_to_kcw_overrides(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
+    """Convert ``calculator_parameters.kcw`` into a kcw.x namelist-overrides dict.
+
+    One entry per namelist (``control``, ``wannier``, ``screen``, ``ham``),
+    present only when the user set at least one of its keywords
+    (``exclude_unset``): the DFPT route's own synthesized values stand
+    wherever the user is silent. Route-owned keys are rejected at parse time
+    (``koopmans.input_file.kcw``) and never reach here, so every key present
+    is safe to merge on top of the route's own namelist dicts.
+    """
+    kcw = koopmans_input.calculator_parameters.kcw
+    overrides: dict[str, dict[str, Any]] = {}
+    for name, namelist in (
+        ("control", kcw.control),
+        ("wannier", kcw.wannier),
+        ("screen", kcw.screen),
+        ("ham", kcw.ham),
+    ):
+        dumped = namelist.model_dump(exclude_unset=True)
+        if dumped:
+            overrides[name] = _convert_paths_to_strings(dumped)
+    return overrides
+
+
 def get_pseudos_from_family(
     pseudo_family: str,
     structure: orm.StructureData,

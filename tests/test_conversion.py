@@ -11,6 +11,7 @@ from koopmans.aiida.conversion import (
     _calculate_kpoints_along_path,
     _parse_kpoints_path_string,
     atoms_input_to_structure,
+    input_to_kcw_overrides,
     input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
@@ -280,6 +281,57 @@ class TestInputToPwParameters:
             parameters = input_to_pw_parameters(inp)
 
         assert parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
+
+
+class TestInputToKcwOverrides:
+    """``calculator_parameters.kcw`` splits per namelist, only where the user wrote something."""
+
+    def test_no_kcw_block_gives_no_overrides(self, aiida_profile: Any) -> None:
+        """Silence everywhere means an empty overrides dict, not four empty entries."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        assert input_to_kcw_overrides(inp) == {}
+
+    def test_each_namelist_lands_under_its_own_key_and_nowhere_else(
+        self, aiida_profile: Any
+    ) -> None:
+        """A keyword set on one namelist appears only under that namelist's key."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "kcw": {
+                        "control": {"lrpa": True},
+                        "screen": {"tr2": 1.0e-16},
+                        "ham": {"on_site_only": True},
+                    },
+                }
+            )
+        )
+        overrides = input_to_kcw_overrides(inp)
+
+        assert overrides["control"] == {"lrpa": True}
+        assert overrides["screen"] == {"tr2": pytest.approx(1.0e-16)}
+        assert overrides["ham"] == {"on_site_only": True}
+        assert "wannier" not in overrides
+        # Every namelist's dict carries only what it owns.
+        assert "tr2" not in overrides["control"]
+        assert "lrpa" not in overrides["screen"]
+        assert "on_site_only" not in overrides["control"]
+        assert "on_site_only" not in overrides["screen"]
+
+    def test_unset_namelists_are_absent(self, aiida_profile: Any) -> None:
+        """Setting only ``control`` leaves ``wannier``/``screen``/``ham`` out entirely."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(calculator_parameters={"ecutwfc": 20.0, "kcw": {"control": {"lrpa": True}}})
+        )
+        overrides = input_to_kcw_overrides(inp)
+        assert set(overrides) == {"control"}
 
 
 class TestCodeParallelizationHelper:
