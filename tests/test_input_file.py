@@ -621,8 +621,16 @@ class TestPathDensityRename:
 # (keyword, a value the dft_eps route would never accept from the user, a
 # substring of what actually owns it).
 _PH_ROUTE_OWNED_KEYS = [
-    ("epsil", True, "dft_eps route"),
-    ("trans", False, "dft_eps route"),
+    ("epsil", False, "dft_eps route"),
+    ("trans", True, "dft_eps route"),
+    ("verbosity", "low", "aiida-quantumespresso"),
+]
+
+# (keyword, the value the route always forces — restating it is accepted).
+_PH_ROUTE_FORCED_VALUES = [
+    ("epsil", True),
+    ("trans", False),
+    ("verbosity", "high"),
 ]
 
 
@@ -654,11 +662,12 @@ class TestPhCalculatorParameters:
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             KoopmansInput.model_validate(d)
 
-    def test_restating_the_default_is_accepted(self) -> None:
-        """A route-owned key stated at its own default is not rejected."""
-        d = _si_input_with({"ecutwfc": 20.0, "ph": {"epsil": False}})
+    @pytest.mark.parametrize(("keyword", "value"), _PH_ROUTE_FORCED_VALUES)
+    def test_restating_the_forced_value_is_accepted(self, keyword: str, value: object) -> None:
+        """A route-owned key stated at the value the route actually forces is not rejected."""
+        d = _si_input_with({"ecutwfc": 20.0, "ph": {keyword: value}})
         inp = KoopmansInput.model_validate(d)
-        assert inp.calculator_parameters.ph.epsil is False
+        assert getattr(inp.calculator_parameters.ph, keyword) == value
 
     def test_dump_and_revalidate_roundtrips(self) -> None:
         """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks."""

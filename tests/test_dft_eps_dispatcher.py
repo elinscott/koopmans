@@ -288,8 +288,8 @@ class TestPhCalculatorParameters:
         assert inputph["trans"] is False
 
     def test_epsil_is_rejected_at_parse(self) -> None:
-        """A user-set ``epsil`` fails before the dispatcher runs, naming its owner."""
+        """A user-set ``epsil`` disagreeing with the route fails at parse, naming the owner."""
         d = _si_eps_dict()
-        d["calculator_parameters"]["ph"] = {"epsil": True}
+        d["calculator_parameters"]["ph"] = {"epsil": False}
         with pytest.raises(ValueError, match=r"calculator_parameters\.ph\.epsil.*dft_eps route"):
             KoopmansInput.model_validate(d)
