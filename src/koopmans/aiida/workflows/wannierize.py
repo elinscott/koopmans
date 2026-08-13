@@ -167,7 +167,7 @@ def _external_projector_kwargs(
     }
 
 
-def _user_wannier90_overrides(koopmans_input: KoopmansInput) -> dict[str, Any]:
+def _get_user_w90_overrides(koopmans_input: KoopmansInput) -> dict[str, Any]:
     """Return the wannier90 keywords the user set, flat and unwrapped.
 
     Disentanglement windows, iteration counts, convergence tolerances — every
@@ -242,9 +242,9 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # builder reads them from a nested wannier90.wannier90.parameters
     # namespace, unlike the flat dict the per-block route's plugin builder
     # expects.
-    w90_user = _user_wannier90_overrides(koopmans_input)
-    if w90_user:
-        overrides["wannier90"] = {"wannier90": {"parameters": w90_user}}
+    w90_user_overrides = _get_user_w90_overrides(koopmans_input)
+    if w90_user_overrides:
+        overrides["wannier90"] = {"wannier90": {"parameters": w90_user_overrides}}
 
     # The automatically derived projections are the pseudopotentials' atomic
     # orbitals (upstream's ATOMIC_PROJECTORS_QE mechanism) unless external
@@ -394,9 +394,9 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
     # feed every per-block wannierisation; flat by design (see
     # ``WannierizeOverrides``).
-    w90_user = _user_wannier90_overrides(koopmans_input)
-    if w90_user:
-        wannier_overrides["wannier90"] = w90_user
+    w90_user_overrides = _get_user_w90_overrides(koopmans_input)
+    if w90_user_overrides:
+        wannier_overrides["wannier90"] = w90_user_overrides
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, wannier_overrides)
 

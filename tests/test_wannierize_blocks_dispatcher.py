@@ -1019,13 +1019,13 @@ class TestUserWannier90Overrides:
 
         Marks every field of the schema as user-set (value left at its
         default -- only field-name completeness is at stake here) and checks
-        the flat override dict :func:`_user_wannier90_overrides` builds
+        the flat override dict :func:`_get_user_w90_overrides` builds
         carries exactly that key set, minus ``projections``/``up``/``down``
         (handled separately). A keyword the schema grows that this dump
         silently excludes -- the way ``dis_froz_max`` did before this fix --
         fails here without needing one parametrized case per field.
         """
-        from koopmans.aiida.workflows.wannierize import _user_wannier90_overrides
+        from koopmans.aiida.workflows.wannierize import _get_user_w90_overrides
         from koopmans.input_file import KoopmansInput, Wannier90InputParametersWithUpDown
 
         excluded = {"projections", "up", "down"}
@@ -1035,7 +1035,7 @@ class TestUserWannier90Overrides:
         w90 = inp.calculator_parameters.wannier90
         object.__setattr__(w90, "__pydantic_fields_set__", set(type(w90).model_fields))
 
-        assert set(_user_wannier90_overrides(inp)) == declared
+        assert set(_get_user_w90_overrides(inp)) == declared
 
 
 def _path_labels(kpoints: Any) -> list[str]:
