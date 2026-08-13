@@ -658,15 +658,28 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     # Merge with explicit PW parameters from input
     if pw_params.control:
         parameters["CONTROL"].update(
-            pw_params.control.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.control.model_dump(exclude_none=True, exclude_unset=True)
         )
     if pw_params.system:
         parameters["SYSTEM"].update(
-            pw_params.system.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.system.model_dump(exclude_none=True, exclude_unset=True)
         )
     if pw_params.electrons:
         parameters["ELECTRONS"].update(
-            pw_params.electrons.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.electrons.model_dump(exclude_none=True, exclude_unset=True)
+        )
+
+    if (
+        parameters["SYSTEM"].get("occupations") == "smearing"
+        and "degauss" not in parameters["SYSTEM"]
+    ):
+        raise ValueError(
+            "`calculator_parameters.pw.system.occupations = 'smearing'` needs "
+            "`calculator_parameters.pw.system.degauss` set explicitly too. Every "
+            "koopmans route runs pw.x with fixed occupations by default, which "
+            "clears the protocol's own smearing keywords before this override "
+            "lands, so pw.x would abort asking for a broadening value. Set "
+            "`calculator_parameters.pw.system.degauss` (Ry)."
         )
 
     # After the merge, so the pair is resolved from the cutoffs pw.x will run
