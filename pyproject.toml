@@ -302,7 +302,7 @@ environments = [
 
 [tool.uv.sources]
 pydantic-espresso = { path = "../pydantic_espresso" }
-aiida-core = { path = "../aiida-core" }
+aiida-core = { path = "../aiida-core", editable = true }
 aiida-koopmans = { path = "../aiida-koopmans2", editable = true }
 aiida-wannierjl = { path = "../aiida-wannierjl", editable = true }
 aiida-quantumespresso = { path = "../aiida-quantumespresso", editable = true }
