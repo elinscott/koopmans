@@ -305,6 +305,121 @@ class TestInputToPhParameters:
         assert parameters["INPUTPH"]["tr2_ph"] == pytest.approx(1.0e-14)
 
 
+class TestPwNamelistDumpSurvivesDefaultValues:
+    """A value equal to the schema default is not the same as an unset field.
+
+    ``exclude_defaults=True`` cannot distinguish the two and drops both,
+    silently discarding e.g. ``occupations: fixed``; ``exclude_unset=True``
+    only drops fields the user never wrote.
+    """
+
+    def test_no_pw_block_dumps_nothing(self, aiida_profile: Any) -> None:
+        """No user ``pw`` block at all: nothing rides along in SYSTEM/CONTROL."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"].keys() == {"ecutwfc", "ecutrho"}
+        assert parameters["CONTROL"] == {}
+
+    def test_occupations_fixed_survives_though_it_equals_the_schema_default(
+        self, aiida_profile: Any
+    ) -> None:
+        """``occupations: fixed`` (the pydantic default) still reaches the dump."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={"ecutwfc": 20.0, "pw": {"system": {"occupations": "fixed"}}}
+            )
+        )
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"]["occupations"] == "fixed"
+
+    def test_smearing_and_degauss_survive_though_they_equal_the_schema_defaults(
+        self, aiida_profile: Any
+    ) -> None:
+        """``smearing: gaussian`` and ``degauss: 0.0`` (pydantic defaults) survive too."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "pw": {
+                        "system": {
+                            "occupations": "smearing",
+                            "smearing": "gaussian",
+                            "degauss": 0.0,
+                        }
+                    },
+                }
+            )
+        )
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"]["smearing"] == "gaussian"
+        assert parameters["SYSTEM"]["degauss"] == pytest.approx(0.0)
+
+    def test_a_non_default_value_still_survives(self, aiida_profile: Any) -> None:
+        """Control: a value away from the schema default was never at risk."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "pw": {"system": {"occupations": "smearing", "degauss": 0.05}},
+                }
+            )
+        )
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"]["occupations"] == "smearing"
+        assert parameters["SYSTEM"]["degauss"] == pytest.approx(0.05)
+
+
+class TestSmearingWithoutDegaussRejected:
+    """``occupations: smearing`` alone is a silent trap, not a valid input.
+
+    Every koopmans route runs pw.x with fixed occupations by default; the
+    upstream builder clears ``smearing``/``degauss`` from the protocol and
+    re-merges the user's override afterwards (absolute-override semantics),
+    so an override naming ``occupations`` without ``degauss`` leaves pw.x
+    with neither and it aborts. Caught here instead, with a message naming
+    the missing keyword, rather than surfacing as a pw.x crash downstream.
+    """
+
+    def test_occupations_smearing_alone_raises(self, aiida_profile: Any) -> None:
+        """A bare ``occupations: smearing`` override is rejected, not silently broken."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "pw": {"system": {"occupations": "smearing"}},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match=r"degauss"):
+            input_to_pw_parameters(inp)
+
+    def test_occupations_smearing_with_degauss_is_accepted(self, aiida_profile: Any) -> None:
+        """Pairing ``occupations: smearing`` with ``degauss`` is not rejected."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "pw": {"system": {"occupations": "smearing", "degauss": 0.02}},
+                }
+            )
+        )
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"]["occupations"] == "smearing"
+        assert parameters["SYSTEM"]["degauss"] == pytest.approx(0.02)
+
+
 class TestCodeParallelizationHelper:
     """``code_parallelization`` maps a per-code config to (options, settings)."""
 
