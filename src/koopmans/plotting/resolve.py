@@ -202,6 +202,16 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         )
         for namespace, name in _OPTIMIZE_OUTPUTS
     ),
+    # The split-mode auto-Wannierization merges each group's re-interpolated
+    # bands into one block-wide structure; it is the same shape of curve as
+    # the groups it concatenates, so it shares their series name and is told
+    # apart from them by the call chain, same as any other tied producer.
+    BandProducer(
+        process_type="aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands",
+        socket="result",
+        series="Wannier interpolation",
+        references=_no_references,
+    ),
 )
 
 
@@ -359,35 +369,120 @@ def _prettify_link_label(label: str) -> str:
     return label.replace("_", " ")
 
 
+def _stripped_hop_labels(labels: Sequence[str], depth: int) -> dict[str, str]:
+    """Render one call-chain hop's sibling labels as legend text.
+
+    ``labels`` are the distinct labels a single depth split a tied group
+    into. At depth 0 they are the run's caller's own immediate names for
+    each step, used exactly as given. Any deeper hop is a level of
+    sub-graph wrapping the run itself chose the same way for every
+    branch, so the lead-in every label there shares (e.g. the
+    ``wannierize_`` common to a set of per-block sub-graph calls) is
+    stripped before rendering, leaving the token that actually varies;
+    labels with no shared lead-in are used exactly as they are.
+    """
+    if depth == 0:
+        return dict(zip(labels, labels, strict=True))
+    prefix = _shared_prefix(labels)
+    if "_" in prefix:
+        prefix = prefix.rsplit("_", 1)[0] + "_"
+    else:
+        prefix = ""
+    return {label: _prettify_link_label(label[len(prefix) :] or label) for label in labels}
+
+
+def _split_by_call_chain(
+    steps: Sequence[orm.ProcessNode], root: orm.ProcessNode
+) -> tuple[dict[int, list[str]], dict[int, int]]:
+    """Partition ``steps`` by their call chain to ``root``.
+
+    Returns, per step index: a history of the rendered hop labels that
+    separated it from its call-chain siblings, in root-to-leaf order, for
+    every step some depth eventually isolates; and a 1-based rank, scoped
+    to the group of steps no depth ever isolates from each other (their
+    chains run out while still tied), in call order.
+    """
+    chains = [_call_chain(step, root) for step in steps]
+    histories: dict[int, list[str]] = {}
+    unresolved: dict[int, int] = {}
+
+    def resolve(indices: list[int], depth: int, path: list[str]) -> None:
+        if len(indices) == 1:
+            histories[indices[0]] = path
+            return
+        if any(depth >= len(chains[i]) for i in indices):
+            for rank, index in enumerate(sorted(indices), start=1):
+                unresolved[index] = rank
+            return
+        buckets: dict[str, list[int]] = {}
+        for i in indices:
+            buckets.setdefault(chains[i][depth], []).append(i)
+        if len(buckets) == 1:
+            resolve(indices, depth + 1, path)
+            return
+        rendered = _stripped_hop_labels(list(buckets), depth)
+        for label, members in buckets.items():
+            resolve(members, depth + 1, [*path, rendered[label]])
+
+    resolve(list(range(len(steps))), 0, [])
+    return histories, unresolved
+
+
+def _minimal_unique_suffixes(histories: dict[int, list[str]]) -> dict[int, str]:
+    """Return the shortest hop-history suffix, per step, that tells it from the rest.
+
+    Steps already unique on their own deepest hop keep just that one label
+    (the common case: each block, group, or merge names itself distinctly).
+    A hop shared by several steps' histories (e.g. several blocks each
+    producing the same per-group fragment index) is not enough on its own,
+    so those steps grow their rendered suffix one hop further toward the
+    root, in lockstep, until every candidate in the run is distinct.
+    """
+    remaining = dict(histories)
+    resolved: dict[int, str] = {}
+    depth = 1
+    while remaining:
+        candidates = {index: ", ".join(hops[-depth:]) for index, hops in remaining.items()}
+        counts: dict[str, int] = {}
+        for text in candidates.values():
+            counts[text] = counts.get(text, 0) + 1
+        newly_resolved = [index for index, text in candidates.items() if counts[text] == 1]
+        for index in newly_resolved:
+            resolved[index] = candidates[index]
+            del remaining[index]
+        if not remaining:
+            break
+        if all(depth >= len(hops) for hops in remaining.values()):
+            # Every remaining step has used its full history and some are
+            # still tied by pure string coincidence between unrelated
+            # branches; there is nothing more to combine.
+            for index, hops in remaining.items():
+                resolved[index] = ", ".join(hops)
+            break
+        depth += 1
+    return resolved
+
+
 def _disambiguating_labels(steps: Sequence[orm.ProcessNode], root: orm.ProcessNode) -> list[str]:
     """Return one distinguishing legend suffix per step in a tied group.
 
-    Walks each step's chain of CALL links toward ``root`` and stops at the
-    first depth where every step's label there is distinct from the rest.
-    The immediate call label, when it already distinguishes the group, is
-    used as-is: the run's caller named that step directly. Escalating past
-    it means every branch shares that immediate label (a sub-graph that
-    calls the same producer under the same name once per block), so the
-    prefix the group shares at the depth that does distinguish them (e.g.
-    the ``wannierize_`` common to a set of per-block sub-graph calls) is
-    stripped before the label is rendered, leaving the block token. Falls
-    back to plain numbering when no depth distinguishes every step.
+    Walks each step's chain of CALL links toward ``root``, splitting the
+    group at each depth where a label there varies (a per-block sub-graph
+    name, a per-group fragment index, a merge step's own literal call
+    label, ...). A split-mode run nests several of these depths — block
+    identity two levels above a per-group label that itself restarts at
+    each block — so a step's legend suffix combines every depth that
+    contributed to isolating it, not just one; the combination is grown
+    only as far as needed; the common case (one producer, one distinguishing
+    depth) still renders that depth's label alone. Falls back to plain
+    numbering for a subset no depth distinguishes at all.
     """
-    chains = [_call_chain(step, root) for step in steps]
-    depth = 0
-    while all(depth < len(chain) for chain in chains):
-        labels = [chain[depth] for chain in chains]
-        if len(set(labels)) == len(labels):
-            if depth == 0:
-                return list(labels)
-            prefix = _shared_prefix(labels)
-            if "_" in prefix:
-                prefix = prefix.rsplit("_", 1)[0] + "_"
-            else:
-                prefix = ""
-            return [_prettify_link_label(label[len(prefix) :] or label) for label in labels]
-        depth += 1
-    return [str(index) for index in range(1, len(steps) + 1)]
+    histories, unresolved = _split_by_call_chain(steps, root)
+    suffixes = _minimal_unique_suffixes(histories) if histories else {}
+    return [
+        suffixes[index] if index in suffixes else str(unresolved[index])
+        for index in range(len(steps))
+    ]
 
 
 def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
