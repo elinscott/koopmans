@@ -14,6 +14,7 @@ from koopmans.aiida.conversion import (
     input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
+from tests.fixtures import path_labels
 from tests.fixtures import silicon_pw_input as _pw_input
 
 SI_ALAT_BOHR = 10.2622
@@ -528,6 +529,45 @@ class TestDftBandsScfMesh:
         )
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_bands"):
             build_workgraph(inp)
+
+    def test_an_explicit_path_reaches_bands_kpoints(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """``kpoints.path`` bypasses seekpath, reaching the workchain as ``bands_kpoints``.
+
+        Regression for koopmans#159: the route used to forward only a
+        ``bands_kpoints_distance``, so seekpath always chose its own path
+        even when the input asked for a specific one.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                kpoints={"grid": [2, 2, 2], "offset": [0, 0, 0], "path": "GXG"},
+            )
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        bands_kpoints = task_inputs["bands_kpoints"].value
+        assert path_labels(bands_kpoints) == ["GAMMA", "X", "GAMMA"]
+        assert task_inputs["bands_kpoints_distance"].value is None
+
+    def test_no_path_leaves_seekpath_in_charge(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """With no ``kpoints.path`` the route still sends only a distance."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(pseudo_library="SG15/1.0/PBE/SR", kpoints={"grid": [2, 2, 2]})
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        assert task_inputs["bands_kpoints"].value is None
+        assert task_inputs["bands_kpoints_distance"].value is not None
 
 
 class TestStepKpointsMesh:

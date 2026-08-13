@@ -28,6 +28,8 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """
     from aiida_koopmans.workgraphs.pw import PwBandsCodes, RunPwBands
 
+    from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+
     reject_kpoint_overrides(
         koopmans_input,
         {
@@ -39,10 +41,17 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     structure, _pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "bands"])
 
+    bands_kpoints = (
+        kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
+        if koopmans_input.kpoints.path is not None
+        else None
+    )
+
     return RunPwBands.build(
         codes=load_codes(PwBandsCodes),
         structure=structure,
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
         scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
+        bands_kpoints=bands_kpoints,
     )
