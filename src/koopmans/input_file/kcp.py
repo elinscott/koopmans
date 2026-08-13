@@ -88,8 +88,6 @@ class SystemNamelist(BaseModel):
     tot_charge: int = 0
     tot_magnetization: float | None = None
     # multiplicity: int = 0
-    ecutwfc: float = 0.0
-    ecutrho: float = 0.0
     # Nr1: int = 0
     # Nr2: int = 0
     # Nr3: int = 0

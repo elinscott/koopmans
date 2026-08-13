@@ -20,7 +20,7 @@ from koopmans.aiida.workflows.wannierize import (
     build_wannierize_workgraph,
 )
 from koopmans.input_file import KoopmansInput
-from tests.fixtures import count_pw_bands_runs
+from tests.fixtures import count_pw_bands_runs, path_labels
 
 
 def _si_split_dict(**workflow_updates: Any) -> dict[str, Any]:
@@ -1038,12 +1038,6 @@ class TestUserWannier90Overrides:
         assert set(_get_user_w90_overrides(inp)) == declared
 
 
-def _path_labels(kpoints: Any) -> list[str]:
-    """Return the labels of an explicit k-path node, in path order."""
-    assert kpoints is not None, "no k-path node reached the wannierization"
-    return [label for _, label in kpoints.labels]
-
-
 class TestInterpolatedBands:
     """A ``kpoints.path`` in the input reaches wannier90 as its bands path.
 
@@ -1066,7 +1060,7 @@ class TestInterpolatedBands:
         wg = _build_plain(_si_auto_dict())
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         w90 = w90_task.inputs["wannier90"]["wannier90"]
-        assert _path_labels(w90["bands_kpoints"].value) == ["GAMMA", "X"]
+        assert path_labels(w90["bands_kpoints"].value) == ["GAMMA", "X"]
         assert w90["parameters"].value.get_dict()["bands_plot"] is True
 
     def test_the_whole_manifold_route_without_a_path_interpolates_nothing(
@@ -1096,7 +1090,7 @@ class TestInterpolatedBands:
             for name in ("wannierize_occ_1", "wannierize_block_2")
         ]
         for path in paths:
-            assert _path_labels(path) == ["GAMMA", "X"]
+            assert path_labels(path) == ["GAMMA", "X"]
         # One node serves every block, so the interpolations cannot drift apart.
         assert paths[0].uuid == paths[1].uuid
 
@@ -1122,7 +1116,7 @@ class TestInterpolatedBands:
         wg = _build(_si_split_dict())
         split_task = wg.tasks["wannierize_split_block_1"]
         path = split_task.inputs["interpolation_kpoints"].value
-        assert _path_labels(path) == ["GAMMA", "X"]
+        assert path_labels(path) == ["GAMMA", "X"]
         assert path.uuid == wg.tasks["bands"].inputs["kpoints"].value.uuid
 
 

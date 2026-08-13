@@ -43,6 +43,7 @@ KCW_HAM = "aiida.calculations:koopmans.kcw_ham"
 W90_BASE = "aiida.workflows:wannier90_workflows.base.wannier90"
 W90_CALC = "aiida_wannier90.calculations.wannier90.Wannier90Calculation"
 W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
+MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands"
 
 #: A cubic cell, so that reciprocal-space distances are easy to reason about.
 CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
@@ -571,6 +572,143 @@ class TestResolver:
             "Wannier interpolation (north)",
             "Wannier interpolation (south)",
         ]
+
+    def test_merge_interpolated_bands_is_recognized(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The split-mode merge calcfunction's output is a plottable band structure.
+
+        Before this producer is registered, a folder addressing this
+        calcfunction directly reports that no step of it produced a
+        plottable output.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        merged = make_process(
+            MERGE_INTERPOLATED_BANDS,
+            caller=root,
+            link_label="merge_interpolated_bands",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(merged, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_split_mode_names_the_gauge_fragments_and_merge(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A whole-run plot of one split block shows every reachable curve.
+
+        The pre-split whole-block gauge, each re-Wannierised group, and the
+        block-wide merge all share the "Wannier interpolation" series name
+        and are told apart structurally, without falling back to bare
+        numbering; a sibling block wannierized directly is unaffected.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+
+        direct = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize_occ"
+        )
+        direct_leaf = make_process(W90_BASE, caller=direct, link_label="wannier90")
+        attach(direct_leaf, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+
+        split = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize_split_emp"
+        )
+        gauge = make_process(
+            "aiida.workflows:workgraph.engine", caller=split, link_label="wannierize_whole_block"
+        )
+        gauge_leaf = make_process(W90_BASE, caller=gauge, link_label="wannier90")
+        attach(gauge_leaf, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.1]]))
+
+        rewannierize = make_process(
+            "aiida.workflows:workgraph.engine", caller=split, link_label="rewannierize_split_blocks"
+        )
+        for i in range(2):
+            fragment = make_process(
+                W90_CALC,
+                caller=rewannierize,
+                link_label=f"wannier90_split_block_{i}",
+                calcjob=True,
+                computer=aiida_localhost,
+            )
+            attach(fragment, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.2 - i]]))
+        merged = make_process(
+            MERGE_INTERPOLATED_BANDS,
+            caller=rewannierize,
+            link_label="merge_interpolated_bands",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(merged, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.4]]))
+
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+        labels = sorted(item.label for item in found)
+
+        # Five curves, every one distinct, and none of them bare numbering:
+        # a whole-block gauge, two split fragments, a merge, and the
+        # sibling block wannierized directly.
+        assert len(labels) == len(set(labels)) == 5
+        assert not any(label.rsplit("(", 1)[-1].rstrip(")").strip().isdigit() for label in labels)
+        assert "Wannier interpolation (occ)" in labels
+
+    def test_split_mode_two_blocks_combines_depths_for_matching_fragments(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Two split blocks each contribute a same-indexed fragment and a merge.
+
+        Fragment 0 of one block and fragment 0 of the other tie at every
+        depth their own sub-graph shares (the fragment index, the
+        "rewannierize_split_blocks" wrapper); only the block name two
+        levels up (which itself only distinguishes once combined with the
+        fragment index) tells them apart, so disambiguation has to combine
+        more than one depth rather than stopping at the first that splits
+        anything.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+
+        for block in ("occ", "emp"):
+            split = make_process(
+                "aiida.workflows:workgraph.engine",
+                caller=root,
+                link_label=f"wannierize_split_{block}",
+            )
+            rewannierize = make_process(
+                "aiida.workflows:workgraph.engine",
+                caller=split,
+                link_label="rewannierize_split_blocks",
+            )
+            for i in range(2):
+                fragment = make_process(
+                    W90_CALC,
+                    caller=rewannierize,
+                    link_label=f"wannier90_split_block_{i}",
+                    calcjob=True,
+                    computer=aiida_localhost,
+                )
+                attach(fragment, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0 - i]]))
+            merged = make_process(
+                MERGE_INTERPOLATED_BANDS,
+                caller=rewannierize,
+                link_label="merge_interpolated_bands",
+                calcjob=True,
+                computer=aiida_localhost,
+            )
+            attach(merged, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.5]]))
+
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+        labels = sorted(item.label for item in found)
+
+        # Six curves: two fragments and a merge, per block, all distinct.
+        assert len(labels) == len(set(labels)) == 6
+        assert not any(label.rsplit("(", 1)[-1].rstrip(")").strip().isdigit() for label in labels)
 
     def test_not_a_run_directory(self, aiida_profile: Any, tmp_path: Path) -> None:
         """A folder with no metadata file is named, along with what to pass."""

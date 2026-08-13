@@ -15,10 +15,7 @@ def _dispatch(label: str) -> Any:
     from koopmans.aiida.workflows import prepare_common_inputs
 
     inp = KoopmansInput.model_validate(
-        silicon_pw_input(
-            pseudo_library=label,
-            calculator_parameters={"pw": {"system": {"ecutwfc": 20.0}}},
-        )
+        silicon_pw_input(pseudo_library=label, calculator_parameters={"ecutwfc": 20.0})
     )
     return prepare_common_inputs(inp, ["scf", "bands"])
 
