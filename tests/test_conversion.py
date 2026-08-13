@@ -15,6 +15,7 @@ from koopmans.aiida.conversion import (
     input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
+from tests.fixtures import path_labels
 from tests.fixtures import silicon_pw_input as _pw_input
 
 SI_ALAT_BOHR = 10.2622
@@ -229,6 +230,64 @@ class TestSeekpathBasisGuard:
 
         assert np.allclose(kpts.cell, cell)
         assert list(kpts.pbc) == [True, True, True]
+
+
+class TestInterpolationPathHelper:
+    """``kpoints_input_to_interpolation_path`` decides whether a step samples a path.
+
+    Shared by the ``dft_bands``, wannierize and DFPT routes. The DFPT route
+    cannot exercise the gamma-only branch end to end — it rejects
+    gamma-only inputs before it ever builds a path — so this tests the
+    helper directly, which is exactly what that route now relies on.
+    """
+
+    @staticmethod
+    def _fcc_silicon() -> Any:
+        import numpy as np
+        from aiida import orm
+
+        a = 5.43
+        cell = np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2
+        structure = orm.StructureData(cell=cell.tolist())
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(-a / 4, a / 4, a / 4), symbols="Si"
+        )
+        return structure
+
+    def test_gamma_only_returns_none(self, aiida_profile: Any) -> None:
+        """A gamma-only input's fixed path names the zone centre alone, so no path is built."""
+        from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        kpoints = GammaOnlyKpointsInput(gamma_only=True)
+        assert kpoints_input_to_interpolation_path(kpoints, self._fcc_silicon()) is None
+
+    def test_no_path_returns_none(self, aiida_profile: Any) -> None:
+        """With no ``path`` set, the helper leaves the step on its protocol default."""
+        from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2))
+        assert kpoints_input_to_interpolation_path(kpoints, self._fcc_silicon()) is None
+
+    def test_explicit_path_matches_kpoints_input_to_kpoints_path(self, aiida_profile: Any) -> None:
+        """An explicit path is sampled, exactly as ``kpoints_input_to_kpoints_path`` directly."""
+        import numpy as np
+
+        from koopmans.aiida.conversion import (
+            kpoints_input_to_interpolation_path,
+            kpoints_input_to_kpoints_path,
+        )
+        from koopmans.input_file import GridKpointsInput
+
+        structure = self._fcc_silicon()
+        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX")
+        expected = kpoints_input_to_kpoints_path(kpoints, structure)
+        actual = kpoints_input_to_interpolation_path(kpoints, structure)
+        assert actual is not None
+        assert dict(actual.labels) == dict(expected.labels)
+        assert np.allclose(actual.get_kpoints(), expected.get_kpoints())  # type: ignore[no-untyped-call]
 
 
 class TestInputToPwParameters:
@@ -635,6 +694,68 @@ class TestDftBandsScfMesh:
         )
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_bands"):
             build_workgraph(inp)
+
+    def test_an_explicit_path_reaches_bands_kpoints(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """``kpoints.path`` bypasses seekpath, reaching the workchain as ``bands_kpoints``.
+
+        Regression for koopmans#159: the route used to forward only a
+        ``bands_kpoints_distance``, so seekpath always chose its own path
+        even when the input asked for a specific one.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                kpoints={"grid": [2, 2, 2], "offset": [0, 0, 0], "path": "GXG"},
+            )
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        bands_kpoints = task_inputs["bands_kpoints"].value
+        assert path_labels(bands_kpoints) == ["GAMMA", "X", "GAMMA"]
+        assert task_inputs["bands_kpoints_distance"].value is None
+
+    def test_no_path_leaves_seekpath_in_charge(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """With no ``kpoints.path`` the route still sends only a distance."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(pseudo_library="SG15/1.0/PBE/SR", kpoints={"grid": [2, 2, 2]})
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        assert task_inputs["bands_kpoints"].value is None
+        assert task_inputs["bands_kpoints_distance"].value is not None
+
+    def test_gamma_only_leaves_seekpath_in_charge(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A gamma-only input's fixed ``path: "G"`` names no segment to sample.
+
+        ``GammaOnlyKpointsInput.path`` defaults to the literal ``"G"`` and
+        can never be ``None``, so a bare ``kpoints.path is not None`` guard
+        would always fire here and hand the single-label path to
+        ``kpoints_input_to_kpoints_path``, which raises building an empty
+        k-point list. The route must fall back to the protocol's own
+        ``bands_kpoints_distance`` instead, exactly as with no path at all.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(pseudo_library="SG15/1.0/PBE/SR", kpoints={"gamma_only": True})
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        assert task_inputs["bands_kpoints"].value is None
+        assert task_inputs["bands_kpoints_distance"].value is not None
 
 
 class TestStepKpointsMesh:
