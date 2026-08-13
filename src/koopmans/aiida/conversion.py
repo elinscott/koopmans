@@ -7,7 +7,6 @@ AiiDA-compatible data structures for use with workgraphs.
 from __future__ import annotations
 
 import math
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -102,8 +101,6 @@ def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
     Returns:
         3x3 list of cell vectors in Angstrom.
     """
-    import math
-
     a = celldms[1] * BOHR_TO_ANGSTROM  # celldm(1) is in Bohr
     b = celldms.get(2, 1.0) * a if 2 in celldms else a
     c = celldms.get(3, 1.0) * a if 3 in celldms else a
@@ -581,52 +578,15 @@ def kpoints_input_to_kpoints_path(
     return kpts
 
 
-def _resolve_pw_cutoffs(system: dict[str, Any], kcp_ecutrho: float) -> None:
-    """Complete the ``SYSTEM`` cutoff pair in place, from ``ecutwfc``.
+def _resolve_pw_cutoffs(system: dict[str, Any]) -> None:
+    """Set ``ecutrho`` in place, at :data:`NORM_CONSERVING_DUAL` times ``ecutwfc``.
 
-    An unstated ``ecutrho`` becomes ``kcp_ecutrho``, or
-    ``NORM_CONSERVING_DUAL * ecutwfc`` when that is unset too. Whatever its
-    source, an ``ecutrho`` that is not :data:`NORM_CONSERVING_DUAL` times
-    ``ecutwfc`` takes effect with a warning naming the key it came from. With
-    neither cutoff stated the pair is left empty, for the pseudopotential
-    family to recommend.
-
-    Raises:
-        ValueError: If ``ecutrho`` is stated and ``ecutwfc`` is not.
+    With no ``ecutwfc`` stated the pair is left empty, for the
+    pseudopotential family to recommend.
     """
     ecutwfc = system.get("ecutwfc")
-    ecutrho = system.get("ecutrho")
-    source = "calculator_parameters.pw.system.ecutrho"
-
-    if ecutwfc is None:
-        if ecutrho is not None:
-            raise ValueError(
-                "`calculator_parameters.pw.system.ecutrho` is set without a wavefunction "
-                "cutoff, which would pair it with whatever the pseudopotential family "
-                "recommends. Set `calculator_parameters.ecutwfc`; `ecutrho` follows at "
-                f"{NORM_CONSERVING_DUAL:g} times it on its own."
-            )
-        return
-
-    if ecutrho is None:
-        if kcp_ecutrho:
-            # An explicit ``kcp.system.ecutrho`` keeps the pw.x runs on the grid
-            # of the CP supercell run the dft_init consistency checks compare
-            # against.
-            ecutrho = kcp_ecutrho
-            source = "calculator_parameters.kcp.system.ecutrho"
-        else:
-            ecutrho = NORM_CONSERVING_DUAL * ecutwfc
-        system["ecutrho"] = ecutrho
-
-    if not math.isclose(ecutrho, NORM_CONSERVING_DUAL * ecutwfc):
-        warnings.warn(
-            f"`{source}` = {ecutrho:g} Ry: ecutrho should be {NORM_CONSERVING_DUAL:g} x "
-            f"ecutwfc = {NORM_CONSERVING_DUAL * ecutwfc:g} Ry for norm-conserving "
-            f"pseudopotentials. Drop `{source}` to take that.",
-            UserWarning,
-            stacklevel=3,
-        )
+    if ecutwfc is not None:
+        system["ecutrho"] = NORM_CONSERVING_DUAL * ecutwfc
 
 
 def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
@@ -682,9 +642,7 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
             "`calculator_parameters.pw.system.degauss` (Ry)."
         )
 
-    # After the merge, so the pair is resolved from the cutoffs pw.x will run
-    # rather than from the top-level shorthand a ``pw.system`` block may replace.
-    _resolve_pw_cutoffs(parameters["SYSTEM"], calc_params.kcp.system.ecutrho)
+    _resolve_pw_cutoffs(parameters["SYSTEM"])
 
     # Ensure all Path objects are converted to strings for JSON serialization
     parameters = _convert_paths_to_strings(parameters)

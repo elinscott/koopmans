@@ -167,8 +167,7 @@ def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -
         raise ValueError(
             f"The pseudopotential family `{pseudo_family}` publishes no recommended "
             "cutoffs, so they must come from the input file: set "
-            "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it "
-            "unless `calculator_parameters.pw.system.ecutrho` states otherwise."
+            "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it."
         )
 
 
