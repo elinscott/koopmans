@@ -14,7 +14,7 @@ supported-markers = [
 
 [[package]]
 name = "aiida-core"
-source = { directory = "../aiida-core" }
+source = { editable = "../aiida-core" }
 dependencies = [
     { name = "alembic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "archive-path", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1537,7 +1537,7 @@ typing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiida-core", directory = "../aiida-core" },
+    { name = "aiida-core", editable = "../aiida-core" },
     { name = "aiida-hyperqueue", specifier = "~=0.3.0" },
     { name = "aiida-koopmans", editable = "../aiida-koopmans2" },
     { name = "aiida-quantumespresso", editable = "../aiida-quantumespresso" },
