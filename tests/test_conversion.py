@@ -231,6 +231,64 @@ class TestSeekpathBasisGuard:
         assert list(kpts.pbc) == [True, True, True]
 
 
+class TestInterpolationPathHelper:
+    """``kpoints_input_to_interpolation_path`` decides whether a step samples a path.
+
+    Shared by the ``dft_bands``, wannierize and DFPT routes. The DFPT route
+    cannot exercise the gamma-only branch end to end — it rejects
+    gamma-only inputs before it ever builds a path — so this tests the
+    helper directly, which is exactly what that route now relies on.
+    """
+
+    @staticmethod
+    def _fcc_silicon() -> Any:
+        import numpy as np
+        from aiida import orm
+
+        a = 5.43
+        cell = np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2
+        structure = orm.StructureData(cell=cell.tolist())
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(-a / 4, a / 4, a / 4), symbols="Si"
+        )
+        return structure
+
+    def test_gamma_only_returns_none(self, aiida_profile: Any) -> None:
+        """A gamma-only input's fixed path names the zone centre alone, so no path is built."""
+        from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        kpoints = GammaOnlyKpointsInput(gamma_only=True)
+        assert kpoints_input_to_interpolation_path(kpoints, self._fcc_silicon()) is None
+
+    def test_no_path_returns_none(self, aiida_profile: Any) -> None:
+        """With no ``path`` set, the helper leaves the step on its protocol default."""
+        from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2))
+        assert kpoints_input_to_interpolation_path(kpoints, self._fcc_silicon()) is None
+
+    def test_explicit_path_matches_kpoints_input_to_kpoints_path(self, aiida_profile: Any) -> None:
+        """An explicit path is sampled, exactly as ``kpoints_input_to_kpoints_path`` directly."""
+        import numpy as np
+
+        from koopmans.aiida.conversion import (
+            kpoints_input_to_interpolation_path,
+            kpoints_input_to_kpoints_path,
+        )
+        from koopmans.input_file import GridKpointsInput
+
+        structure = self._fcc_silicon()
+        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX")
+        expected = kpoints_input_to_kpoints_path(kpoints, structure)
+        actual = kpoints_input_to_interpolation_path(kpoints, structure)
+        assert actual is not None
+        assert dict(actual.labels) == dict(expected.labels)
+        assert np.allclose(actual.get_kpoints(), expected.get_kpoints())  # type: ignore[no-untyped-call]
+
+
 class TestInputToPwParameters:
     """The shared pw parameter dict carries no calculation type of its own."""
 

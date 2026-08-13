@@ -581,6 +581,30 @@ def kpoints_input_to_kpoints_path(
     return kpts
 
 
+def kpoints_input_to_interpolation_path(
+    kpoints: KpointsInput,
+    structure: orm.StructureData,
+) -> orm.KpointsData | None:
+    """Return the input's k-path as a labelled explicit k-list, or ``None``.
+
+    ``None`` when the input states no ``kpoints.path``, and for a gamma-only
+    input, whose fixed ``path`` names the zone centre alone and so defines no
+    segment to interpolate along. Otherwise defers to
+    :func:`kpoints_input_to_kpoints_path`. Callers use this to decide whether
+    a step gets an explicit bands path or is left on its protocol default.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        structure: The structure to generate the k-path for.
+
+    Returns:
+        AiiDA KpointsData node with the k-point path, or ``None``.
+    """
+    if kpoints.gamma_only or kpoints.path is None:
+        return None
+    return kpoints_input_to_kpoints_path(kpoints, structure)
+
+
 def _resolve_pw_cutoffs(system: dict[str, Any], kcp_ecutrho: float) -> None:
     """Complete the ``SYSTEM`` cutoff pair in place, from ``ecutwfc``.
 
