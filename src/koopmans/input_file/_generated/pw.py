@@ -355,6 +355,7 @@ _PW_SYSTEM_OWNED: dict[str, str] = {
     'noncolin': 'Set `workflow.spin`.',
     'nspin': 'Set `workflow.spin`.',
     'ntyp': 'The species come from the `atomic_positions` block.',
+    'tot_magnetization': 'Set `calculator_parameters.tot_magnetization`: the moment is stated once, and every calculation koopmans runs takes it from there.',
 }
 
 
@@ -533,17 +534,6 @@ class SystemNamelist(Namelist):
             missing from the system, tot_charge=-1 means one additional electron, and so on.  In a
             periodic calculation a compensating jellium background is inserted to remove
             divergences if the cell is not neutral."""
-        ),
-    )
-
-    tot_magnetization: float = Field(
-        -10000,
-        description=dedent(
-            """\
-            Total majority spin charge - minority spin charge. Used to impose a specific total
-            electronic magnetization. The default value -10000 is a sentinel meaning 'unspecified':
-            if left unspecified the tot_magnetization variable is ignored and the amount of
-            electronic magnetization is determined during the self-consistent cycle."""
         ),
     )
 

@@ -175,6 +175,10 @@ REASONS: dict[str, dict[str, str]] = {
         "nspin": _SPIN,
         "noncolin": _SPIN,
         "lspinorb": _SPIN,
+        "tot_magnetization": (
+            "Set `calculator_parameters.tot_magnetization`: the moment is stated once, "
+            "and every calculation koopmans runs takes it from there."
+        ),
     },
     "ph.INPUTPH": {
         "outdir": _AIIDA,

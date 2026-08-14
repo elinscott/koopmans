@@ -56,6 +56,7 @@ class TestOwnedKeywordsAreRefused:
         [
             ("pw.system", "ecutwfc", "calculator_parameters.ecutwfc"),
             ("pw.system", "nspin", "workflow.spin"),
+            ("pw.system", "tot_magnetization", "calculator_parameters.tot_magnetization"),
             ("pw.control", "verbosity", "high verbosity"),
             ("ph", "trans", "dft_eps"),
             ("pw2wannier90", "spin_component", "workflow.spin"),
