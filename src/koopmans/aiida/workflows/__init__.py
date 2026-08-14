@@ -285,8 +285,10 @@ def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
         koopmans_input: The parsed koopmans input.
 
     Returns:
-        ``calculator_parameters.tot_magnetization``, as a whole number of
-        unpaired electrons.
+        ``calculator_parameters.tot_magnetization``, as a count of unpaired
+        electrons. The field is whole by validation
+        (:data:`~koopmans.input_file.UnpairedElectrons`), so the count is
+        exact.
 
     Raises:
         ValueError: If the input carries no magnetization.
@@ -298,6 +300,20 @@ def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
             "the number of unpaired electrons."
         )
     return int(magnetization)
+
+
+def optional_magnetization(koopmans_input: KoopmansInput) -> int | None:
+    """Return the stated moment as a count of unpaired electrons, or ``None``.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+
+    Returns:
+        ``calculator_parameters.tot_magnetization`` where the input states
+        one, else ``None``.
+    """
+    magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    return None if magnetization is None else int(magnetization)
 
 
 def pin_spin_regime(

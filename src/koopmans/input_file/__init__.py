@@ -58,6 +58,7 @@ __all__ = [
     "SpinSpecificWannierInput",
     "StepKpointsInput",
     "UnfoldAndInterpolateConfig",
+    "UnpairedElectrons",
     "Wannier90InputParametersWithUpDown",
     "WorkflowConfig",
     "migrate_input_dict",
@@ -157,6 +158,22 @@ def _expressible_shift(value: float) -> float:
 #: One axis of a k-point mesh offset: 0 leaves it Gamma-centred, 0.5
 #: half-shifts it, and nothing else is expressible.
 KpointOffset = Annotated[float, AfterValidator(_expressible_shift)]
+
+
+def _whole_electrons(value: float) -> float:
+    """Reject a moment that splits an electron between the two channels."""
+    if not float(value).is_integer():
+        raise ValueError(
+            "the magnetization is a number of unpaired electrons, so it must be whole. "
+            "Every calculation koopmans runs fixes the occupations, which leaves no "
+            "fraction of an electron to place"
+        )
+    return value
+
+
+#: A magnetization, in unpaired electrons: the difference between the two
+#: channels' occupations, which are whole numbers of states.
+UnpairedElectrons = Annotated[float, AfterValidator(_whole_electrons)]
 
 
 def _no_shift(value: float) -> float:
@@ -326,7 +343,7 @@ class CalculatorParametersInput(BaseModel):
 
     ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
-    tot_magnetization: float | None = None
+    tot_magnetization: UnpairedElectrons | None = None
     ph: PHInputParameters = Field(default_factory=lambda: PHInputParameters())
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(

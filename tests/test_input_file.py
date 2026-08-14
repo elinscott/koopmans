@@ -705,14 +705,74 @@ class TestCollinearNeedsAMagnetization:
         assert "``" not in str(excinfo.value)
         assert "tot_magnetization" in str(excinfo.value)
 
-    def test_a_round_tripped_input_is_still_refused(self) -> None:
-        """``model_dump()`` states every field, including the moment nobody set.
+    def test_a_dumped_input_is_still_refused(self) -> None:
+        """The check reads the moment's value, not whether the key is present.
 
-        koopmans re-validates modified inputs this way, so the check reads
-        the value rather than whether the key is present.
+        ``model_dump()`` states every field, the moment nobody set included,
+        so an input that reached the check as a dumped model would satisfy a
+        key-presence test while stating nothing.
         """
         dumped = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0})).model_dump()
         _set_keyword(dumped, "workflow", "spin", "collinear")
 
         with pytest.raises(ValueError, match="tot_magnetization"):
             KoopmansInput.model_validate(dumped)
+
+
+class TestTheMomentIsWholeElectrons:
+    """A magnetization counts unpaired electrons, so it cannot be a fraction."""
+
+    @pytest.mark.parametrize("magnetization", [0.5, 2.7, -1.5])
+    def test_a_fraction_is_refused(self, magnetization: float) -> None:
+        """Truncating would run a different calculation than the one asked for.
+
+        ``0.5`` is the discriminating value: rounded down it becomes a
+        closed-shell run, which pw.x accepts and nothing downstream records
+        as a substitution.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(_collinear_input(tot_magnetization=magnetization))
+
+        assert "whole" in str(excinfo.value)
+
+    @pytest.mark.parametrize("magnetization", [0, 2, 2.0, -1])
+    def test_a_whole_number_passes_however_it_is_written(self, magnetization: float) -> None:
+        """The rule is the value, not the JSON type: ``2.0`` states two electrons."""
+        inp = KoopmansInput.model_validate(_collinear_input(tot_magnetization=magnetization))
+        assert inp.calculator_parameters.tot_magnetization == pytest.approx(magnetization)
+
+    @pytest.mark.parametrize("task", [task.value for task in Task])
+    def test_every_task_is_held_to_it(self, task: str) -> None:
+        """Every route fixes its occupations, so none of them can place half an electron.
+
+        The discriminator against a route-local check: the coercion this
+        replaces sat in the dispatcher, so a task reaching pw.x by another
+        path silently rounded instead.
+        """
+        d = _si_input_with({"ecutwfc": 20.0, "tot_magnetization": 0.5})
+        _set_keyword(d, "workflow", "task", task)
+
+        with pytest.raises(ValueError, match="whole"):
+            KoopmansInput.model_validate(d)
+
+    def test_the_pw_namelist_spelling_is_untouched(self) -> None:
+        """``pw.system.tot_magnetization`` reaches pw.x alone, under the user's occupations.
+
+        A fractional moment is legal there — with smearing, QE takes one —
+        so the rule belongs to the shared field the fixed-occupation routes
+        read, not to the namelist keyword.
+        """
+        d = _si_input_with(
+            {
+                "ecutwfc": 20.0,
+                "pw": {
+                    "system": {
+                        "tot_magnetization": 0.5,
+                        "occupations": "smearing",
+                        "degauss": 0.01,
+                    }
+                },
+            }
+        )
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.pw.system.tot_magnetization == pytest.approx(0.5)
