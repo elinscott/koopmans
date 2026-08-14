@@ -43,6 +43,7 @@ __all__ = [
     "CellParametersViaVectors",
     "GammaOnlyKpointsInput",
     "GridKpointsInput",
+    "IntegerMagnetization",
     "KCPInputParameters",
     "KoopmansInput",
     "KpointOffset",
@@ -58,7 +59,6 @@ __all__ = [
     "SpinSpecificWannierInput",
     "StepKpointsInput",
     "UnfoldAndInterpolateConfig",
-    "UnpairedElectrons",
     "Wannier90InputParametersWithUpDown",
     "WorkflowConfig",
     "migrate_input_dict",
@@ -173,7 +173,7 @@ def _whole_electrons(value: float) -> float:
 
 #: A magnetization, in unpaired electrons: the difference between the two
 #: channels' occupations, which are whole numbers of states.
-UnpairedElectrons = Annotated[float, AfterValidator(_whole_electrons)]
+IntegerMagnetization = Annotated[float, AfterValidator(_whole_electrons)]
 
 
 def _no_shift(value: float) -> float:
@@ -343,7 +343,7 @@ class CalculatorParametersInput(BaseModel):
 
     ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
-    tot_magnetization: UnpairedElectrons | None = None
+    tot_magnetization: IntegerMagnetization | None = None
     ph: PHInputParameters = Field(default_factory=lambda: PHInputParameters())
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(

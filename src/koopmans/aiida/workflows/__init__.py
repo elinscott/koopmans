@@ -287,7 +287,7 @@ def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
     Returns:
         ``calculator_parameters.tot_magnetization``, as a count of unpaired
         electrons. The field is whole by validation
-        (:data:`~koopmans.input_file.UnpairedElectrons`), so the count is
+        (:data:`~koopmans.input_file.IntegerMagnetization`), so the count is
         exact.
 
     Raises:
