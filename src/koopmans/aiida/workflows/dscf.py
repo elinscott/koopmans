@@ -14,6 +14,7 @@ from koopmans.aiida.conversion import (
     input_to_pw_parameters,
 )
 from koopmans.aiida.workflows import (
+    collinear_magnetization,
     load_codes,
     reject_kpoint_overrides,
     require_configured_codes,
@@ -234,12 +235,7 @@ def dscf_wannier_init_inputs(
                 "``calculator_parameters.w90.up.projections`` and "
                 "``calculator_parameters.w90.down.projections``."
             )
-        magnetization = _coerce_optional_int(calc_params.tot_magnetization)
-        if magnetization is None:
-            raise ValueError(
-                "spin='collinear' Wannier initialisation needs "
-                "``calculator_parameters.tot_magnetization``."
-            )
+        magnetization = collinear_magnetization(koopmans_input)
         if (nelec + magnetization) % 2:
             raise ValueError(
                 f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "

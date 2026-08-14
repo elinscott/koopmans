@@ -7,6 +7,7 @@ from json import load
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from aiida_quantumespresso.common.types import SpinType
 from pydantic import AfterValidator, Field, ValidationError, field_validator, model_validator
 from pydantic_core import ErrorDetails
 from wannier90_input.models.parameters import Projection
@@ -429,6 +430,30 @@ class KoopmansInput(BaseModel):
                 "are upgraded automatically)"
             )
         return version
+
+    @model_validator(mode="after")
+    def check_collinear_states_a_magnetization(self) -> KoopmansInput:
+        """Require a magnetization wherever the two spin channels may differ.
+
+        ``spin = 'collinear'`` alone leaves the moment unstated, and every
+        route needs one: the pw.x steps run at fixed occupations, and the
+        kcp.x and kcw.x steps split the electrons between the channels.
+
+        Raises:
+            ValueError: If ``workflow.spin = 'collinear'`` and
+                ``calculator_parameters.tot_magnetization`` is absent.
+        """
+        if self.workflow.spin != SpinType.COLLINEAR:
+            return self
+        if self.calculator_parameters.tot_magnetization is None:
+            raise ValueError(
+                "`workflow.spin = 'collinear'` needs "
+                "`calculator_parameters.tot_magnetization`, the number of unpaired "
+                "electrons. koopmans does not guess it for you: a spin-polarized run "
+                "at the wrong moment is a different calculation from the one you "
+                "asked for. Write 0 if the system is closed-shell."
+            )
+        return self
 
     @classmethod
     def from_file(cls, filename: str | Path) -> KoopmansInput:

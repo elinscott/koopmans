@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from koopmans.aiida.workflows import build_workgraph
 from koopmans.input_file import KoopmansInput
 from tests.fixtures import silicon_pw_input
@@ -100,26 +98,3 @@ class TestDftBandsSpin:
 
             distinct = [sorted(namelists[regime][step].items()) for regime in namelists]
             assert all(a != b for i, a in enumerate(distinct) for b in distinct[i + 1 :]), step
-
-    def test_collinear_without_a_magnetization_is_rejected(
-        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """pw.x has no Fermi level to share between two channels at fixed occupations."""
-        with pytest.raises(ValueError, match="tot_magnetization"):
-            build_workgraph(_spin_input("collinear"))
-
-    def test_a_pw_system_magnetization_satisfies_collinear(
-        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
-    ) -> None:
-        """The per-namelist spelling counts too, so the check cannot reject a valid input."""
-        d = silicon_pw_input(
-            pseudo_library="SG15/1.0/PBE/SR",
-            calculator_parameters={
-                "ecutwfc": 20.0,
-                "pw": {"system": {"tot_magnetization": 2}},
-            },
-        )
-        d["workflow"]["spin"] = "collinear"
-        namelists = _system_namelists(KoopmansInput.model_validate(d))
-        assert namelists["scf"]["tot_magnetization"] == 2
-        assert namelists["scf"]["nspin"] == 2

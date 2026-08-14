@@ -227,17 +227,6 @@ class TestDftEpsSpin:
         control = unpolarized.tasks["scf"].inputs["pw"]["parameters"].value.get_dict()["SYSTEM"]
         assert "nspin" not in control
 
-    def test_collinear_without_a_magnetization_is_rejected(
-        self,
-        aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_ph_code: Any,
-        fake_sg15_cutoffs_family: Any,
-    ) -> None:
-        """pw.x has no Fermi level to share between two channels at fixed occupations."""
-        with pytest.raises(ValueError, match="tot_magnetization"):
-            build_workgraph(KoopmansInput.model_validate(_si_eps_dict(spin="collinear")))
-
     @pytest.mark.parametrize("spin", ["non_collinear", "spin_orbit"])
     def test_spinor_regimes_are_refused(self, spin: str) -> None:
         """ph.x has no electric-field perturbation for noncollinear magnetism.

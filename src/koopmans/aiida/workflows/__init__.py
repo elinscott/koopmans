@@ -275,6 +275,31 @@ def pin_step_kpoints(
     return step_kpoints_mesh(koopmans_input.kpoints, step)
 
 
+def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
+    """Return the moment a collinear run splits its electrons by.
+
+    Call only where ``workflow.spin`` is ``collinear``; validating an input
+    in that regime requires ``calculator_parameters.tot_magnetization``.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+
+    Returns:
+        ``calculator_parameters.tot_magnetization``, as a whole number of
+        unpaired electrons.
+
+    Raises:
+        ValueError: If the input carries no magnetization.
+    """
+    magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    if magnetization is None:
+        raise ValueError(
+            "a collinear calculation needs `calculator_parameters.tot_magnetization`, "
+            "the number of unpaired electrons."
+        )
+    return int(magnetization)
+
+
 def pin_spin_regime(
     koopmans_input: KoopmansInput,
     overrides: dict[str, Any],
@@ -293,26 +318,15 @@ def pin_spin_regime(
 
     Returns:
         The regime named by ``workflow.spin``.
-
-    Raises:
-        ValueError: If ``spin = 'collinear'`` and no magnetization is given.
     """
     spin = koopmans_input.workflow.spin
     if spin != SpinType.COLLINEAR:
         return spin
 
-    magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    magnetization = collinear_magnetization(koopmans_input)
     for step in overrides:
         system = overrides[step]["pw"]["parameters"].setdefault("SYSTEM", {})
-        if magnetization is not None:
-            system["tot_magnetization"] = int(magnetization)
-        elif "tot_magnetization" not in system:
-            raise ValueError(
-                "spin='collinear' needs `calculator_parameters.tot_magnetization` "
-                "(the number of unpaired electrons): these steps run pw.x with "
-                "fixed occupations, which under nspin = 2 has no Fermi level to "
-                "share between the two channels."
-            )
+        system["tot_magnetization"] = magnetization
     return spin
 
 

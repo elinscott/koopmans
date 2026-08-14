@@ -626,3 +626,77 @@ class TestPhCalculatorParameters:
         """With no ``ph`` block, the namelist states nothing explicitly."""
         inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
         assert inp.calculator_parameters.ph.model_fields_set == set()
+
+
+def _collinear_input(**calculator_parameters: object) -> dict[str, object]:
+    """Return the minimal silicon input at ``spin = 'collinear'``."""
+    d = _si_input_with({"ecutwfc": 20.0, **calculator_parameters})
+    _set_keyword(d, "workflow", "spin", "collinear")
+    return d
+
+
+class TestCollinearNeedsAMagnetization:
+    """``spin = 'collinear'`` states its moment; koopmans does not pick one."""
+
+    def test_an_input_without_one_is_refused(self) -> None:
+        """The refusal names the field to set."""
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(_collinear_input())
+
+        assert "`calculator_parameters.tot_magnetization`" in str(excinfo.value)
+
+    def test_zero_is_a_statement(self) -> None:
+        """A closed-shell collinear run is a deliberate input, not a missing one."""
+        inp = KoopmansInput.model_validate(_collinear_input(tot_magnetization=0))
+        assert inp.calculator_parameters.tot_magnetization == 0
+
+    @pytest.mark.parametrize("task", [task.value for task in Task])
+    def test_every_task_is_held_to_it(self, task: str) -> None:
+        """The rule belongs to the input file, so no task escapes it.
+
+        The discriminator against a route-local check: ``dft_bands`` and
+        ``dft_eps`` refused a moment-less collinear input while the four
+        others ran one, choosing the moment for the user.
+        """
+        d = _collinear_input()
+        _set_keyword(d, "workflow", "task", task)
+
+        with pytest.raises(ValueError, match="tot_magnetization"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize("spin", ["none", "non_collinear", "spin_orbit"])
+    def test_the_other_regimes_need_no_moment(self, spin: str) -> None:
+        """Only collinear splits the electrons between two channels.
+
+        ``none`` has one channel, and the two spinor regimes pin no moment
+        along any axis, so a magnetization is neither needed nor meaningful.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, "workflow", "spin", spin)
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.tot_magnetization is None
+
+    def test_the_pw_namelist_spelling_does_not_satisfy_it(self) -> None:
+        """``pw.system.tot_magnetization`` reaches pw.x alone, and not on every route.
+
+        The kcp.x and kcw.x steps read the shared field, so a moment given
+        only to pw.x leaves those channels unstated.
+        """
+        d = _collinear_input(pw={"system": {"tot_magnetization": 2}})
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        assert "`calculator_parameters.tot_magnetization`" in str(excinfo.value)
+
+    def test_a_round_tripped_input_is_still_refused(self) -> None:
+        """``model_dump()`` states every field, including the moment nobody set.
+
+        koopmans re-validates modified inputs this way, so the check reads
+        the value rather than whether the key is present.
+        """
+        dumped = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0})).model_dump()
+        _set_keyword(dumped, "workflow", "spin", "collinear")
+
+        with pytest.raises(ValueError, match="tot_magnetization"):
+            KoopmansInput.model_validate(dumped)
