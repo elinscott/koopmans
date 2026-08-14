@@ -514,13 +514,17 @@ def convert_errors(e: ValidationError) -> list[ErrorDetails]:
 
 
 def prettify_errors(e: ValidationError) -> str:
-    """Return a prettified string of validation errors."""
+    """Return a prettified string of validation errors.
+
+    An error raised over the whole input file has no location of its own,
+    and an empty pair of backticks in front of it names nothing.
+    """
     errors = convert_errors(e)
     error_lines = []
     for error in errors:
         loc = ".".join(str(part) for part in error["loc"])
         msg = error["msg"]
-        error_lines.append(f" `{loc}` {msg}")
+        error_lines.append(f" `{loc}` {msg}" if loc else f" {msg}")
     return "\n".join(error_lines)
 
 

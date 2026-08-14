@@ -654,9 +654,9 @@ class TestCollinearNeedsAMagnetization:
     def test_every_task_is_held_to_it(self, task: str) -> None:
         """The rule belongs to the input file, so no task escapes it.
 
-        The discriminator against a route-local check: ``dft_bands`` and
-        ``dft_eps`` refused a moment-less collinear input while the four
-        others ran one, choosing the moment for the user.
+        The discriminator against a route-local check: the refusal used to
+        sit inside individual route builders, so which task enforced it —
+        and which path within a task — varied.
         """
         d = _collinear_input()
         _set_keyword(d, "workflow", "task", task)
@@ -688,6 +688,22 @@ class TestCollinearNeedsAMagnetization:
             KoopmansInput.model_validate(d)
 
         assert "`calculator_parameters.tot_magnetization`" in str(excinfo.value)
+
+    def test_the_file_level_refusal_names_no_empty_location(self, tmp_path: Path) -> None:
+        """A rule over the whole file has no field to point at, and says so.
+
+        Every other refusal is reported against the field that carries it,
+        which this one has none of; the reader should not be handed an empty
+        pair of backticks.
+        """
+        input_file = tmp_path / "collinear.json"
+        input_file.write_text(json.dumps(_collinear_input()))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        assert "``" not in str(excinfo.value)
+        assert "tot_magnetization" in str(excinfo.value)
 
     def test_a_round_tripped_input_is_still_refused(self) -> None:
         """``model_dump()`` states every field, including the moment nobody set.
