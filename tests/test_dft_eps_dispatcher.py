@@ -228,14 +228,22 @@ class TestDftEpsSpin:
         assert "nspin" not in control
 
     @pytest.mark.parametrize("spin", ["non_collinear", "spin_orbit"])
-    def test_spinor_regimes_are_refused(self, spin: str) -> None:
+    def test_spinor_regimes_are_refused(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+        spin: str,
+    ) -> None:
         """ph.x has no electric-field perturbation for noncollinear magnetism.
 
-        Refused before any code or pseudo family is touched, so the message
-        is what the user gets rather than a ph.x abort hours into the run.
+        The refusal is ``DielectricTask``'s, reached at build because this
+        route calls it as the entry graph: the user reads it before anything
+        is submitted, rather than a ph.x abort hours into the run.
         """
         inp = KoopmansInput.model_validate(_si_eps_dict(spin=spin))
-        with pytest.raises(NotImplementedError, match="noncollinear magnetic ground"):
+        with pytest.raises(NotImplementedError, match="not implemented for noncollinear"):
             build_workgraph(inp)
 
 

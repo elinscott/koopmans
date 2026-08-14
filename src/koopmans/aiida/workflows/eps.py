@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aiida_quantumespresso.common.types import SpinType
-
 from koopmans.aiida.workflows import (
     load_codes,
     pin_spin_regime,
@@ -36,30 +34,19 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     ``workflow.spin`` reaches the scf as ``'none'`` or ``'collinear'``
     (the latter needing a ``calculator_parameters.tot_magnetization``);
-    the two spinor regimes are refused, since ph.x has no electric-field
-    perturbation for a noncollinear magnetic ground state.
+    ``DielectricTask`` refuses the two spinor regimes itself.
 
     Args:
         koopmans_input: The parsed koopmans input.
 
     Returns:
         A WorkGraph chaining PwBaseWorkChain into PhBaseWorkChain.
-
-    Raises:
-        NotImplementedError: If ``workflow.spin`` names a spinor regime.
     """
     from aiida_koopmans.workgraphs.ph import DielectricCodes, DielectricTask
 
     from koopmans.aiida.conversion import input_to_ph_parameters
 
     spin = koopmans_input.workflow.spin
-    if spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
-        raise NotImplementedError(
-            f"spin={spin.value!r} is not supported by the `dft_eps` route: ph.x has "
-            "no electric-field perturbation for a noncollinear magnetic ground "
-            "state, so no dielectric constant comes out of it. Use spin='none' or "
-            "spin='collinear'."
-        )
 
     reject_kpoint_overrides(
         koopmans_input,
