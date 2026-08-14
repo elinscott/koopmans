@@ -253,6 +253,10 @@ def dscf_wannier_init_inputs(
                 f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "
                 "integer per-channel occupations."
             )
+        # The scf and nscf feeding the Wannierisation run at nspin = 2 with
+        # fixed occupations, which pw.x refuses unless it is told how to
+        # split the electrons between the two channels.
+        parameters.setdefault("SYSTEM", {})["tot_magnetization"] = magnetization
         nocc_up = (nelec + magnetization) // 2
         nocc_down = (nelec - magnetization) // 2
         # nbnd must equal the number of Wannier functions the projections

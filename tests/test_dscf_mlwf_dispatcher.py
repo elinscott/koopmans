@@ -520,6 +520,46 @@ class TestPeriodicMlwfsBuild:
             ("emp_down_1", False),
         ]
 
+    def test_collinear_magnetization_reaches_the_pw_steps(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The shared magnetization lands in the scf and nscf SYSTEM namelists.
+
+        Those two run at nspin = 2 with fixed occupations, so pw.x needs the
+        moment; before it was threaded here the key was absent altogether and
+        only the retired ``pw.system`` spelling could supply one.
+        """
+        from koopmans.aiida.conversion import atoms_input_to_structure
+
+        inp = KoopmansInput.model_validate(_si_collinear_dscf_dict())
+        structure = atoms_input_to_structure(inp.atoms)
+        nbnd = inp.calculator_parameters.nbnd
+        assert nbnd is not None
+        overrides = dscf_wannier_init_inputs(inp, structure, nbnd)["wannier_overrides"]
+
+        for step in ("scf", "nscf"):
+            system = overrides[step]["pw"]["parameters"]["SYSTEM"]
+            assert system["tot_magnetization"] == inp.calculator_parameters.tot_magnetization
+
+    def test_unpolarized_pw_steps_state_no_magnetization(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A ``spin: none`` run leaves the keyword out rather than stamping a moment.
+
+        Pairs with the collinear case: together they show the value is read
+        from the input in the collinear branch, not written unconditionally.
+        """
+        from koopmans.aiida.conversion import atoms_input_to_structure
+
+        inp = KoopmansInput.model_validate(_si_dscf_dict())
+        structure = atoms_input_to_structure(inp.atoms)
+        nbnd = inp.calculator_parameters.nbnd
+        assert nbnd is not None
+        overrides = dscf_wannier_init_inputs(inp, structure, nbnd)["wannier_overrides"]
+
+        for step in ("scf", "nscf"):
+            assert "tot_magnetization" not in overrides[step]["pw"]["parameters"]["SYSTEM"]
+
     def test_collinear_route_builds(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
