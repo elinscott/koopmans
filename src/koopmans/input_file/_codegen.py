@@ -158,9 +158,7 @@ REASONS: dict[str, dict[str, str]] = {
         "pseudo_dir": "Pseudopotentials come from `workflow.pseudo_library`.",
         "outdir": _AIIDA,
         "prefix": _AIIDA,
-        "verbosity": (
-            "koopmans needs every eigenvalue pw.x can print, so it always runs at high verbosity."
-        ),
+        "verbosity": "koopmans runs every pw.x calculation at high verbosity.",
     },
     "pw.SYSTEM": {
         "ibrav": "The lattice comes from the `cell_parameters` block.",

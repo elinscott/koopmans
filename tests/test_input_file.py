@@ -252,6 +252,35 @@ class TestPerCalculatorCutoffsRemoved:
         assert (kcp["ecutwfc"], kcp["ecutrho"]) == pytest.approx((45.0, 180.0))
 
 
+class TestKcpMagnetizationRemoved:
+    """The magnetization is stated once, via ``calculator_parameters``."""
+
+    def test_the_kcp_magnetization_names_the_shared_field(self, tmp_path: Path) -> None:
+        """The retired ``kcp`` spelling points at ``calculator_parameters``' own field."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with({"kcp": {"system": {"tot_magnetization": 2.0}}}))
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcp.system.tot_magnetization`" in message
+        assert "`calculator_parameters.tot_magnetization`" in message
+
+    def test_the_shared_magnetization_still_reaches_kcp(self, tmp_path: Path) -> None:
+        """The surviving spelling is what the kcp.x builders read."""
+        from koopmans.aiida.workflows.dscf import kcp_dscf_inputs
+
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with({"ecutwfc": 45.0, "nbnd": 8, "tot_magnetization": 2.0}))
+        )
+
+        assert kcp_dscf_inputs(read_input_file(input_file))["tot_magnetization"] == 2
+
+
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
     """Return a minimal silicon input dict for parallelization-block tests."""
     d: dict[str, object] = {
