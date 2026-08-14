@@ -663,11 +663,6 @@ _KCW_ROUTE_KEYWORDS = [
     ("calculator_parameters.pw.system.nosym", {"pw": {"system": {"nosym": True}}}, "Remove it"),
     ("calculator_parameters.pw.system.noinv", {"pw": {"system": {"noinv": True}}}, "Remove it"),
     (
-        "calculator_parameters.pw.system.tot_magnetization",
-        {"pw": {"system": {"tot_magnetization": 2.0}}},
-        "`workflow.spin = 'collinear'`",
-    ),
-    (
         "calculator_parameters.tot_magnetization",
         {"tot_magnetization": 2.0},
         "`workflow.spin = 'collinear'`",
@@ -678,9 +673,10 @@ _KCW_ROUTE_KEYWORDS = [
 class TestKeywordsTheKcwRouteDetermines:
     """A keyword the kcw.x route sets itself is refused on that route alone.
 
-    ``nosym`` / ``noinv`` and ``tot_magnetization`` stay input-file keywords
-    because every other route honours them; the DFPT chain force-merges them
-    over the caller's overrides, so stating one there means nothing.
+    ``nosym`` / ``noinv`` and the shared ``tot_magnetization`` stay
+    input-file keywords because every other route honours them; the DFPT
+    chain force-merges them over the caller's overrides, so stating one
+    there means nothing.
     """
 
     @pytest.mark.parametrize(
@@ -717,7 +713,7 @@ class TestKeywordsTheKcwRouteDetermines:
         """No kcw.x chain runs, so none of the four is determined for the caller."""
         parameters: dict[str, object] = {
             "tot_magnetization": 2.0,
-            "pw": {"system": {"nosym": True, "noinv": True, "tot_magnetization": 2.0}},
+            "pw": {"system": {"nosym": True, "noinv": True}},
         }
         KoopmansInput.model_validate(_si_input_on(parameters, task=task, screening_method="dfpt"))
 
@@ -733,25 +729,15 @@ class TestKeywordsTheKcwRouteDetermines:
         inp = KoopmansInput.model_validate(d)
         assert inp.calculator_parameters.tot_magnetization == pytest.approx(2.0)
 
-    def test_a_collinear_run_refuses_the_pw_magnetization(self) -> None:
-        """The collinear route overwrites the pw.x spelling with the shared one."""
+    def test_a_spinor_run_takes_the_shared_magnetization(self) -> None:
+        """A spinor chain forces no moment, so the stated one stands."""
         d = _si_input_on(
-            {"pw": {"system": {"tot_magnetization": 2.0}}},
-            screening_method="dfpt",
-            spin="collinear",
-        )
-        with pytest.raises(ValueError, match=r"Set `calculator_parameters\.tot_magnetization`"):
-            KoopmansInput.model_validate(d)
-
-    def test_a_spinor_run_honours_the_pw_magnetization(self) -> None:
-        """A spinor chain forces no moment, so pw.x takes the caller's."""
-        d = _si_input_on(
-            {"pw": {"system": {"tot_magnetization": 2.0}}},
+            {"tot_magnetization": 2.0},
             screening_method="dfpt",
             spin="non_collinear",
         )
         inp = KoopmansInput.model_validate(d)
-        assert inp.calculator_parameters.pw.system.tot_magnetization == pytest.approx(2.0)
+        assert inp.calculator_parameters.tot_magnetization == pytest.approx(2.0)
 
     def test_leaving_them_unset_parses(self) -> None:
         """The refusal must fire on a stated keyword, not on the field's default."""
@@ -759,14 +745,14 @@ class TestKeywordsTheKcwRouteDetermines:
 
     def test_every_refused_path_is_a_real_input_field(self) -> None:
         """A misspelt path would match nothing the reader can state, and refuse nothing."""
-        from koopmans.input_file._route_conditional import ROUTE_REFUSALS
+        from koopmans.input_file._route_conditional import ROUTE_REFUSALS, SHARED_REFUSALS
 
         inp = KoopmansInput.model_validate(_minimal_si_input())
-        for block in ROUTE_REFUSALS.values():
-            for paths in block.values():
-                for path in paths:
-                    owner: object = inp
-                    *parents, field = path.split(".")
-                    for part in parents:
-                        owner = getattr(owner, part)
-                    assert field in type(owner).model_fields, path  # type: ignore[attr-defined]
+        namelist = (paths for block in ROUTE_REFUSALS.values() for paths in block.values())
+        for paths in (*namelist, SHARED_REFUSALS):
+            for path in paths:
+                owner: object = inp
+                *parents, field = path.split(".")
+                for part in parents:
+                    owner = getattr(owner, part)
+                assert field in type(owner).model_fields, path  # type: ignore[attr-defined]

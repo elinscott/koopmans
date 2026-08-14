@@ -8,7 +8,9 @@ what koopmans owes the reader is a refusal on the route that does not.
 :data:`ROUTE_REFUSALS` pairs each declared keyword with the input-file
 paths that spell it and the message each is refused with, and
 :func:`check_route_refusals` raises if the two declarations have drifted
-apart. :func:`raise_for_route_conditional` applies them to a parsed input.
+apart. :data:`SHARED_REFUSALS` carries the same for koopmans' own fields,
+which no namelist spells and ``ROUTE_CONDITIONAL`` cannot declare.
+:func:`raise_for_route_conditional` applies both to a parsed input.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ROUTE_REFUSALS",
+    "SHARED_REFUSALS",
     "check_route_refusals",
     "raise_for_route_conditional",
 ]
@@ -51,31 +54,10 @@ def _refuse_symmetry(workflow: WorkflowConfig, path: str) -> str | None:
     )
 
 
-def _refuse_pw_magnetization(workflow: WorkflowConfig, path: str) -> str | None:
-    """Refuse the pw.x moment on the kcw.x route, which states it elsewhere."""
-    if not _runs_kcw(workflow):
-        return None
-    if workflow.spin == SpinType.NONE:
-        return _closed_shell_advice(path)
-    if workflow.spin == SpinType.COLLINEAR:
-        return (
-            f"`{path}` cannot be set with `workflow.screening_method = 'dfpt'` and "
-            "`workflow.spin = 'collinear'`. Set `calculator_parameters.tot_magnetization`: "
-            "a collinear kcw.x run reads the moment from there for the pw.x runs and for "
-            "the per-channel occupations, and would overwrite this one."
-        )
-    return None
-
-
 def _refuse_shared_magnetization(workflow: WorkflowConfig, path: str) -> str | None:
     """Refuse the shared moment where a closed-shell kcw.x run forces zero."""
     if not _runs_kcw(workflow) or workflow.spin != SpinType.NONE:
         return None
-    return _closed_shell_advice(path)
-
-
-def _closed_shell_advice(path: str) -> str:
-    """Return the refusal for a moment stated on a closed-shell kcw.x run."""
     return (
         f"`{path}` cannot be set with `workflow.screening_method = 'dfpt'` and "
         "`workflow.spin = 'none'`. kcw.x needs a two-channel ground state even for a "
@@ -92,11 +74,13 @@ ROUTE_REFUSALS: dict[str, dict[str, dict[str, Callable[[WorkflowConfig, str], st
     "pw.SYSTEM": {
         "nosym": {"calculator_parameters.pw.system.nosym": _refuse_symmetry},
         "noinv": {"calculator_parameters.pw.system.noinv": _refuse_symmetry},
-        "tot_magnetization": {
-            "calculator_parameters.pw.system.tot_magnetization": _refuse_pw_magnetization,
-            "calculator_parameters.tot_magnetization": _refuse_shared_magnetization,
-        },
     },
+}
+
+#: Refusals for koopmans' own input-file fields, which no Quantum ESPRESSO
+#: namelist spells and :data:`ROUTE_CONDITIONAL` therefore cannot declare.
+SHARED_REFUSALS: dict[str, Callable[[WorkflowConfig, str], str | None]] = {
+    "calculator_parameters.tot_magnetization": _refuse_shared_magnetization,
 }
 
 
@@ -147,7 +131,8 @@ def raise_for_route_conditional(koopmans_input: KoopmansInput) -> None:
         ValueError: If the input states one, naming the field and what to
             set instead.
     """
-    for paths in (refusals for block in ROUTE_REFUSALS.values() for refusals in block.values()):
+    namelist = (refusals for block in ROUTE_REFUSALS.values() for refusals in block.values())
+    for paths in (*namelist, SHARED_REFUSALS):
         for path, refuse in paths.items():
             if not _is_stated(koopmans_input, path):
                 continue
