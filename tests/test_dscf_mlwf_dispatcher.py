@@ -560,6 +560,32 @@ class TestPeriodicMlwfsBuild:
         for step in ("scf", "nscf"):
             assert "tot_magnetization" not in overrides[step]["pw"]["parameters"]["SYSTEM"]
 
+    @pytest.mark.parametrize(
+        ("input_dict", "expected"),
+        [(_si_collinear_dscf_dict(), True), (_si_dscf_dict(), False)],
+        ids=["collinear", "none"],
+    )
+    def test_the_stated_regime_reaches_the_wannier_initialization(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        input_dict: dict[str, Any],
+        expected: bool,
+    ) -> None:
+        """The regime reaches the sub-workflow that runs the ground state.
+
+        Downstream of this socket the plugin turns it into the ``spin_type``
+        its scf and nscf are built from, so a run whose regime stops here
+        Wannierizes spin-resolved blocks off an unpolarized density — and
+        the magnetization above lands in a namelist with no ``nspin``, which
+        pw.x refuses outright. Both cases together show the flag is read
+        from the input rather than stamped.
+        """
+        task = _build(input_dict).tasks["wannier_initialization"]
+        # A graph input is a proxy, for which ``is`` against a bool is false.
+        assert task.inputs["spin_polarized"].value == expected
+
     def test_collinear_route_builds(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
