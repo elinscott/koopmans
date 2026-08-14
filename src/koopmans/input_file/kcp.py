@@ -86,7 +86,6 @@ class SystemNamelist(BaseModel):
     nbnd: int | None = None
     nelec: int = 0
     tot_charge: int = 0
-    tot_magnetization: float | None = None
     # multiplicity: int = 0
     # Nr1: int = 0
     # Nr2: int = 0
