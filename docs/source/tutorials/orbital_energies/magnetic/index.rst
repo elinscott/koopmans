@@ -94,9 +94,13 @@ majority channel fills both :math:`\pi^*` orbitals and the minority leaves them 
 so the highest occupied and lowest unoccupied orbitals are the same orbital in opposite
 channels, each screened by a parameter of its own.
 
-KI puts the ionization potential at 12.35 eV and the electron affinity at 0.40 eV. The
-`tabulated values
-<https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782447&Mask=20#Ion-Energetics>`_ are 12.07
-eV and 0.45 eV. Both are adiabatic, and as the ozone tutorial notes an orbital energy is
-a vertical quantity: the vertical ionization potential lies above the adiabatic one, and
-the vertical electron affinity below.
+KI puts the ionization potential at 12.35 eV and the electron affinity at 0.40 eV. As in
+the ozone tutorial, an orbital energy is a vertical quantity, and photoemission puts O₂'s
+vertical first ionization between 12.30 eV :cite:`Kimura1981` and 12.33 eV
+:cite:`Banna1976` — a few hundredths of an electronvolt below KI.
+
+The `tabulated values
+<https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782447&Mask=20#Ion-Energetics>`_ of 12.07 eV
+and 0.45 eV are the adiabatic ones. The electron affinity has no measured vertical
+counterpart: photodetachment reaches the neutral molecule from O₂⁻, whose bond is longer
+than O₂'s, so there is nothing to hold the 0.40 eV against.
