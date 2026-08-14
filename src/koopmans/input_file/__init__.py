@@ -342,30 +342,31 @@ class CalculatorParametersInput(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def reject_removed_per_calculator_cutoffs(cls, data: Any) -> Any:
-        """Point a per-calculator cutoff at the single ``ecutwfc`` field.
+        """Point a ``kcp`` cutoff at the single ``ecutwfc`` field.
 
-        ``pw.system``/``kcp.system`` no longer carry their own
-        ``ecutwfc``/``ecutrho``: pw.x and kcp.x always share one grid, derived
-        from ``calculator_parameters.ecutwfc``. Runs before field validation,
-        so it reports the removed spelling instead of the generic
-        "extra_forbidden" error the nested model would otherwise raise.
+        ``kcp.system`` no longer carries its own ``ecutwfc``/``ecutrho``:
+        pw.x and kcp.x always share one grid, derived from
+        ``calculator_parameters.ecutwfc``. Runs before field validation, so
+        it reports the removed spelling instead of the generic
+        "extra_forbidden" error the nested model would otherwise raise. The
+        ``pw`` spellings are reported by the generated model itself (see
+        ``koopmans.input_file._codegen``).
 
         Raises:
-            ValueError: If any of the four removed keys is present.
+            ValueError: If either removed key is present.
         """
         if not isinstance(data, dict):
             return data
-        for calc in ("pw", "kcp"):
-            system = data.get(calc)
-            if not isinstance(system, dict) or not isinstance(system.get("system"), dict):
-                continue
-            for key in ("ecutwfc", "ecutrho"):
-                if key in system["system"]:
-                    raise ValueError(
-                        f"`calculator_parameters.{calc}.system.{key}` no longer exists. "
-                        "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four "
-                        "times it."
-                    )
+        kcp = data.get("kcp")
+        if not isinstance(kcp, dict) or not isinstance(kcp.get("system"), dict):
+            return data
+        for key in ("ecutwfc", "ecutrho"):
+            if key in kcp["system"]:
+                raise ValueError(
+                    f"`calculator_parameters.kcp.system.{key}` no longer exists. "
+                    "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four "
+                    "times it."
+                )
         return data
 
 

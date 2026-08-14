@@ -1,13 +1,10 @@
 """Input parameters for ``pw.x`` calculations."""
 
-from typing import Any, ClassVar, Literal
-
-from pydantic import Field, field_validator
-from pydantic_espresso.models.pw.develop import ControlNamelist as _ControlNamelist
+from pydantic import Field
 from pydantic_espresso.models.pw.develop import ElectronsNamelist
-from pydantic_espresso.models.pw.develop import SystemNamelist as _SystemNamelist
 
 from koopmans.base import BaseModel
+from koopmans.input_file._generated.pw import _ControlNamelist, _SystemNamelist
 
 __all__ = ["ControlNamelist", "PWInputParameters", "SystemNamelist"]
 
@@ -15,42 +12,14 @@ __all__ = ["ControlNamelist", "PWInputParameters", "SystemNamelist"]
 class ControlNamelist(_ControlNamelist):
     """``CONTROL`` namelist for ``pw.x`` calculations."""
 
-    # Excluded fields: koopmans manages these itself, so they are demoted to
-    # class variables to drop them from the pydantic schema. mypy --strict (even
-    # with the pydantic plugin) cannot express a ClassVar overriding a base
-    # model field, hence the ignores; unused-ignore is included because the
-    # generated base models' field optionality varies between checkouts.
-    pseudo_dir: ClassVar[str | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    outdir: ClassVar[str | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    prefix: ClassVar[str | None] = None  # type: ignore[misc, assignment, unused-ignore]
-
-    @field_validator("verbosity", mode="before")
-    @classmethod
-    def enforce_high_verbosity(cls, v: Any) -> Literal["high"]:
-        """High verbosity is required to guarantee that all bands will be printed."""
-        return "high"
-
 
 class SystemNamelist(_SystemNamelist):
-    """``SYSTEM`` namelist for ``pw.x`` calculations.
-
-    ``ibrav``, ``nat`` and ``ntyp`` are derived from the input structure, not provided
-    by the user. ``ecutwfc`` and ``ecutrho`` are not provided here either:
-    ``calculator_parameters.ecutwfc`` is the one place a cutoff is stated, and pw.x
-    and kcp.x always share the grid it derives.
-    """
-
-    # Excluded fields (see ``ControlNamelist`` above for the ClassVar rationale).
-    ibrav: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    nat: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    ntyp: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    ecutwfc: ClassVar[float | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    ecutrho: ClassVar[float | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    """``SYSTEM`` namelist for ``pw.x`` calculations."""
 
 
 class PWInputParameters(BaseModel):
     """Input parameters for ``pw.x`` calculations."""
 
     control: ControlNamelist = Field(default_factory=lambda: ControlNamelist())
-    system: SystemNamelist = Field(default_factory=lambda: SystemNamelist())  # type: ignore[call-arg]
+    system: SystemNamelist = Field(default_factory=lambda: SystemNamelist())
     electrons: ElectronsNamelist = Field(default_factory=lambda: ElectronsNamelist())

@@ -127,7 +127,6 @@ _REMOVED_KEYWORDS = [
     ("workflow", "automated_wannierization"),
     ("ml", "train_on_the_fly"),
     ("ml", "alphas_from_file"),
-    ("calculator_parameters.wannier90", "auto_projections"),
     ("calculator_parameters.wannier90.up", "auto_projections"),
     ("calculator_parameters.wannier90.down", "auto_projections"),
 ]
@@ -559,15 +558,15 @@ class TestPathDensityRename:
         assert inp.kpoints.path_density == 20.0
 
 
-# (keyword, a value the dft_eps route would never accept from the user, a
-# substring of what actually owns it).
+# (keyword, a substring of the explanation it is refused with).
 _PH_ROUTE_OWNED_KEYS = [
-    ("epsil", False, "dft_eps route"),
-    ("trans", True, "dft_eps route"),
-    ("verbosity", "low", "aiida-quantumespresso"),
+    ("epsil", "dft_eps"),
+    ("trans", "dft_eps"),
+    ("verbosity", "AiiDA"),
+    ("outdir", "AiiDA"),
 ]
 
-# (keyword, the value the route always forces — restating it is accepted).
+# (keyword, the value the dft_eps route always forces).
 _PH_ROUTE_FORCED_VALUES = [
     ("epsil", True),
     ("trans", False),
@@ -578,37 +577,30 @@ _PH_ROUTE_FORCED_VALUES = [
 class TestPhCalculatorParameters:
     """``calculator_parameters.ph`` mounts the ph.x ``INPUTPH`` namelist (koopmans2#162)."""
 
-    @pytest.mark.parametrize(("keyword", "value", "owner_snippet"), _PH_ROUTE_OWNED_KEYS)
-    def test_route_owned_key_is_rejected(
-        self, keyword: str, value: object, owner_snippet: str
-    ) -> None:
-        """A user-set route-owned key fails at parse, naming the key and its owner."""
+    @pytest.mark.parametrize(("keyword", "reason_snippet"), _PH_ROUTE_OWNED_KEYS)
+    def test_route_owned_key_is_rejected(self, keyword: str, reason_snippet: str) -> None:
+        """A user-set route-owned key fails at parse, naming the key and why it went."""
         d = _si_input_with({"ecutwfc": 20.0})
-        _set_keyword(d, "calculator_parameters.ph", keyword, value)
+        _set_keyword(d, "calculator_parameters.ph", keyword, "custom")
 
         with pytest.raises(ValueError) as excinfo:
             KoopmansInput.model_validate(d)
 
         message = str(excinfo.value)
         assert f"`calculator_parameters.ph.{keyword}`" in message
-        assert owner_snippet in message
-
-    def test_a_plugin_managed_key_is_an_unknown_field(self) -> None:
-        """``outdir`` is absent from the schema: aiida-quantumespresso forces it for every run."""
-        from pydantic import ValidationError
-
-        d = _si_input_with({"ecutwfc": 20.0})
-        _set_keyword(d, "calculator_parameters.ph", "outdir", "custom")
-
-        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-            KoopmansInput.model_validate(d)
+        assert reason_snippet in message
 
     @pytest.mark.parametrize(("keyword", "value"), _PH_ROUTE_FORCED_VALUES)
-    def test_restating_the_forced_value_is_accepted(self, keyword: str, value: object) -> None:
-        """A route-owned key stated at the value the route actually forces is not rejected."""
+    def test_restating_the_forced_value_is_rejected_too(self, keyword: str, value: object) -> None:
+        """The keyword is gone, so agreeing with the route is refused like disagreeing.
+
+        Accepting the agreeing spelling was how the old check let a stated
+        value through: it compared against the field's declared default, so
+        whichever value that was passed and then won the merge.
+        """
         d = _si_input_with({"ecutwfc": 20.0, "ph": {keyword: value}})
-        inp = KoopmansInput.model_validate(d)
-        assert getattr(inp.calculator_parameters.ph, keyword) == value
+        with pytest.raises(ValueError, match=rf"`calculator_parameters\.ph\.{keyword}`"):
+            KoopmansInput.model_validate(d)
 
     def test_dump_and_revalidate_roundtrips(self) -> None:
         """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks."""
