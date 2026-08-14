@@ -618,3 +618,126 @@ class TestPhCalculatorParameters:
         """With no ``ph`` block, the namelist states nothing explicitly."""
         inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
         assert inp.calculator_parameters.ph.model_fields_set == set()
+
+
+def _si_input_on(calculator_parameters: dict[str, object], **workflow: object) -> dict[str, object]:
+    """Return the minimal silicon input, on a named route and with given parameters."""
+    d = _minimal_si_input()
+    d["calculator_parameters"] = {"ecutwfc": 20.0, **calculator_parameters}
+    d["workflow"] = {**_minimal_si_input()["workflow"], **workflow}  # type: ignore[dict-item]
+    return d
+
+
+# (input-file path of a keyword the kcw.x route determines, the parameters
+# stating it, a substring of the refusal it must name).
+_KCW_ROUTE_KEYWORDS = [
+    ("calculator_parameters.pw.system.nosym", {"pw": {"system": {"nosym": True}}}, "Remove it"),
+    ("calculator_parameters.pw.system.noinv", {"pw": {"system": {"noinv": True}}}, "Remove it"),
+    (
+        "calculator_parameters.pw.system.tot_magnetization",
+        {"pw": {"system": {"tot_magnetization": 2.0}}},
+        "`workflow.spin = 'collinear'`",
+    ),
+    (
+        "calculator_parameters.tot_magnetization",
+        {"tot_magnetization": 2.0},
+        "`workflow.spin = 'collinear'`",
+    ),
+]
+
+
+class TestKeywordsTheKcwRouteDetermines:
+    """A keyword the kcw.x route sets itself is refused on that route alone.
+
+    ``nosym`` / ``noinv`` and ``tot_magnetization`` stay input-file keywords
+    because every other route honours them; the DFPT chain force-merges them
+    over the caller's overrides, so stating one there means nothing.
+    """
+
+    @pytest.mark.parametrize(
+        ("path", "parameters", "advice"),
+        _KCW_ROUTE_KEYWORDS,
+        ids=[k[0] for k in _KCW_ROUTE_KEYWORDS],
+    )
+    def test_the_kcw_route_refuses_it(
+        self, path: str, parameters: dict[str, object], advice: str
+    ) -> None:
+        """The refusal names the field the reader set and what to do instead."""
+        d = _si_input_on(parameters, screening_method="dfpt")
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`{path}`" in message
+        assert advice in message
+
+    @pytest.mark.parametrize(
+        ("path", "parameters", "advice"),
+        _KCW_ROUTE_KEYWORDS,
+        ids=[k[0] for k in _KCW_ROUTE_KEYWORDS],
+    )
+    def test_the_dscf_route_honours_it(
+        self, path: str, parameters: dict[str, object], advice: str
+    ) -> None:
+        """kcp.x screening honours all four, so refusing them there would be a regression."""
+        KoopmansInput.model_validate(_si_input_on(parameters, screening_method="dscf"))
+
+    @pytest.mark.parametrize("task", ["dft_bands", "wannierize", "dft_eps"])
+    def test_a_route_without_screening_honours_them(self, task: str) -> None:
+        """No kcw.x chain runs, so none of the four is determined for the caller."""
+        parameters: dict[str, object] = {
+            "tot_magnetization": 2.0,
+            "pw": {"system": {"nosym": True, "noinv": True, "tot_magnetization": 2.0}},
+        }
+        KoopmansInput.model_validate(_si_input_on(parameters, task=task, screening_method="dfpt"))
+
+    def test_restating_the_forced_value_is_refused_too(self) -> None:
+        """The route forces ``nosym = .true.``; agreeing with it is still meaningless."""
+        d = _si_input_on({"pw": {"system": {"nosym": True}}}, screening_method="dfpt")
+        with pytest.raises(ValueError, match=r"`calculator_parameters\.pw\.system\.nosym`"):
+            KoopmansInput.model_validate(d)
+
+    def test_a_collinear_run_takes_the_shared_magnetization(self) -> None:
+        """A collinear kcw.x run requires the moment, so it must stay settable."""
+        d = _si_input_on({"tot_magnetization": 2.0}, screening_method="dfpt", spin="collinear")
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.tot_magnetization == pytest.approx(2.0)
+
+    def test_a_collinear_run_refuses_the_pw_magnetization(self) -> None:
+        """The collinear route overwrites the pw.x spelling with the shared one."""
+        d = _si_input_on(
+            {"pw": {"system": {"tot_magnetization": 2.0}}},
+            screening_method="dfpt",
+            spin="collinear",
+        )
+        with pytest.raises(ValueError, match=r"Set `calculator_parameters\.tot_magnetization`"):
+            KoopmansInput.model_validate(d)
+
+    def test_a_spinor_run_honours_the_pw_magnetization(self) -> None:
+        """A spinor chain forces no moment, so pw.x takes the caller's."""
+        d = _si_input_on(
+            {"pw": {"system": {"tot_magnetization": 2.0}}},
+            screening_method="dfpt",
+            spin="non_collinear",
+        )
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.pw.system.tot_magnetization == pytest.approx(2.0)
+
+    def test_leaving_them_unset_parses(self) -> None:
+        """The refusal must fire on a stated keyword, not on the field's default."""
+        KoopmansInput.model_validate(_si_input_on({}, screening_method="dfpt"))
+
+    def test_every_refused_path_is_a_real_input_field(self) -> None:
+        """A misspelt path would match nothing the reader can state, and refuse nothing."""
+        from koopmans.input_file._route_conditional import ROUTE_REFUSALS
+
+        inp = KoopmansInput.model_validate(_minimal_si_input())
+        for block in ROUTE_REFUSALS.values():
+            for paths in block.values():
+                for path in paths:
+                    owner: object = inp
+                    *parents, field = path.split(".")
+                    for part in parents:
+                        owner = getattr(owner, part)
+                    assert field in type(owner).model_fields, path  # type: ignore[attr-defined]

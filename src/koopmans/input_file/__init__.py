@@ -13,6 +13,7 @@ from wannier90_input.models.parameters import Projection
 from yaml import safe_load
 
 from koopmans.base import BaseModel
+from koopmans.input_file._route_conditional import raise_for_route_conditional
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
 from koopmans.input_file.cell_parameters import (
     CellParametersViaAlat,
@@ -431,6 +432,18 @@ class KoopmansInput(BaseModel):
             )
         return version
 
+    @model_validator(mode="after")
+    def reject_keywords_this_route_determines(self) -> KoopmansInput:
+        """Refuse a calculator keyword this workflow's route sets for itself.
+
+        A keyword every other route honours keeps its input-file spelling
+        (see ``koopmans.input_file._route_conditional``), so the check needs
+        both the calculator keyword and the workflow that would discard it,
+        which meet on this model.
+        """
+        raise_for_route_conditional(self)
+        return self
+
     @classmethod
     def from_file(cls, filename: str | Path) -> KoopmansInput:
         """Load an input file and return a KoopmansInput object."""
@@ -490,13 +503,17 @@ def convert_errors(e: ValidationError) -> list[ErrorDetails]:
 
 
 def prettify_errors(e: ValidationError) -> str:
-    """Return a prettified string of validation errors."""
+    """Return a prettified string of validation errors.
+
+    An error a whole-model validator raises has no location of its own, and
+    an empty pair of backticks in front of it names nothing.
+    """
     errors = convert_errors(e)
     error_lines = []
     for error in errors:
         loc = ".".join(str(part) for part in error["loc"])
         msg = error["msg"]
-        error_lines.append(f" `{loc}` {msg}")
+        error_lines.append(f" `{loc}` {msg}" if loc else f" {msg}")
     return "\n".join(error_lines)
 
 

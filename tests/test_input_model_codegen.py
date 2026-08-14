@@ -8,12 +8,20 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from aiida_koopmans.owned_keywords import OWNED
+from aiida_koopmans.owned_keywords import OWNED, ROUTE_CONDITIONAL
 from pydantic import ValidationError
 
 import koopmans
 from koopmans.input_file import CalculatorParametersInput
 from koopmans.input_file._codegen import MODULES, REASONS, generate, render
+from koopmans.input_file._route_conditional import ROUTE_REFUSALS, check_route_refusals
+from koopmans.input_file.workflow import WorkflowConfig
+
+
+def _never(workflow: WorkflowConfig, path: str) -> str | None:
+    """Accept every route; stands in for a real refusal in the drift alarms."""
+    return None
+
 
 _GENERATED = Path(koopmans.__file__ or "").parent / "input_file" / "_generated"
 
@@ -158,3 +166,33 @@ class TestDriftAlarms:
         monkeypatch.setitem(REASONS, "ph.INPUTPH", {**REASONS["ph.INPUTPH"], "epsilon": "typo"})
         with pytest.raises(ValueError, match=r"declares no epsilon.*stale"):
             generate(tmp_path)
+
+
+class TestRouteConditionalAlarms:
+    """A route-conditional keyword and its refusal must be declared together."""
+
+    def test_an_unrefused_conditional_keyword_refuses_to_generate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Declaring a keyword conditional without refusing it restores the silent drop."""
+        monkeypatch.setitem(
+            ROUTE_CONDITIONAL, "pw.SYSTEM", ROUTE_CONDITIONAL["pw.SYSTEM"] | {"nbnd"}
+        )
+        with pytest.raises(ValueError, match=r"nbnd would stay settable.*ROUTE_REFUSALS"):
+            generate(tmp_path)
+
+    def test_a_refusal_for_an_unclassified_keyword_refuses_to_generate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A refusal left behind after a route stopped forcing the keyword is stale."""
+        monkeypatch.setitem(
+            ROUTE_REFUSALS,
+            "pw.SYSTEM",
+            {**ROUTE_REFUSALS["pw.SYSTEM"], "nbnd": {"calculator_parameters.nbnd": _never}},
+        )
+        with pytest.raises(ValueError, match=r"nbnd is refused in ROUTE_REFUSALS"):
+            generate(tmp_path)
+
+    def test_every_declared_keyword_is_refused_today(self) -> None:
+        """The alarm is only worth having if the checked-in declarations agree."""
+        check_route_refusals()

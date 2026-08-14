@@ -38,15 +38,18 @@ def _copy_with_calc_overrides(inp: KoopmansInput, **calc_param_updates: object) 
 
     Each key in ``calc_param_updates`` is a dotted path into
     ``calculator_parameters`` (e.g. ``"kcp.system.nbnd"``). Pydantic's
-    ``model_copy`` is shallow, so we dump, mutate, and re-validate.
+    ``model_copy`` is shallow, so we dump, mutate, and re-validate. The dump
+    excludes unset fields, so the copy states exactly what the original
+    stated plus the patches: the routes read that same distinction
+    (``model_dump(exclude_unset=True)``) to decide what to override.
     """
-    d = inp.model_dump()
-    calc = d["calculator_parameters"]
+    d = inp.model_dump(exclude_unset=True)
+    calc = d.setdefault("calculator_parameters", {})
     for dotted, value in calc_param_updates.items():
         target = calc
         parts = dotted.split(".")
         for part in parts[:-1]:
-            target = target[part]
+            target = target.setdefault(part, {})
         target[parts[-1]] = value
     return KoopmansInput.model_validate(d)
 
@@ -175,7 +178,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         self, ozone_input: KoopmansInput, correction_value: str
     ) -> None:
         """Only KI/KIPZ are implemented; other corrections should raise NotImplementedError."""
-        d = ozone_input.model_dump()
+        d = ozone_input.model_dump(exclude_unset=True)
         d["workflow"]["correction"] = correction_value
         inp = KoopmansInput.model_validate(d)
 
@@ -192,7 +195,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         correction: the DFPT branch dispatches on ``screening_method`` before
         the DSCF correction guard is reached.
         """
-        d = ozone_input.model_dump()
+        d = ozone_input.model_dump(exclude_unset=True)
         d["workflow"]["screening_method"] = "dfpt"
         d["workflow"]["correction"] = correction_value
         inp = KoopmansInput.model_validate(d)
@@ -210,7 +213,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         builds its Wannierization, so accepting the switch would silently
         drop it.
         """
-        d = ozone_input.model_dump()
+        d = ozone_input.model_dump(exclude_unset=True)
         d["workflow"]["screening_method"] = screening_method
         d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
         inp = KoopmansInput.model_validate(d)
@@ -230,7 +233,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         """
         from koopmans.aiida.workflows import build_workgraph
 
-        d = ozone_input.model_dump()
+        d = ozone_input.model_dump(exclude_unset=True)
         d["workflow"]["task"] = task
         d["workflow"]["auto_projections"] = True
         inp = KoopmansInput.model_validate(d)
@@ -249,7 +252,7 @@ class TestExplicitOrbitalGroupsRejected:
 
     def test_dscf_kcp_inputs_reject_orbital_groups(self, ozone_input: KoopmansInput) -> None:
         """The DSCF (kcp.x) grouping choke point rejects an explicit grouping."""
-        d = ozone_input.model_dump()
+        d = ozone_input.model_dump(exclude_unset=True)
         d["workflow"]["orbital_groups"] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         inp = KoopmansInput.model_validate(d)
 
@@ -268,7 +271,7 @@ class TestExplicitOrbitalGroupsRejected:
         ``orbital_groups``); the guard fires at the DFPT grouping choke point,
         before any structure conversion or pseudopotential install.
         """
-        d = ozone_input.model_dump()
+        d = ozone_input.model_dump(exclude_unset=True)
         d["workflow"]["screening_method"] = "dfpt"
         d["workflow"]["correction"] = "ki"
         d["workflow"]["init_orbitals"] = "mlwfs"

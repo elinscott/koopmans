@@ -458,7 +458,17 @@ def generate(directory: Path | None = None) -> list[Path]:
 
     Returns:
         The paths written, in :data:`MODULES` order.
+
+    Raises:
+        ValueError: If the ownership data has outrun the schema built from
+            it — an owned block no model covers, or a route-conditional
+            keyword no refusal covers.
     """
+    # Deferred: ``koopmans.input_file`` imports the models this writes, so
+    # importing it is a cost only the caller of ``generate`` pays.
+    from koopmans.input_file._route_conditional import check_route_refusals
+
+    check_route_refusals()
     ungenerated = sorted(
         OWNED.keys() - {model.block for module in MODULES for model in module.models}
     )
