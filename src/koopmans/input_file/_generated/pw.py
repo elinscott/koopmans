@@ -20,7 +20,7 @@ _PW_CONTROL_OWNED: dict[str, str] = {
     'outdir': 'AiiDA writes it for every calculation it runs.',
     'prefix': 'AiiDA writes it for every calculation it runs.',
     'pseudo_dir': 'Pseudopotentials come from `workflow.pseudo_library`.',
-    'verbosity': 'koopmans needs every eigenvalue pw.x can print, so it always runs at high verbosity.',
+    'verbosity': 'koopmans runs every pw.x calculation at high verbosity.',
 }
 
 
