@@ -44,8 +44,12 @@ class GeneratedModel:
 
     Args:
         source: Dotted path of the module declaring the generic model.
-        name: Class name in ``source``; the emitted class keeps it, prefixed
-            with an underscore, since it is a base for the public model.
+        name: Class name in ``source``.
+        emitted: Name of the emitted class. It is the public name wherever
+            koopmans has nothing to add to the restricted model, since a
+            subclass that declares no field of its own documents as an empty
+            model; where koopmans does add something, it takes an
+            underscore-prefixed name and the public class subclasses it.
         block: Key into :data:`~aiida_koopmans.owned_keywords.OWNED` and
             :data:`REASONS`.
         path: Dotted path of the block in a koopmans input file, for the
@@ -55,6 +59,7 @@ class GeneratedModel:
 
     source: str
     name: str
+    emitted: str
     block: str
     path: str
     summary: str
@@ -83,16 +88,18 @@ MODULES: list[GeneratedModule] = [
             GeneratedModel(
                 "pydantic_espresso.models.pw.develop",
                 "ControlNamelist",
+                "ControlNamelist",
                 "pw.CONTROL",
                 "calculator_parameters.pw.control",
-                "``CONTROL`` namelist for ``pw.x``, less the keywords koopmans determines.",
+                "``CONTROL`` namelist for ``pw.x`` calculations.",
             ),
             GeneratedModel(
                 "pydantic_espresso.models.pw.develop",
                 "SystemNamelist",
+                "SystemNamelist",
                 "pw.SYSTEM",
                 "calculator_parameters.pw.system",
-                "``SYSTEM`` namelist for ``pw.x``, less the keywords koopmans determines.",
+                "``SYSTEM`` namelist for ``pw.x`` calculations.",
             ),
         ],
     ),
@@ -103,6 +110,7 @@ MODULES: list[GeneratedModule] = [
             GeneratedModel(
                 "pydantic_espresso.models.ph.develop",
                 "InputphNamelist",
+                "_InputphNamelist",
                 "ph.INPUTPH",
                 "calculator_parameters.ph",
                 "``INPUTPH`` namelist for ``ph.x``, less the keywords koopmans determines.",
@@ -116,10 +124,10 @@ MODULES: list[GeneratedModule] = [
             GeneratedModel(
                 "pydantic_espresso.models.pw2wannier90.develop",
                 "InputppNamelist",
+                "PW2Wannier90InputParameters",
                 "pw2wannier90.INPUTPP",
                 "calculator_parameters.pw2wannier90",
-                "``INPUTPP`` namelist for ``pw2wannier90.x``, less the keywords koopmans "
-                "determines.",
+                "Input parameters for ``pw2wannier90.x`` (the ``INPUTPP`` namelist).",
             )
         ],
     ),
@@ -130,6 +138,7 @@ MODULES: list[GeneratedModule] = [
             GeneratedModel(
                 "wannier90_input.models.latest",
                 "Wannier90Input",
+                "_Wannier90Input",
                 "wannier90",
                 "calculator_parameters.wannier90",
                 "Input keywords for ``wannier90.x``, less the ones koopmans determines.",
@@ -239,7 +248,11 @@ def _validated_fields(node: ast.FunctionDef) -> set[str]:
             continue
         target = decorator.func
         if isinstance(target, ast.Name) and target.id == "field_validator":
-            names |= {a.value for a in decorator.args if isinstance(a, ast.Constant)}
+            names |= {
+                argument.value
+                for argument in decorator.args
+                if isinstance(argument, ast.Constant) and isinstance(argument.value, str)
+            }
     return names
 
 
@@ -396,7 +409,7 @@ def _render_class(
     model: GeneratedModel, bases: str, reasons: dict[str, str], segments: list[str]
 ) -> str:
     """Return the source of one generated class."""
-    constant = f"_{_snake(model.name).upper()}_OWNED"
+    constant = "_" + model.block.replace(".", "_").upper() + "_OWNED"
     entries = "\n".join(f"    {keyword!r}: {reason!r}," for keyword, reason in reasons.items())
     owned_map = (
         f"#: The keywords koopmans determines, and what to set instead.\n"
@@ -414,7 +427,8 @@ def _render_class(
         else ""
     )
     body = "\n\n".join(segments)
-    return f'{owned_map}class _{model.name}({bases}):\n    """{model.summary}"""\n\n{validator}{body}\n'
+    declaration = f'class {model.emitted}({bases}):\n    """{model.summary}"""\n\n'
+    return f"{owned_map}{declaration}{validator}{body}\n"
 
 
 def _segment(lines: list[str], node: ast.stmt, name: str) -> str:
@@ -433,12 +447,6 @@ def _segment(lines: list[str], node: ast.stmt, name: str) -> str:
     if isinstance(node, ast.FunctionDef) and node.decorator_list:
         first = min(decorator.lineno for decorator in node.decorator_list)
     return "\n".join(lines[first - 1 : node.end_lineno])
-
-
-def _snake(name: str) -> str:
-    """Return ``name`` in snake_case."""
-    out = [("_" + c.lower()) if c.isupper() and i else c.lower() for i, c in enumerate(name)]
-    return "".join(out)
 
 
 def generate(directory: Path | None = None) -> list[Path]:

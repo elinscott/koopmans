@@ -15,7 +15,7 @@ from textwrap import dedent
 from typing import Annotated, Any, Literal
 
 #: The keywords koopmans determines, and what to set instead.
-_INPUTPH_NAMELIST_OWNED: dict[str, str] = {
+_PH_INPUTPH_OWNED: dict[str, str] = {
     'epsil': '`task: dft_eps` is the dielectric response; it is what asks ph.x for one.',
     'fildyn': 'AiiDA writes it for every calculation it runs.',
     'ldisp': 'koopmans runs ph.x only at q = Gamma.',
@@ -37,7 +37,7 @@ class _InputphNamelist(Namelist):
     @classmethod
     def reject_owned_keywords(cls, data: Any) -> Any:
         """Refuse a keyword koopmans determines, naming what to set instead."""
-        return raise_for_owned_keywords(data, 'calculator_parameters.ph', _INPUTPH_NAMELIST_OWNED)
+        return raise_for_owned_keywords(data, 'calculator_parameters.ph', _PH_INPUTPH_OWNED)
 
     niter_ph: int | None = Field(
         None,

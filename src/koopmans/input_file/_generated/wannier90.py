@@ -14,7 +14,7 @@ from wannier90_input.models.parameters import CentreConstraint, DisentanglementS
 from wannier90_input.models.template import Wannier90InputTemplate
 
 #: The keywords koopmans determines, and what to set instead.
-_WANNIER90_INPUT_OWNED: dict[str, str] = {
+_WANNIER90_OWNED: dict[str, str] = {
     'atoms_cart': 'The atoms come from the `atomic_positions` block.',
     'atoms_frac': 'The atoms come from the `atomic_positions` block.',
     'auto_projections': 'Set `workflow.auto_projections`.',
@@ -39,7 +39,7 @@ class _Wannier90Input(Wannier90InputTemplate):
     @classmethod
     def reject_owned_keywords(cls, data: Any) -> Any:
         """Refuse a keyword koopmans determines, naming what to set instead."""
-        return raise_for_owned_keywords(data, 'calculator_parameters.wannier90', _WANNIER90_INPUT_OWNED)
+        return raise_for_owned_keywords(data, 'calculator_parameters.wannier90', _WANNIER90_OWNED)
 
     gamma_only: bool = Field(
         False, description="Wavefunctions from underlying ab initio calculation are manifestly real"

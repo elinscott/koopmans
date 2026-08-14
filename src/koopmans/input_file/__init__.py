@@ -332,7 +332,7 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: PW2Wannier90InputParameters()
     )
     wannier90: Wannier90InputParametersWithUpDown = Field(
-        default_factory=lambda: Wannier90InputParametersWithUpDown()  # type: ignore[call-arg]
+        default_factory=lambda: Wannier90InputParametersWithUpDown()
     )
     unfold_and_interpolate: UnfoldAndInterpolateConfig = Field(
         default_factory=lambda: UnfoldAndInterpolateConfig()

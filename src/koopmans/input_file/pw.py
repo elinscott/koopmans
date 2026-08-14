@@ -4,17 +4,12 @@ from pydantic import Field
 from pydantic_espresso.models.pw.develop import ElectronsNamelist
 
 from koopmans.base import BaseModel
-from koopmans.input_file._generated.pw import _ControlNamelist, _SystemNamelist
+
+# Generated (``just generate-input-models``): the keywords the workflow
+# determines are absent from these, and nothing here is added to them.
+from koopmans.input_file._generated.pw import ControlNamelist, SystemNamelist
 
 __all__ = ["ControlNamelist", "PWInputParameters", "SystemNamelist"]
-
-
-class ControlNamelist(_ControlNamelist):
-    """``CONTROL`` namelist for ``pw.x`` calculations."""
-
-
-class SystemNamelist(_SystemNamelist):
-    """``SYSTEM`` namelist for ``pw.x`` calculations."""
 
 
 class PWInputParameters(BaseModel):

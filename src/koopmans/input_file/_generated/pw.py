@@ -16,7 +16,7 @@ from textwrap import dedent
 from typing import Annotated, Any, Literal
 
 #: The keywords koopmans determines, and what to set instead.
-_CONTROL_NAMELIST_OWNED: dict[str, str] = {
+_PW_CONTROL_OWNED: dict[str, str] = {
     'outdir': 'AiiDA writes it for every calculation it runs.',
     'prefix': 'AiiDA writes it for every calculation it runs.',
     'pseudo_dir': 'Pseudopotentials come from `workflow.pseudo_library`.',
@@ -24,14 +24,14 @@ _CONTROL_NAMELIST_OWNED: dict[str, str] = {
 }
 
 
-class _ControlNamelist(Namelist):
-    """``CONTROL`` namelist for ``pw.x``, less the keywords koopmans determines."""
+class ControlNamelist(Namelist):
+    """``CONTROL`` namelist for ``pw.x`` calculations."""
 
     @model_validator(mode="before")
     @classmethod
     def reject_owned_keywords(cls, data: Any) -> Any:
         """Refuse a keyword koopmans determines, naming what to set instead."""
-        return raise_for_owned_keywords(data, 'calculator_parameters.pw.control', _CONTROL_NAMELIST_OWNED)
+        return raise_for_owned_keywords(data, 'calculator_parameters.pw.control', _PW_CONTROL_OWNED)
 
     calculation: Literal["scf", "nscf", "bands", "relax", "md", "vc-relax", "vc-md"] = Field(
         "scf",
@@ -346,7 +346,7 @@ class _ControlNamelist(Namelist):
 
 
 #: The keywords koopmans determines, and what to set instead.
-_SYSTEM_NAMELIST_OWNED: dict[str, str] = {
+_PW_SYSTEM_OWNED: dict[str, str] = {
     'ecutrho': 'Set `calculator_parameters.ecutwfc`: pw.x and kcp.x always share one grid, and `ecutrho` follows at four times it.',
     'ecutwfc': 'Set `calculator_parameters.ecutwfc`: pw.x and kcp.x always share one grid, and `ecutrho` follows at four times it.',
     'ibrav': 'The lattice comes from the `cell_parameters` block.',
@@ -358,14 +358,14 @@ _SYSTEM_NAMELIST_OWNED: dict[str, str] = {
 }
 
 
-class _SystemNamelist(Namelist):
-    """``SYSTEM`` namelist for ``pw.x``, less the keywords koopmans determines."""
+class SystemNamelist(Namelist):
+    """``SYSTEM`` namelist for ``pw.x`` calculations."""
 
     @model_validator(mode="before")
     @classmethod
     def reject_owned_keywords(cls, data: Any) -> Any:
         """Refuse a keyword koopmans determines, naming what to set instead."""
-        return raise_for_owned_keywords(data, 'calculator_parameters.pw.system', _SYSTEM_NAMELIST_OWNED)
+        return raise_for_owned_keywords(data, 'calculator_parameters.pw.system', _PW_SYSTEM_OWNED)
 
     @field_validator("smearing", mode="before")
     @classmethod

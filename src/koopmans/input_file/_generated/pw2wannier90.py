@@ -16,7 +16,7 @@ from textwrap import dedent
 from typing import Annotated, Any
 
 #: The keywords koopmans determines, and what to set instead.
-_INPUTPP_NAMELIST_OWNED: dict[str, str] = {
+_PW2WANNIER90_INPUTPP_OWNED: dict[str, str] = {
     'outdir': 'AiiDA writes it for every calculation it runs.',
     'prefix': 'AiiDA writes it for every calculation it runs.',
     'seedname': 'AiiDA writes it for every calculation it runs.',
@@ -24,14 +24,14 @@ _INPUTPP_NAMELIST_OWNED: dict[str, str] = {
 }
 
 
-class _InputppNamelist(Namelist):
-    """``INPUTPP`` namelist for ``pw2wannier90.x``, less the keywords koopmans determines."""
+class PW2Wannier90InputParameters(Namelist):
+    """Input parameters for ``pw2wannier90.x`` (the ``INPUTPP`` namelist)."""
 
     @model_validator(mode="before")
     @classmethod
     def reject_owned_keywords(cls, data: Any) -> Any:
         """Refuse a keyword koopmans determines, naming what to set instead."""
-        return raise_for_owned_keywords(data, 'calculator_parameters.pw2wannier90', _INPUTPP_NAMELIST_OWNED)
+        return raise_for_owned_keywords(data, 'calculator_parameters.pw2wannier90', _PW2WANNIER90_INPUTPP_OWNED)
 
     wan_mode: str = Field(
         "standalone",

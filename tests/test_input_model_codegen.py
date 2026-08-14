@@ -11,10 +11,11 @@ import pytest
 from aiida_koopmans.owned_keywords import OWNED
 from pydantic import ValidationError
 
+import koopmans
 from koopmans.input_file import CalculatorParametersInput
 from koopmans.input_file._codegen import MODULES, REASONS, generate, render
 
-_GENERATED = Path(__import__("koopmans").__file__).parent / "input_file" / "_generated"
+_GENERATED = Path(koopmans.__file__ or "").parent / "input_file" / "_generated"
 
 
 class TestGenerationIsReproducible:
@@ -41,7 +42,7 @@ class TestGeneratedFieldSets:
             generic = getattr(import_module(model.source), model.name)
             restricted = getattr(
                 import_module(f"koopmans.input_file._generated.{module.filename[:-3]}"),
-                f"_{model.name}",
+                model.emitted,
             )
             dropped = generic.model_fields.keys() - restricted.model_fields.keys()
             assert dropped == set(OWNED[model.block]), model.name
