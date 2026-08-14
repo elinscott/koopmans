@@ -201,6 +201,55 @@ class TestDftEps:
         assert "koopmans install" in str(excinfo.value)
 
 
+class TestDftEpsSpin:
+    """``workflow.spin`` reaches the ground state, or is refused with the reason."""
+
+    def test_collinear_polarizes_the_scf(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """ph.x computes the LSDA dielectric response, so collinear is honored here.
+
+        The unpolarized build below is the control: before this wiring both
+        produced the same namelist.
+        """
+        d = _si_eps_dict(spin="collinear")
+        d["calculator_parameters"]["tot_magnetization"] = 0
+        wg = build_workgraph(KoopmansInput.model_validate(d))
+        system = wg.tasks["scf"].inputs["pw"]["parameters"].value.get_dict()["SYSTEM"]
+        assert system["nspin"] == 2
+        assert system["tot_magnetization"] == 0
+
+        unpolarized = build_workgraph(KoopmansInput.model_validate(_si_eps_dict()))
+        control = unpolarized.tasks["scf"].inputs["pw"]["parameters"].value.get_dict()["SYSTEM"]
+        assert "nspin" not in control
+
+    def test_collinear_without_a_magnetization_is_rejected(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """pw.x has no Fermi level to share between two channels at fixed occupations."""
+        with pytest.raises(ValueError, match="tot_magnetization"):
+            build_workgraph(KoopmansInput.model_validate(_si_eps_dict(spin="collinear")))
+
+    @pytest.mark.parametrize("spin", ["non_collinear", "spin_orbit"])
+    def test_spinor_regimes_are_refused(self, spin: str) -> None:
+        """ph.x has no electric-field perturbation for noncollinear magnetism.
+
+        Refused before any code or pseudo family is touched, so the message
+        is what the user gets rather than a ph.x abort hours into the run.
+        """
+        inp = KoopmansInput.model_validate(_si_eps_dict(spin=spin))
+        with pytest.raises(NotImplementedError, match="noncollinear magnetic ground"):
+            build_workgraph(inp)
+
+
 class TestDfptAutoEps:
     """eps_inf='auto' prepends the dielectric steps to the DFPT stream."""
 

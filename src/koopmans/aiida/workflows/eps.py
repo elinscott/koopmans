@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiida_quantumespresso.common.types import SpinType
+
 from koopmans.aiida.workflows import (
     load_codes,
+    pin_spin_regime,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
@@ -31,15 +34,32 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     reaches the ph.x step underneath the route's own ``epsil``/``trans``/
     q-mesh keys.
 
+    ``workflow.spin`` reaches the scf as ``'none'`` or ``'collinear'``
+    (the latter needing a ``calculator_parameters.tot_magnetization``);
+    the two spinor regimes are refused, since ph.x has no electric-field
+    perturbation for a noncollinear magnetic ground state.
+
     Args:
         koopmans_input: The parsed koopmans input.
 
     Returns:
         A WorkGraph chaining PwBaseWorkChain into PhBaseWorkChain.
+
+    Raises:
+        NotImplementedError: If ``workflow.spin`` names a spinor regime.
     """
     from aiida_koopmans.workgraphs.ph import DielectricCodes, DielectricTask
 
     from koopmans.aiida.conversion import input_to_ph_parameters
+
+    spin = koopmans_input.workflow.spin
+    if spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
+        raise NotImplementedError(
+            f"spin={spin.value!r} is not supported by the `dft_eps` route: ph.x has "
+            "no electric-field perturbation for a noncollinear magnetic ground "
+            "state, so no dielectric constant comes out of it. Use spin='none' or "
+            "spin='collinear'."
+        )
 
     reject_kpoint_overrides(
         koopmans_input,
@@ -51,6 +71,7 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     )
 
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf"])
+    pin_spin_regime(koopmans_input, overrides)
     overrides["ph"] = {"ph": {"parameters": input_to_ph_parameters(koopmans_input)}}
 
     # DielectricTask binds both codes eagerly (aiida-koopmans#97: not
@@ -66,4 +87,5 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         overrides=overrides,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
         scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
+        spin_type=spin,
     )

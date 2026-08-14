@@ -19,6 +19,7 @@ from typing import (
 
 from aiida import orm
 from aiida_koopmans.ml import MLMode
+from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
@@ -272,6 +273,47 @@ def pin_step_kpoints(
         overrides.setdefault(step, {})["kpoints_distance"] = spacing
         return None
     return step_kpoints_mesh(koopmans_input.kpoints, step)
+
+
+def pin_spin_regime(
+    koopmans_input: KoopmansInput,
+    overrides: dict[str, Any],
+) -> SpinType:
+    """Return the run's spin regime, recording a collinear magnetization in ``overrides``.
+
+    The pw.x steps of a plain-DFT route take their spin keywords from
+    aiida-quantumespresso's ``spin_type``, which the returned value feeds.
+    Only the magnetization has to travel separately: those steps run with
+    fixed occupations, and pw.x rejects those under LSDA unless
+    ``tot_magnetization`` is set.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+        overrides: The route's per-step override dict (mutated in place).
+
+    Returns:
+        The regime named by ``workflow.spin``.
+
+    Raises:
+        ValueError: If ``spin = 'collinear'`` and no magnetization is given.
+    """
+    spin = koopmans_input.workflow.spin
+    if spin != SpinType.COLLINEAR:
+        return spin
+
+    magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    for step in overrides:
+        system = overrides[step]["pw"]["parameters"].setdefault("SYSTEM", {})
+        if magnetization is not None:
+            system["tot_magnetization"] = int(magnetization)
+        elif "tot_magnetization" not in system:
+            raise ValueError(
+                "spin='collinear' needs `calculator_parameters.tot_magnetization` "
+                "(the number of unpaired electrons): these steps run pw.x with "
+                "fixed occupations, which under nspin = 2 has no Fermi level to "
+                "share between the two channels."
+            )
+    return spin
 
 
 def _projection_site_advice(exc: ProjectionSiteError) -> str:

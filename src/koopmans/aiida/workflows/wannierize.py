@@ -209,9 +209,9 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     if koopmans_input.workflow.spin != SpinType.NONE:
         raise NotImplementedError(
-            "Wannierization currently supports spin='none' only: no route sets "
-            "`nspin`, and the per-block group detection and split are "
-            "single-channel."
+            "Wannierization currently supports spin='none' only: this route sets "
+            "up no spin-polarized scratch, and the per-block group detection and "
+            "split are single-channel."
         )
 
     if koopmans_input.workflow.block_wannierization_threshold is not None:
