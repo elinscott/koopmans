@@ -659,6 +659,12 @@ def _si_input_on(calculator_parameters: dict[str, object], **workflow: object) -
 
 # (input-file path of a keyword the kcw.x route determines, the parameters
 # stating it, a substring of the refusal it must name).
+#
+# This list is the only thing that notices a refusal being deleted:
+# ``check_route_refusals`` holds the tables to the keyword declarations they
+# rest on, but nothing declares that a field *needs* refusing on a route, so
+# an emptied table passes every build-time check. Every entry added to
+# ``ROUTE_REFUSALS`` or ``SHARED_REFUSALS`` needs one here.
 _KCW_ROUTE_KEYWORDS = [
     ("calculator_parameters.pw.system.nosym", {"pw": {"system": {"nosym": True}}}, "Remove it"),
     ("calculator_parameters.pw.system.noinv", {"pw": {"system": {"noinv": True}}}, "Remove it"),
@@ -743,16 +749,56 @@ class TestKeywordsTheKcwRouteDetermines:
         """The refusal must fire on a stated keyword, not on the field's default."""
         KoopmansInput.model_validate(_si_input_on({}, screening_method="dfpt"))
 
-    def test_every_refused_path_is_a_real_input_field(self) -> None:
-        """A misspelt path would match nothing the reader can state, and refuse nothing."""
-        from koopmans.input_file._route_conditional import ROUTE_REFUSALS, SHARED_REFUSALS
 
-        inp = KoopmansInput.model_validate(_minimal_si_input())
-        namelist = (paths for block in ROUTE_REFUSALS.values() for paths in block.values())
-        for paths in (*namelist, SHARED_REFUSALS):
-            for path in paths:
-                owner: object = inp
-                *parents, field = path.split(".")
-                for part in parents:
-                    owner = getattr(owner, part)
-                assert field in type(owner).model_fields, path  # type: ignore[attr-defined]
+class TestTheRefusalTablesAreChecked:
+    """``check_route_refusals`` catches the drift a refusal cannot report itself.
+
+    A refusal that names nothing, or rests on a keyword the routes have
+    given back, goes on parsing every input silently. Both are build-time
+    facts, so both are checked where the schema is generated.
+    """
+
+    def test_a_misspelt_path_is_caught(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A path naming no field would match nothing the reader can state."""
+        from koopmans.input_file import _route_conditional
+
+        refusals = dict(_route_conditional.SHARED_REFUSALS)
+        entry = refusals.pop("calculator_parameters.tot_magnetization")
+        refusals["calculator_parameters.tot_magnetisation"] = entry
+        monkeypatch.setattr(_route_conditional, "SHARED_REFUSALS", refusals)
+
+        with pytest.raises(ValueError, match="not a field"):
+            _route_conditional.check_route_refusals()
+
+    def test_a_path_through_a_value_is_caught(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``ecutwfc`` holds a number, so nothing can be refused beneath it."""
+        from koopmans.input_file import _route_conditional
+
+        entry = _route_conditional.SHARED_REFUSALS["calculator_parameters.tot_magnetization"]
+        monkeypatch.setattr(
+            _route_conditional,
+            "SHARED_REFUSALS",
+            {"calculator_parameters.ecutwfc.system": entry},
+        )
+
+        with pytest.raises(ValueError, match="holds a value rather than a block"):
+            _route_conditional.check_route_refusals()
+
+    def test_a_keyword_the_routes_gave_back_is_caught(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Un-owning the keyword restores its own spelling, so the field is no longer alone.
+
+        This is what ties the shared refusals to the plugin: the field is
+        worth refusing only while ``OWNED`` keeps the namelist keyword out
+        of the input file.
+        """
+        from aiida_koopmans import owned_keywords
+
+        from koopmans.input_file import _route_conditional
+
+        pw_system = owned_keywords.OWNED["pw.SYSTEM"] - {"tot_magnetization"}
+        monkeypatch.setitem(owned_keywords.OWNED, "pw.SYSTEM", pw_system)
+
+        with pytest.raises(ValueError, match="no longer claims"):
+            _route_conditional.check_route_refusals()
