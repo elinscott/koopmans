@@ -9,12 +9,27 @@ gets its own screening parameter. This page runs the :doc:`ozone calculation
 <../ozone/automatically>` again on O₂ and draws out that difference; anything it does
 not mention works as it did there.
 
+A challenge before you read on: modify the :doc:`ozone tutorial's
+<../ozone/automatically>` input file for molecular oxygen, and see whether the IP and EA
+compare as well to experiment. O₂ is a linear molecule with a bond length of 1.21 Å, and
+— unlike ozone — it is paramagnetic, so its two spin channels differ.
+
+.. question:: Do the IP and EA of O₂ compare as well to experiment?
+
+    Set ``spin: collinear`` in the ``workflow`` block, add ``tot_magnetization: 2`` and
+    lower ``nbnd`` to ``8`` in ``calculator_parameters``, and update the atoms. That
+    gives an ionization potential of 12.35 eV and an electron affinity of 0.40 eV.
+    Whether they compare as well as ozone's depends on what you hold them against: the
+    tabulated values of 12.07 eV and 0.45 eV are adiabatic, and an orbital energy
+    corresponds to a vertical one. The rest of this page works through the input file,
+    the run and that comparison.
+
 ****************
  The input file
 ****************
 
-Download :download:`o2.yaml <o2.yaml>` and place it in an empty directory. Here it is in
-full:
+Download :download:`o2.yaml <o2.yaml>` — the ozone input with those changes made — and
+place it in an empty directory. Here it is in full:
 
 .. literalinclude:: o2.yaml
     :language: yaml
@@ -95,12 +110,12 @@ so the highest occupied and lowest unoccupied orbitals are the same orbital in o
 channels, each screened by a parameter of its own.
 
 KI puts the ionization potential at 12.35 eV and the electron affinity at 0.40 eV. As in
-the ozone tutorial, an orbital energy is a vertical quantity, and photoemission puts O₂'s
-vertical first ionization between 12.30 eV :cite:`Kimura1981` and 12.33 eV
+the ozone tutorial, an orbital energy is a vertical quantity, and photoemission puts
+O₂'s vertical first ionization between 12.30 eV :cite:`Kimura1981` and 12.33 eV
 :cite:`Banna1976` — a few hundredths of an electronvolt below KI.
 
 The `tabulated values
-<https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782447&Mask=20#Ion-Energetics>`_ of 12.07 eV
-and 0.45 eV are the adiabatic ones. The electron affinity has no measured vertical
+<https://webbook.nist.gov/cgi/cbook.cgi?ID=C7782447&Mask=20#Ion-Energetics>`_ of 12.07
+eV and 0.45 eV are the adiabatic ones. The electron affinity has no measured vertical
 counterpart: photodetachment reaches the neutral molecule from O₂⁻, whose bond is longer
 than O₂'s, so there is nothing to hold the 0.40 eV against.
