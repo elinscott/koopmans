@@ -196,7 +196,8 @@ The progress table shows a self-consistent ``pw.x`` calculation, then a
 non-self-consistent one that adds the empty bands, then one Wannierization per block —
 each of which is itself a ``wannier90.x`` preprocessing run, a ``pw2wannier90.x`` run
 that extracts the overlaps and projections, and the ``wannier90.x`` run that minimizes
-the spread.
+the spread. A further ``pw.x`` calculation runs off the self-consistent density to get
+the bands along ``path``; the last part of this section is what it is for.
 
 The results land in ``si/``, one directory per step, exactly as :doc:`the ozone tutorial
 <../../orbital_energies/ozone/automatically>` describes. The files worth opening are the
@@ -245,6 +246,27 @@ the Wannier functions ended up.
 
     This is the sense in which the grid in this file is unconverged, and it is worth
     knowing before you read the numbers at the end of this tutorial.
+
+``aiida.wout`` reports what Wannier90 did. Whether the result still describes the
+electronic structure ``pw.x`` computed is a separate question, and the band structure
+answers it. Because ``si.yaml`` gives a ``path``, each block's Wannier functions are
+interpolated along it, and the extra ``pw.x`` calculation supplies the same bands
+directly. Draw them on one set of axes with
+
+.. code-block:: console
+
+    $ koopmans plot bandstructure si
+
+which writes ``bandstructure.png`` — the ``pw.x`` bands, and one interpolated band
+structure per block — or add ``--show`` to open a window instead.
+
+Two things are worth reading off it. *Which* bands the interpolation is obliged to
+reproduce is what ``dis_froz_max`` sets: the empty block must span the states below it
+and is free above, so tracking ``pw.x`` inside the frozen window and departing from it
+higher up is the disentanglement doing exactly what it was told. *How closely* the
+interpolation follows those bands between the k-points of the grid is set by the grid: a
+Wannier interpolation is exact on the k-points it was built from, and
+:math:`2\times2\times2` gives it eight of them to carry the whole path.
 
 ********************
  The KI calculation
