@@ -1662,6 +1662,116 @@ class TestCommand:
         assert result.exit_code == 2
         assert "--label must follow the folder it applies to" in result.output
 
+    def test_a_second_style_for_the_same_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """A second --style for one folder is refused, not silently overwritten.
+
+        Silently keeping the last one would discard the first with no error —
+        the kind of silent drop this codebase refuses everywhere else.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "--style", "x", "--style", "rx"]
+        )
+
+        assert result.exit_code == 2
+        assert "--style was already given for" in result.output
+        assert "'x'" in result.output
+
+    def test_a_second_label_for_the_same_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--label is refused a second time for one folder, symmetrically with --style."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "--label", "DFT", "--label", "KI"]
+        )
+
+        assert result.exit_code == 2
+        assert "--label was already given for" in result.output
+        assert "'DFT'" in result.output
+
+    def test_a_double_dash_escapes_a_dash_prefixed_folder(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """-- ends option parsing, so a dash-prefixed folder is still a folder.
+
+        Without honoring click's own "--" escape hatch, a folder spelled with
+        a leading dash looks like an unrecognized option to the scanner that
+        pairs --style with the folder before it.
+        """
+        from koopmans.cli import cli
+
+        with runner.isolated_filesystem(temp_dir=tmp_path) as workdir:
+            dft_run(Path(workdir), "-oldrun", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+            result = runner.invoke(cli, ["plot", "bandstructure", "--", "-oldrun"])
+
+        assert result.exit_code == 0, result.output
+        assert "1 series" in result.output
+
+    def test_a_double_dash_hands_everything_after_it_to_click_as_folders(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """After --, --style is a folder name too, exactly as click's own parser reads it.
+
+        Before honoring --, this raised the misleading "--style must follow
+        the folder it applies to" — misleading because a folder (-oldrun) had
+        in fact just been given. What's left after fixing that is click's own
+        "no such folder" complaint about the two names that are not real
+        directories, which is at least an honest error.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(cli, ["plot", "bandstructure", "--", str(folder), "--style", "rx"])
+
+        assert result.exit_code == 2
+        assert "--style must follow the folder it applies to" not in result.output
+
+    def test_an_explicit_empty_style_is_distinct_from_no_style(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--style '' is a value the user typed, not the internal "unset" marker.
+
+        Both draw the same plain curve, since an empty format string tells
+        matplotlib nothing different from no format string at all — but the
+        dumped record still says what was actually typed rather than
+        silently collapsing it into "nothing was asked for here".
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "",
+                str(second),
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["", None]
+
     def test_an_unreadable_style_is_refused_with_what_to_write(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:

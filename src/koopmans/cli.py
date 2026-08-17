@@ -850,18 +850,36 @@ class _FolderPairingCommand(click.Command):
 
         Returns the tokens click's own parser should see (folders and every
         option other than the paired ones), and, per paired parameter name, a
-        mapping from folder index to the value that followed that folder.
+        mapping from folder index to the value that followed that folder. A
+        literal ``--`` ends option parsing exactly as it does for click's own
+        parser: everything after it, however it is spelled, is a folder.
 
         :raises click.UsageError: if a paired option appears before any
-            folder, or is given with no value.
+            folder, is given with no value, or is given twice for one folder.
         """
         remaining: list[str] = []
         bound: dict[str, dict[int, str]] = {name: {} for name in set(opt_to_param.values())}
+        folder_tokens: list[str] = []
         folder_count = 0
+        past_double_dash = False
 
         i = 0
         while i < len(args):
             arg = args[i]
+
+            if not past_double_dash and arg == "--":
+                past_double_dash = True
+                remaining.append(arg)
+                i += 1
+                continue
+
+            if past_double_dash:
+                remaining.append(arg)
+                folder_tokens.append(arg)
+                folder_count += 1
+                i += 1
+                continue
+
             name, sep, inline = arg.partition("=") if arg.startswith("--") else (arg, "", "")
 
             if name in opt_to_param:
@@ -870,8 +888,15 @@ class _FolderPairingCommand(click.Command):
                         f"{name} must follow the folder it applies to — give a folder "
                         f"before the first {name}, not a bare {name} up front."
                     )
+                index = folder_count - 1
+                slot = bound[opt_to_param[name]]
+                if index in slot:
+                    raise click.UsageError(
+                        f"{name} was already given for {folder_tokens[index]!r} "
+                        f"({slot[index]!r}); write only one {name} per folder."
+                    )
                 value, i = self._take_paired_value(args, i, name, sep, inline)
-                bound[opt_to_param[name]][folder_count - 1] = value
+                slot[index] = value
                 continue
 
             if name in consumes:
@@ -882,6 +907,7 @@ class _FolderPairingCommand(click.Command):
 
             remaining.append(arg)
             if not arg.startswith("-") or arg == "-":
+                folder_tokens.append(arg)
                 folder_count += 1
             i += 1
 
@@ -922,7 +948,10 @@ class _FolderPairingCommand(click.Command):
         folders = ctx.params.get(self._folder_param, ())
         for name, values in bound.items():
             if values:
-                ctx.params[name] = tuple(values.get(i, "") for i in range(len(folders)))
+                # None marks a folder that had no --style/--label of its own,
+                # distinct from one given an explicit empty string (a no-op
+                # matplotlib format string, still a value the user typed).
+                ctx.params[name] = tuple(values.get(i) for i in range(len(folders)))
 
         return rv
 
@@ -969,8 +998,8 @@ def bandstructure(
     zero: str,
     data_path: Path | None,
     ylim: tuple[float, float] | None,
-    labels: tuple[str, ...],
-    styles: tuple[str, ...],
+    labels: tuple[str | None, ...],
+    styles: tuple[str | None, ...],
 ) -> None:
     """Draw the band structures of finished runs on one set of axes.
 

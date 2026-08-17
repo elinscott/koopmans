@@ -797,7 +797,7 @@ def _name_after_folder(found: Sequence[tuple[BandSeries, str]], label: str) -> N
         item.label = f"{label}{qualifier}"
 
 
-def _check_one_per_folder(values: Sequence[str], folders: int, option: str) -> None:
+def _check_one_per_folder(values: Sequence[str | None], folders: int, option: str) -> None:
     """Reject a per-folder option given for some but not all of the folders.
 
     :raises ValueError: if any values were given and they do not number ``folders``.
@@ -811,7 +811,9 @@ def _check_one_per_folder(values: Sequence[str], folders: int, option: str) -> N
 
 
 def resolve_band_series(
-    folders: Sequence[Path], labels: Sequence[str] = (), styles: Sequence[str] = ()
+    folders: Sequence[Path],
+    labels: Sequence[str | None] = (),
+    styles: Sequence[str | None] = (),
 ) -> tuple[list[BandSeries], list[str]]:
     """Return the band structures of the given runs, and any warnings.
 
@@ -819,13 +821,15 @@ def resolve_band_series(
     name when more than one folder is on the axes. ``labels`` names the folders
     instead, one per folder in the order they were given; a folder that yields
     several series keeps whatever tells them apart, so one name covers a
-    per-spin or per-block fan-out and no two curves end up sharing a name. An
-    empty string leaves that folder's own series named or styled as if
+    per-spin or per-block fan-out and no two curves end up sharing a name.
+    ``None`` leaves that folder's own series named or styled as if
     ``labels``/``styles`` had not been given for it at all, which is how a
-    caller pairing values with only some of the folders spells "no value here".
-    ``styles`` are matplotlib format strings, given the same way and covering a
-    fan-out the same way: every curve one folder contributes is drawn alike.
-    Every folder must carry a band structure: drawing fewer curves than folders
+    caller pairing values with only some of the folders spells "no value
+    here" — an empty string is a value of its own (a no-op matplotlib format
+    string counts as a style given), not a stand-in for "none". ``styles``
+    are matplotlib format strings, given the same way and covering a fan-out
+    the same way: every curve one folder contributes is drawn alike. Every
+    folder must carry a band structure: drawing fewer curves than folders
     asked for reads as a figure of them all.
 
     :raises ValueError: if given, ``labels``/``styles`` do not number the
@@ -848,11 +852,14 @@ def resolve_band_series(
         found = _series_from_node(node)
         if not found:
             empty.append((folder, node))
-        if styles and styles[index]:
+        style_value = styles[index] if styles else None
+        if style_value is not None:
             for item, _ in found:
-                item.style = styles[index]
-        if labels and labels[index]:
-            _name_after_folder(found, labels[index])
+                item.style = style_value
+
+        label_value = labels[index] if labels else None
+        if label_value is not None:
+            _name_after_folder(found, label_value)
         elif len(folders) > 1:
             prefix = folder.name or folder.resolve().name
             for item, _ in found:
