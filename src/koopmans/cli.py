@@ -809,13 +809,12 @@ ylim_option = click.option(
     multiple=True,
     metavar="FORMAT",
     callback=_check_styles,
-    help="Draw a curve in a matplotlib format string, such as 'x' for crosses, "
-    "'k--' for a dashed black line or '-' for a plain one. Repeat once per "
-    "folder, in the order the folders are listed, which draws everything a "
-    "folder contributes the same way; or once per curve, in the order they are "
-    "drawn, which draws a folder's own curves differently from each other. A "
-    "color the string names replaces the one this command would have chosen. "
-    "--label stays one per folder either way.",
+    help="Draw a folder in a matplotlib format string, such as 'x' for crosses, "
+    "'k--' for a dashed black line or '-' for a plain one; repeat once per "
+    "folder, in the order the folders are listed, as --label does. A color the "
+    "string names replaces the one this command would have chosen, and every "
+    "curve the folder draws is drawn the same way — pass a calculation "
+    "directory of its own to draw one result differently from its siblings.",
 )
 def bandstructure(
     folders: tuple[Path, ...],
@@ -829,21 +828,22 @@ def bandstructure(
 ) -> None:
     """Draw the band structures of finished runs on one set of axes.
 
-    FOLDERS are directories `koopmans run` wrote. Every band structure across
-    all of them is drawn, so a DFT run and a Koopmans run given together
-    overlay, referenced to a single energy zero. Each is named after the step
-    that produced it unless --label names it:
+    FOLDERS are directories `koopmans run` wrote, or single calculation
+    directories inside them, which carry a metadata file of their own. Every
+    band structure across all of them is drawn, so a DFT run and a Koopmans run
+    given together overlay, referenced to a single energy zero. Each is named
+    after the step that produced it unless --label names it:
 
         koopmans plot bandstructure dft ki --label DFT --label "KI@LDA"
 
     Each is drawn in a color of this command's choosing unless --style says
-    how. One style per folder draws everything that folder contributes alike;
-    one per curve draws them differently, in the order they are drawn. A
-    wannierize run of silicon draws its pw.x bands and one interpolation per
-    block, so crosses at the k-points pw.x computed and a line through each
-    interpolation of them read:
+    how, as crosses at the k-points pw.x computed and a line through the
+    wannier90 interpolation of them:
 
-        koopmans plot bandstructure si --style rx --style b- --style b-
+        koopmans plot bandstructure pw wannier --style x --style -
+
+    One style covers everything its folder draws, so drawing one run's results
+    differently from each other means passing them as separate folders.
 
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
