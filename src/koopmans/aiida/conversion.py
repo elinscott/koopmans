@@ -379,6 +379,21 @@ def step_grid_spacing(kpoints: KpointsInput, step: str) -> float | None:
     return None if override is None else override.grid_spacing
 
 
+def wannier90_path_density(kpoints: KpointsInput) -> float:
+    """Return the density wannier90 interpolates its band structure at.
+
+    Falls back to :class:`~koopmans.input_file.WannierPathOverrideInput`'s
+    own default where ``kpoints.overrides.wannier90`` is unset.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+    """
+    from koopmans.input_file import WannierPathOverrideInput
+
+    override = kpoints.overrides.wannier90
+    return (override or WannierPathOverrideInput()).path_density
+
+
 def _parse_kpoints_path_string(
     path_string: str, point_coords: dict[str, list[float]]
 ) -> list[tuple[str, str]]:
@@ -439,17 +454,26 @@ def _calculate_kpoints_along_path(
     path: list[tuple[str, str]],
     point_coords: dict[str, list[float]],
     density: float,
+    reciprocal_cell: Any,
 ) -> tuple[list[list[float]], list[tuple[int, str]]]:
     """Calculate k-points along a path with the specified density.
 
     Args:
         path: List of (start_label, end_label) tuples defining path segments.
-        point_coords: Dict mapping special point labels to their coordinates.
-        density: Number of k-points per reciprocal space unit.
+        point_coords: Dict mapping special point labels to their crystal
+            (fractional reciprocal) coordinates.
+        density: Number of k-points per inverse angstrom, in the same 2π
+            convention as ``reciprocal_cell`` (and as ``kpoints.grid_spacing``).
+        reciprocal_cell: The cell's reciprocal lattice vectors as rows, in
+            1/angstrom, 2π convention (:func:`_reciprocal_cell`). Segment
+            lengths are measured in this Cartesian basis, so a converged
+            density carries between structures — crystal coordinates alone
+            say nothing about physical length.
 
     Returns:
-        Tuple of (kpoint_list, label_list) where kpoint_list contains coordinates
-        and label_list contains (index, label) tuples for special points.
+        Tuple of (kpoint_list, label_list) where kpoint_list contains crystal
+        coordinates and label_list contains (index, label) tuples for special
+        points.
     """
     import numpy as np
 
@@ -461,7 +485,7 @@ def _calculate_kpoints_along_path(
         start_coord = np.array(point_coords[start_label])
         end_coord = np.array(point_coords[end_label])
 
-        segment_length = np.linalg.norm(end_coord - start_coord)
+        segment_length = np.linalg.norm((end_coord - start_coord) @ reciprocal_cell)
         n_points = max(2, int(np.ceil(segment_length * density)))
 
         for i in range(n_points):
@@ -483,6 +507,18 @@ def _calculate_kpoints_along_path(
         previous_end = end_label
 
     return kpoint_list, label_list
+
+
+def _reciprocal_cell(structure: orm.StructureData) -> Any:
+    """Return the cell's reciprocal lattice vectors as rows, in 1/angstrom.
+
+    The 2π convention: matches ``aiida.orm.KpointsData.reciprocal_cell``, the
+    basis ``kpoints.grid_spacing`` already measures against, so a k-path
+    density expressed against this basis carries the same physical meaning.
+    """
+    import numpy as np
+
+    return 2.0 * np.pi * np.linalg.inv(np.array(structure.cell)).T
 
 
 def _cell_special_points(structure: orm.StructureData) -> dict[str, list[float]]:
@@ -509,6 +545,7 @@ def _cell_special_points(structure: orm.StructureData) -> dict[str, list[float]]
 def kpoints_input_to_kpoints_path(
     kpoints: KpointsInput,
     structure: orm.StructureData,
+    density: float | None = None,
 ) -> orm.KpointsData:
     """Convert KpointsInput to AiiDA KpointsData for bands calculations.
 
@@ -522,6 +559,9 @@ def kpoints_input_to_kpoints_path(
     Args:
         kpoints: The kpoints input from KoopmansInput.
         structure: The structure to generate k-path for.
+        density: Points per inverse angstrom to sample the path at. Defaults
+            to ``kpoints.path_density``; a caller wiring a different step's
+            interpolation density passes its own value instead.
 
     Returns:
         AiiDA KpointsData node with k-point path.
@@ -564,7 +604,10 @@ def kpoints_input_to_kpoints_path(
             }
 
     kpoint_list, label_list = _calculate_kpoints_along_path(
-        path, point_coords, kpoints.path_density
+        path,
+        point_coords,
+        kpoints.path_density if density is None else density,
+        _reciprocal_cell(structure),
     )
 
     kpts = orm.KpointsData()
@@ -581,6 +624,7 @@ def kpoints_input_to_kpoints_path(
 def kpoints_input_to_interpolation_path(
     kpoints: KpointsInput,
     structure: orm.StructureData,
+    density: float | None = None,
 ) -> orm.KpointsData | None:
     """Return the input's k-path as a labelled explicit k-list, or ``None``.
 
@@ -593,13 +637,15 @@ def kpoints_input_to_interpolation_path(
     Args:
         kpoints: The kpoints input from KoopmansInput.
         structure: The structure to generate the k-path for.
+        density: Points per inverse angstrom to sample the path at. Defaults
+            to ``kpoints.path_density``.
 
     Returns:
         AiiDA KpointsData node with the k-point path, or ``None``.
     """
     if kpoints.gamma_only or kpoints.path is None:
         return None
-    return kpoints_input_to_kpoints_path(kpoints, structure)
+    return kpoints_input_to_kpoints_path(kpoints, structure, density)
 
 
 def _resolve_pw_cutoffs(system: dict[str, Any]) -> None:
