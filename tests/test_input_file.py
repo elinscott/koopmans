@@ -230,6 +230,53 @@ class TestCalculateBandsRemoved:
             KoopmansInput.model_validate(d)
 
 
+class TestPeriodicIsOnePerCellVector:
+    """``periodic`` is canonical after validation, whichever way it was written."""
+
+    @pytest.mark.parametrize(
+        ("written", "expected"),
+        [
+            (True, (True, True, True)),
+            (False, (False, False, False)),
+            ([True, True, False], (True, True, False)),
+        ],
+    )
+    def test_a_bool_states_the_same_of_all_three(
+        self, written: object, expected: tuple[bool, bool, bool]
+    ) -> None:
+        """A single bool expands; an explicit triple passes through."""
+        d = _minimal_si_input()
+        _set_keyword(d, "atoms.cell_parameters", "periodic", written)
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.atoms.cell_parameters.periodic == expected
+
+    def test_a_wrong_length_is_rejected(self) -> None:
+        """Two entries name no third cell vector."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "atoms.cell_parameters", "periodic", [True, False])
+
+        with pytest.raises(ValidationError):
+            KoopmansInput.model_validate(d)
+
+    def test_the_canonical_form_round_trips(self) -> None:
+        """``model_dump`` emits the triple, and re-validating it changes nothing.
+
+        koopmans re-validates dumped inputs, so a normalization only the raw
+        file survived would drift on the second pass.
+        """
+        inp = KoopmansInput.model_validate(_minimal_si_input())
+
+        dumped = inp.model_dump()
+        periodic = dumped["atoms"]["cell_parameters"]["periodic"]
+
+        assert periodic == (True, True, True)
+        assert KoopmansInput.model_validate(dumped).atoms.cell_parameters.periodic == periodic
+
+
 def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object]:
     """Return the minimal silicon input, its ``calculator_parameters`` replaced."""
     d = _minimal_si_input()

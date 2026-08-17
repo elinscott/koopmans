@@ -447,7 +447,7 @@ class KoopmansInput(BaseModel):
         atoms = info.data.get("atoms")
         if workflow is None or atoms is None or not names_band_path(kpoints):
             return kpoints
-        message = band_path_refusal(workflow, any(atoms.cell_parameters.pbc))
+        message = band_path_refusal(workflow, any(atoms.cell_parameters.periodic))
         if message is not None:
             raise ValueError(message)
         return kpoints

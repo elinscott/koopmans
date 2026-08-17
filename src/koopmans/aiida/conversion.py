@@ -233,7 +233,7 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     cell = cell_in_angstrom(cell_params)
 
     # Create structure
-    structure = orm.StructureData(cell=cell, pbc=cell_params.pbc)
+    structure = orm.StructureData(cell=cell, pbc=cell_params.periodic)
 
     # Add atoms
     units = positions.units
@@ -289,7 +289,7 @@ def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]
     frames = ase_read(atoms.snapshots, index=":")
 
     cell = cell_in_angstrom(atoms.cell_parameters)
-    pbc = atoms.cell_parameters.pbc
+    pbc = atoms.cell_parameters.periodic
 
     structures: dict[str, orm.StructureData] = {}
     for index, frame in enumerate(frames, start=1):
