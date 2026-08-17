@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__ = ["LabelDisplay", "describe_label", "prettify_label"]
+__all__ = ["LabelDisplay", "describe_label", "executable_for", "prettify_label"]
 
 
 class LabelDisplay(NamedTuple):
@@ -148,10 +148,12 @@ _DISPLAY: dict[str | tuple[str, str], str] = {
     # --- names seen only in the failure summary ---
     # That summary is keyed on ``process_label``, not on the call link
     # label: a class name for a CalcJob or WorkChain, the function's own
-    # name for a PyFunction. The two model steps below are PyFunctions,
-    # which the table drops.
+    # name for a PyFunction. The two model steps here are PyFunctions,
+    # which the table drops; the refinement is a graph the table sees
+    # through, and a cascading failure names it all the same.
     "train_screening_model": "Screening model training",
     "evaluate_screening_model": "Screening model evaluation",
+    "RefineScreeningParameters": "Screening refinement",
     "PwCalculation": "pw.x",
     "PwBaseWorkChain": "pw.x",
     "PwBandsWorkChain": "DFT band structure",
@@ -174,6 +176,10 @@ _DISPLAY: dict[str | tuple[str, str], str] = {
     "Wann2kcpCalculation": "wann2kcp.x",
     "MergeEvcCalculation": "merge_evc.x",
 }
+
+# The names of :data:`_EXECUTABLES`, so a display name can be recognised
+# as naming a binary rather than a step.
+_EXECUTABLE_NAMES = frozenset(_EXECUTABLES.values())
 
 _SPIN = {"up": "spin up", "down": "spin down"}
 _MANIFOLD = {"occ": "occupied block", "emp": "empty block", "block": "block"}
@@ -298,6 +304,24 @@ def describe_label(raw: str, process_label: str = "") -> LabelDisplay:
     text = _DISPLAY.get((raw, process_label)) or _DISPLAY.get(raw) or _assembled(raw) or raw
     transparent = (raw, process_label) in _TRANSPARENT or raw in _TRANSPARENT
     return LabelDisplay(text, code, transparent, raw in _NUMBERED)
+
+
+def executable_for(process_label: str) -> str | None:
+    """Return the executable a process label names, or ``None``.
+
+    Only a display name filed under one of the entries of
+    :data:`_EXECUTABLES` qualifies, so a process named after a step
+    rather than after a binary, and one the table does not name at all,
+    both answer ``None``.
+
+    Examples:
+    >>> executable_for("PwBaseWorkChain")
+    'pw.x'
+    >>> executable_for("ScreeningIteration") is None
+    True
+    """
+    name = _DISPLAY.get(process_label)
+    return name if name in _EXECUTABLE_NAMES else None
 
 
 def prettify_label(raw: str, process_label: str = "") -> str:

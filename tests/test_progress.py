@@ -643,6 +643,19 @@ class TestDescribeLabel:
         assert progress.prettify_label("Wann2kcCalculation") == "kcw.x"
         assert progress.prettify_label("Pw2wannier90Calculation") == "pw2wannier90.x"
 
+    def test_only_a_name_that_is_an_executable_answers_as_one(self) -> None:
+        """The failure summary's second column holds a binary or nothing.
+
+        A process label whose display name is a step rather than a
+        program has no executable to report, and neither has one the
+        table does not name at all.
+        """
+        assert progress.executable_for("PwBaseWorkChain") == "pw.x"
+        assert progress.executable_for("KcpCalculation") == "kcp.x"
+        assert progress.executable_for("ScreeningIteration") is None
+        assert progress.executable_for("PwBandsWorkChain") is None
+        assert progress.executable_for("SomeNewWorkChain") is None
+
     def test_the_failure_summary_names_a_pyfunction_by_its_function_name(self) -> None:
         """It is keyed on ``process_label``, which for a PyFunction is the function's name."""
         assert progress.prettify_label("train_screening_model") == "Screening model training"

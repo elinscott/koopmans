@@ -12,7 +12,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from koopmans.aiida.labels import LabelDisplay, describe_label, prettify_label
+from koopmans.aiida.labels import LabelDisplay, describe_label, executable_for, prettify_label
 from koopmans.aiida.utils import get_node_label, suppress_stdout
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 # Re-exported so the display names stay reachable as ``progress.<name>``,
 # the way every caller already spells them.
-__all__ = ["LabelDisplay", "describe_label", "prettify_label"]
+__all__ = ["LabelDisplay", "describe_label", "executable_for", "prettify_label"]
 
 
 # Status display styling
@@ -222,12 +222,16 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[LabelDisplay, Pro
 class _Row:
     """A row under construction, holding the rows nested beneath it."""
 
-    def __init__(self, display: LabelDisplay, state: str) -> None:
+    def __init__(self, display: LabelDisplay, state: str, pk: int | None = None) -> None:
         self.text = display.text
         self.code = display.code
         self.numbered = display.numbered
         self.state = state
         self.children: list[_Row] = []
+        # Every process this row stands for: itself, plus whatever it
+        # collapsed. A row is the only handle a reader has on a process,
+        # so a process that has one is named by it.
+        self.pks: list[int] = [] if pk is None else [pk]
 
 
 def build_progress_rows(process_node: ProcessNode) -> list[ProcessRow]:
@@ -246,6 +250,37 @@ def build_progress_rows(process_node: ProcessNode) -> list[ProcessRow]:
     root = describe_label(getattr(process_node, "process_label", None) or "WorkGraph")
     rows, _ = _collect_rows(process_node, root, is_root=True)
     return _flatten(rows, depth=0)
+
+
+def build_step_paths(process_node: ProcessNode) -> dict[int, tuple[str, ...]]:
+    """Map each displayed process to the named steps that lead to it.
+
+    A path reads as the table reads — siblings numbered, wrappers the
+    table hides passed over — and ends with the process's own row, so
+    two runs of the same step differ in their last element. The root row
+    names the run rather than a step of it and is left out; a process
+    with no row of its own is absent, and a process whose row collapsed
+    another shares that row's path with it.
+
+    Args:
+        process_node: The root process node.
+
+    Returns:
+        One path per displayed process, keyed by pk.
+    """
+    root = describe_label(getattr(process_node, "process_label", None) or "WorkGraph")
+    rows, _ = _collect_rows(process_node, root, is_root=True)
+    return {pk: path[1:] for pk, path in _row_paths(rows, ()).items()}
+
+
+def _row_paths(rows: Sequence[_Row], prefix: tuple[str, ...]) -> dict[int, tuple[str, ...]]:
+    """Return the path of row names leading to each process, keyed by pk."""
+    paths: dict[int, tuple[str, ...]] = {}
+    for row in rows:
+        path = (*prefix, row.text)
+        paths.update(dict.fromkeys(row.pks, path))
+        paths.update(_row_paths(row.children, path))
+    return paths
 
 
 def _flatten(rows: Sequence[_Row], depth: int) -> list[ProcessRow]:
@@ -328,12 +363,13 @@ def _collect_rows(
     # iteration and this row have handed their children up as siblings.
     _number_siblings(child_rows)
 
-    row = _Row(display, state)
+    row = _Row(display, state, getattr(process_node, "pk", None))
     # The root names the workflow, never one of its steps, so it keeps
     # both its row and whatever single step it has so far produced.
     if not is_root and len(child_rows) == 1 and not child_rows[0].children:
         collapsed = child_rows.pop()
         row.code = collapsed.code or row.code
+        row.pks.extend(collapsed.pks)
         borrowed.append(_promoted_state(collapsed.state))
     row.children = child_rows
 
@@ -430,25 +466,43 @@ def make_progress_table(process_node: ProcessNode) -> Table | Group:
     return Group(table, *hint_lines)
 
 
-def _walk_failed_descendants(
-    node: ProcessNode,
-) -> list[tuple[int | None, str, int | None, str | None, str]]:
+class ProcessFailure(NamedTuple):
+    """One terminated-not-ok process: what it is, where it sits, how it ended."""
+
+    name: str
+    code: str | None
+    path: tuple[str, ...]
+    exit_status: int | None
+    message: str | None
+    state: str
+
+
+def _walk_failed_descendants(node: ProcessNode) -> list[ProcessFailure]:
     """Collect every terminated-not-ok process in the tree, including ``node`` itself.
 
-    Returns ``(pk, process_label, exit_status, message, state)`` tuples in
-    creation order. ``state`` is ``"excepted"``, ``"killed"``, or
-    ``"failed"`` (a normal finished-not-ok exit); ``message`` is the
-    exception text for an excepted process, the exit message for a
-    failed one, and usually ``None`` for a killed one. A cascading
-    failure can appear more than once (a wrapper and the child that
-    actually failed), which is expected: the failed leaf carries the
+    Returns the failures in creation order. ``state`` is ``"excepted"``,
+    ``"killed"``, or ``"failed"`` (a normal finished-not-ok exit);
+    ``message`` is the exception text for an excepted process, the exit
+    message for a failed one, and usually ``None`` for a killed one. A
+    cascading failure can appear more than once (a wrapper and the child
+    that actually failed), which is expected: the failed leaf carries the
     real cause. As with :func:`_walk_paused_descendants`, PyFunction
     nodes the progress table hides still appear here — a failure is
     diagnostic information whether or not it has a row.
-    """
-    out: list[tuple[int | None, str, int | None, str | None, str]] = []
 
-    def _visit(n: ProcessNode) -> None:
+    A process is named by its row, which is what the reader watched go
+    past and which carries the index that tells two runs of one step
+    apart; ``path`` places that row in the run. A process with no row —
+    a PyFunction, a wrapper the table sees through — falls back to the
+    display name of its process label, under the path of the nearest row
+    above it.
+    """
+    paths = build_step_paths(node)
+    out: list[ProcessFailure] = []
+
+    def _visit(n: ProcessNode, inherited: tuple[str, ...]) -> None:
+        label = n.process_label or n.__class__.__name__
+        path = paths.get(n.pk, inherited) if n.pk is not None else inherited
         if n.is_terminated and not n.is_finished_ok:
             if n.is_excepted:
                 state, message = "excepted", n.exception
@@ -456,17 +510,25 @@ def _walk_failed_descendants(
                 state, message = "killed", n.exit_message
             else:
                 state, message = "failed", n.exit_message
+            named = n.pk in paths and bool(path)
             out.append(
-                (n.pk, n.process_label or n.__class__.__name__, n.exit_status, message, state)
+                ProcessFailure(
+                    name=path[-1] if named else prettify_label(label),
+                    code=executable_for(label) if named else None,
+                    path=path[:-1] if named else path,
+                    exit_status=n.exit_status,
+                    message=message,
+                    state=state,
+                )
             )
         try:
             children = sorted(n.called, key=lambda child: (child.ctime, child.pk or 0))
         except Exception:
             return
         for child in children:
-            _visit(child)
+            _visit(child, path)
 
-    _visit(node)
+    _visit(node, ())
     return out
 
 
@@ -496,11 +558,15 @@ def render_process_once(process_node: ProcessNode, console: Console | None = Non
     console.print()
     console.print(make_progress_table(process_node))
 
-    for pk, label, exit_status, message, state in _walk_failed_descendants(process_node):
-        detail = f"exit status {exit_status}" if state == "failed" else state
-        if message:
-            detail += f": {message}"
-        console.print(f"  [red]{prettify_label(label)}[/red] (pk {pk}) — {detail}")
+    for failure in _walk_failed_descendants(process_node):
+        detail = (
+            f"exit status {failure.exit_status}" if failure.state == "failed" else failure.state
+        )
+        if failure.message:
+            detail += f": {failure.message}"
+        code = f" ({failure.code})" if failure.code else ""
+        where = f" in {' > '.join(failure.path)}" if failure.path else ""
+        console.print(f"  [red]{failure.name}[/red]{code}{where} — {detail}")
 
     if process_node.is_terminated:
         _print_outcome_banner(console, process_node)
