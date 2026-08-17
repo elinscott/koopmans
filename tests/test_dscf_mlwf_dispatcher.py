@@ -687,19 +687,20 @@ class TestPerStepKpointMeshRejected:
 class TestBandPathRejected:
     """The kcp.x route cannot yet unfold its supercell Hamiltonian onto a path."""
 
-    def test_a_band_path_is_rejected(self) -> None:
+    def test_a_band_path_is_rejected(self, read_input_dict: Any) -> None:
         """A path the route silently dropped would look like a band structure was coming.
 
-        The guard runs before any code or pseudopotential is loaded, so it
-        needs no profile.
+        Refused while the input file is read, so the reader gets the error
+        report rather than a traceback out of the graph build.
         """
         d = _si_dscf_dict()
         d["kpoints"]["path"] = "GX"
 
-        with pytest.raises(NotImplementedError) as excinfo:
-            _build(d)
+        with pytest.raises(ValueError) as excinfo:
+            read_input_dict(d)
 
         message = str(excinfo.value)
+        assert "Errors found in the input file" in message
         assert "`kpoints.path`" in message
         assert "screening_method = 'dfpt'" in message
 
@@ -725,10 +726,10 @@ class TestBandPathRejected:
 
         assert wg.tasks["dfpt"].inputs["bands_kpoints"].value is not None
 
-    def test_a_molecular_kohn_sham_path_is_still_rejected(self) -> None:
+    def test_a_molecular_kohn_sham_path_is_still_rejected(self, read_input_dict: Any) -> None:
         """The other route kcp.x does run has no band structure either.
 
-        Pins the guard against being dropped for ``kohn-sham`` wholesale:
+        Pins the refusal against being dropped for ``kohn-sham`` wholesale:
         molecular runs are the initialisation route kcp.x supports, so a
         path there still has nowhere to go.
         """
@@ -740,20 +741,21 @@ class TestBandPathRejected:
         }
         d["kpoints"]["path"] = "GX"
 
-        with pytest.raises(NotImplementedError) as excinfo:
-            _build(d)
+        with pytest.raises(ValueError) as excinfo:
+            read_input_dict(d)
 
         assert "`kpoints.path`" in str(excinfo.value)
 
     def test_a_periodic_kohn_sham_input_hears_its_own_blocker_first(
         self, aiida_profile_clean: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """Pins the guard below the initialisation-route check.
+        """Pins the refusal behind the initialisation-route check.
 
         kcp.x runs no periodic ``kohn-sham`` route at all, and refusing the
         band path first would send the reader to ``screening_method =
         'dfpt'`` — which refuses the same input again, for wanting Wannier
-        orbitals. The blocker must arrive on the first hop.
+        orbitals. So this input must parse, and the blocker must arrive on
+        the first hop when it is built.
         """
         d = _si_dscf_dict(init_orbitals="kohn-sham")
         d["kpoints"]["path"] = "GX"

@@ -248,36 +248,6 @@ def reject_kpoint_overrides(koopmans_input: KoopmansInput, messages: dict[str, s
             raise ValueError(message)
 
 
-def reject_band_path(
-    koopmans_input: KoopmansInput,
-    message: str,
-    error: type[Exception] = ValueError,
-) -> None:
-    """Raise for a ``kpoints.path`` the route about to be built cannot interpolate along.
-
-    Every route that can produce a band structure does so whenever the input
-    names a path, so a route that cannot must say so rather than build a
-    graph the path never reaches. The predicate matches
-    :func:`koopmans.aiida.conversion.kpoints_input_to_interpolation_path`: a
-    gamma-only input's fixed ``path`` names the zone centre alone and so
-    defines no segment to interpolate along.
-
-    Args:
-        koopmans_input: The parsed koopmans input.
-        message: What the user should write instead.
-        error: ``ValueError`` where the route's physics produces no band
-            structure at all, ``NotImplementedError`` where koopmans has
-            simply not ported the stage that would.
-
-    Raises:
-        Exception: An instance of ``error``, if the input names a path with
-            segments.
-    """
-    kpoints = koopmans_input.kpoints
-    if not kpoints.gamma_only and kpoints.path is not None:
-        raise error(message)
-
-
 def pin_step_kpoints(
     overrides: dict[str, Any],
     step: str,

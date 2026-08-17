@@ -11,13 +11,11 @@ from koopmans.aiida.conversion import atoms_input_to_structures
 from koopmans.aiida.workflows import (
     load_code,
     load_codes,
-    reject_band_path,
     reject_kpoint_overrides,
     require_configured_codes,
 )
 from koopmans.aiida.workflows.dscf import (
     KPOINT_OVERRIDES_ON_TRAJECTORY,
-    NO_BAND_PATH_ON_TRAJECTORY,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
     require_supported_correction,
@@ -78,7 +76,6 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # this route runs kcp.x, and the reader has to hear about the method they
     # asked for before they hear about the mesh.
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_TRAJECTORY)
-    reject_band_path(koopmans_input, NO_BAND_PATH_ON_TRAJECTORY, NotImplementedError)
 
     require_supported_correction(workflow.correction)
 

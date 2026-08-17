@@ -8,6 +8,7 @@ the pattern used by the sibling ``aiida-koopmans2/tests/fixtures.py``.
 from __future__ import annotations
 
 import io
+import json
 import re
 import shutil
 import subprocess
@@ -26,6 +27,25 @@ import pytest
 def tutorials_dir() -> Path:
     """Return the path to the tutorials directory shipped with the docs."""
     return Path(__file__).parent.parent / "docs" / "source" / "tutorials"
+
+
+@pytest.fixture
+def read_input_dict(tmp_path: Path) -> Callable[[dict[str, Any]], Any]:
+    """Return a callable parsing an input dict the way the CLI reads a file.
+
+    Writes the dict to JSON and hands it to
+    :func:`koopmans.input_file.read_input_file`, so a rejected input raises
+    the ``ValueError`` carrying the input-file error report rather than a
+    raw ``ValidationError``.
+    """
+    from koopmans.input_file import read_input_file
+
+    def _read(input_dict: dict[str, Any]) -> Any:
+        path = tmp_path / "input.json"
+        path.write_text(json.dumps(input_dict))
+        return read_input_file(path)
+
+    return _read
 
 
 @pytest.fixture

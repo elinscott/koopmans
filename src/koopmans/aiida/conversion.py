@@ -31,7 +31,6 @@ def _convert_paths_to_strings(obj: Any) -> Any:
 if TYPE_CHECKING:
     from koopmans.input_file import AtomsInput, KoopmansInput, KpointsInput
     from koopmans.input_file.cell_parameters import (
-        CellParametersBase,
         CellParametersViaAlat,
         CellParametersViaIbrav,
         CellParametersViaVectors,
@@ -213,23 +212,6 @@ def alat_in_angstrom(
     return cell_params.celldms[1] * BOHR_TO_ANGSTROM
 
 
-def cell_pbc(cell_params: CellParametersBase) -> tuple[bool, bool, bool]:
-    """Return the three periodic directions ``cell_parameters.periodic`` declares.
-
-    Args:
-        cell_params: The cell parameters from the input file, whose
-            ``periodic`` is either one bool for all three directions or one
-            per direction.
-
-    Returns:
-        The periodicity of each cell vector.
-    """
-    periodic = cell_params.periodic
-    if isinstance(periodic, bool):
-        return (periodic, periodic, periodic)
-    return periodic
-
-
 def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     """Convert AtomsInput to AiiDA StructureData.
 
@@ -251,7 +233,7 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     cell = cell_in_angstrom(cell_params)
 
     # Create structure
-    structure = orm.StructureData(cell=cell, pbc=cell_pbc(cell_params))
+    structure = orm.StructureData(cell=cell, pbc=cell_params.pbc)
 
     # Add atoms
     units = positions.units
@@ -307,7 +289,7 @@ def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]
     frames = ase_read(atoms.snapshots, index=":")
 
     cell = cell_in_angstrom(atoms.cell_parameters)
-    pbc = cell_pbc(atoms.cell_parameters)
+    pbc = atoms.cell_parameters.pbc
 
     structures: dict[str, orm.StructureData] = {}
     for index, frame in enumerate(frames, start=1):
@@ -595,9 +577,9 @@ def kpoints_input_to_interpolation_path(
 ) -> orm.KpointsData | None:
     """Return the input's k-path as a labelled explicit k-list, or ``None``.
 
-    ``None`` when the input states no ``kpoints.path``, and for a gamma-only
-    input, whose fixed ``path`` names the zone centre alone and so defines no
-    segment to interpolate along. Otherwise defers to
+    ``None`` unless the input names a path with a segment to interpolate
+    along (:func:`koopmans.input_file.names_band_path`, the same predicate
+    the input file's own band-path refusals read). Otherwise defers to
     :func:`kpoints_input_to_kpoints_path`. Callers use this to decide whether
     a step gets an explicit bands path or is left on its protocol default.
 
@@ -608,7 +590,9 @@ def kpoints_input_to_interpolation_path(
     Returns:
         AiiDA KpointsData node with the k-point path, or ``None``.
     """
-    if kpoints.gamma_only or kpoints.path is None:
+    from koopmans.input_file import names_band_path
+
+    if not names_band_path(kpoints):
         return None
     return kpoints_input_to_kpoints_path(kpoints, structure)
 

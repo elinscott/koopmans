@@ -8,7 +8,6 @@ from koopmans.aiida.workflows import (
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
-    reject_band_path,
     reject_kpoint_overrides,
     require_configured_codes,
 )
@@ -17,13 +16,6 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
-
-#: What to write instead of a k-path on the ph.x route.
-NO_BAND_PATH_ON_DFT_EPS = (
-    "`kpoints.path` cannot take effect in a `dft_eps` calculation: it runs one scf "
-    "and then ph.x, which computes a dielectric constant and no band structure. "
-    "Remove `kpoints.path`, or run `task: dft_bands` to get a band structure."
-)
 
 
 def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
@@ -57,7 +49,6 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "`kpoints.overrides.scf` or `kpoints.grid`."
         },
     )
-    reject_band_path(koopmans_input, NO_BAND_PATH_ON_DFT_EPS)
 
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf"])
     overrides["ph"] = {"ph": {"parameters": input_to_ph_parameters(koopmans_input)}}

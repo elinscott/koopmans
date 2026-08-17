@@ -31,6 +31,13 @@ class CellParametersBase(BaseModel):
 
     periodic: bool | tuple[bool, bool, bool] = True
 
+    @property
+    def pbc(self) -> tuple[bool, bool, bool]:
+        """Return ``periodic`` per cell vector, whichever way it was written."""
+        if isinstance(self.periodic, bool):
+            return (self.periodic, self.periodic, self.periodic)
+        return self.periodic
+
 
 class CellParametersViaIbrav(CellParametersBase):
     """Cell parameters specified via ``ibrav`` and ``celldms``."""
