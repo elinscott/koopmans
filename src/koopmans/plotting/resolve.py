@@ -693,17 +693,39 @@ def _name_after_folder(found: Sequence[tuple[BandSeries, str]], label: str) -> N
         item.label = f"{label}{qualifier}"
 
 
-def _check_one_per_folder(values: Sequence[str], folders: int, option: str) -> None:
-    """Reject a per-folder option given for some but not all of the folders.
+def _style_count_error(styles: int, folders: int, curves: int) -> ValueError:
+    """Return the error naming every count of styles the figure would accept."""
+    readings = f"one --style per folder, in the order the folders are listed ({folders})"
+    if curves != folders:
+        readings += f", one per curve, in the order they are drawn ({curves})"
+    return ValueError(
+        f"{styles} --style value(s) were given for {folders} folder(s) drawing "
+        f"{curves} curve(s). Give {readings}, or none at all."
+    )
 
-    :raises ValueError: if any values were given and they do not number ``folders``.
+
+def _apply_styles(drawn: Sequence[Sequence[tuple[BandSeries, str]]], styles: Sequence[str]) -> None:
+    """Draw the folders, or the curves, in the format strings given for them.
+
+    As many styles as folders draws each folder in its own, covering every
+    curve that folder contributes; as many as curves draws each curve in its
+    own, in the order they are drawn. Both readings apply only where every
+    folder drew one curve, and there they mean the same thing.
+
+    :raises ValueError: if the styles number neither the folders nor the curves.
     """
-    if values and len(values) != folders:
-        raise ValueError(
-            f"{len(values)} {option} value(s) were given for {folders} folder(s). "
-            f"Give one {option} per folder, in the order the folders are listed, or "
-            "none at all."
-        )
+    if not styles:
+        return
+    curves = [item for found in drawn for item, _ in found]
+    if len(styles) == len(drawn):
+        for found, style in zip(drawn, styles, strict=True):
+            for item, _ in found:
+                item.style = style
+    elif len(styles) == len(curves):
+        for item, style in zip(curves, styles, strict=True):
+            item.style = style
+    else:
+        raise _style_count_error(len(styles), len(drawn), len(curves))
 
 
 def resolve_band_series(
@@ -716,21 +738,29 @@ def resolve_band_series(
     instead, one per folder in the order they were given; a folder that yields
     several series keeps whatever tells them apart, so one name covers a
     per-spin or per-block fan-out and no two curves end up sharing a name.
-    ``styles`` are matplotlib format strings, given the same way and covering a
-    fan-out the same way: every curve one folder contributes is drawn alike.
+    ``styles`` are matplotlib format strings, one per folder or one per curve:
+    a folder's fan-out is drawn alike under the first reading and curve by
+    curve under the second. Series come out in the order they are drawn, which
+    is the order the folders were listed, and within a folder the order its
+    steps ran.
     Every folder must carry a band structure: drawing fewer curves than folders
     asked for reads as a figure of them all.
 
-    :raises ValueError: if some but not all of the folders are named or styled.
+    :raises ValueError: if some but not all of the folders are named, or the
+        styles number neither the folders nor the curves.
     :raises PlottingError: if a folder is not a run directory, its run is not
         in this profile, or any of them holds nothing plottable.
     """
-    _check_one_per_folder(labels, len(folders), "--label")
-    _check_one_per_folder(styles, len(folders), "--style")
+    if labels and len(labels) != len(folders):
+        raise ValueError(
+            f"{len(labels)} --label value(s) were given for {len(folders)} folder(s). "
+            "Give one --label per folder, in the order the folders are listed, or "
+            "none at all."
+        )
 
     nodes = [run_node(folder) for folder in folders]
 
-    series: list[BandSeries] = []
+    drawn: list[list[tuple[BandSeries, str]]] = []
     warnings: list[str] = []
     empty: list[tuple[Path, orm.ProcessNode]] = []
     for index, (folder, node) in enumerate(zip(folders, nodes, strict=True)):
@@ -740,17 +770,15 @@ def resolve_band_series(
         found = _series_from_node(node)
         if not found:
             empty.append((folder, node))
-        if styles:
-            for item, _ in found:
-                item.style = styles[index]
         if labels:
             _name_after_folder(found, labels[index])
         elif len(folders) > 1:
             prefix = folder.name or folder.resolve().name
             for item, _ in found:
                 item.label = f"{prefix}: {item.label}"
-        series += [item for item, _ in found]
+        drawn.append(found)
 
     if empty:
         raise _nothing_plottable(empty, len(folders))
-    return series, warnings
+    _apply_styles(drawn, styles)
+    return [item for found in drawn for item, _ in found], warnings

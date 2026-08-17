@@ -1250,6 +1250,22 @@ def dft_run(tmp_path: Path, name: str, vbm: float, energies: list[list[float]]) 
     return write_run_folder(tmp_path, name, root)
 
 
+def wannierize_run(tmp_path: Path, name: str) -> Path:
+    """Write a run folder holding pw.x bands and one interpolation per block.
+
+    What a silicon wannierize run leaves on disk, and the reason a folder can
+    need more than one style: its three curves are the bands pw.x computed and
+    the wannier90 interpolations of the occupied and empty blocks.
+    """
+    root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+    dft = make_process(PW_BANDS, caller=root, link_label="dft_bands")
+    attach(dft, "band_structure", make_bands([[0.0, 0.0, 0.0]], [[-5.0]], cell=CUBIC))
+    for block in ("wannierize_occ", "wannierize_emp"):
+        step = make_process(W90_BASE, caller=root, link_label=block)
+        attach(step, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]], cell=CUBIC))
+    return write_run_folder(tmp_path, name, root)
+
+
 class TestCommand:
     """``koopmans plot bandstructure`` end to end."""
 
@@ -1436,6 +1452,47 @@ class TestCommand:
         assert {item.get_linestyle() for item in line} == {"-"}
         payload = json.loads((tmp_path / "si.json").read_text())
         assert [record["style"] for record in payload["series"]] == ["x", "-"]
+
+    def test_one_folder_of_three_curves_takes_three_styles(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """The silicon case, through the command: crosses, then two lines.
+
+        The markers are read off the drawn curves in order, so this fails both
+        if the styles are paired the wrong way round and if a folder's curves
+        are all painted alike.
+        """
+        from koopmans.cli import cli
+
+        folder = wannierize_run(tmp_path, "si")
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--style",
+                "rx",
+                "--style",
+                "b-",
+                "--style",
+                "b-",
+                "--zero",
+                "none",
+                "-o",
+                str(tmp_path / "si.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        lines = band_lines(drawn_axes[-1])
+        assert [line.get_marker() for line in lines] == ["x", "None", "None"]
+        assert [as_rgba(line.get_color()) for line in lines] == [
+            as_rgba("r"),
+            as_rgba("b"),
+            as_rgba("b"),
+        ]
 
     def test_a_style_count_mismatch_is_reported(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
@@ -2064,8 +2121,9 @@ class TestFolderStyles:
     ) -> None:
         """A collinear folder becomes two curves, and one style draws both.
 
-        A style says how a folder is drawn, not which of its curves is which;
-        the spin channel is still what tells them apart, and it survives.
+        One style for a folder that draws several is the folder reading: it
+        covers the fan-out rather than picking one of it, and the spin channel
+        is still what tells the two apart. Two styles would draw them apart.
         """
         root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
         chain = make_process(PW_BANDS, caller=root, link_label="bands")
@@ -2084,6 +2142,49 @@ class TestFolderStyles:
         assert [item.style for item in found] == ["x", "x"]
         assert [item.label for item in found] == ["Iron (up)", "Iron (down)"]
 
+    def test_a_style_per_curve_draws_a_fan_out_apart(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """One folder's three curves take three styles, curve by curve.
+
+        The case the option exists for: a wannierize run holds the bands pw.x
+        computed and an interpolation per block in one directory, so styling
+        them apart is styling curves rather than folders.
+        """
+        folder = wannierize_run(tmp_path, "si")
+
+        found, _ = resolve_band_series([folder], styles=("rx", "b-", "b-"))
+
+        assert [(item.label, item.style) for item in found] == [
+            ("DFT", "rx"),
+            ("Wannier interpolation (wannierize_occ)", "b-"),
+            ("Wannier interpolation (wannierize_emp)", "b-"),
+        ]
+
+    def test_the_curve_reading_follows_the_drawing_order(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """Curves take their styles in the order they are drawn, across folders.
+
+        That order is the folders as listed, and within a folder the order its
+        steps ran, which is also the order the legend and the --data file take.
+        Pinning it here is what makes a per-curve style mean one curve: a
+        reordering elsewhere would repaint the figure without failing anything.
+        """
+        first = wannierize_run(tmp_path, "si")
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series(
+            [first, second], ("Wannier", "KI"), ("rx", "b-", "g--", "k-")
+        )
+
+        assert [(item.label, item.style) for item in found] == [
+            ("Wannier (DFT)", "rx"),
+            ("Wannier (wannierize_occ)", "b-"),
+            ("Wannier (wannierize_emp)", "g--"),
+            ("KI", "k-"),
+        ]
+
     def test_fewer_styles_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
         """Cycling a short list would draw two folders alike without saying so."""
         first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
@@ -2092,7 +2193,9 @@ class TestFolderStyles:
         with pytest.raises(ValueError) as caught:
             resolve_band_series([first, second], styles=("x",))
 
-        assert "1 --style value(s) were given for 2 folder(s)" in str(caught.value)
+        assert "1 --style value(s) were given for 2 folder(s) drawing 2 curve(s)" in str(
+            caught.value
+        )
 
     def test_more_styles_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
         """The extra style belongs to a folder that was left off the command."""
@@ -2101,7 +2204,42 @@ class TestFolderStyles:
         with pytest.raises(ValueError) as caught:
             resolve_band_series([folder], styles=("x", "k-"))
 
-        assert "2 --style value(s) were given for 1 folder(s)" in str(caught.value)
+        assert "2 --style value(s) were given for 1 folder(s) drawing 1 curve(s)" in str(
+            caught.value
+        )
+
+    def test_a_count_matching_neither_names_both_numbers(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """Two styles for one folder drawing three curves says what to write.
+
+        Neither reading fits, so the message states how many folders and how
+        many curves there are, and offers both numbers rather than one.
+        """
+        folder = wannierize_run(tmp_path, "si")
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([folder], styles=("rx", "b-"))
+
+        message = str(caught.value)
+        assert "2 --style value(s) were given for 1 folder(s) drawing 3 curve(s)" in message
+        assert "one --style per folder, in the order the folders are listed (1)" in message
+        assert "one per curve, in the order they are drawn (3)" in message
+
+    def test_one_number_is_offered_when_the_readings_coincide(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A figure of one curve per folder has one acceptable count, not two.
+
+        Offering '2 or 2' would read as a bug in the message.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([first, second], styles=("x",))
+
+        assert "one per curve" not in str(caught.value)
 
     def test_styling_and_naming_are_counted_apart(self, aiida_profile: Any, tmp_path: Path) -> None:
         """One name and no styles is not a miscount, and neither is the reverse.

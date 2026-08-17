@@ -809,11 +809,13 @@ ylim_option = click.option(
     multiple=True,
     metavar="FORMAT",
     callback=_check_styles,
-    help="Draw a folder in a matplotlib format string, such as 'x' for crosses, "
-    "'k--' for a dashed black line or '-' for a plain one; repeat once per "
-    "folder, in the order the folders are listed, as --label does. A color the "
-    "string names replaces the one this command would have chosen, and every "
-    "curve the folder draws is drawn the same way.",
+    help="Draw a curve in a matplotlib format string, such as 'x' for crosses, "
+    "'k--' for a dashed black line or '-' for a plain one. Repeat once per "
+    "folder, in the order the folders are listed, which draws everything a "
+    "folder contributes the same way; or once per curve, in the order they are "
+    "drawn, which draws a folder's own curves differently from each other. A "
+    "color the string names replaces the one this command would have chosen. "
+    "--label stays one per folder either way.",
 )
 def bandstructure(
     folders: tuple[Path, ...],
@@ -835,10 +837,13 @@ def bandstructure(
         koopmans plot bandstructure dft ki --label DFT --label "KI@LDA"
 
     Each is drawn in a color of this command's choosing unless --style says
-    how, as crosses at the k-points pw.x computed and a line through the
-    wannier90 interpolation of them:
+    how. One style per folder draws everything that folder contributes alike;
+    one per curve draws them differently, in the order they are drawn. A
+    wannierize run of silicon draws its pw.x bands and one interpolation per
+    block, so crosses at the k-points pw.x computed and a line through each
+    interpolation of them read:
 
-        koopmans plot bandstructure pw wannier --style x --style -
+        koopmans plot bandstructure si --style rx --style b- --style b-
 
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
