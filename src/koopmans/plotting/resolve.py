@@ -819,13 +819,17 @@ def resolve_band_series(
     name when more than one folder is on the axes. ``labels`` names the folders
     instead, one per folder in the order they were given; a folder that yields
     several series keeps whatever tells them apart, so one name covers a
-    per-spin or per-block fan-out and no two curves end up sharing a name.
+    per-spin or per-block fan-out and no two curves end up sharing a name. An
+    empty string leaves that folder's own series named or styled as if
+    ``labels``/``styles`` had not been given for it at all, which is how a
+    caller pairing values with only some of the folders spells "no value here".
     ``styles`` are matplotlib format strings, given the same way and covering a
     fan-out the same way: every curve one folder contributes is drawn alike.
     Every folder must carry a band structure: drawing fewer curves than folders
     asked for reads as a figure of them all.
 
-    :raises ValueError: if some but not all of the folders are named or styled.
+    :raises ValueError: if given, ``labels``/``styles`` do not number the
+        folders.
     :raises PlottingError: if a folder is not a run directory, its run is not
         in this profile, or any of them holds nothing plottable.
     """
@@ -844,10 +848,10 @@ def resolve_band_series(
         found = _series_from_node(node)
         if not found:
             empty.append((folder, node))
-        if styles:
+        if styles and styles[index]:
             for item, _ in found:
                 item.style = styles[index]
-        if labels:
+        if labels and labels[index]:
             _name_after_folder(found, labels[index])
         elif len(folders) > 1:
             prefix = folder.name or folder.resolve().name

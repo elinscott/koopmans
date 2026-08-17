@@ -787,7 +787,147 @@ ylim_option = click.option(
 )
 
 
-@plot.command()
+class _FolderPairingCommand(click.Command):
+    """A command whose ``--style``/``--label`` bind to the folder before them.
+
+    click gathers a ``nargs=-1`` argument and a ``multiple=True`` option into
+    two separate lists, so by the time a callback sees them the order they
+    were interleaved in is gone — only "the nth folder" and "the nth style"
+    remain, not which folder each style was written after. This command reads
+    the raw tokens once, before click's own parser sees them, to record which
+    folder each ``--style``/``--label`` immediately followed; folders it did
+    not follow one for stay unstyled or unlabelled. Everything else — other
+    options, ``--help``, error formatting — is left to click.
+    """
+
+    #: Parameter names paired with the folder argument, one per folder.
+    _paired_params = ("styles", "labels")
+    _folder_param = "folders"
+
+    @staticmethod
+    def _consumption_map(
+        params: list[click.Parameter], paired: dict[str, click.Parameter]
+    ) -> dict[str, int]:
+        """Return how many extra tokens each other option's flag consumes.
+
+        ``0`` for a flag, else the option's ``nargs``; ``paired`` is excluded
+        since those flags are handled separately, not by counting tokens.
+        """
+        return {
+            opt: (0 if p.is_flag else p.nargs)
+            for p in params
+            if isinstance(p, click.Option) and p.name not in paired
+            for opt in (*p.opts, *p.secondary_opts)
+        }
+
+    @staticmethod
+    def _take_paired_value(
+        args: list[str], i: int, name: str, sep: str, inline: str
+    ) -> tuple[str, int]:
+        """Return a paired option's value and the index just past it.
+
+        :raises click.UsageError: if it was given with no value to follow.
+        """
+        if sep:
+            return inline, i + 1
+        if i + 1 >= len(args):
+            raise click.UsageError(f"Option {name!r} requires an argument.")
+        return args[i + 1], i + 2
+
+    @staticmethod
+    def _skip_other_option(args: list[str], i: int, sep: str, nargs: int) -> int:
+        """Return the index just past an ordinary option and the values it takes."""
+        if sep:
+            return i + 1
+        for _ in range(nargs):
+            i += 1
+        return i + 1
+
+    def _scan(
+        self, args: list[str], opt_to_param: dict[str, str], consumes: dict[str, int]
+    ) -> tuple[list[str], dict[str, dict[int, str]]]:
+        """Split raw tokens into what click parses and what pairs with a folder.
+
+        Returns the tokens click's own parser should see (folders and every
+        option other than the paired ones), and, per paired parameter name, a
+        mapping from folder index to the value that followed that folder.
+
+        :raises click.UsageError: if a paired option appears before any
+            folder, or is given with no value.
+        """
+        remaining: list[str] = []
+        bound: dict[str, dict[int, str]] = {name: {} for name in set(opt_to_param.values())}
+        folder_count = 0
+
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            name, sep, inline = arg.partition("=") if arg.startswith("--") else (arg, "", "")
+
+            if name in opt_to_param:
+                if folder_count == 0:
+                    raise click.UsageError(
+                        f"{name} must follow the folder it applies to — give a folder "
+                        f"before the first {name}, not a bare {name} up front."
+                    )
+                value, i = self._take_paired_value(args, i, name, sep, inline)
+                bound[opt_to_param[name]][folder_count - 1] = value
+                continue
+
+            if name in consumes:
+                end = self._skip_other_option(args, i, sep, consumes[name])
+                remaining.extend(args[i:end])
+                i = end
+                continue
+
+            remaining.append(arg)
+            if not arg.startswith("-") or arg == "-":
+                folder_count += 1
+            i += 1
+
+        return remaining, bound
+
+    @staticmethod
+    def _validate_bound_values(
+        ctx: click.Context, paired: dict[str, click.Parameter], bound: dict[str, dict[int, str]]
+    ) -> None:
+        """Run each paired option's own callback on the values it was given.
+
+        The tokens click's own parser sees have had these values stripped
+        out, so click will not run the callback (matplotlib format checking,
+        for --style) on them itself.
+        """
+        for name, values in bound.items():
+            param = paired[name]
+            callback = param.callback
+            if values and callback is not None:
+                # types-click pins a callback's third argument to str; at
+                # runtime a multiple=True option's callback receives the
+                # whole tuple of values, as click itself does when it calls
+                # this same callback further down in super().parse_args().
+                callback(ctx, param, tuple(values.values()))  # type: ignore[arg-type]
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        """Bind each paired option to the folder it follows, then parse normally."""
+        params = self.get_params(ctx)
+        paired = {p.name: p for p in params if p.name in self._paired_params}
+        opt_to_param = {opt: name for name, p in paired.items() for opt in p.opts}
+        consumes = self._consumption_map(params, paired)
+
+        remaining, bound = self._scan(args, opt_to_param, consumes)
+        self._validate_bound_values(ctx, paired, bound)
+
+        rv = super().parse_args(ctx, remaining)
+
+        folders = ctx.params.get(self._folder_param, ())
+        for name, values in bound.items():
+            if values:
+                ctx.params[name] = tuple(values.get(i, "") for i in range(len(folders)))
+
+        return rv
+
+
+@plot.command(cls=_FolderPairingCommand)
 @click.argument(
     "folders",
     nargs=-1,
@@ -804,9 +944,9 @@ ylim_option = click.option(
     "labels",
     multiple=True,
     metavar="TEXT",
-    help="Name a folder on the legend; repeat once per folder, in the order the "
-    "folders are listed. A folder drawn as several curves keeps what tells them "
-    "apart, such as the spin channel.",
+    help="Name the folder just before it on the legend; a folder with no --label "
+    "after it keeps its derived name. A folder drawn as several curves keeps "
+    "what tells them apart, such as the spin channel.",
 )
 @click.option(
     "--style",
@@ -814,12 +954,13 @@ ylim_option = click.option(
     multiple=True,
     metavar="FORMAT",
     callback=_check_styles,
-    help="Draw a folder in a matplotlib format string, such as 'x' for crosses, "
-    "'k--' for a dashed black line or '-' for a plain one; repeat once per "
-    "folder, in the order the folders are listed, as --label does. A color the "
-    "string names replaces the one this command would have chosen, and every "
-    "curve the folder draws is drawn the same way — pass a calculation "
-    "directory of its own to draw one result differently from its siblings.",
+    help="Draw the folder just before it in a matplotlib format string, such as "
+    "'x' for crosses, 'k--' for a dashed black line or '-' for a plain one; a "
+    "folder with no --style after it is drawn as the figure would draw it on "
+    "its own. A color the string names replaces the one this command would "
+    "have chosen, and every curve the folder draws is drawn the same way — "
+    "pass a calculation directory of its own to draw one result differently "
+    "from its siblings.",
 )
 def bandstructure(
     folders: tuple[Path, ...],
@@ -842,9 +983,29 @@ def bandstructure(
     the folders is drawn, so a DFT run and a Koopmans run given together
     overlay, referenced to a single energy zero. Each is named after the step
     that produced it unless --label names it. A --label pairs with the folder
-    it follows, and so does a --style, so write each beside its own folder:
+    it follows, and so does a --style, so write each beside its own folder;
+    folders can be mixed freely, and one left with neither keeps the figure's
+    own choice of name and appearance — only the reference bands are styled
+    here, the wannierized ones are left as the figure would draw them:
 
-        koopmans plot bandstructure dft --label DFT ki --label "KI@LDA"
+    \b
+        koopmans plot bandstructure \\
+            si/02-bands --style rx \\
+            si/03-wannierize_emp_1/01-wannier90/03-wannier90 \\
+            si/04-wannierize_occ_1/01-wannier90/03-wannier90
+
+    --label works the same way, and can be mixed with --style on the same
+    folder:
+
+    \b
+        koopmans plot bandstructure dft --label DFT ki --style k-- --label "KI@LDA"
+
+    Writing --label or --style before any folder is refused, naming the
+    option, since there would be no folder for it to describe:
+
+    \b
+        koopmans plot bandstructure --style rx si/02-bands
+        Error: --style must follow the folder it applies to — ...
 
     Each is drawn in a color of this command's choosing unless --style says
     how, as crosses at the k-points pw.x computed and a line through the

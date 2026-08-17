@@ -1442,10 +1442,16 @@ class TestCommand:
         assert result.exit_code == 0, result.output
         assert drawn_axes[-1].get_legend() is None
 
-    def test_a_label_count_mismatch_is_reported(
+    def test_a_label_after_the_second_folder_pairs_with_it(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:
-        """The message states both counts, rather than padding or truncating."""
+        """A lone --label names the folder it followed, not every folder.
+
+        Only the second folder is followed by --label here, so it takes the
+        given name and the first keeps its default folder-prefixed one:
+        fewer --label values than folders is not an error, it names only the
+        folders that were followed by one.
+        """
         from koopmans.cli import cli
 
         first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
@@ -1453,11 +1459,23 @@ class TestCommand:
 
         result = runner.invoke(
             cli,
-            ["plot", "bandstructure", str(first), str(second), "--label", "DFT"],
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                str(second),
+                "--label",
+                "DFT",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
         )
 
-        assert result.exit_code == 1
-        assert "1 --label value(s) were given for 2 folder(s)" in result.output
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["label"] for record in payload["series"]] == ["si_lda: DFT", "DFT"]
 
     def test_styles_draw_the_folders_in_the_order_they_are_listed(
         self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
@@ -1479,9 +1497,9 @@ class TestCommand:
                 "plot",
                 "bandstructure",
                 str(pw),
-                str(wannier),
                 "--style",
                 "x",
+                str(wannier),
                 "--style",
                 "-",
                 "-o",
@@ -1504,9 +1522,9 @@ class TestCommand:
     ) -> None:
         """Interleaving folders and styles pairs them as written.
 
-        The help tells the reader to write each style beside its own folder,
-        which only holds because click gathers arguments and options into two
-        lists and pairs them by position. The styles are different so that the
+        The help tells the reader to write each style beside its own folder;
+        this is what makes that literally true, rather than true only when
+        every folder happens to get one. The styles are different so that the
         wrong pairing draws a different figure rather than the same one.
         """
         from koopmans.cli import cli
@@ -1546,10 +1564,10 @@ class TestCommand:
         assert {item.get_marker() for item in crosses} == {"x"}
         assert {as_rgba(item.get_color()) for item in line} == {as_rgba("b")}
 
-    def test_a_style_count_mismatch_is_reported(
-        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    def test_a_style_after_the_second_folder_pairs_with_it(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
     ) -> None:
-        """The message states both counts, as a missing --label's does."""
+        """A lone --style stays with the folder it followed, as --label does."""
         from koopmans.cli import cli
 
         first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
@@ -1557,11 +1575,92 @@ class TestCommand:
 
         result = runner.invoke(
             cli,
-            ["plot", "bandstructure", str(first), str(second), "--style", "x"],
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                str(second),
+                "--style",
+                "x",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
         )
 
-        assert result.exit_code == 1
-        assert "1 --style value(s) were given for 2 folder(s)" in result.output
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == [None, "x"]
+        unstyled, styled = band_lines(drawn_axes[-1])[:2], band_lines(drawn_axes[-1])[2:]
+        assert {item.get_marker() for item in unstyled} == {"None"}
+        assert {item.get_marker() for item in styled} == {"x"}
+
+    def test_mixed_styled_and_unstyled_folders_pair_by_position(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """A reference band structure styled apart from a couple of default ones.
+
+        The number of --style values need not match the number of folders:
+        each one names the single folder it follows, so a folder with none
+        after it is drawn as the figure would draw it on its own, whatever
+        order the styled and unstyled folders come in.
+        """
+        from koopmans.cli import cli
+
+        reference = dft_run(tmp_path, "bands", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        occ = dft_run(tmp_path, "occ", 6.0, [[-5.1, 6.1], [-4.6, 7.1], [-4.1, 7.6]])
+        emp = dft_run(tmp_path, "emp", 6.0, [[-5.2, 6.2], [-4.7, 7.2], [-4.2, 7.7]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(reference),
+                "--style",
+                "rx",
+                str(occ),
+                str(emp),
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["rx", None, None]
+        lines = band_lines(drawn_axes[-1])
+        assert {item.get_marker() for item in lines[:2]} == {"x"}
+        assert {item.get_marker() for item in lines[2:]} == {"None"}
+
+    def test_style_before_any_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--style up front is refused by name, rather than becoming a global default."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(cli, ["plot", "bandstructure", "--style", "rx", str(folder)])
+
+        assert result.exit_code == 2
+        assert "--style must follow the folder it applies to" in result.output
+
+    def test_label_before_any_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--label is refused the same way --style is, symmetrically."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(cli, ["plot", "bandstructure", "--label", "DFT", str(folder)])
+
+        assert result.exit_code == 2
+        assert "--label must follow the folder it applies to" in result.output
 
     def test_an_unreadable_style_is_refused_with_what_to_write(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
