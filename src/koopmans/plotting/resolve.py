@@ -300,8 +300,8 @@ def _read_uuid(folder: Path) -> str | None:
         uuid = parsed["Node data"]["uuid"]
     except (OSError, UnicodeDecodeError, yaml.YAMLError, TypeError, KeyError):
         raise PlottingError(
-            f"{metadata_path} does not record which run it came from. Rerun "
-            "`koopmans run` to write the folder again."
+            f"{folder} does not record which run it came from. Rerun `koopmans run` "
+            "to write the folder again."
         ) from None
     return str(uuid)
 
@@ -344,12 +344,12 @@ def _not_a_run_directory(folder: Path) -> PlottingError:
     Names the directories beneath it that can be plotted, since a step folder
     grouping calculations is the one thing a reader is likely to have typed.
     """
-    opening = f"{folder} is not a koopmans run directory: it holds no {NODE_METADATA_FILE}"
+    opening = f"{folder} is not a koopmans run directory"
     plottable = _plottable_below(folder)
     if not plottable:
         return PlottingError(
-            f"{opening}, and neither does anything beneath it. Pass a directory "
-            "`koopmans run` wrote, or a calculation directory inside one."
+            f"{opening}, and nothing beneath it has a band structure to plot. Pass a "
+            "directory `koopmans run` wrote, or a calculation directory inside one."
         )
     lines = [f"{opening}. These directories beneath it have band structures to plot:"]
     lines += [f"  {path}" for path in plottable[:SUGGESTION_LIMIT]]

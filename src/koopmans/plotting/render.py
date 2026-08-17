@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -163,18 +163,36 @@ class StyleError(ValueError):
     """A style is not one of matplotlib's format strings."""
 
 
+def _format_parser() -> Any:
+    """Return matplotlib's own parser for format strings.
+
+    matplotlib publishes none, so this reads the private one rather than
+    keeping a second copy of the grammar beside it. A release that renames it
+    turns every ``--style`` into this message instead of a traceback.
+
+    :raises StyleError: if this matplotlib no longer carries it.
+    """
+    try:
+        from matplotlib.axes._base import (  # type: ignore[attr-defined]
+            _process_plot_format,
+        )
+    except ImportError as exc:
+        raise StyleError(
+            "this version of matplotlib cannot say whether a format string is "
+            "valid, so --style cannot be checked. Leave --style out, or install "
+            "matplotlib 3.10 or similar."
+        ) from exc
+    return _process_plot_format
+
+
 def _style_color(style: str) -> object | None:
     """Return the color a matplotlib format string names, or ``None`` for none.
 
-    matplotlib publishes no parser for its format strings, so this reads its
-    private one rather than keeping a second copy of the grammar beside it.
-
     :raises StyleError: if matplotlib cannot read ``style`` as a format string.
     """
-    from matplotlib.axes._base import _process_plot_format  # type: ignore[attr-defined]
-
+    parser = _format_parser()
     try:
-        parsed = _process_plot_format(style)
+        parsed = parser(style)
     except ValueError as exc:
         raise StyleError(str(exc)) from exc
     color: object | None = parsed[2]

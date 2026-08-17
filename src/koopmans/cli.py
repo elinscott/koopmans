@@ -834,13 +834,14 @@ def bandstructure(
     """Draw the band structures of finished runs on one set of axes.
 
     FOLDERS are directories `koopmans run` wrote, or single calculation
-    directories inside them, which carry a metadata file of their own. Each is
-    taken as given and nothing beneath it is searched, so a step that ran
-    wannier90 twice is never chosen between on your behalf; a directory that
-    names no run of its own lists the ones under it that can be drawn. Every
-    band structure across all the folders is drawn, so a DFT run and a
-    Koopmans run given together overlay, referenced to a single energy zero.
-    Each is named after the step that produced it unless --label names it:
+    directories inside them. Each is taken as given and nothing beneath it is
+    searched, so a step that ran wannier90 twice is never chosen between on
+    your behalf; a directory that names no run of its own lists the ones under
+    it that can be drawn. Naming a run and a step inside it draws that step
+    twice — pass either the run or its steps. Every band structure across all
+    the folders is drawn, so a DFT run and a Koopmans run given together
+    overlay, referenced to a single energy zero. Each is named after the step
+    that produced it unless --label names it:
 
         koopmans plot bandstructure dft ki --label DFT --label "KI@LDA"
 

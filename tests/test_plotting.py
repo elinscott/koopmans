@@ -736,7 +736,12 @@ class TestResolver:
         assert not any(label.rsplit("(", 1)[-1].rstrip(")").strip().isdigit() for label in labels)
 
     def test_not_a_run_directory(self, aiida_profile: Any, tmp_path: Path) -> None:
-        """A folder with no metadata file is named, along with what to pass."""
+        """A folder that is not a run is named, along with what to pass.
+
+        The bookkeeping file the dump writes is not named: the reader neither
+        writes it nor can act on it, and every message on this path says the
+        same thing.
+        """
         folder = tmp_path / "somewhere"
         folder.mkdir()
 
@@ -745,6 +750,26 @@ class TestResolver:
 
         assert "is not a koopmans run directory" in str(excinfo.value)
         assert "koopmans run" in str(excinfo.value)
+        assert NODE_METADATA_FILE not in str(excinfo.value)
+
+    def test_unreadable_metadata_names_the_folder_not_the_file(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A folder whose metadata records no uuid is named by its own path.
+
+        The reader passed the folder, not the file inside it, and rerunning is
+        the only thing they can do about either.
+        """
+        folder = write_run_folder(tmp_path, "zno", None)
+        (folder / NODE_METADATA_FILE).write_text(yaml.dump({"Node data": {"pk": 1}}))
+
+        with pytest.raises(PlottingError) as excinfo:
+            resolve_band_series([folder])
+
+        message = str(excinfo.value)
+        assert "does not record which run it came from" in message
+        assert str(folder) in message
+        assert NODE_METADATA_FILE not in message
 
     def test_uuid_absent_from_this_profile(self, aiida_profile: Any, tmp_path: Path) -> None:
         """A folder from another machine says so, rather than "node not found"."""
@@ -1214,6 +1239,20 @@ class TestSeriesStyles:
         """A typo is caught by the check rather than by the drawing."""
         with pytest.raises(StyleError, match="not a valid format string"):
             check_style("zz")
+
+    def test_a_matplotlib_without_the_parser_says_so(self, monkeypatch: Any) -> None:
+        """A renamed parser is reported, not raised as a bare ImportError.
+
+        matplotlib publishes no format-string parser, so koopmans reads a
+        private one and is unpinned against it moving; this is what that costs
+        the reader when it does.
+        """
+        from matplotlib.axes import _base
+
+        monkeypatch.delattr(_base, "_process_plot_format")
+
+        with pytest.raises(StyleError, match="cannot say whether a format string is valid"):
+            check_style("rx")
 
 
 # ----------------------------------------------------------------------
@@ -2246,6 +2285,7 @@ class TestRejectedFolderSuggestions:
         assert "is not a koopmans run directory" in message
         assert "have band structures to plot" in message
         assert str(folder / "01-wannier90" / "03-wannier90") in message
+        assert NODE_METADATA_FILE not in message
 
     def test_the_preprocessing_run_is_not_offered(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
@@ -2299,8 +2339,9 @@ class TestRejectedFolderSuggestions:
             resolve_band_series([tmp_path / "elsewhere"])
 
         message = str(caught.value)
-        assert "neither does anything beneath it" in message
+        assert "nothing beneath it has a band structure to plot" in message
         assert "calculation directory inside one" in message
+        assert NODE_METADATA_FILE not in message
 
     def test_a_long_list_is_capped_and_counted(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
