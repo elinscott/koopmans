@@ -53,7 +53,7 @@ Wannierization
   Atomic projections                                    projwfc.x
 
 ########## singlepoint / DSCF (molecular)
-Koopmans Delta-SCF
+Koopmans ΔSCF
   DFT initialization (nspin=1)                          kcp.x
   DFT initialization (nspin=2, staging)                 kcp.x
   DFT initialization (nspin=2)                          kcp.x
@@ -88,7 +88,7 @@ Koopmans Delta-SCF
   Final KI                                              kcp.x
 
 ########## singlepoint / DSCF (periodic, mlwfs)
-Koopmans Delta-SCF
+Koopmans ΔSCF
   Wannier initialization
     Wannierization
       Ground state
@@ -105,8 +105,8 @@ Koopmans Delta-SCF
         Overlaps                                        pw2wannier90.x
         Minimization                                    wannier90.x
     Supercell folding
-      Folded Wannier functions (occupied block 1)       wann2kcp.x
-      Folded Wannier functions (empty block 1)          wann2kcp.x
+      Supercell Wannier functions (occupied block 1)    wann2kcp.x
+      Supercell Wannier functions (empty block 1)       wann2kcp.x
       Supercell wavefunctions (occupied, spin 1)        merge_evc.x
       Supercell wavefunctions (empty, spin 1)           merge_evc.x
     DFT staging                                         kcp.x

@@ -83,7 +83,7 @@ _DISPLAY: dict[str | tuple[str, str], str] = {
     "DielectricTask": "Dielectric constant",
     "WannierizeBlocks": "Wannierization",
     "Wannierize": "Wannierization",
-    "KoopmansDSCFWorkflow": "Koopmans Delta-SCF",
+    "KoopmansDSCFWorkflow": "Koopmans ΔSCF",
     "SinglepointDFPTWorkflow": "Koopmans DFPT",
     "TrajectoryWorkflow": "Trajectory",
     # --- pw.x ---
@@ -182,7 +182,7 @@ _MANIFOLD = {"occ": "occupied block", "emp": "empty block", "block": "block"}
 _BLOCK_STEMS = (
     ("wannierize_split_", "Split Wannierization"),
     ("wannierize_", "Wannierization"),
-    ("fold_", "Folded Wannier functions"),
+    ("fold_", "Supercell Wannier functions"),
     ("decompose_", "Decomposition"),
     ("descriptors_", "Descriptors"),
 )
@@ -304,7 +304,7 @@ def prettify_label(raw: str, process_label: str = "") -> str:
     >>> prettify_label("kcp-dft_n_plus_1_dummy")
     'DFT (N+1, staging)'
     >>> prettify_label("WorkGraph<KoopmansDSCFWorkflow>")
-    'Koopmans Delta-SCF'
+    'Koopmans ΔSCF'
     >>> prettify_label("PwCalculation")
     'pw.x'
     """

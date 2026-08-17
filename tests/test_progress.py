@@ -12,8 +12,8 @@ the logic it applies to them is not.
 run, and ``tests/data/progress_tables.txt`` records what each renders as.
 Regenerate that file after an intended change with::
 
-    python -c "import tests.test_progress as t; print(t.render_route_tables())" \
-        > tests/data/progress_tables.txt
+    python -c "import tests.test_progress as t; \
+        t.TABLES_FILE.write_text(t.render_route_tables(), encoding='utf-8')"
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ class TestStableRows:
         rows = render(_wrapped_calcjob(state="running"))
 
         assert [row.label for row in rows] == [
-            "Koopmans Delta-SCF",
+            "Koopmans ΔSCF",
             "DFT initialization (nspin=1)",
         ]
 
@@ -152,7 +152,7 @@ class TestStableRows:
             root = _wrapped_calcjob(state=calcjob_state)
             rows = render(root)
             assert [row.label for row in rows] == [
-                "Koopmans Delta-SCF",
+                "Koopmans ΔSCF",
                 "DFT initialization (nspin=1)",
             ]
             states.append(rows[1].state)
@@ -220,7 +220,7 @@ class TestStableRows:
         helper = FakeNode(label="build_iter_source", is_pyfunction=True, children=[buried])
         root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[helper])
 
-        assert [row.label for row in render(root)] == ["Koopmans Delta-SCF"]
+        assert [row.label for row in render(root)] == ["Koopmans ΔSCF"]
 
 
 class TestCollapsingAndTransparency:
@@ -545,7 +545,7 @@ class TestSiblingOrder:
         rows = render(root)
 
         assert [(row.label, row.depth) for row in rows] == [
-            ("Koopmans Delta-SCF", 0),
+            ("Koopmans ΔSCF", 0),
             ("Orbital screening", 1),
             ("Orbital 1", 2),
             ("Orbital 2", 2),
@@ -563,7 +563,7 @@ class TestDescribeLabel:
             ("nscf", "NSCF"),
             ("kcw-wann2kc", "Wannier gauge"),
             ("merge_evc-merge_evc0_empty1", "Supercell wavefunctions (empty, spin 1)"),
-            ("wann2kcp-fold_occ_1", "Folded Wannier functions (occupied block 1)"),
+            ("wann2kcp-fold_occ_1", "Supercell Wannier functions (occupied block 1)"),
             ("wannierize_occ_up_1", "Wannierization (occupied block 1, spin up)"),
             ("wannier90-wannier90_split_block_0", "Minimization (group 1)"),
             ("kcw-screen_up_orb_2", "Orbital 2 (spin up)"),
@@ -980,7 +980,7 @@ class TestEveryRouteTable:
         user watching a run of each route sees, checked in so it can be
         read without running anything.
         """
-        assert render_route_tables() == TABLES_FILE.read_text()
+        assert render_route_tables() == TABLES_FILE.read_text(encoding="utf-8")
 
     def test_no_route_shows_a_python_class_name(self) -> None:
         """``Pw Bands Work Chain`` and friends never reach a user."""
