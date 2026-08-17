@@ -13,17 +13,17 @@ from koopmans.aiida.workflows import (
     require_configured_codes,
 )
 
+if TYPE_CHECKING:
+    from aiida_workgraph import WorkGraph
+
+    from koopmans.input_file import KoopmansInput
+
 #: What to write instead of a k-path on the ph.x route.
 NO_BAND_PATH_ON_DFT_EPS = (
     "`kpoints.path` cannot take effect in a `dft_eps` calculation: it runs one scf "
     "and then ph.x, which computes a dielectric constant and no band structure. "
     "Remove `kpoints.path`, or run `task: dft_bands` to get a band structure."
 )
-
-if TYPE_CHECKING:
-    from aiida_workgraph import WorkGraph
-
-    from koopmans.input_file import KoopmansInput
 
 
 def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
