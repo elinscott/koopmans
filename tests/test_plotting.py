@@ -1499,6 +1499,53 @@ class TestCommand:
         payload = json.loads((tmp_path / "si.json").read_text())
         assert [record["style"] for record in payload["series"]] == ["x", "-"]
 
+    def test_a_style_written_beside_its_folder_pairs_with_it(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """Interleaving folders and styles pairs them as written.
+
+        The help tells the reader to write each style beside its own folder,
+        which only holds because click gathers arguments and options into two
+        lists and pairs them by position. The styles are different so that the
+        wrong pairing draws a different figure rather than the same one.
+        """
+        from koopmans.cli import cli
+
+        pw = dft_run(tmp_path, "pw", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        wannier = dft_run(tmp_path, "wannier", 6.0, [[-5.1, 6.1], [-4.6, 7.1], [-4.1, 7.6]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(pw),
+                "--style",
+                "rx",
+                "--label",
+                "pw.x",
+                str(wannier),
+                "--style",
+                "b-",
+                "--label",
+                "wannier90",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [(record["label"], record["style"]) for record in payload["series"]] == [
+            ("pw.x", "rx"),
+            ("wannier90", "b-"),
+        ]
+        crosses, line = band_lines(drawn_axes[-1])[:2], band_lines(drawn_axes[-1])[2:]
+        assert {item.get_marker() for item in crosses} == {"x"}
+        assert {as_rgba(item.get_color()) for item in line} == {as_rgba("b")}
+
     def test_a_style_count_mismatch_is_reported(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:
