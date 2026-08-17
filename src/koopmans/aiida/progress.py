@@ -225,7 +225,10 @@ class _Row:
     def __init__(self, display: LabelDisplay, state: str, pk: int | None = None) -> None:
         self.text = display.text
         self.code = display.code
+        # ``numbered`` is the wish, ``number`` the position granted; a row
+        # keeps the second once :func:`_number_siblings` has run.
         self.numbered = display.numbered
+        self.number: int | None = None
         self.state = state
         self.children: list[_Row] = []
         # Every process this row stands for: itself, plus whatever it
@@ -302,6 +305,7 @@ def _number_siblings(rows: Sequence[_Row]) -> None:
     for row in rows:
         if row.numbered:
             index += 1
+            row.number = index
             row.text = f"{row.text} {index}"
             row.numbered = False
 
@@ -325,7 +329,9 @@ def _collect_rows(
       ``PwCalculation`` is the one row ``SCF`` · ``pw.x``. A restarting
       ``PwBaseWorkChain`` runs two calculations and so does not collapse:
       its attempts stay visible, which is when a watcher needs them. The
-      root never collapses — it names the workflow, not a step of it.
+      root never collapses — it names the workflow, not a step of it —
+      and neither does a row that has been given a number, which states
+      a position among siblings that no surviving row would state.
 
     A process without a row lends its state to the row that stands for
     it: while that row is non-terminal it displays whichever state is
@@ -365,8 +371,16 @@ def _collect_rows(
 
     row = _Row(display, state, getattr(process_node, "pk", None))
     # The root names the workflow, never one of its steps, so it keeps
-    # both its row and whatever single step it has so far produced.
-    if not is_root and len(child_rows) == 1 and not child_rows[0].children:
+    # both its row and whatever single step it has so far produced. A
+    # numbered child keeps its row for a reason of its own: the number it
+    # was just given is the only record of which sibling it is, and this
+    # row would not carry it.
+    if (
+        not is_root
+        and len(child_rows) == 1
+        and not child_rows[0].children
+        and child_rows[0].number is None
+    ):
         collapsed = child_rows.pop()
         row.code = collapsed.code or row.code
         row.pks.extend(collapsed.pks)

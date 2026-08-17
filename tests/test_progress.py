@@ -109,6 +109,20 @@ def render() -> Iterator[Callable[[FakeNode], list[progress.ProcessRow]]]:
         yield _render
 
 
+@pytest.fixture
+def step_paths() -> Iterator[Callable[[FakeNode], dict[int, tuple[str, ...]]]]:
+    """Return a function mapping each process of a fake tree to its step path."""
+    registry: dict[int, FakeNode] = {}
+
+    with stubbed_lookups(registry):
+
+        def _paths(root: FakeNode) -> dict[int, tuple[str, ...]]:
+            _register(root, registry)
+            return progress.build_step_paths(cast("ProcessNode", root))
+
+        yield _paths
+
+
 def _wrapped_calcjob(state: str = "waiting", **kwargs: Any) -> FakeNode:
     """Build root → ``DFT initialization (nspin=1)`` → the one kcp.x call it wraps."""
     calcjob = FakeNode(label="kcp-dft_init", kind="calcjob", state=state, **kwargs)
@@ -408,6 +422,50 @@ class TestScreeningIterationNumbering:
         root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[compute])
 
         assert [row.label for row in render(root)][1:3] == ["Screening parameters", "Iteration 1"]
+
+    def _lone_iteration(self) -> tuple[FakeNode, FakeNode, FakeNode, FakeNode]:
+        """Build a screening whose one iteration holds a single calculation.
+
+        The iteration collapses that calculation into itself and is then a
+        leaf, which is the shape that used to put it within reach of its
+        own parent's collapse.
+        """
+        calcjob = FakeNode(label="kcp-ki_trial", kind="calcjob")
+        iteration = FakeNode(label="ScreeningIteration", children=[calcjob])
+        compute = FakeNode(label="ComputeScreeningParameters", children=[iteration])
+        root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[compute])
+        return root, compute, iteration, calcjob
+
+    def test_a_numbered_row_is_not_collapsed_away(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A number is a position among siblings, and no other row records it.
+
+        Collapsing the row that carries one deletes the only statement of
+        which pass of the loop this was.
+        """
+        root, _, _, _ = self._lone_iteration()
+
+        rows = render(root)
+
+        assert [(row.label, row.depth, row.code) for row in rows] == [
+            ("Koopmans ΔSCF", 0, None),
+            ("Screening parameters", 1, None),
+            ("Iteration 1", 2, "kcp.x"),
+        ]
+
+    def test_the_numbered_row_places_its_failures_under_itself(
+        self, step_paths: Callable[[FakeNode], dict[int, tuple[str, ...]]]
+    ) -> None:
+        """A failure in that pass says which pass, rather than naming the loop."""
+        root, compute, iteration, calcjob = self._lone_iteration()
+
+        paths = step_paths(root)
+
+        assert paths[compute.pk] == ("Screening parameters",)
+        assert paths[iteration.pk] == ("Screening parameters", "Iteration 1")
+        # The calculation the iteration collapsed shares its row, and so its path.
+        assert paths[calcjob.pk] == paths[iteration.pk]
 
 
 class TestSiblingOrder:
