@@ -565,6 +565,10 @@ class TestDescribeLabel:
             ("merge_evc-merge_evc0_empty1", "Merged Wannier manifold (empty, spin 1)"),
             ("wann2kcp-fold_occ_1", "Supercell Wannier functions (occupied block 1)"),
             ("wannierize_occ_up_1", "Wannierization (occupied block 1, spin up)"),
+            ("wannierize_occ", "Wannierization (occupied block)"),
+            ("wannierize_emp", "Wannierization (empty block)"),
+            ("wannierize_occ_up", "Wannierization (occupied block, spin up)"),
+            ("decompose-decompose_emp_down", "Decomposition (empty block, spin down)"),
             ("wannier90-wannier90_split_block_0", "Minimization (group 1)"),
             ("kcw-screen_up_orb_2", "Orbital 2 (spin up)"),
             ("dfpt_down", "DFPT screening (spin down)"),
@@ -638,6 +642,34 @@ class TestDescribeLabel:
         assert progress.prettify_label("PwCalculation") == "pw.x"
         assert progress.prettify_label("Wann2kcCalculation") == "kcw.x"
         assert progress.prettify_label("Pw2wannier90Calculation") == "pw2wannier90.x"
+
+    def test_the_failure_summary_names_a_pyfunction_by_its_function_name(self) -> None:
+        """It is keyed on ``process_label``, which for a PyFunction is the function's name."""
+        assert progress.prettify_label("train_screening_model") == "Screening model training"
+        assert progress.prettify_label("evaluate_screening_model") == "Screening model evaluation"
+
+    @pytest.mark.parametrize("raw", ["injected_alphas", "predict_alphas"])
+    def test_a_link_label_no_surface_reads_carries_no_name(self, raw: str) -> None:
+        """A name nothing can reach is the defect a lookup table is meant to avoid.
+
+        These two label PyFunctions, which the table drops; the failure
+        summary reads ``echo_alpha_screening`` and
+        ``predict_alpha_screening`` instead, so a name filed under the
+        link label would print nowhere.
+        """
+        assert progress.prettify_label(raw) == raw
+
+    def test_a_transparent_link_label_carries_no_name(self) -> None:
+        """A lower-case key names a call link, and only the table reads those.
+
+        The table gives a transparent label no row, so a name filed under
+        one prints nowhere. A class-name key may carry both: the failure
+        summary reads process labels, transparent or not.
+        """
+        from koopmans.aiida.labels import _DISPLAY, _TRANSPARENT
+
+        link_labels = {key for key in _TRANSPARENT if isinstance(key, str) and key.islower()}
+        assert not link_labels & set(_DISPLAY)
 
     @pytest.mark.parametrize(
         "raw", ["orb_1_filled_orbital_screening", "orb_10_empty_orbital_screening"]
@@ -912,6 +944,17 @@ ROUTES: dict[str, FakeNode] = {
             _dfpt(""),
         ],
     ),
+    # A manifold Wannierized as one block is labelled ``occ`` / ``emp``,
+    # without an index — the shape every unsplit DFPT run has.
+    "singlepoint / DFPT (one block per manifold)": FakeNode(
+        process_label="WorkGraph<SinglepointDFPTWorkflow>",
+        kind="workgraph",
+        children=[
+            _ground_state(),
+            _graph("wannierize", *_wannierize_blocks("occ", "emp")),
+            _dfpt(""),
+        ],
+    ),
     "singlepoint / DFPT (collinear)": FakeNode(
         process_label="WorkGraph<SinglepointDFPTWorkflow>",
         kind="workgraph",
@@ -983,7 +1026,13 @@ class TestEveryRouteTable:
         assert render_route_tables() == TABLES_FILE.read_text(encoding="utf-8")
 
     def test_no_route_shows_a_python_class_name(self) -> None:
-        """``Pw Bands Work Chain`` and friends never reach a user."""
+        """``Pw Bands Work Chain`` and friends never reach a user.
+
+        The tables only. The failure summary reads process labels rather
+        than call link labels, and most ``@task.graph`` names have no
+        entry, so it still prints identifiers like
+        ``RewannierizeSplitBlocks`` verbatim.
+        """
         rendered = render_route_tables()
         for leaked in ("WorkChain", "Work Chain", "Calculation", "Workflow"):
             assert leaked not in rendered

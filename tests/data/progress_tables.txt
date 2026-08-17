@@ -170,6 +170,32 @@ Koopmans DFPT
       Orbital 5                                         kcw.x
     Koopmans Hamiltonian                                kcw.x
 
+########## singlepoint / DFPT (one block per manifold)
+Koopmans DFPT
+  Ground state
+    SCF                                                 pw.x
+    NSCF                                                pw.x
+  Wannierization
+    Ground state
+      SCF                                               pw.x
+      NSCF                                              pw.x
+    Band structure                                      pw.x
+    Atomic projections                                  projwfc.x
+    Wannierization (occupied block)
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+    Wannierization (empty block)
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+  DFPT screening
+    Wannier gauge                                       kcw.x
+    Orbital screening
+      Orbital 1                                         kcw.x
+      Orbital 5                                         kcw.x
+    Koopmans Hamiltonian                                kcw.x
+
 ########## singlepoint / DFPT (collinear)
 Koopmans DFPT
   Ground state

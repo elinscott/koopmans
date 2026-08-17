@@ -131,13 +131,11 @@ _DISPLAY: dict[str | tuple[str, str], str] = {
     "kipz_final": "Final KIPZ",
     "RunFinalKI": "Final KI",
     "run_final_ki_predicted": "Final KI (predicted alphas)",
-    "injected_alphas": "Injected alphas",
     "ComputeScreeningParameters": "Screening parameters",
     "PredictScreeningParameters": "Predicted screening parameters",
     "compute_orbital_screening_parameters": "Orbital screening",
     "ScreeningIteration": "Iteration",
     "screening_iteration": "Iteration",
-    "refine_screening_parameters": "Screening parameters",
     # --- kcw.x ---
     "dfpt": "DFPT screening",
     "wann2kc": "Wannier gauge",
@@ -147,10 +145,13 @@ _DISPLAY: dict[str | tuple[str, str], str] = {
     # --- machine learning ---
     "descriptors": "Descriptors",
     "predicted_descriptors": "Descriptors",
-    "predict_alphas": "Predicted alphas",
+    # --- names seen only in the failure summary ---
+    # That summary is keyed on ``process_label``, not on the call link
+    # label: a class name for a CalcJob or WorkChain, the function's own
+    # name for a PyFunction. The two model steps below are PyFunctions,
+    # which the table drops.
     "train_screening_model": "Screening model training",
     "evaluate_screening_model": "Screening model evaluation",
-    # --- process classes, seen only in the failure summary ---
     "PwCalculation": "pw.x",
     "PwBaseWorkChain": "pw.x",
     "PwBandsWorkChain": "DFT band structure",
@@ -177,8 +178,8 @@ _DISPLAY: dict[str | tuple[str, str], str] = {
 _SPIN = {"up": "spin up", "down": "spin down"}
 _MANIFOLD = {"occ": "occupied block", "emp": "empty block", "block": "block"}
 
-# Stems whose remainder identifies a block: ``occ_1``, ``emp_up_2``,
-# ``block_1``. Longest stem first, so the split variant wins.
+# Stems whose remainder identifies a block: ``occ``, ``occ_1``,
+# ``emp_up_2``, ``block_1``. Longest stem first, so the split variant wins.
 _BLOCK_STEMS = (
     ("wannierize_split_", "Split Wannierization"),
     ("wannierize_", "Wannierization"),
@@ -193,12 +194,16 @@ _ORBITAL_STEMS = ("compute_alpha_", "screen_")
 
 
 def _block_qualifier(rest: str) -> str | None:
-    """Render an ``occ_1`` / ``emp_up_2`` / ``block_1`` remainder, or ``None``."""
-    match = re.fullmatch(r"(occ|emp|block)(?:_(up|down))?_(\d+)", rest)
+    """Render an ``occ`` / ``occ_1`` / ``emp_up_2`` / ``block_1`` remainder, or ``None``.
+
+    The index is optional: a manifold Wannierized as one block is labelled
+    without one, and then the qualifier names the manifold alone.
+    """
+    match = re.fullmatch(r"(occ|emp|block)(?:_(up|down))?(?:_(\d+))?", rest)
     if not match:
         return None
     manifold, spin, index = match.groups()
-    text = f"{_MANIFOLD[manifold]} {index}"
+    text = _MANIFOLD[manifold] if index is None else f"{_MANIFOLD[manifold]} {index}"
     return f"{text}, {_SPIN[spin]}" if spin else text
 
 
