@@ -3,13 +3,12 @@
 #################################################
 
 This tutorial applies the KI functional to a crystal. Two things change once the system
-is periodic. The variational orbitals can no longer be the Kohn-Sham orbitals, because
-in a crystal those are Bloch states spread over the whole solid; we use Wannier
-functions instead. And the screening parameters, still computed from total-energy
-differences as they were for :doc:`ozone <../../orbital_energies/ozone/automatically>`,
-now need a supercell, because you cannot remove one electron from an infinite crystal.
+becomes periodic:
 
-Everything else is the workflow you already know: initialize the variational orbitals,
+- instead of using Kohn-Sham states as the variational orbitals, we use Wannier functions
+- when computing screening parameters from total-energy differences, the calculations require a supercell to avoid the spurious interaction of charged periodic images
+
+Everything else is the workflow you already know from :doc:`the previous tutorials on molecules <../../orbital_energies/index>`: initialize the variational orbitals,
 compute one screening parameter per orbital from constrained calculations, then evaluate
 the corrected functional.
 
@@ -17,9 +16,8 @@ the corrected functional.
 
     Total-energy differences are not the only way to get the screening parameters. The
     :doc:`next tutorial <../silicon_linear_response/index>` computes them for the same
-    system by linear response, which stays in the primitive cell throughout and is far
-    cheaper. Read this one first: the two share their Wannierization, and only the
-    screening step differs.
+    system by linear response, which removes the need for a supercell throughout and is far
+    cheaper.
 
 ***********************************
  Variational orbitals in a crystal
@@ -28,8 +26,8 @@ the corrected functional.
 A Koopmans correction acts orbital by orbital, and the orbitals it acts on must be
 localized. Bloch states are not: a Bloch state is spread evenly over every unit cell of
 the crystal, so removing "one electron from a Bloch state" removes an infinitesimal
-amount of charge from each cell and the Koopmans condition becomes vacuous. The Wannier
-representation fixes this.
+amount of charge from each cell and the Koopmans condition becomes trivially satisfied by Janak's theorem.
+The Wannier representation fixes this :cite:`Nguyen2018`.
 
 Wannier functions :math:`w_{n\mathbf{R}}(\mathbf{r})` are a unitary transformation of the
 Bloch states :math:`\psi_{n\mathbf{k}}(\mathbf{r})`:
@@ -64,11 +62,10 @@ with ``pw.x`` and ``pw2wannier90.x``; ``koopmans`` drives all three for you.
 .. note::
 
     This tutorial does not teach Wannierization itself — the `Wannier90 tutorials
-    <http://www.wannier.org/support/>`_ do that far better. One point of departure is
-    worth flagging, though. Most Wannier90 tutorials Wannierize occupied and empty states
-    together. A Koopmans calculation cannot: the correction treats a filled orbital and
-    an empty one differently, so each variational orbital has to be wholly filled or
-    wholly empty. We therefore Wannierize the two manifolds separately, as two
+    <http://www.wannier.org/support/>`_ do that already. One point of departure is
+    worth flagging, though: Most Wannier90 tutorials Wannierize occupied and empty states
+    together. A Koopmans calculation requires separate representations of the occupied
+    and empty manifolds. We therefore Wannierize the two manifolds separately.
     **blocks**.
 
 ****************
@@ -109,11 +106,11 @@ switches off the Makov-Payne correction for the charged supercell calculations.
     with published ones, but a charged periodic supercell really does need the
     correction. For production work leave it on and give the material's ``eps_inf``.
 
-The ``kpoints`` block is new too, and it does more work here than its name suggests:
+Periodic systems also require ``kpoints``:
 
 .. literalinclude:: si.yaml
     :language: yaml
-    :start-at: grid:
+    :start-at: kpoints:
     :end-at: grid:
 
 sets the Brillouin-zone sampling, and with it the size of the supercell the screening
@@ -132,25 +129,6 @@ Each inner list is one block, and each block gets its own Wannierization. Both b
 ask for four :math:`sp^3` hybrids on the bond-centre site: the first block takes the
 four filled bonding combinations, the second the four empty antibonding ones.
 
-.. question:: Why does the empty block need ``dis_win_max`` and ``dis_froz_max``, when the filled one does not?
-
-    The four filled bands are the whole occupied manifold — there is nothing else for
-    them to mix with, so the transformation is a plain unitary rotation among four
-    bands. The four antibonding states are not so cleanly separated: they sit at the
-    bottom of a conduction manifold that runs off to infinity, and they hybridize with
-    what is above them. Wannier90 handles this by *disentanglement* — it reads a larger
-    window of bands (``nbnd: 20`` here, so 16 of them once the filled four are excluded)
-    and extracts the four-dimensional subspace that is smoothest across the Brillouin
-    zone.
-
-    The two keywords bound that search. ``dis_win_max`` is the highest energy any state
-    may be drawn from, and ``dis_froz_max`` is the energy below which states must be
-    kept whole. Both are absolute energies in eV, not measured from the valence band
-    edge.
-
-    ``koopmans`` applies them only to the blocks that actually disentangle, so leaving
-    them in the file costs the filled block nothing.
-
 .. question:: Why is ``alpha_guess`` 0.077 here, when ozone used 0.6?
 
     A screening parameter measures how much the rest of the system relaxes when you
@@ -159,20 +137,13 @@ four filled bonding combinations, the second the four empty antibonding ones.
     dielectric constant is around 12. Starting the loop near the answer saves iterations;
     it does not change where the loop converges to.
 
-************************************
- First, check the Wannier functions
-************************************
+********************************
+ Checking the Wannier functions
+********************************
 
 A Koopmans calculation on a solid is only as good as its variational orbitals, and the
 Wannierization is the one step in this workflow that regularly needs adjusting. So run
 it on its own first — that is what ``task: wannierize`` in the file is for.
-
-.. warning::
-
-    Make sure you have installed ``koopmans``: see :doc:`here <../../../installation>`
-    for more details.
-
-    This part of the tutorial needs ``pw.x``, ``wannier90.x`` and ``pw2wannier90.x``.
 
 .. code-block:: console
 
@@ -180,8 +151,7 @@ it on its own first — that is what ``task: wannierize`` in the file is for.
 
 .. tip::
 
-    A crystal is heavier than a molecule, and the ``pw.x`` steps parallelize well over
-    k-points. Adding
+    ``pw.x`` steps parallelize well over k-points. Adding
 
     .. code-block:: yaml
 
@@ -283,12 +253,9 @@ and run it again.
 
 .. warning::
 
-    This calculation is much heavier than the Wannierization alone, and adds ``kcp.x``,
-    ``wann2kcp.x`` and ``merge_evc.x`` to the codes it needs.
-
     The Wannierization runs again as the first stage of it. You will not pay for it
-    twice: ``koopmans`` records every calculation in a database, and an identical one is
-    served from that record rather than rerun.
+    twice: ``koopmans`` records every calculation in a database, and if it sees the
+    same input again it fetches the cached result.
 
 -----------------------------------
  Initialization, and the supercell
