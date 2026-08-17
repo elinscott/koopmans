@@ -151,6 +151,17 @@ class TestPerStepKpointMesh:
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 27
         assert wg.tasks["dfpt"].inputs["kgrid"].value == [3, 3, 3]
 
+    def test_wannier90_density_raises(self) -> None:
+        """Not yet wired into this route's own wannierization step.
+
+        The guard runs before any code or pseudopotential is loaded, so it
+        needs no profile.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*DFPT"):
+            _build(d)
+
 
 class TestCollinear:
     """spin='collinear' fans out per spin channel and validates its inputs."""

@@ -10,6 +10,7 @@ from koopmans.aiida.workflows import (
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
+    reject_kpoint_overrides,
     require_configured_codes,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
@@ -49,6 +50,16 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     )
 
     workflow = koopmans_input.workflow
+
+    reject_kpoint_overrides(
+        koopmans_input,
+        {
+            "wannier90": "`kpoints.overrides.wannier90.path_density` is not yet wired "
+            "into the DFPT route: its own wannierization step interpolates along "
+            "`kpoints.path` at the top-level `kpoints.path_density`, with no socket "
+            "of its own yet for a denser interpolation."
+        },
+    )
 
     group_orbitals_tol = dfpt_grouping_tol(workflow)
     if workflow.correction != Correction.KI:

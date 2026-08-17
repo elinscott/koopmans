@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from koopmans.aiida.workflows import build_workgraph
 from koopmans.input_file import KoopmansInput
 from tests.fixtures import silicon_pw_input
@@ -40,3 +42,17 @@ class TestDftBandsOccupations:
             assert system["occupations"] == "fixed", step
             assert "smearing" not in system, step
             assert "degauss" not in system, step
+
+
+class TestNoWannierStep:
+    """`dft_bands` runs no Wannierization: `overrides.wannier90` has nothing to reach."""
+
+    def test_explicit_wannier90_density_raises(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The route names its own `kpoints.path_density` as the alternative."""
+        d = silicon_pw_input(pseudo_library="SG15/1.0/PBE/SR")
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*dft_bands"):
+            build_workgraph(inp)

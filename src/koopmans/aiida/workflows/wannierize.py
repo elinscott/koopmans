@@ -18,7 +18,6 @@ from koopmans.aiida.workflows import (
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
-    reject_kpoint_overrides,
     require_configured_codes,
     require_cutoffs_for_family,
 )
@@ -47,24 +46,6 @@ _NO_PROJECTIONS_PROVIDED_MESSAGE = (
     "`pw2wannier90.atom_proj_ext` at them; or (b) provide explicit projections "
     "in `calculator_parameters.w90.projections`."
 )
-
-#: Raised for an explicit `kpoints.overrides.wannier90.path_density` on a
-#: Wannierization that has no independent socket for it: aiida-koopmans2's
-#: `Wannierize` and, off the split path, `WannierizeBlocks` hand the same
-#: explicit k-list to both the pw.x quality-check bands run and wannier90's
-#: own interpolation. Only `block_wannierization_threshold` (or an
-#: automatic-projections block, which always splits) buys the second socket
-#: that lets the two densities differ.
-_WANNIER90_DENSITY_NEEDS_SPLIT_SOCKET = {
-    "wannier90": (
-        "`kpoints.overrides.wannier90.path_density` cannot take effect here: this "
-        "route has no k-point socket of its own for wannier90's interpolation, "
-        "separate from the pw.x quality-check bands run, so the interpolation "
-        "stays on the top-level `kpoints.path_density`. Set "
-        "`workflow.block_wannierization_threshold` to route through the "
-        "block-splitting machinery, which does keep the two densities apart."
-    )
-}
 
 
 def _keywords_setting_projections(
@@ -243,12 +224,6 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     if not koopmans_input.workflow.auto_projections:
         raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
-    # This route has one k-point socket, shared between the pw.x
-    # quality-check bands run and wannier90's own interpolation (see
-    # _WANNIER90_DENSITY_NEEDS_SPLIT_SOCKET); block_wannierization_threshold
-    # (handled above) is the only way to a route with a second one.
-    reject_kpoint_overrides(koopmans_input, _WANNIER90_DENSITY_NEEDS_SPLIT_SOCKET)
-
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
@@ -269,7 +244,13 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, overrides)
 
+    # Two independent k-point lists: the pw.x quality-check run keeps the
+    # top-level path_density, wannier90's own interpolation takes
+    # overrides.wannier90.path_density.
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    interpolation_kpoints = kpoints_input_to_interpolation_path(
+        koopmans_input.kpoints, structure, density=wannier90_path_density(koopmans_input.kpoints)
+    )
 
     # load_codes loads projwfc, WannierizeCodes's one NotRequired member,
     # whenever it is configured. The upstream builder wires it only for
@@ -296,6 +277,7 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         kpoints=kpoints,
         mp_grid=mp_grid,
         bands_kpoints=bands_kpoints,
+        interpolation_kpoints=interpolation_kpoints,
         **extra_kwargs,
     )
 
@@ -385,17 +367,6 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     else:
         raise ValueError(_NO_PROJECTIONS_PROVIDED_MESSAGE)
 
-    # WannierizeBlocks samples the pw.x quality-check / split-detection run
-    # off `bands_kpoints` only in split mode (`block_wannierize.py`'s own
-    # `split = split_threshold is not None or any block missing
-    # "projections"`); off the plain explicit-projections path it falls
-    # back to `interpolation_kpoints` for that run too, sharing the one
-    # socket with wannier90's interpolation. `projections` truthy is
-    # exactly the explicit branch above, whose blocks all carry a
-    # `projections` key, so this mirrors that condition without importing
-    # ak2's block dicts to inspect them.
-    split = threshold is not None or not projections
-
     # The scf needs only the occupied bands, so nbnd is dropped from its
     # override; the nscf — and the bands run seeded from its overrides —
     # must cover every Wannierised band.
@@ -430,27 +401,15 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, wannier_overrides)
 
-    if split:
-        # Two independent k-point lists: the split-mode band detection (and
-        # its doubling quality-check pw.x run) samples the top-level
-        # `kpoints.path_density`; wannier90's own interpolation samples
-        # `kpoints.overrides.wannier90.path_density` instead.
-        bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
-        interpolation_kpoints = kpoints_input_to_interpolation_path(
-            koopmans_input.kpoints,
-            structure,
-            density=wannier90_path_density(koopmans_input.kpoints),
-        )
-    else:
-        # One node serves both uses of the input's k-path: off this route
-        # there is no separate socket for the pw.x quality-check run (see
-        # _WANNIER90_DENSITY_NEEDS_SPLIT_SOCKET), so an explicit
-        # `overrides.wannier90.path_density` has nowhere to go.
-        reject_kpoint_overrides(koopmans_input, _WANNIER90_DENSITY_NEEDS_SPLIT_SOCKET)
-        bands_kpoints = None
-        interpolation_kpoints = kpoints_input_to_interpolation_path(
-            koopmans_input.kpoints, structure
-        )
+    # Two independent k-point lists, in every mode: the pw.x quality-check /
+    # split-detection run samples the top-level `kpoints.path_density`;
+    # wannier90's own interpolation samples
+    # `kpoints.overrides.wannier90.path_density` instead. `WannierizeBlocks`
+    # takes `bands_kpoints` for the former regardless of split mode.
+    bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    interpolation_kpoints = kpoints_input_to_interpolation_path(
+        koopmans_input.kpoints, structure, density=wannier90_path_density(koopmans_input.kpoints)
+    )
 
     # load_codes loads every configured member of WannierizeBlocksCodes.
     # wannierjl (the julia binary registered via
@@ -466,12 +425,13 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     codes = load_codes(WannierizeBlocksCodes)
     require_configured_codes(WannierizeBlocksCodes, codes)
 
-    # Without a threshold the graph splits nothing, and WannierizeBlocks
-    # rejects the split-only inputs rather than ignore them.
+    # split_threshold and num_occ_bands are split-only: without a threshold
+    # the graph splits nothing, and WannierizeBlocks rejects them rather
+    # than ignore them. bands_kpoints carries no such restriction — it
+    # sets the quality-check run's density in every mode.
     split_kwargs: dict[str, Any] = {}
     if threshold is not None:
         split_kwargs = {
-            "bands_kpoints": bands_kpoints,
             "num_occ_bands": num_occ_bands,
             "split_threshold": float(threshold),
         }
@@ -483,6 +443,7 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
         kpoints=kpoints,
         mp_grid=mp_grid,
         scf_kpoints=scf_kpoints,
+        bands_kpoints=bands_kpoints,
         **split_kwargs,
         interpolation_kpoints=interpolation_kpoints,
         pseudo_family=pseudo_family,
