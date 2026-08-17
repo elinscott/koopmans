@@ -31,6 +31,7 @@ def _convert_paths_to_strings(obj: Any) -> Any:
 if TYPE_CHECKING:
     from koopmans.input_file import AtomsInput, KoopmansInput, KpointsInput
     from koopmans.input_file.cell_parameters import (
+        CellParametersBase,
         CellParametersViaAlat,
         CellParametersViaIbrav,
         CellParametersViaVectors,
@@ -212,6 +213,23 @@ def alat_in_angstrom(
     return cell_params.celldms[1] * BOHR_TO_ANGSTROM
 
 
+def cell_pbc(cell_params: CellParametersBase) -> tuple[bool, bool, bool]:
+    """Return the three periodic directions ``cell_parameters.periodic`` declares.
+
+    Args:
+        cell_params: The cell parameters from the input file, whose
+            ``periodic`` is either one bool for all three directions or one
+            per direction.
+
+    Returns:
+        The periodicity of each cell vector.
+    """
+    periodic = cell_params.periodic
+    if isinstance(periodic, bool):
+        return (periodic, periodic, periodic)
+    return periodic
+
+
 def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
     """Convert AtomsInput to AiiDA StructureData.
 
@@ -232,13 +250,8 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
 
     cell = cell_in_angstrom(cell_params)
 
-    # Determine periodicity
-    pbc = cell_params.periodic
-    if isinstance(pbc, bool):
-        pbc = (pbc, pbc, pbc)
-
     # Create structure
-    structure = orm.StructureData(cell=cell, pbc=pbc)
+    structure = orm.StructureData(cell=cell, pbc=cell_pbc(cell_params))
 
     # Add atoms
     units = positions.units
@@ -294,9 +307,7 @@ def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]
     frames = ase_read(atoms.snapshots, index=":")
 
     cell = cell_in_angstrom(atoms.cell_parameters)
-    pbc = atoms.cell_parameters.periodic
-    if isinstance(pbc, bool):
-        pbc = (pbc, pbc, pbc)
+    pbc = cell_pbc(atoms.cell_parameters)
 
     structures: dict[str, orm.StructureData] = {}
     for index, frame in enumerate(frames, start=1):

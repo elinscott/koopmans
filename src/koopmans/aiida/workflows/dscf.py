@@ -11,6 +11,7 @@ from aiida_quantumespresso.common.types import SpinType
 from koopmans.aiida.conversion import (
     NORM_CONSERVING_DUAL,
     atoms_input_to_structure,
+    cell_pbc,
     input_to_pw_parameters,
 )
 from koopmans.aiida.workflows import (
@@ -89,6 +90,17 @@ NO_BAND_PATH_ON_DSCF = _KCP_HAS_NO_BANDS.format(
 NO_BAND_PATH_ON_TRAJECTORY = _KCP_HAS_NO_BANDS.format(alternative="")
 
 
+def dscf_initialization_is_supported(init_orbitals: VariationalOrbitalType, periodic: bool) -> bool:
+    """Report whether ``KoopmansDSCFWorkflow`` runs this initialisation route.
+
+    Two routes exist: molecular ``kohn-sham``, and periodic ``mlwfs`` /
+    ``projwfs``. Every other pairing the workflow refuses on entry.
+    """
+    if init_orbitals in (VariationalOrbitalType.MLWFS, VariationalOrbitalType.PROJWFS):
+        return periodic
+    return init_orbitals == VariationalOrbitalType.KOHN_SHAM and not periodic
+
+
 def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
 
@@ -114,7 +126,15 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         return build_singlepoint_dfpt_workgraph(koopmans_input)
 
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
-    reject_band_path(koopmans_input, NO_BAND_PATH_ON_DSCF, NotImplementedError)
+    # Skipped where the workflow runs no such initialisation route at all:
+    # that blocker is the one the reader has to act on, and refusing the
+    # band path instead would send a periodic `kohn-sham` input to
+    # `screening_method = 'dfpt'`, which refuses it again for wanting
+    # Wannier orbitals.
+    if dscf_initialization_is_supported(
+        workflow.init_orbitals, any(cell_pbc(koopmans_input.atoms.cell_parameters))
+    ):
+        reject_band_path(koopmans_input, NO_BAND_PATH_ON_DSCF, NotImplementedError)
     require_supported_correction(workflow.correction)
 
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):

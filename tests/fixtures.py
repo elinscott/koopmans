@@ -1116,6 +1116,13 @@ def _scrub(value: Any) -> Any:  # noqa: C901
         # structured items (dicts, sub-lists) are left in place — their
         # order tends to carry semantic meaning (e.g. socket-connection
         # order).
+        #
+        # The DFPT route breaks that assumption: its ``links`` entries for
+        # ``codes.pw`` / ``codes.wannier90`` swap places between processes,
+        # so three builds of one input give three orderings. Nothing
+        # snapshots a DFPT graph today; whoever first does will need those
+        # entries sorted by ``(from_socket, to_socket)`` here, or the
+        # snapshot will be flaky.
         if scrubbed and all(isinstance(v, str) for v in scrubbed):
             scrubbed.sort()
         return scrubbed
