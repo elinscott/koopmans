@@ -394,6 +394,30 @@ def dfpt_pdos_codes(dfpt_codes: Any, localhost_code: Any) -> dict[str, Any]:
     return {**dfpt_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
 
 
+class TestBandsFollowThePath:
+    """A ``kpoints.path`` alone makes the kcw.x ham step interpolate the bands."""
+
+    def test_a_path_reaches_the_kcw_ham_step(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """No switch stands between the stated path and the Koopmans band structure."""
+        from tests.fixtures import path_labels
+
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+
+        assert path_labels(wg.tasks["dfpt"].inputs["bands_kpoints"].value) == ["GAMMA", "X"]
+
+    def test_no_path_leaves_the_ham_step_uninterpolated(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: the same input without a path grows no bands path."""
+        wg = _build(_si_dfpt_dict())
+
+        assert wg.tasks["dfpt"].inputs["bands_kpoints"].value is None
+
+
 class TestProjwfcQualityCheck:
     """A ``kpoints.path`` and a configured projwfc code reach the wannierize step.
 

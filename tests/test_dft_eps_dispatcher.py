@@ -175,6 +175,23 @@ class TestDftEps:
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_eps"):
             build_workgraph(KoopmansInput.model_validate(d))
 
+    def test_a_band_path_is_rejected(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """ph.x computes a dielectric constant, so a path here would never be sampled."""
+        d = _si_eps_dict()
+        d["kpoints"]["path"] = "GX"
+        with pytest.raises(ValueError) as excinfo:
+            build_workgraph(KoopmansInput.model_validate(d))
+
+        message = str(excinfo.value)
+        assert "`kpoints.path`" in message
+        assert "dft_bands" in message
+
     def test_missing_ph_code_earns_preflight_advice(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:

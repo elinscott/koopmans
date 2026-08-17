@@ -15,6 +15,7 @@ from koopmans.aiida.conversion import (
 )
 from koopmans.aiida.workflows import (
     load_codes,
+    reject_band_path,
     reject_kpoint_overrides,
     require_configured_codes,
     require_cutoffs_for_family,
@@ -66,6 +67,27 @@ KPOINT_OVERRIDES_ON_TRAJECTORY = {
     step: _KCP_TAKES_ONE_MESH.format(step=step, alternative="") for step in ("scf", "nscf")
 }
 
+#: Why no kcp.x route interpolates a band structure yet: kcp.x works in the
+#: supercell the k-mesh folds to, where the band structure has collapsed onto
+#: the zone centre. Recovering it means unfolding the converged Koopmans
+#: Hamiltonian back onto the primitive cell and interpolating it — a stage
+#: koopmans has not ported (koopmans#188).
+_KCP_HAS_NO_BANDS = (
+    "`kpoints.path` cannot take effect on the kcp.x route: its steps work in the "
+    "supercell `kpoints.grid` folds to, and unfolding the converged Koopmans "
+    "Hamiltonian back onto that path is not ported yet. Remove "
+    "`kpoints.path`.{alternative}"
+)
+
+NO_BAND_PATH_ON_DSCF = _KCP_HAS_NO_BANDS.format(
+    alternative=" Screening with `screening_method = 'dfpt'` gives you a Koopmans band "
+    "structure along it."
+)
+
+#: The same rejection without the DFPT alternative, which the trajectory task
+#: does not offer.
+NO_BAND_PATH_ON_TRAJECTORY = _KCP_HAS_NO_BANDS.format(alternative="")
+
 
 def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
@@ -92,6 +114,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         return build_singlepoint_dfpt_workgraph(koopmans_input)
 
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
+    reject_band_path(koopmans_input, NO_BAND_PATH_ON_DSCF, NotImplementedError)
     require_supported_correction(workflow.correction)
 
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):

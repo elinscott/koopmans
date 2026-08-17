@@ -876,6 +876,41 @@ class TestFrozenWindowThreading:
         assert list(empty["exclude_bands"]) == [1, 2, 3, 4]
 
 
+class TestBandPathRejected:
+    """kcp.x screens each snapshot in a supercell; no step interpolates a path."""
+
+    def test_a_band_path_is_rejected(self, tmp_path: Path) -> None:
+        """The guard runs before any code or pseudopotential, so it needs no profile."""
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
+
+        with pytest.raises(NotImplementedError) as excinfo:
+            build_trajectory_workgraph(KoopmansInput.model_validate(d))
+
+        message = str(excinfo.value)
+        assert "`kpoints.path`" in message
+        # `screening_method` does not select this route, so the DFPT
+        # alternative the singlepoint route offers must not appear here.
+        assert "dfpt" not in message
+
+    def test_a_gamma_only_input_is_not_rejected(self, tmp_path: Path) -> None:
+        """Negative control: gamma-only's fixed ``path`` names no segment to interpolate.
+
+        Every molecular trajectory carries it, so a guard that fired on
+        ``path is not None`` would reject the task's main use.
+        """
+        from koopmans.aiida.workflows import reject_band_path
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["kpoints"] = {"gamma_only": True}
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        assert koopmans_input.kpoints.path == "G"
+        reject_band_path(koopmans_input, "unreachable", NotImplementedError)
+
+
 class TestPerStepKpointMeshRejected:
     """The trajectory task screens with kcp.x, which runs every step on one mesh."""
 

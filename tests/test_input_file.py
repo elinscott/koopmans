@@ -201,6 +201,35 @@ class TestCutoffsMustBePositive:
         assert "must be greater than 0" in message
 
 
+class TestCalculateBandsRemoved:
+    """A band structure is asked for by ``kpoints.path``, not by a switch."""
+
+    def test_the_removed_keyword_names_the_path_instead(self, tmp_path: Path) -> None:
+        """The message points the reader at ``kpoints.path``, not at ``extra_forbidden``."""
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "calculate_bands")
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`workflow.calculate_bands` no longer exists" in message
+        assert "`kpoints.path`" in message
+        assert "is not a valid keyword" not in message
+
+    def test_the_removed_keyword_is_rejected_however_it_is_set(self) -> None:
+        """``false`` is refused too: the keyword no longer states anything."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "calculate_bands", False)
+
+        with pytest.raises(ValidationError, match="no longer exists"):
+            KoopmansInput.model_validate(d)
+
+
 def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object]:
     """Return the minimal silicon input, its ``calculator_parameters`` replaced."""
     d = _minimal_si_input()

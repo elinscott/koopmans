@@ -684,6 +684,48 @@ class TestPerStepKpointMeshRejected:
             _build(d)
 
 
+class TestBandPathRejected:
+    """The kcp.x route cannot yet unfold its supercell Hamiltonian onto a path."""
+
+    def test_a_band_path_is_rejected(self) -> None:
+        """A path the route silently dropped would look like a band structure was coming.
+
+        The guard runs before any code or pseudopotential is loaded, so it
+        needs no profile.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"]["path"] = "GX"
+
+        with pytest.raises(NotImplementedError) as excinfo:
+            _build(d)
+
+        message = str(excinfo.value)
+        assert "`kpoints.path`" in message
+        assert "screening_method = 'dfpt'" in message
+
+    def test_the_dfpt_route_takes_the_same_path(
+        self,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        installed_kcw_code: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """Discriminates the guard from a blanket refusal: only kcp.x lacks the stage.
+
+        The message sends the reader to ``screening_method = 'dfpt'``, so
+        the same input under that method must build rather than raise.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        d = _si_dscf_dict(screening_method="dfpt")
+        d["kpoints"]["path"] = "GX"
+
+        wg = build_workgraph(KoopmansInput.model_validate(d))
+
+        assert wg.tasks["dfpt"].inputs["bands_kpoints"].value is not None
+
+
 class TestCutoffLessPseudoFamily:
     """A family recommending no cutoffs drives this route's pw steps from the input.
 
