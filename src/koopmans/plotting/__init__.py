@@ -20,6 +20,7 @@ from koopmans.plotting.resolve import (
     BAND_PRODUCERS,
     BandProducer,
     PlottingError,
+    RunNotInProfileError,
     resolve_band_series,
     run_node,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "NoEnergyZeroError",
     "PathMismatchError",
     "PlottingError",
+    "RunNotInProfileError",
     "StyleError",
     "apply_energy_zero",
     "check_paths_agree",

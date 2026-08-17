@@ -24,6 +24,7 @@ __all__ = [
     "BAND_PRODUCERS",
     "BandProducer",
     "PlottingError",
+    "RunNotInProfileError",
     "resolve_band_series",
     "run_node",
 ]
@@ -31,6 +32,10 @@ __all__ = [
 
 class PlottingError(Exception):
     """A folder cannot be turned into a figure."""
+
+
+class RunNotInProfileError(PlottingError):
+    """A folder names a run this AiiDA profile does not hold."""
 
 
 References = Callable[["orm.ProcessNode", "orm.BandsData"], "tuple[float | None, float | None]"]
@@ -315,27 +320,36 @@ def _has_band_structure(node: orm.ProcessNode) -> bool:
     )
 
 
-def _plottable_below(folder: Path) -> list[Path]:
-    """Return the directories under ``folder`` holding a band structure to plot.
+def _plottable_below(folder: Path) -> tuple[list[Path], int]:
+    """Return what under ``folder`` can be plotted, and how much is elsewhere.
+
+    The second value counts the directories skipped because this profile does
+    not hold the runs they name.
 
     A dump keeps a metadata file beside each calculation and none beside the
     step folders grouping them, so a rejected folder can still say which of
-    the directories under it can be given to the command.
+    the directories under it can be given to the command. Shallowest first, so
+    that a whole run outranks its own steps when the list is cut short.
 
     Expects an AiiDA profile to be loaded.
     """
     found: list[Path] = []
-    for metadata_path in sorted(folder.rglob(NODE_METADATA_FILE)):
+    absent = 0
+    candidates = sorted(folder.rglob(NODE_METADATA_FILE), key=lambda path: (len(path.parts), path))
+    for metadata_path in candidates:
         directory = metadata_path.parent
         if directory == folder:
             continue
         try:
             node = run_node(directory)
+        except RunNotInProfileError:
+            absent += 1
+            continue
         except PlottingError:
             continue
         if _has_band_structure(node):
             found.append(directory)
-    return found
+    return found, absent
 
 
 def _not_a_run_directory(folder: Path) -> PlottingError:
@@ -345,7 +359,14 @@ def _not_a_run_directory(folder: Path) -> PlottingError:
     grouping calculations is the one thing a reader is likely to have typed.
     """
     opening = f"{folder} is not a koopmans run directory"
-    plottable = _plottable_below(folder)
+    plottable, absent = _plottable_below(folder)
+    if not plottable and absent:
+        return PlottingError(
+            f"{opening}, and the {absent} run(s) beneath it are not in this AiiDA "
+            "profile: they were made under a different profile, or on a different "
+            "machine. A dumped folder does not yet carry its own results, so it can "
+            "only be plotted where it was run."
+        )
     if not plottable:
         return PlottingError(
             f"{opening}, and nothing beneath it has a band structure to plot. Pass a "
@@ -375,7 +396,7 @@ def run_node(folder: Path) -> orm.ProcessNode:
     try:
         node = orm.load_node(uuid)
     except NotExistent:
-        raise PlottingError(
+        raise RunNotInProfileError(
             f"The run in {folder} (uuid {uuid}) is not in this AiiDA profile: it was "
             "made under a different profile, or on a different machine. A dumped "
             "folder does not yet carry its own results, so it can only be plotted "

@@ -854,13 +854,13 @@ def bandstructure(
 
     One style covers everything its folder draws, so drawing the results of a
     single run differently from each other means naming their calculation
-    directories, which a silicon wannierize run has one of per block:
+    directories. A wannierize run has one wannier90 calculation per block, and
+    a block folder that carries no run of its own will name it for you:
 
     \b
         koopmans plot bandstructure \\
-            si/02-bands --style rx \\
-            si/04-wannierize_occ_1/01-wannier90/03-wannier90 --style b- \\
-            si/03-wannierize_emp_1/01-wannier90/03-wannier90 --style b-
+            zno/02-wannierize/01-bands --style rx \\
+            zno/02-wannierize/02-wannierize_emp/01-wannier90/03-wannier90 --style b-
 
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,

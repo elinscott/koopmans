@@ -1872,6 +1872,41 @@ class TestProducerOwnership:
 
         assert [item.label for item in found] == ["DFT"]
 
+    def test_a_dumped_calculation_reads_the_same_declared_inputs(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A calculation directory collapses degenerate channels as its run does.
+
+        The calculation carries its namelists at ``inputs.parameters`` and the
+        workchain above it at ``inputs.pw.parameters``. Reading only the latter
+        would leave a dumped step drawing two identical channels while the run
+        it belongs to draws one.
+        """
+        calculation = make_process(
+            PW_CALC,
+            calcjob=True,
+            computer=aiida_localhost,
+            process_label="PwCalculation",
+            inputs={
+                "parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {
+                        "CONTROL": {"calculation": "bands"},
+                        "SYSTEM": {"nspin": 2, "starting_magnetization": {"Zn": 0.0, "O": 0.0}},
+                    }
+                )
+            },
+        )
+        attach(
+            calculation,
+            "output_band",
+            make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-5.0, 5.0]]]),
+        )
+        folder = write_run_folder(tmp_path, "02-bands", calculation)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT"]
+
     def test_declared_magnetization_keeps_the_spin_split(
         self, aiida_profile: Any, tmp_path: Path
     ) -> None:
@@ -2389,6 +2424,60 @@ class TestRejectedFolderSuggestions:
         assert "nothing beneath it has a band structure to plot" in message
         assert "calculation directory inside one" in message
         assert NODE_METADATA_FILE not in message
+
+    def test_a_run_root_outranks_its_own_steps(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The whole run is listed first, not cut off after its own steps.
+
+        Ordering by path alone sorts a root's metadata after every ``NN-step/``
+        beneath it, so the one entry that draws everything falls past the cap
+        on a run of a dozen steps.
+        """
+        holder = tmp_path / "runs"
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        for index in range(SUGGESTION_LIMIT + 2):
+            step = make_process(W90_BASE, caller=root, link_label=f"wannierize_{index}")
+            attach(step, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        run = write_run_folder(holder, "zno", root)
+        for index in range(SUGGESTION_LIMIT + 2):
+            calculation = make_process(
+                W90_CALC,
+                calcjob=True,
+                computer=aiida_localhost,
+                process_label="Wannier90Calculation",
+            )
+            attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+            write_run_folder(run, f"{index:02d}-wannier90", calculation)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([holder])
+
+        listed = [line.strip() for line in str(caught.value).splitlines() if line.startswith("  ")]
+        assert listed[0] == str(run)
+
+    def test_descendants_from_another_profile_are_not_called_empty(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A copied dump says its runs are elsewhere, not that it holds nothing.
+
+        Skipping every descendant because this profile does not hold it, then
+        reporting that nothing beneath has a band structure, tells the reader
+        the opposite of what is wrong — and this is the case the root folder's
+        own message exists for.
+        """
+        holder = tmp_path / "copied"
+        step = write_run_folder(holder, "01-bands", None)
+        (step / NODE_METADATA_FILE).write_text(
+            yaml.dump({"Node data": {"uuid": "00000000-0000-0000-0000-000000000000"}})
+        )
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([holder])
+
+        message = str(caught.value)
+        assert "not in this AiiDA profile" in message
+        assert "nothing beneath it has a band structure" not in message
 
     def test_a_long_list_is_capped_and_counted(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
