@@ -269,9 +269,9 @@ class TestStatus:
         result = CliRunner().invoke(cli, ["status", "--pk", str(node.pk)])
 
         assert result.exit_code == 0, result.output
-        # "ByPk" is CamelCase and gets word-split for display, like every
-        # other process label the progress table renders.
-        assert "By Pk" in result.output
+        # "ByPk" is not a name the display table knows, so it is shown
+        # exactly as written rather than guessed at.
+        assert "ByPk" in result.output
 
     def test_a_deleted_node_is_a_clean_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any

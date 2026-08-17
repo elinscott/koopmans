@@ -130,8 +130,9 @@ class TestRenderProcessOnce:
         progress.render_process_once(root, console=console)
 
         output = buffer.getvalue()
-        # The failure line prettifies the label the same way row labels are.
-        assert "Pw Base Work Chain" in output
+        # The failure line names the binary that failed, not its Python class.
+        assert "pw.x (pk" in output
+        assert "Pw Base Work Chain" not in output
         assert "402" in output
         assert "pw.x did not converge" in output
         assert "finished with status: 1" in output
@@ -165,7 +166,7 @@ class TestRenderProcessOnce:
         output = buffer.getvalue()
         assert "Workflow was killed!" in output
         # The step's own detail line says killed, above the closing banner.
-        killed_line_index = output.index("Pw Base Work Chain")
+        killed_line_index = output.index("pw.x (pk")
         banner_index = output.index("Workflow was killed!")
         assert killed_line_index < banner_index
         detail_line = output[killed_line_index:banner_index]

@@ -1,0 +1,294 @@
+########## dft_bands
+DFT band structure
+  SCF                                                   pw.x
+  Band structure                                        pw.x
+
+########## dft_eps
+Dielectric constant
+  SCF                                                   pw.x
+  Dielectric response                                   ph.x
+
+########## wannierize (per-block)
+Wannierization
+  Ground state
+    SCF                                                 pw.x
+    NSCF                                                pw.x
+  Band structure                                        pw.x
+  Atomic projections                                    projwfc.x
+  Wannierization (occupied block 1)
+    Preprocessing                                       wannier90.x
+    Overlaps                                            pw2wannier90.x
+    Minimization                                        wannier90.x
+  Wannierization (empty block 1)
+    Preprocessing                                       wannier90.x
+    Overlaps                                            pw2wannier90.x
+    Minimization                                        wannier90.x
+
+########## wannierize (split)
+Wannierization
+  Ground state
+    SCF                                                 pw.x
+    NSCF                                                pw.x
+  Band structure                                        pw.x
+  Atomic projections                                    projwfc.x
+  Split Wannierization (block 1)
+    Whole-block Wannierization
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+    Parallel-transport split                            wannier.jl
+    Per-group Wannierization
+      Minimization (group 1)                            wannier90.x
+      Minimization (group 2)                            wannier90.x
+
+########## wannierize (whole manifold)
+Wannierization
+  SCF                                                   pw.x
+  NSCF                                                  pw.x
+  Atomic projections                                    projwfc.x
+  Preprocessing                                         wannier90.x
+  Overlaps                                              pw2wannier90.x
+  Minimization                                          wannier90.x
+  Band structure                                        pw.x
+  Atomic projections                                    projwfc.x
+
+########## singlepoint / DSCF (molecular)
+Koopmans Delta-SCF
+  DFT initialization (nspin=1)                          kcp.x
+  DFT initialization (nspin=2, staging)                 kcp.x
+  DFT initialization (nspin=2)                          kcp.x
+  Screening parameters
+    Iteration 1
+      Trial KI                                          kcp.x
+      Orbital screening
+        Orbital 1                                       kcp.x
+        Orbital 2                                       kcp.x
+        Orbital 5
+          DFT (N+1, staging)                            kcp.x
+          PZ staging                                    kcp.x
+          DFT (N+1)                                     kcp.x
+    Iteration 2
+      Trial KI                                          kcp.x
+      Orbital screening
+        Orbital 1                                       kcp.x
+        Orbital 2                                       kcp.x
+        Orbital 5
+          DFT (N+1, staging)                            kcp.x
+          PZ staging                                    kcp.x
+          DFT (N+1)                                     kcp.x
+    Iteration 3
+      Trial KI                                          kcp.x
+      Orbital screening
+        Orbital 1                                       kcp.x
+        Orbital 2                                       kcp.x
+        Orbital 5
+          DFT (N+1, staging)                            kcp.x
+          PZ staging                                    kcp.x
+          DFT (N+1)                                     kcp.x
+  Final KI                                              kcp.x
+
+########## singlepoint / DSCF (periodic, mlwfs)
+Koopmans Delta-SCF
+  Wannier initialization
+    Wannierization
+      Ground state
+        SCF                                             pw.x
+        NSCF                                            pw.x
+      Band structure                                    pw.x
+      Atomic projections                                projwfc.x
+      Wannierization (occupied block 1)
+        Preprocessing                                   wannier90.x
+        Overlaps                                        pw2wannier90.x
+        Minimization                                    wannier90.x
+      Wannierization (empty block 1)
+        Preprocessing                                   wannier90.x
+        Overlaps                                        pw2wannier90.x
+        Minimization                                    wannier90.x
+    Supercell folding
+      Folded Wannier functions (occupied block 1)       wann2kcp.x
+      Folded Wannier functions (empty block 1)          wann2kcp.x
+      Supercell wavefunctions (occupied, spin 1)        merge_evc.x
+      Supercell wavefunctions (empty, spin 1)           merge_evc.x
+    DFT staging                                         kcp.x
+    DFT initialization                                  kcp.x
+  Screening parameters
+    Iteration 1
+      Trial KI                                          kcp.x
+      Orbital screening
+        Orbital 1                                       kcp.x
+        Orbital 2                                       kcp.x
+        Orbital 5
+          DFT (N+1, staging)                            kcp.x
+          PZ staging                                    kcp.x
+          DFT (N+1)                                     kcp.x
+    Iteration 2
+      Trial KI                                          kcp.x
+      Orbital screening
+        Orbital 1                                       kcp.x
+        Orbital 2                                       kcp.x
+        Orbital 5
+          DFT (N+1, staging)                            kcp.x
+          PZ staging                                    kcp.x
+          DFT (N+1)                                     kcp.x
+    Iteration 3
+      Trial KI                                          kcp.x
+      Orbital screening
+        Orbital 1                                       kcp.x
+        Orbital 2                                       kcp.x
+        Orbital 5
+          DFT (N+1, staging)                            kcp.x
+          PZ staging                                    kcp.x
+          DFT (N+1)                                     kcp.x
+  Final KI                                              kcp.x
+
+########## singlepoint / DFPT
+Koopmans DFPT
+  Dielectric constant
+    SCF                                                 pw.x
+    Dielectric response                                 ph.x
+  Ground state
+    SCF                                                 pw.x
+    NSCF                                                pw.x
+  Wannierization
+    Ground state
+      SCF                                               pw.x
+      NSCF                                              pw.x
+    Band structure                                      pw.x
+    Atomic projections                                  projwfc.x
+    Wannierization (occupied block 1)
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+    Wannierization (empty block 1)
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+  DFPT screening
+    Wannier gauge                                       kcw.x
+    Orbital screening
+      Orbital 1                                         kcw.x
+      Orbital 5                                         kcw.x
+    Koopmans Hamiltonian                                kcw.x
+
+########## singlepoint / DFPT (collinear)
+Koopmans DFPT
+  Ground state
+    SCF                                                 pw.x
+    NSCF                                                pw.x
+  Wannierization (spin up)
+    Ground state
+      SCF                                               pw.x
+      NSCF                                              pw.x
+    Band structure                                      pw.x
+    Atomic projections                                  projwfc.x
+    Wannierization (occupied block 1, spin up)
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+    Wannierization (empty block 1, spin up)
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+  DFPT screening (spin up)
+    Wannier gauge                                       kcw.x
+    Orbital screening
+      Orbital 1                                         kcw.x
+      Orbital 5                                         kcw.x
+    Koopmans Hamiltonian                                kcw.x
+  Wannierization (spin down)
+    Ground state
+      SCF                                               pw.x
+      NSCF                                              pw.x
+    Band structure                                      pw.x
+    Atomic projections                                  projwfc.x
+    Wannierization (occupied block 1, spin down)
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+    Wannierization (empty block 1, spin down)
+      Preprocessing                                     wannier90.x
+      Overlaps                                          pw2wannier90.x
+      Minimization                                      wannier90.x
+  DFPT screening (spin down)
+    Wannier gauge                                       kcw.x
+    Orbital screening
+      Orbital 1                                         kcw.x
+      Orbital 5                                         kcw.x
+    Koopmans Hamiltonian                                kcw.x
+
+########## trajectory (ml train)
+Trajectory
+  Snapshot 1
+    DFT initialization (nspin=1)                        kcp.x
+    DFT initialization (nspin=2, staging)               kcp.x
+    DFT initialization (nspin=2)                        kcp.x
+    Screening parameters
+      Iteration 1
+        Trial KI                                        kcp.x
+        Orbital screening
+          Orbital 1                                     kcp.x
+          Orbital 2                                     kcp.x
+          Orbital 5
+            DFT (N+1, staging)                          kcp.x
+            PZ staging                                  kcp.x
+            DFT (N+1)                                   kcp.x
+      Iteration 2
+        Trial KI                                        kcp.x
+        Orbital screening
+          Orbital 1                                     kcp.x
+          Orbital 2                                     kcp.x
+          Orbital 5
+            DFT (N+1, staging)                          kcp.x
+            PZ staging                                  kcp.x
+            DFT (N+1)                                   kcp.x
+      Iteration 3
+        Trial KI                                        kcp.x
+        Orbital screening
+          Orbital 1                                     kcp.x
+          Orbital 2                                     kcp.x
+          Orbital 5
+            DFT (N+1, staging)                          kcp.x
+            PZ staging                                  kcp.x
+            DFT (N+1)                                   kcp.x
+    Final KI                                            kcp.x
+  Snapshot 2
+    DFT initialization (nspin=1)                        kcp.x
+    DFT initialization (nspin=2, staging)               kcp.x
+    DFT initialization (nspin=2)                        kcp.x
+    Screening parameters
+      Iteration 1
+        Trial KI                                        kcp.x
+        Orbital screening
+          Orbital 1                                     kcp.x
+          Orbital 2                                     kcp.x
+          Orbital 5
+            DFT (N+1, staging)                          kcp.x
+            PZ staging                                  kcp.x
+            DFT (N+1)                                   kcp.x
+      Iteration 2
+        Trial KI                                        kcp.x
+        Orbital screening
+          Orbital 1                                     kcp.x
+          Orbital 2                                     kcp.x
+          Orbital 5
+            DFT (N+1, staging)                          kcp.x
+            PZ staging                                  kcp.x
+            DFT (N+1)                                   kcp.x
+      Iteration 3
+        Trial KI                                        kcp.x
+        Orbital screening
+          Orbital 1                                     kcp.x
+          Orbital 2                                     kcp.x
+          Orbital 5
+            DFT (N+1, staging)                          kcp.x
+            PZ staging                                  kcp.x
+            DFT (N+1)                                   kcp.x
+    Final KI                                            kcp.x
+
+########## trajectory (ml test, power_spectrum)
+Trajectory
+  Snapshot 1
+    Predicted screening parameters
+      Trial KI                                          kcp.x
+      Descriptors                                       pw2wannier90.x
+    Final KI (predicted alphas)                         kcp.x
