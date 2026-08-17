@@ -26,8 +26,10 @@ from koopmans.plotting import (
     NoEnergyZeroError,
     PathMismatchError,
     PlottingError,
+    StyleError,
     apply_energy_zero,
     check_paths_agree,
+    check_style,
     describe_energy_zero,
     draw_band_structures,
     path_distances,
@@ -1108,6 +1110,90 @@ class TestRenderer:
 
 
 # ----------------------------------------------------------------------
+# How a series is drawn
+# ----------------------------------------------------------------------
+
+
+def as_rgba(color: Any) -> tuple[float, float, float, float]:
+    """Return a color in the one form 'k', 'C1' and a drawn line's own all take."""
+    from matplotlib.colors import to_rgba
+
+    return to_rgba(color)
+
+
+class TestSeriesStyles:
+    """A series drawn in a matplotlib format string of its own."""
+
+    def test_a_style_sets_the_marker_and_line_of_every_band(self) -> None:
+        """The format string reaches each of the series' bands, not just its first.
+
+        A band is a plot call of its own, so a style applied where the series
+        is set up rather than where each curve is drawn would style one band
+        and leave the rest solid.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT", style="x")])
+
+        lines = band_lines(axes)
+        assert len(lines) == 2
+        assert {line.get_marker() for line in lines} == {"x"}
+        assert {line.get_linestyle() for line in lines} == {"None"}
+
+    def test_an_unstyled_series_keeps_the_plain_curve(self) -> None:
+        """The control: without a style the bands are solid lines, as before."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")])
+
+        lines = band_lines(axes)
+        assert {line.get_linestyle() for line in lines} == {"-"}
+        assert {line.get_marker() for line in lines} == {"None"}
+        assert {as_rgba(line.get_color()) for line in lines} == {as_rgba("C0")}
+
+    def test_a_color_in_the_style_replaces_the_assigned_one(self) -> None:
+        """A style naming a color owns it; the unstyled series keeps its own.
+
+        Handing matplotlib both a format string and a ``color`` keyword lets
+        the keyword win, which would make an explicit 'k-' come out in the
+        automatic color it was given to escape.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT"), series("KI", style="k-")])
+
+        first, second = band_lines(axes)[:2], band_lines(axes)[2:]
+        assert {as_rgba(line.get_color()) for line in first} == {as_rgba("C0")}
+        assert {as_rgba(line.get_color()) for line in second} == {as_rgba("k")}
+
+    def test_a_style_naming_no_color_keeps_one_color_per_series(self) -> None:
+        """Crosses come out in the series' own color, not one per band.
+
+        matplotlib advances its color cycle once per plot call and a series is
+        drawn a band at a time, so leaving the color to a format string that
+        names none draws a single band structure in as many colors as it has
+        bands.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT"), series("KI", style="x")])
+
+        first, second = band_lines(axes)[:2], band_lines(axes)[2:]
+        assert {as_rgba(line.get_color()) for line in second} == {as_rgba("C1")}
+        assert {as_rgba(line.get_color()) for line in first} == {as_rgba("C0")}
+
+    def test_the_matplotlib_vocabulary_is_accepted(self) -> None:
+        """The strings the option's help offers are all readable as written."""
+        for style in ("x", "-", "--", "k--", "rx", "C1--", "o", "k--x"):
+            check_style(style)
+
+    def test_a_string_matplotlib_cannot_read_is_refused(self) -> None:
+        """A typo is caught by the check rather than by the drawing."""
+        with pytest.raises(StyleError, match="not a valid format string"):
+            check_style("zz")
+
+
+# ----------------------------------------------------------------------
 # The command
 # ----------------------------------------------------------------------
 
@@ -1310,6 +1396,102 @@ class TestCommand:
 
         assert result.exit_code == 1
         assert "1 --label value(s) were given for 2 folder(s)" in result.output
+
+    def test_styles_draw_the_folders_in_the_order_they_are_listed(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """Crosses for the computed bands, a line for the interpolated ones.
+
+        The two folders are drawn differently and the right way round, which
+        the marker of each folder's own curves shows; the data file records
+        what each was drawn in, so the figure can be redrawn from it.
+        """
+        from koopmans.cli import cli
+
+        pw = dft_run(tmp_path, "pw", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        wannier = dft_run(tmp_path, "wannier", 6.0, [[-5.1, 6.1], [-4.6, 7.1], [-4.1, 7.6]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(pw),
+                str(wannier),
+                "--style",
+                "x",
+                "--style",
+                "-",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        crosses, line = band_lines(drawn_axes[-1])[:2], band_lines(drawn_axes[-1])[2:]
+        assert {item.get_marker() for item in crosses} == {"x"}
+        assert {item.get_marker() for item in line} == {"None"}
+        assert {item.get_linestyle() for item in line} == {"-"}
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["x", "-"]
+
+    def test_a_style_count_mismatch_is_reported(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The message states both counts, as a missing --label's does."""
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(first), str(second), "--style", "x"],
+        )
+
+        assert result.exit_code == 1
+        assert "1 --style value(s) were given for 2 folder(s)" in result.output
+
+    def test_an_unreadable_style_is_refused_with_what_to_write(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """A style matplotlib cannot read is refused before anything is drawn.
+
+        matplotlib's own complaint names the character it choked on and stops
+        there, so the message goes on to say what a format string is made of.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(cli, ["plot", "bandstructure", str(folder), "--style", "dashed"])
+
+        assert result.exit_code == 2
+        assert "not a valid format string" in result.output
+        assert "'k-' is a black line" in result.output
+
+    def test_a_style_alone_leaves_the_legend_off(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """Saying how a curve is drawn is not asking for it to be named.
+
+        A lone --label brings the key back because a name has nowhere else to
+        appear; a style shows on the curve itself.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(folder), "--style", "x", "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert drawn_axes[-1].get_legend() is None
+        assert {line.get_marker() for line in band_lines(drawn_axes[-1])} == {"x"}
 
     def test_an_inverted_ylim_is_refused(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
@@ -1845,6 +2027,95 @@ class TestFolderLabels:
 
         with pytest.raises(ValueError, match="--label"):
             resolve_band_series([missing], ("DFT", "KI"))
+
+
+class TestFolderStyles:
+    """``--style`` draws a folder, and every curve that folder contributes."""
+
+    def test_each_style_draws_its_own_folder(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Styles pair with the folders positionally, in the order given.
+
+        Each style is checked against the bands of the folder it was given
+        for, which pairing the two the other way round would fail.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second], styles=("x", "k-"))
+
+        styled = {item.style: item for item in found}
+        assert list(styled) == ["x", "k-"]
+        assert styled["x"].vbm == pytest.approx(6.0)
+        assert styled["k-"].vbm == pytest.approx(5.4)
+
+    def test_no_styles_leaves_the_appearance_to_the_figure(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The control: unstyled folders carry no format string at all."""
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second])
+
+        assert [item.style for item in found] == [None, None]
+
+    def test_a_style_covers_every_curve_of_its_folder(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A collinear folder becomes two curves, and one style draws both.
+
+        A style says how a folder is drawn, not which of its curves is which;
+        the spin channel is still what tells them apart, and it survives.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+        chain = make_process(PW_BANDS, caller=root, link_label="bands")
+        attach(
+            chain,
+            "band_structure",
+            make_spin_bands(
+                [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+                [[[-5.0, 5.0], [-4.0, 6.0]], [[-5.2, 5.2], [-4.2, 6.2]]],
+            ),
+        )
+        folder = write_run_folder(tmp_path, "fe", root)
+
+        found, _ = resolve_band_series([folder], ("Iron",), ("x",))
+
+        assert [item.style for item in found] == ["x", "x"]
+        assert [item.label for item in found] == ["Iron (up)", "Iron (down)"]
+
+    def test_fewer_styles_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Cycling a short list would draw two folders alike without saying so."""
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([first, second], styles=("x",))
+
+        assert "1 --style value(s) were given for 2 folder(s)" in str(caught.value)
+
+    def test_more_styles_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The extra style belongs to a folder that was left off the command."""
+        folder = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([folder], styles=("x", "k-"))
+
+        assert "2 --style value(s) were given for 1 folder(s)" in str(caught.value)
+
+    def test_styling_and_naming_are_counted_apart(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """One name and no styles is not a miscount, and neither is the reverse.
+
+        The two options are independent, so a folder may be named without
+        being styled; counting them together would refuse that.
+        """
+        folder = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        named, _ = resolve_band_series([folder], ("DFT",))
+        drawn, _ = resolve_band_series([folder], styles=("x",))
+
+        assert [(item.label, item.style) for item in named] == [("DFT", None)]
+        assert [(item.label, item.style) for item in drawn] == [("DFT", "x")]
 
 
 # ----------------------------------------------------------------------

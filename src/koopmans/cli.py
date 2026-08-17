@@ -750,6 +750,26 @@ def _check_ylim(
     return value
 
 
+def _check_styles(
+    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Reject a style matplotlib cannot read, before any run is looked up."""
+    from koopmans.plotting import StyleError, check_style
+
+    for style in value:
+        try:
+            check_style(style)
+        except StyleError as exc:
+            raise click.BadParameter(
+                f"{exc}. A format string combines a color, a marker and a line style: "
+                "'k-' is a black line, 'rx' red crosses, 'C1--' a dashed line in the "
+                "second automatic color.",
+                ctx=ctx,
+                param=param,
+            ) from exc
+    return value
+
+
 ylim_option = click.option(
     "--ylim",
     nargs=2,
@@ -783,6 +803,18 @@ ylim_option = click.option(
     "folders are listed. A folder drawn as several curves keeps what tells them "
     "apart, such as the spin channel.",
 )
+@click.option(
+    "--style",
+    "styles",
+    multiple=True,
+    metavar="FORMAT",
+    callback=_check_styles,
+    help="Draw a folder in a matplotlib format string, such as 'x' for crosses, "
+    "'k--' for a dashed black line or '-' for a plain one; repeat once per "
+    "folder, in the order the folders are listed, as --label does. A color the "
+    "string names replaces the one this command would have chosen, and every "
+    "curve the folder draws is drawn the same way.",
+)
 def bandstructure(
     folders: tuple[Path, ...],
     output_path: Path | None,
@@ -791,6 +823,7 @@ def bandstructure(
     data_path: Path | None,
     ylim: tuple[float, float] | None,
     labels: tuple[str, ...],
+    styles: tuple[str, ...],
 ) -> None:
     """Draw the band structures of finished runs on one set of axes.
 
@@ -800,6 +833,12 @@ def bandstructure(
     that produced it unless --label names it:
 
         koopmans plot bandstructure dft ki --label DFT --label "KI@LDA"
+
+    Each is drawn in a color of this command's choosing unless --style says
+    how, as crosses at the k-points pw.x computed and a line through the
+    wannier90 interpolation of them:
+
+        koopmans plot bandstructure pw wannier --style x --style -
 
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
@@ -821,7 +860,7 @@ def bandstructure(
 
     kind = EnergyZero(zero)
     try:
-        series, warnings = resolve_band_series(folders, labels)
+        series, warnings = resolve_band_series(folders, labels, styles)
         check_paths_agree(series)
         value, reference = apply_energy_zero(series, kind)
     except (PlottingError, PathMismatchError, NoEnergyZeroError, ValueError) as exc:

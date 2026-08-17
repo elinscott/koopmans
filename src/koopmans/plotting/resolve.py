@@ -693,8 +693,21 @@ def _name_after_folder(found: Sequence[tuple[BandSeries, str]], label: str) -> N
         item.label = f"{label}{qualifier}"
 
 
+def _check_one_per_folder(values: Sequence[str], folders: int, option: str) -> None:
+    """Reject a per-folder option given for some but not all of the folders.
+
+    :raises ValueError: if any values were given and they do not number ``folders``.
+    """
+    if values and len(values) != folders:
+        raise ValueError(
+            f"{len(values)} {option} value(s) were given for {folders} folder(s). "
+            f"Give one {option} per folder, in the order the folders are listed, or "
+            "none at all."
+        )
+
+
 def resolve_band_series(
-    folders: Sequence[Path], labels: Sequence[str] = ()
+    folders: Sequence[Path], labels: Sequence[str] = (), styles: Sequence[str] = ()
 ) -> tuple[list[BandSeries], list[str]]:
     """Return the band structures of the given runs, and any warnings.
 
@@ -703,19 +716,17 @@ def resolve_band_series(
     instead, one per folder in the order they were given; a folder that yields
     several series keeps whatever tells them apart, so one name covers a
     per-spin or per-block fan-out and no two curves end up sharing a name.
+    ``styles`` are matplotlib format strings, given the same way and covering a
+    fan-out the same way: every curve one folder contributes is drawn alike.
     Every folder must carry a band structure: drawing fewer curves than folders
     asked for reads as a figure of them all.
 
-    :raises ValueError: if some but not all of the folders are named.
+    :raises ValueError: if some but not all of the folders are named or styled.
     :raises PlottingError: if a folder is not a run directory, its run is not
         in this profile, or any of them holds nothing plottable.
     """
-    if labels and len(labels) != len(folders):
-        raise ValueError(
-            f"{len(labels)} --label value(s) were given for {len(folders)} folder(s). "
-            "Give one --label per folder, in the order the folders are listed, or "
-            "none at all."
-        )
+    _check_one_per_folder(labels, len(folders), "--label")
+    _check_one_per_folder(styles, len(folders), "--style")
 
     nodes = [run_node(folder) for folder in folders]
 
@@ -729,6 +740,9 @@ def resolve_band_series(
         found = _series_from_node(node)
         if not found:
             empty.append((folder, node))
+        if styles:
+            for item, _ in found:
+                item.style = styles[index]
         if labels:
             _name_after_folder(found, labels[index])
         elif len(folders) > 1:
