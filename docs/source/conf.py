@@ -11,11 +11,12 @@ root, use ``os.path.abspath`` to make it absolute, like shown here.
 """
 
 import os
-import re
 import sys
 import zipfile
 from calendar import month_name
 from datetime import date
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 
 import pybtex.plugin
@@ -32,17 +33,18 @@ project = "koopmans"
 copyright = f"{date.today().year}, Edward Linscott"
 author = "Edward Linscott"
 
-# The full version, including alpha/beta/rc tags.
-release = "0.0.1-dev"
+# The full version, including any dev/local segment, read from the
+# installed package's git-derived metadata (see [tool.hatch.version] in
+# pyproject.toml).
+try:
+    release = _pkg_version("koopmans")
+except PackageNotFoundError:
+    release = "0.0.0+unknown"
 
-# The short X.Y version.
-parsed_version = re.match(
-    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:-(?P<release>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+(?P<build>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?",
-    release,
-)
-version = parsed_version.expand(r"\g<major>.\g<minor>.\g<patch>")
+# The short X.Y.Z version, with any dev/local segment stripped.
+version = release.split(".dev")[0].split("+")[0]
 
-if parsed_version.group("release"):
+if release != version:
     tags.add("prerelease")  # noqa:F821
 
 

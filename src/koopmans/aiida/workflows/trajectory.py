@@ -8,7 +8,12 @@ from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import atoms_input_to_structures
-from koopmans.aiida.workflows import load_code, reject_kpoint_overrides
+from koopmans.aiida.workflows import (
+    load_code,
+    load_codes,
+    reject_kpoint_overrides,
+    require_configured_codes,
+)
 from koopmans.aiida.workflows.dscf import (
     KPOINT_OVERRIDES_ON_TRAJECTORY,
     dscf_wannier_init_inputs,
@@ -20,7 +25,6 @@ from koopmans.input_file.workflow import CalculateScreeningMethod, VariationalOr
 
 if TYPE_CHECKING:
     from aiida import orm
-    from aiida_koopmans.workgraphs import Codes
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
@@ -28,10 +32,7 @@ if TYPE_CHECKING:
     from koopmans.input_file.workflow import WorkflowConfig
 
 
-def build_trajectory_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a trajectory (machine-learning) task.
 
     Fans the snapshots out over per-snapshot ``KoopmansDSCFWorkflow`` runs via
@@ -40,25 +41,24 @@ def build_trajectory_workgraph(
     alphas (``ml: {mode: train}``), scores an existing model against them
     (``mode: test``), or applies an existing model in place of the Delta-SCF
     refinement (``mode: predict`` — each snapshot runs one trial KI at the
-    guess alphas, the model predicts every screening parameter from the
-    trial's self-Hartrees, and the final KI applies the predictions).
+    guess alphas, the model predicts every screening parameter from that
+    snapshot's descriptors, and the final KI applies the predictions).
 
     ``self_hartree`` needs nothing beyond the kcp.x runs themselves.
     ``power_spectrum`` builds its power spectra from a pw2wannier90.x
     ``wan_mode='decompose'`` pass over each snapshot's per-block Wannier
     functions, so it requires the Wannier-initialised route
     (``init_orbitals`` in ``mlwfs`` / ``projwfs``); the ``ml``
-    radial-basis settings become that pass's namelist keys. ``mode: predict``
-    supports ``self_hartree`` only: the decompose pass that builds the
-    power-spectrum descriptors is not wired into the DSCF's screening
-    stage, where the prediction runs.
+    radial-basis settings become that pass's namelist keys, and are
+    stamped into a trained model so a later run cannot predict with a
+    model built on a different basis. Both descriptors work in every mode.
 
     Each frame of the ``atoms.snapshots`` xyz becomes one ``snapshot_N``
     structure fed to the dynamic snapshots namespace. All frames share one
     cell, composition and projection set, so the Wannier-route inputs are
     derived once from the first frame.
     """
-    from aiida_koopmans.workgraphs.ml import TrajectoryWorkflow
+    from aiida_koopmans.workgraphs.ml import DscfCodes, TrajectoryWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
@@ -93,21 +93,33 @@ def build_trajectory_workgraph(
 
     inputs = kcp_dscf_inputs(koopmans_input)
 
-    extra_kwargs: dict[str, Any] = {}
-    if workflow.init_orbitals in (
+    wannier_init = workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
-    ):
+    )
+    extra_kwargs: dict[str, Any] = {}
+    if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(
-            koopmans_input, next(iter(snapshots.values())), codes, inputs["nbnd"]
+            koopmans_input, next(iter(snapshots.values())), inputs["nbnd"]
         )
+
+    # load_codes loads every configured member of DscfCodes. Every
+    # NotRequired member exists for the Wannier-seeded initialisation;
+    # whether the route needs them, and whether a missing one is fatal, is
+    # the graph's own structural requirement. TrajectoryWorkflow forwards
+    # codes into the same KoopmansDSCFWorkflow machinery, whose kcp bind
+    # is eager (aiida-koopmans#90: a deliberate, permanent choice); the
+    # pre-flight catches a missing kcp before that bare subscript can
+    # raise a bare KeyError.
+    codes = load_codes(DscfCodes)
+    require_configured_codes(DscfCodes, codes)
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
     return TrajectoryWorkflow.build(
-        code=codes["kcp"],
+        codes=codes,
         snapshots=snapshots,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
         **inputs,
@@ -129,29 +141,19 @@ def _resolve_trajectory_ml(
     sources: the stored node named by ``ml:model`` (set as the graph input
     ``orm.Dict`` itself, so the run's provenance links back to the
     training artifact) or the JSON file named by ``ml:model_file``.
-    Predict-mode inputs that cannot take effect raise here: the
-    ``power_spectrum`` descriptor (its decompose pass is not wired into
-    the DSCF's screening stage, where the prediction runs) and
-    ``alpha_numsteps != 1``.
+    ``alpha_numsteps != 1`` under ``mode: predict`` raises here: the
+    refinement it counts is what the prediction replaces.
     """
     from json import load as json_load
 
     ml_mode = ml_config.mode
 
-    if ml_mode == MLMode.PREDICT:
-        if ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
-            raise NotImplementedError(
-                "ml:mode='predict' supports only descriptor='self_hartree': the "
-                "decompose pass that builds the power-spectrum descriptors is not wired "
-                "into the DSCF's screening stage, where the prediction runs. Use "
-                "descriptor='self_hartree'."
-            )
-        if workflow.alpha_numsteps != 1:
-            raise ValueError(
-                "ml:mode='predict' replaces the Delta-SCF refinement with a single "
-                "trial-KI prediction, so workflow:alpha_numsteps cannot take effect; "
-                "set it to 1."
-            )
+    if ml_mode == MLMode.PREDICT and workflow.alpha_numsteps != 1:
+        raise ValueError(
+            "ml:mode='predict' replaces the Delta-SCF refinement with a single "
+            "trial-KI prediction, so workflow:alpha_numsteps cannot take effect; "
+            "set it to 1."
+        )
 
     ml_model: dict[str, Any] | orm.Dict | None = None
     if ml_mode in (MLMode.TEST, MLMode.PREDICT):
@@ -181,7 +183,7 @@ def _load_model_node(identifier: int | str) -> orm.Dict:
     raw = str(identifier)
     node = orm.load_node(int(raw) if raw.isdigit() else raw)
     if not isinstance(node, orm.Dict):
-        raise ValueError(
+        raise TypeError(
             f"ml:model must name the stored trained-model Dict node (the `model` "
             f"output of a mode='train' run); node {raw} is a {type(node).__name__}."
         )

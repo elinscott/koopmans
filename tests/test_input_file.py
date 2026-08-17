@@ -134,12 +134,12 @@ _REMOVED_KEYWORDS = [
 ]
 
 
-def _set_removed_keyword(d: dict[str, object], section: str, keyword: str) -> None:
-    """Set ``keyword`` under the (dotted) ``section`` path of an input dict."""
+def _set_keyword(d: dict[str, object], section: str, keyword: str, value: object = True) -> None:
+    """Set ``keyword`` to ``value`` under the (dotted) ``section`` path of an input dict."""
     target = d
     for part in section.split("."):
         target = target.setdefault(part, {})  # type: ignore[assignment]
-    target[keyword] = True
+    target[keyword] = value
 
 
 class TestRemovedKeywordsRejected:
@@ -151,7 +151,7 @@ class TestRemovedKeywordsRejected:
         from pydantic import ValidationError
 
         d = _minimal_si_input()
-        _set_removed_keyword(d, section, keyword)
+        _set_keyword(d, section, keyword)
 
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             KoopmansInput.model_validate(d)
@@ -162,12 +162,96 @@ class TestRemovedKeywordsRejected:
     ) -> None:
         """``read_input_file`` reports the retired keyword as an invalid keyword."""
         d = _minimal_si_input()
-        _set_removed_keyword(d, section, keyword)
+        _set_keyword(d, section, keyword)
         input_file = tmp_path / "input.json"
         input_file.write_text(json.dumps(d))
 
         with pytest.raises(ValueError, match=rf"{section}\.{keyword}.*is not a valid keyword"):
             read_input_file(input_file)
+
+
+_CUTOFF_KEYS = [
+    ("calculator_parameters", "ecutwfc"),
+]
+
+
+class TestCutoffsMustBePositive:
+    """A cutoff of zero or less is rejected at parse."""
+
+    @pytest.mark.parametrize(("section", "keyword"), _CUTOFF_KEYS)
+    @pytest.mark.parametrize("value", [0.0, -45.0])
+    def test_a_non_positive_cutoff_is_rejected(
+        self, section: str, keyword: str, value: float, tmp_path: Path
+    ) -> None:
+        """The message names the key the input file used, not a ratio arithmetic failure.
+
+        Zero and a negative value fail differently downstream — one divides by
+        zero building the off-ratio warning, the other reports a ratio of -36 —
+        so both are asserted rather than one standing in for the pair.
+        """
+        d = _minimal_si_input()
+        _set_keyword(d, section, keyword, value)
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}`" in message
+        assert "must be greater than 0" in message
+
+
+def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object]:
+    """Return the minimal silicon input, its ``calculator_parameters`` replaced."""
+    d = _minimal_si_input()
+    d["calculator_parameters"] = calculator_parameters
+    return d
+
+
+_REMOVED_PER_CALCULATOR_CUTOFFS = [
+    ("pw", "ecutwfc"),
+    ("pw", "ecutrho"),
+    ("kcp", "ecutwfc"),
+    ("kcp", "ecutrho"),
+]
+
+
+class TestPerCalculatorCutoffsRemoved:
+    """pw.x and kcp.x always share one grid, stated once via ``ecutwfc``."""
+
+    @pytest.mark.parametrize(
+        ("calculator", "keyword"),
+        _REMOVED_PER_CALCULATOR_CUTOFFS,
+        ids=[f"{calc}.{kw}" for calc, kw in _REMOVED_PER_CALCULATOR_CUTOFFS],
+    )
+    def test_a_removed_key_names_its_replacement(
+        self, calculator: str, keyword: str, tmp_path: Path
+    ) -> None:
+        """Each retired spelling points the reader at ``calculator_parameters.ecutwfc``."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(_si_input_with({calculator: {"system": {keyword: 45.0}}})))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert f"`calculator_parameters.{calculator}.system.{keyword}`" in message
+        assert "`calculator_parameters.ecutwfc`" in message
+
+    def test_a_single_ecutwfc_reaches_both_pw_and_kcp(self, tmp_path: Path) -> None:
+        """One stated cutoff derives both codes' grids, at the norm-conserving ratio."""
+        from koopmans.aiida.conversion import input_to_pw_parameters
+        from koopmans.aiida.workflows.dscf import kcp_dscf_inputs
+
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(_si_input_with({"ecutwfc": 45.0, "nbnd": 8})))
+        inp = read_input_file(input_file)
+
+        pw_system = input_to_pw_parameters(inp)["SYSTEM"]
+        kcp = kcp_dscf_inputs(inp)
+        assert (pw_system["ecutwfc"], pw_system["ecutrho"]) == pytest.approx((45.0, 180.0))
+        assert (kcp["ecutwfc"], kcp["ecutrho"]) == pytest.approx((45.0, 180.0))
 
 
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
@@ -474,3 +558,72 @@ class TestPathDensityRename:
             _si_input_with_kpoints(grid=[2, 2, 2], path="GX", path_density=20.0)
         )
         assert inp.kpoints.path_density == 20.0
+
+
+# (keyword, a value the dft_eps route would never accept from the user, a
+# substring of what actually owns it).
+_PH_ROUTE_OWNED_KEYS = [
+    ("epsil", False, "dft_eps route"),
+    ("trans", True, "dft_eps route"),
+    ("verbosity", "low", "aiida-quantumespresso"),
+]
+
+# (keyword, the value the route always forces — restating it is accepted).
+_PH_ROUTE_FORCED_VALUES = [
+    ("epsil", True),
+    ("trans", False),
+    ("verbosity", "high"),
+]
+
+
+class TestPhCalculatorParameters:
+    """``calculator_parameters.ph`` mounts the ph.x ``INPUTPH`` namelist (koopmans2#162)."""
+
+    @pytest.mark.parametrize(("keyword", "value", "owner_snippet"), _PH_ROUTE_OWNED_KEYS)
+    def test_route_owned_key_is_rejected(
+        self, keyword: str, value: object, owner_snippet: str
+    ) -> None:
+        """A user-set route-owned key fails at parse, naming the key and its owner."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, "calculator_parameters.ph", keyword, value)
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`calculator_parameters.ph.{keyword}`" in message
+        assert owner_snippet in message
+
+    def test_a_plugin_managed_key_is_an_unknown_field(self) -> None:
+        """``outdir`` is absent from the schema: aiida-quantumespresso forces it for every run."""
+        from pydantic import ValidationError
+
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, "calculator_parameters.ph", "outdir", "custom")
+
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize(("keyword", "value"), _PH_ROUTE_FORCED_VALUES)
+    def test_restating_the_forced_value_is_accepted(self, keyword: str, value: object) -> None:
+        """A route-owned key stated at the value the route actually forces is not rejected."""
+        d = _si_input_with({"ecutwfc": 20.0, "ph": {keyword: value}})
+        inp = KoopmansInput.model_validate(d)
+        assert getattr(inp.calculator_parameters.ph, keyword) == value
+
+    def test_dump_and_revalidate_roundtrips(self) -> None:
+        """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks."""
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        KoopmansInput.model_validate(inp.model_dump())
+
+    def test_non_owned_keywords_pass_through(self) -> None:
+        """A user-set expert keyword outside the owned set is accepted as-is."""
+        d = _si_input_with({"ecutwfc": 20.0, "ph": {"tr2_ph": 1.0e-14, "nmix_ph": 6}})
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.ph.tr2_ph == pytest.approx(1.0e-14)
+        assert inp.calculator_parameters.ph.nmix_ph == 6
+
+    def test_defaults_leave_the_namelist_unset(self) -> None:
+        """With no ``ph`` block, the namelist states nothing explicitly."""
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        assert inp.calculator_parameters.ph.model_fields_set == set()

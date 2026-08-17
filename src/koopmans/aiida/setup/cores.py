@@ -2,9 +2,12 @@
 
 kcp.x and friends are tightly-coupled MPI workloads that lose performance
 when oversubscribed onto hyperthreads, so we count physical cores — not
-logical ones. Used both as the default ``num_mpiprocs_per_machine`` for
-the localhost Computer and as the worker's advertised CPU pool when HQ
-is enabled.
+logical ones.
+
+The count is the default for two independent quantities: the ranks one
+calculation is given (the localhost Computer's ``default_mpiprocs_per_machine``,
+overridden by ``koopmans install --procs-per-calc``) and the CPU pool the
+HyperQueue worker advertises (overridden by ``--max-procs``).
 """
 
 from __future__ import annotations

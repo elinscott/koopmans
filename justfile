@@ -99,14 +99,6 @@ docs-test:
 # Deployment tools #
 ####################
 
-[doc("run `bumpversion` with a given subcommand")]
-@bumpversion command:
-    uvx bump-my-version bump {{ command }}
-
-[doc("make a release")]
-bumpversion-release:
-    uvx bump-my-version bump release --tag
-
 [doc("build an sdist and wheel")]
 build:
     uv build --sdist --wheel --clear
@@ -115,6 +107,22 @@ build:
 # Releases #
 ############
 
+# The package version is git-derived (see [tool.hatch.version] in
+# pyproject.toml): an exact "vX.Y.Z" tag on the current commit gives a clean,
+# PyPI-publishable version; anything else carries a `.devN+g<sha>` local
+# segment, which PyPI refuses, so publishing from an untagged commit fails
+# safely instead of landing on PyPI. There is no version file to bump after
+# a release — the next commit's version increments on its own.
+#
+# Tagging and publishing are deliberately two separate, both-manual steps:
+# `tag-release` only validates and tags — it never builds or uploads.
+# Publishing (`release`/`release-via-env` below) is always a second, explicit
+# command a human runs afterwards; nothing here reacts to a tag being pushed,
+# and no CI workflow watches for one either. A future GitHub Actions release
+# workflow, gated on a manual `workflow_dispatch` trigger, is tracked as k2
+# issue #154 — it does not exist yet, so today publishing only ever happens
+# from a developer's own machine.
+#
 # In order to make a release to PyPI, you'll need to take the following steps:
 #
 # 1. Navigate to https://pypi.org/account/register/ to register for Test PyPI
@@ -126,6 +134,19 @@ build:
 # 6. Install keyring with `uv tool install keyring`
 # 7. Add your token to keyring with `keyring set https://upload.pypi.org/legacy/ __token__`
 
+[doc("Validate `version` (PEP 440, newer than every existing tag) and tag the current commit as a release. Never builds or publishes anything — see the note above and k2 issue #154.")]
+tag-release version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "Working tree is not clean; commit or stash before tagging a release." >&2
+        exit 1
+    fi
+    latest_tag=$(git tag --list 'v*' | sed 's/^v//' | sort -V | tail -n1)
+    uv run --no-project --with packaging python3 scripts/validate_release_version.py "{{ version }}" "$latest_tag"
+    git tag -a "v{{ version }}" -m "Release {{ version }}"
+    git push --tags
+
 [doc("Release the code to PyPI so users can pip install it, using credentials from keyring")]
 release:
     just build
@@ -136,14 +157,6 @@ release:
 release-via-env:
     just build
     uv publish --publish-url https://upload.pypi.org/legacy/
-
-[doc("Run a workflow that removes -dev from the version, creates a tagged release on GitHub, creates a release on PyPI, and bumps the version again.")]
-finish:
-    just bumpversion-release
-    just release
-    git push --tags
-    uvx bump-my-version bump patch
-    git push
 
 #################
 # Test Releases #
@@ -165,11 +178,3 @@ test-release:
     just build
     uv tool install --quiet keyring
     uv publish --username __token__ --keyring-provider subprocess --publish-url https://test.pypi.org/legacy/
-
-[doc("Run a workflow that removes -dev from the version, creates a tagged release on GitHub, creates a release on Test PyPI, and bumps the version again.")]
-test-finish:
-    just bumpversion-release
-    just test-release
-    git push --tags
-    uvx bump-my-version bump patch
-    git push

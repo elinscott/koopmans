@@ -317,9 +317,9 @@ raw:
     from_task: graph_inputs
     to_socket: nspin
     to_task: count_electrons_task
-  - from_socket: code
+  - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: dft_init_nspin1
   - from_socket: structure
     from_task: graph_inputs
@@ -345,9 +345,9 @@ raw:
     from_task: graph_inputs
     to_socket: nbnd
     to_task: dft_init_nspin1
-  - from_socket: code
+  - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: dft_init_nspin2_dummy
   - from_socket: structure
     from_task: graph_inputs
@@ -389,9 +389,9 @@ raw:
     from_task: dft_init_nspin2_dummy
     to_socket: spin2_dummy_parent_folder
     to_task: convert_spin1_to_spin2
-  - from_socket: code
+  - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: dft_init_nspin2
   - from_socket: structure
     from_task: graph_inputs
@@ -429,9 +429,9 @@ raw:
     from_task: convert_spin1_to_spin2
     to_socket: parent_folder
     to_task: dft_init_nspin2
-  - from_socket: code
+  - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: ComputeScreeningParameters
   - from_socket: structure
     from_task: graph_inputs
@@ -493,9 +493,9 @@ raw:
     from_task: dft_init_nspin2
     to_socket: dft_remote
     to_task: ComputeScreeningParameters
-  - from_socket: code
+  - from_socket: codes.kcp
     from_task: graph_inputs
-    to_socket: code
+    to_socket: kcp_code
     to_task: RunFinalKI
   - from_socket: structure
     from_task: graph_inputs
@@ -638,111 +638,57 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
-        code:
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            extras:
-              py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-            required: true
         codes:
           dynamic: false
           fields:
-            dos:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                required: false
             kcp:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                required: false
-            kcw:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                required: false
+                help: Needed to perform explicitly orbital-density-dependent functional
+                  calculations.
+                required: true
             merge_evc:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                required: false
-            ph:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                required: false
-            projwfc:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
             pw:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
             pw2wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
             wann2kcp:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
             wannier90:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                required: false
-            wannierjl:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
           identifier: <scrubbed:identifier>
           meta:
             call_role: kwargs
             child_default_link_limit: 1
-            required: false
+            required: true
         correction:
           default: ki
           dynamic: false
@@ -755,6 +701,25 @@ raw:
               structured_type:
                 kind: enum
                 path: aiida_koopmans.functionals.Correction
+            required: false
+        decompose_parameters:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        descriptor:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida_koopmans.ml.MLDescriptor
+              structured_type:
+                kind: enum
+                path: aiida_koopmans.ml.MLDescriptor
             required: false
         ecutrho:
           dynamic: false
@@ -858,6 +823,8 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: The label to use for the `CALL` link if the process is called
+                  by another process.
                 is_metadata: true
                 required: false
             description:
@@ -866,6 +833,7 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: Description to set on the process node.
                 is_metadata: true
                 required: false
             disable_cache:
@@ -874,6 +842,8 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: Do not consider the cache for this process, ignoring all other
+                  caching configuration rules.
                 is_metadata: true
                 required: false
             label:
@@ -882,6 +852,7 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: Label to set on the process node.
                 is_metadata: true
                 required: false
             store_provenance:
@@ -890,6 +861,7 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                help: If set to `False` provenance will not be stored in the database.
                 is_metadata: true
                 required: false
           identifier: <scrubbed:identifier>
@@ -1258,6 +1230,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: true
+        pw2wannier90_code:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         spin_polarized:
           default: false
           dynamic: false
@@ -1376,6 +1355,14 @@ raw:
                   extras:
                     py_type: aiida.orm.nodes.data.singlefile.SinglefileData
                   required: true
+              interpolated_bands:
+                dynamic: false
+                identifier: <scrubbed:identifier>
+                meta:
+                  child_default_link_limit: 1
+                  extras:
+                    py_type: aiida.orm.nodes.data.array.bands.BandsData
+                  required: false
               nnkp_file:
                 dynamic: false
                 identifier: <scrubbed:identifier>
@@ -1900,8 +1887,11 @@ raw:
       inputs:
         alpha_numsteps: 1
         calculate_alpha: true
-        code:
-          __aiida_code__: kcp@localhost
+        codes:
+          kcp:
+            __aiida_code__: kcp@localhost
+          pw:
+            __aiida_code__: pw@localhost
         correction: ki
         ecutrho: 200.0
         ecutwfc: 50.0
@@ -1957,111 +1947,62 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
-            code:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                required: true
             codes:
               dynamic: false
               fields:
-                dos:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                    required: false
                 kcp:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                    required: false
-                kcw:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                    required: false
+                    help: Needed to perform explicitly orbital-density-dependent functional
+                      calculations.
+                    required: true
                 merge_evc:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                    required: false
-                ph:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                    required: false
-                projwfc:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
                 pw:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
                 pw2wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
                 wann2kcp:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
                 wannier90:
                   dynamic: false
                   identifier: <scrubbed:identifier>
                   meta:
                     child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
-                    required: false
-                wannierjl:
-                  dynamic: false
-                  identifier: <scrubbed:identifier>
-                  meta:
-                    child_default_link_limit: 1
-                    extras:
-                      py_type: aiida.orm.nodes.data.code.abstract.AbstractCode
+                    help: Needed to initialize the variational orbitals as Wannier
+                      functions.
                     required: false
               identifier: <scrubbed:identifier>
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
-                required: false
+                required: true
             correction:
               default: ki
               dynamic: false
@@ -2074,6 +2015,25 @@ raw:
                   structured_type:
                     kind: enum
                     path: aiida_koopmans.functionals.Correction
+                required: false
+            decompose_parameters:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            descriptor:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida_koopmans.ml.MLDescriptor
+                  structured_type:
+                    kind: enum
+                    path: aiida_koopmans.ml.MLDescriptor
                 required: false
             ecutrho:
               dynamic: false
@@ -2177,6 +2137,8 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: The label to use for the `CALL` link if the process is called
+                      by another process.
                     is_metadata: true
                     required: false
                 description:
@@ -2185,6 +2147,7 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: Description to set on the process node.
                     is_metadata: true
                     required: false
                 disable_cache:
@@ -2193,6 +2156,8 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: Do not consider the cache for this process, ignoring all
+                      other caching configuration rules.
                     is_metadata: true
                     required: false
                 label:
@@ -2201,6 +2166,7 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: Label to set on the process node.
                     is_metadata: true
                     required: false
                 store_provenance:
@@ -2209,6 +2175,7 @@ raw:
                   meta:
                     call_role: kwargs
                     child_default_link_limit: 1
+                    help: If set to `False` provenance will not be stored in the database.
                     is_metadata: true
                     required: false
               identifier: <scrubbed:identifier>
@@ -2577,6 +2544,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: true
+            pw2wannier90_code:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             spin_polarized:
               default: false
               dynamic: false
@@ -2726,6 +2700,14 @@ raw:
                       extras:
                         py_type: aiida.orm.nodes.data.singlefile.SinglefileData
                       required: true
+                  interpolated_bands:
+                    dynamic: false
+                    identifier: <scrubbed:identifier>
+                    meta:
+                      child_default_link_limit: 1
+                      extras:
+                        py_type: aiida.orm.nodes.data.array.bands.BandsData
+                      required: false
                   nnkp_file:
                     dynamic: false
                     identifier: <scrubbed:identifier>

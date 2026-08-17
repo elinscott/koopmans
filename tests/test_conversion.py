@@ -11,9 +11,12 @@ from koopmans.aiida.conversion import (
     _calculate_kpoints_along_path,
     _parse_kpoints_path_string,
     atoms_input_to_structure,
+    input_to_ph_parameters,
     input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
+from tests.fixtures import path_labels
+from tests.fixtures import silicon_pw_input as _pw_input
 
 SI_ALAT_BOHR = 10.2622
 
@@ -229,6 +232,64 @@ class TestSeekpathBasisGuard:
         assert list(kpts.pbc) == [True, True, True]
 
 
+class TestInterpolationPathHelper:
+    """``kpoints_input_to_interpolation_path`` decides whether a step samples a path.
+
+    Shared by the ``dft_bands``, wannierize and DFPT routes. The DFPT route
+    cannot exercise the gamma-only branch end to end — it rejects
+    gamma-only inputs before it ever builds a path — so this tests the
+    helper directly, which is exactly what that route now relies on.
+    """
+
+    @staticmethod
+    def _fcc_silicon() -> Any:
+        import numpy as np
+        from aiida import orm
+
+        a = 5.43
+        cell = np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2
+        structure = orm.StructureData(cell=cell.tolist())
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(-a / 4, a / 4, a / 4), symbols="Si"
+        )
+        return structure
+
+    def test_gamma_only_returns_none(self, aiida_profile: Any) -> None:
+        """A gamma-only input's fixed path names the zone centre alone, so no path is built."""
+        from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        kpoints = GammaOnlyKpointsInput(gamma_only=True)
+        assert kpoints_input_to_interpolation_path(kpoints, self._fcc_silicon()) is None
+
+    def test_no_path_returns_none(self, aiida_profile: Any) -> None:
+        """With no ``path`` set, the helper leaves the step on its protocol default."""
+        from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2))
+        assert kpoints_input_to_interpolation_path(kpoints, self._fcc_silicon()) is None
+
+    def test_explicit_path_matches_kpoints_input_to_kpoints_path(self, aiida_profile: Any) -> None:
+        """An explicit path is sampled, exactly as ``kpoints_input_to_kpoints_path`` directly."""
+        import numpy as np
+
+        from koopmans.aiida.conversion import (
+            kpoints_input_to_interpolation_path,
+            kpoints_input_to_kpoints_path,
+        )
+        from koopmans.input_file import GridKpointsInput
+
+        structure = self._fcc_silicon()
+        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX")
+        expected = kpoints_input_to_kpoints_path(kpoints, structure)
+        actual = kpoints_input_to_interpolation_path(kpoints, structure)
+        assert actual is not None
+        assert dict(actual.labels) == dict(expected.labels)
+        assert np.allclose(actual.get_kpoints(), expected.get_kpoints())  # type: ignore[no-untyped-call]
+
+
 class TestInputToPwParameters:
     """The shared pw parameter dict carries no calculation type of its own."""
 
@@ -239,6 +300,152 @@ class TestInputToPwParameters:
         inp = KoopmansInput.model_validate(_pw_input())
         parameters = input_to_pw_parameters(inp)
         assert "calculation" not in parameters.get("CONTROL", {})
+
+    def test_ecutrho_derives_from_ecutwfc(self, aiida_profile: Any) -> None:
+        """``ecutrho`` is always four times ``ecutwfc``, with no other source."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input(calculator_parameters={"ecutwfc": 20.0}))
+        parameters = input_to_pw_parameters(inp)
+
+        assert parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
+
+
+class TestPwNamelistDumpSurvivesDefaultValues:
+    """A value equal to the schema default is not the same as an unset field.
+
+    ``exclude_defaults=True`` cannot distinguish the two and drops both,
+    silently discarding e.g. ``occupations: fixed``; ``exclude_unset=True``
+    only drops fields the user never wrote.
+    """
+
+    def test_no_pw_block_dumps_nothing(self, aiida_profile: Any) -> None:
+        """No user ``pw`` block at all: nothing rides along in SYSTEM/CONTROL."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"].keys() == {"ecutwfc", "ecutrho"}
+        assert parameters["CONTROL"] == {}
+
+    def test_occupations_fixed_survives_though_it_equals_the_schema_default(
+        self, aiida_profile: Any
+    ) -> None:
+        """``occupations: fixed`` (the pydantic default) still reaches the dump."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={"ecutwfc": 20.0, "pw": {"system": {"occupations": "fixed"}}}
+            )
+        )
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"]["occupations"] == "fixed"
+
+    def test_smearing_and_degauss_survive_though_they_equal_the_schema_defaults(
+        self, aiida_profile: Any
+    ) -> None:
+        """``smearing: gaussian`` and ``degauss: 0.0`` (pydantic defaults) survive too."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "pw": {
+                        "system": {
+                            "occupations": "smearing",
+                            "smearing": "gaussian",
+                            "degauss": 0.0,
+                        }
+                    },
+                }
+            )
+        )
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"]["smearing"] == "gaussian"
+        assert parameters["SYSTEM"]["degauss"] == pytest.approx(0.0)
+
+    def test_a_non_default_value_still_survives(self, aiida_profile: Any) -> None:
+        """Control: a value away from the schema default was never at risk."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "pw": {"system": {"occupations": "smearing", "degauss": 0.05}},
+                }
+            )
+        )
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"]["occupations"] == "smearing"
+        assert parameters["SYSTEM"]["degauss"] == pytest.approx(0.05)
+
+
+class TestSmearingWithoutDegaussRejected:
+    """``occupations: smearing`` alone is a silent trap, not a valid input.
+
+    Every koopmans route runs pw.x with fixed occupations by default; the
+    upstream builder clears ``smearing``/``degauss`` from the protocol and
+    re-merges the user's override afterwards (absolute-override semantics),
+    so an override naming ``occupations`` without ``degauss`` leaves pw.x
+    with neither and it aborts. Caught here instead, with a message naming
+    the missing keyword, rather than surfacing as a pw.x crash downstream.
+    """
+
+    def test_occupations_smearing_alone_raises(self, aiida_profile: Any) -> None:
+        """A bare ``occupations: smearing`` override is rejected, not silently broken."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "pw": {"system": {"occupations": "smearing"}},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match=r"degauss"):
+            input_to_pw_parameters(inp)
+
+    def test_occupations_smearing_with_degauss_is_accepted(self, aiida_profile: Any) -> None:
+        """Pairing ``occupations: smearing`` with ``degauss`` is not rejected."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "pw": {"system": {"occupations": "smearing", "degauss": 0.02}},
+                }
+            )
+        )
+        parameters = input_to_pw_parameters(inp)
+        assert parameters["SYSTEM"]["occupations"] == "smearing"
+        assert parameters["SYSTEM"]["degauss"] == pytest.approx(0.02)
+
+
+class TestInputToPhParameters:
+    """``input_to_ph_parameters`` carries user overrides, nothing else."""
+
+    def test_empty_by_default(self, aiida_profile: Any) -> None:
+        """With no ``ph`` block, ``INPUTPH`` states nothing explicitly."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        parameters = input_to_ph_parameters(inp)
+        assert parameters == {"INPUTPH": {}}
+
+    def test_user_value_survives(self, aiida_profile: Any) -> None:
+        """A tightened ``tr2_ph`` reaches the ``INPUTPH`` dict."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(calculator_parameters={"ecutwfc": 20.0, "ph": {"tr2_ph": 1.0e-14}})
+        )
+        parameters = input_to_ph_parameters(inp)
+        assert parameters["INPUTPH"]["tr2_ph"] == pytest.approx(1.0e-14)
 
 
 class TestCodeParallelizationHelper:
@@ -335,7 +542,9 @@ class TestParallelizationWiring:
 class TestDispatcherThreadsParallelization:
     """The dispatcher forwards the per-code mapping to the workgraph builder."""
 
-    def test_mapping_reaches_the_builder(self, aiida_profile: Any, monkeypatch: Any) -> None:
+    def test_mapping_reaches_the_builder(
+        self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
+    ) -> None:
         """A configured block is passed as the graph's ``parallelization`` kwarg."""
         import aiida_koopmans.workgraphs.pw as pw_module
 
@@ -360,10 +569,12 @@ class TestDispatcherThreadsParallelization:
         inp = KoopmansInput.model_validate(
             _pw_input(parallelization={"pw": {"npool": 4}, "kcw": {"ntasks": 8}})
         )
-        build_dft_bands_workgraph(inp, {"pw": object()})
+        build_dft_bands_workgraph(inp)
         assert captured["parallelization"] == {"pw": {"npool": 4}, "kcw": {"ntasks": 8}}
 
-    def test_no_config_passes_none(self, aiida_profile: Any, monkeypatch: Any) -> None:
+    def test_no_config_passes_none(
+        self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
+    ) -> None:
         """With nothing configured the builder receives ``parallelization=None``."""
         import aiida_koopmans.workgraphs.pw as pw_module
 
@@ -379,32 +590,8 @@ class TestDispatcherThreadsParallelization:
             pw_module.RunPwBands, "build", staticmethod(lambda **kw: captured.update(kw))
         )
 
-        build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()), {"pw": object()})
+        build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()))
         assert captured["parallelization"] is None
-
-
-def _pw_input(
-    *,
-    pseudo_library: str = "SG15/1.2/PBE/SR",
-    parallelization: dict[str, Any] | None = None,
-    kpoints: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Return a minimal silicon dft_bands input dict for the wiring tests."""
-    d: dict[str, Any] = {
-        "workflow": {"task": "dft_bands", "pseudo_library": pseudo_library},
-        "atoms": {
-            "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
-            "atomic_positions": {
-                "units": "crystal",
-                "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
-            },
-        },
-        "kpoints": kpoints or {"grid": [2, 2, 2], "offset": [0, 0, 0]},
-        "calculator_parameters": {"ecutwfc": 20.0},
-    }
-    if parallelization is not None:
-        d["parallelization"] = parallelization
-    return d
 
 
 class TestDftBandsScfMesh:
@@ -507,6 +694,68 @@ class TestDftBandsScfMesh:
         )
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_bands"):
             build_workgraph(inp)
+
+    def test_an_explicit_path_reaches_bands_kpoints(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """``kpoints.path`` bypasses seekpath, reaching the workchain as ``bands_kpoints``.
+
+        Regression for koopmans#159: the route used to forward only a
+        ``bands_kpoints_distance``, so seekpath always chose its own path
+        even when the input asked for a specific one.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                kpoints={"grid": [2, 2, 2], "offset": [0, 0, 0], "path": "GXG"},
+            )
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        bands_kpoints = task_inputs["bands_kpoints"].value
+        assert path_labels(bands_kpoints) == ["GAMMA", "X", "GAMMA"]
+        assert task_inputs["bands_kpoints_distance"].value is None
+
+    def test_no_path_leaves_seekpath_in_charge(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """With no ``kpoints.path`` the route still sends only a distance."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(pseudo_library="SG15/1.0/PBE/SR", kpoints={"grid": [2, 2, 2]})
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        assert task_inputs["bands_kpoints"].value is None
+        assert task_inputs["bands_kpoints_distance"].value is not None
+
+    def test_gamma_only_leaves_seekpath_in_charge(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A gamma-only input's fixed ``path: "G"`` names no segment to sample.
+
+        ``GammaOnlyKpointsInput.path`` defaults to the literal ``"G"`` and
+        can never be ``None``, so a bare ``kpoints.path is not None`` guard
+        would always fire here and hand the single-label path to
+        ``kpoints_input_to_kpoints_path``, which raises building an empty
+        k-point list. The route must fall back to the protocol's own
+        ``bands_kpoints_distance`` instead, exactly as with no path at all.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(pseudo_library="SG15/1.0/PBE/SR", kpoints={"gamma_only": True})
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        assert task_inputs["bands_kpoints"].value is None
+        assert task_inputs["bands_kpoints_distance"].value is not None
 
 
 class TestStepKpointsMesh:

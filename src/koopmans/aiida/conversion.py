@@ -6,6 +6,7 @@ AiiDA-compatible data structures for use with workgraphs.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,10 @@ if TYPE_CHECKING:
 
 # Quantum ESPRESSO's own value, so that converted quantities match QE output
 BOHR_TO_ANGSTROM: float = CONSTANTS.bohr_to_ang
+
+# ``ecutrho / ecutwfc`` for a norm-conserving pseudopotential, which is what
+# kcp.x and kcw.x accept — and so the only kind koopmans runs.
+NORM_CONSERVING_DUAL: float = 4.0
 
 
 def code_parallelization(
@@ -96,8 +101,6 @@ def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
     Returns:
         3x3 list of cell vectors in Angstrom.
     """
-    import math
-
     a = celldms[1] * BOHR_TO_ANGSTROM  # celldm(1) is in Bohr
     b = celldms.get(2, 1.0) * a if 2 in celldms else a
     c = celldms.get(3, 1.0) * a if 3 in celldms else a
@@ -575,6 +578,41 @@ def kpoints_input_to_kpoints_path(
     return kpts
 
 
+def kpoints_input_to_interpolation_path(
+    kpoints: KpointsInput,
+    structure: orm.StructureData,
+) -> orm.KpointsData | None:
+    """Return the input's k-path as a labelled explicit k-list, or ``None``.
+
+    ``None`` when the input states no ``kpoints.path``, and for a gamma-only
+    input, whose fixed ``path`` names the zone centre alone and so defines no
+    segment to interpolate along. Otherwise defers to
+    :func:`kpoints_input_to_kpoints_path`. Callers use this to decide whether
+    a step gets an explicit bands path or is left on its protocol default.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        structure: The structure to generate the k-path for.
+
+    Returns:
+        AiiDA KpointsData node with the k-point path, or ``None``.
+    """
+    if kpoints.gamma_only or kpoints.path is None:
+        return None
+    return kpoints_input_to_kpoints_path(kpoints, structure)
+
+
+def _resolve_pw_cutoffs(system: dict[str, Any]) -> None:
+    """Set ``ecutrho`` in place, at :data:`NORM_CONSERVING_DUAL` times ``ecutwfc``.
+
+    With no ``ecutwfc`` stated the pair is left empty, for the
+    pseudopotential family to recommend.
+    """
+    ecutwfc = system.get("ecutwfc")
+    if ecutwfc is not None:
+        system["ecutrho"] = NORM_CONSERVING_DUAL * ecutwfc
+
+
 def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
     """Convert KoopmansInput to a PW input-parameter namelist dict.
 
@@ -596,16 +634,6 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     # Add ecutwfc if specified
     if calc_params.ecutwfc is not None:
         parameters["SYSTEM"]["ecutwfc"] = calc_params.ecutwfc
-        # Pin ecutrho alongside it (kcp.x convention: 4x for norm-conserving,
-        # same fallback as ``_extract_kcp_scalar_inputs``). Without this the
-        # pseudo family's placeholder ecutrho wins in protocol-built PW runs,
-        # putting them on a different grid from the CP supercell run that the
-        # dft_init consistency checks compare against. An explicit
-        # ``pw.system.ecutrho`` still overrides via the update below.
-        kcp_system = calc_params.kcp.system
-        parameters["SYSTEM"]["ecutrho"] = (
-            kcp_system.ecutrho if kcp_system.ecutrho else 4.0 * calc_params.ecutwfc
-        )
 
     # Add nbnd if specified
     if calc_params.nbnd is not None:
@@ -614,19 +642,52 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     # Merge with explicit PW parameters from input
     if pw_params.control:
         parameters["CONTROL"].update(
-            pw_params.control.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.control.model_dump(exclude_none=True, exclude_unset=True)
         )
     if pw_params.system:
         parameters["SYSTEM"].update(
-            pw_params.system.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.system.model_dump(exclude_none=True, exclude_unset=True)
         )
     if pw_params.electrons:
         parameters["ELECTRONS"].update(
-            pw_params.electrons.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.electrons.model_dump(exclude_none=True, exclude_unset=True)
         )
+
+    if (
+        parameters["SYSTEM"].get("occupations") == "smearing"
+        and "degauss" not in parameters["SYSTEM"]
+    ):
+        raise ValueError(
+            "`calculator_parameters.pw.system.occupations = 'smearing'` needs "
+            "`calculator_parameters.pw.system.degauss` set explicitly too. Every "
+            "koopmans route runs pw.x with fixed occupations by default, which "
+            "clears the protocol's own smearing keywords before this override "
+            "lands, so pw.x would abort asking for a broadening value. Set "
+            "`calculator_parameters.pw.system.degauss` (Ry)."
+        )
+
+    _resolve_pw_cutoffs(parameters["SYSTEM"])
+
     # Ensure all Path objects are converted to strings for JSON serialization
     parameters = _convert_paths_to_strings(parameters)
 
+    return parameters
+
+
+def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
+    """Convert ``calculator_parameters.ph`` into a ph.x ``INPUTPH`` namelist dict.
+
+    The dielectric-constant (dft_eps) route merges this underneath its own
+    ``epsil``/``trans``/q-mesh keys, so every key present here is a plain
+    user override (route-owned keys are rejected at parse time; see
+    ``koopmans.input_file.ph``).
+    """
+    parameters: dict[str, dict[str, Any]] = {
+        "INPUTPH": koopmans_input.calculator_parameters.ph.model_dump(
+            exclude_none=True, exclude_defaults=True
+        ),
+    }
+    parameters = _convert_paths_to_strings(parameters)
     return parameters
 
 

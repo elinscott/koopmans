@@ -22,6 +22,7 @@ from koopmans.input_file.cell_parameters import (
 from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.parallelization import ParallelizationInput
+from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
@@ -47,6 +48,7 @@ __all__ = [
     "KpointsOverridesInput",
     "MLConfig",
     "NoOffset",
+    "PHInputParameters",
     "PW2Wannier90InputParameters",
     "PWInputParameters",
     "ParallelizationInput",
@@ -321,9 +323,10 @@ class Wannier90InputParametersWithUpDown(RestrictedWannier90InputParameters):
 class CalculatorParametersInput(BaseModel):
     """Calculator-specific input parameters."""
 
-    ecutwfc: float | None = None
+    ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
     tot_magnetization: float | None = None
+    ph: PHInputParameters = Field(default_factory=lambda: PHInputParameters())
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(
         default_factory=lambda: PW2Wannier90InputParameters()
@@ -335,6 +338,35 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: UnfoldAndInterpolateConfig()
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_per_calculator_cutoffs(cls, data: Any) -> Any:
+        """Point a per-calculator cutoff at the single ``ecutwfc`` field.
+
+        ``pw.system``/``kcp.system`` no longer carry their own
+        ``ecutwfc``/``ecutrho``: pw.x and kcp.x always share one grid, derived
+        from ``calculator_parameters.ecutwfc``. Runs before field validation,
+        so it reports the removed spelling instead of the generic
+        "extra_forbidden" error the nested model would otherwise raise.
+
+        Raises:
+            ValueError: If any of the four removed keys is present.
+        """
+        if not isinstance(data, dict):
+            return data
+        for calc in ("pw", "kcp"):
+            system = data.get(calc)
+            if not isinstance(system, dict) or not isinstance(system.get("system"), dict):
+                continue
+            for key in ("ecutwfc", "ecutrho"):
+                if key in system["system"]:
+                    raise ValueError(
+                        f"`calculator_parameters.{calc}.system.{key}` no longer exists. "
+                        "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four "
+                        "times it."
+                    )
+        return data
 
 
 class KoopmansInput(BaseModel):
@@ -440,6 +472,7 @@ CUSTOM_MESSAGES = {
     "type": 'is the wrong type (should be "{expected_type}", not "{given_type}")',
     "extra_forbidden": "is not a valid keyword.",
     "missing": "was not provided.",
+    "greater_than": "must be greater than {gt}.",
 }
 
 
