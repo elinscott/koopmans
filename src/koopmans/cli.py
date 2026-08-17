@@ -14,6 +14,11 @@ executed twice:
     https://click.palletsprojects.com/en/8.1.x/setuptools/#setuptools-integration
 """
 
+# A command's help text keeps a worked example on the lines it was written on
+# by carrying click's own "\b" marker, which a raw docstring would turn into
+# two literal characters.
+# ruff: noqa: D301
+
 from __future__ import annotations
 
 import logging
@@ -829,10 +834,13 @@ def bandstructure(
     """Draw the band structures of finished runs on one set of axes.
 
     FOLDERS are directories `koopmans run` wrote, or single calculation
-    directories inside them, which carry a metadata file of their own. Every
-    band structure across all of them is drawn, so a DFT run and a Koopmans run
-    given together overlay, referenced to a single energy zero. Each is named
-    after the step that produced it unless --label names it:
+    directories inside them, which carry a metadata file of their own. Each is
+    taken as given and nothing beneath it is searched, so a step that ran
+    wannier90 twice is never chosen between on your behalf; a directory that
+    names no run of its own lists the ones under it that can be drawn. Every
+    band structure across all the folders is drawn, so a DFT run and a
+    Koopmans run given together overlay, referenced to a single energy zero.
+    Each is named after the step that produced it unless --label names it:
 
         koopmans plot bandstructure dft ki --label DFT --label "KI@LDA"
 
@@ -842,8 +850,15 @@ def bandstructure(
 
         koopmans plot bandstructure pw wannier --style x --style -
 
-    One style covers everything its folder draws, so drawing one run's results
-    differently from each other means passing them as separate folders.
+    One style covers everything its folder draws, so drawing the results of a
+    single run differently from each other means naming their calculation
+    directories, which a silicon wannierize run has one of per block:
+
+    \b
+        koopmans plot bandstructure si/02-bands \\
+            si/04-wannierize_occ_1/01-wannier90/03-wannier90 \\
+            si/03-wannierize_emp_1/01-wannier90/03-wannier90 \\
+            --style rx --style b- --style b-
 
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,

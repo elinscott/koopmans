@@ -37,6 +37,7 @@ from koopmans.plotting import (
     resolve_band_series,
     write_series_json,
 )
+from koopmans.plotting.resolve import SUGGESTION_LIMIT
 from tests.fixtures import make_process
 
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
@@ -44,6 +45,7 @@ PW_BASE = "aiida.workflows:quantumespresso.pw.base"
 KCW_HAM = "aiida.calculations:koopmans.kcw_ham"
 W90_BASE = "aiida.workflows:wannier90_workflows.base.wannier90"
 W90_CALC = "aiida_wannier90.calculations.wannier90.Wannier90Calculation"
+PW_CALC = "aiida.calculations:quantumespresso.pw"
 W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
 MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands"
 
@@ -1594,6 +1596,23 @@ class TestValenceBandEdge:
 # ----------------------------------------------------------------------
 
 
+def pw_calculation_run(tmp_path: Path, name: str, computer: orm.Computer, calculation: str) -> Path:
+    """Write a folder naming a pw.x calculation that ran ``calculation``.
+
+    What a dumped ``02-bands`` or ``01-scf`` directory holds: the calculation
+    itself, its declared namelists, and the eigenvalues it wrote.
+    """
+    step = make_process(
+        PW_CALC,
+        calcjob=True,
+        computer=computer,
+        process_label="PwCalculation",
+        inputs={"parameters": orm.Dict({"CONTROL": {"calculation": calculation}})},  # type: ignore[no-untyped-call]
+    )
+    attach(step, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0]], cell=CUBIC))
+    return write_run_folder(tmp_path, name, step)
+
+
 class TestProducerOwnership:
     """A step that declares a band structure owns everything below it."""
 
@@ -1628,6 +1647,36 @@ class TestProducerOwnership:
 
         assert [item.label for item in found] == ["Wannier interpolation"]
         assert found[0].energies == [[-5.0]]
+
+    def test_a_dumped_bands_calculation_is_plotted(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A pw.x calculation that sampled a path plots on its own.
+
+        The bands step of a dumped run is a calculation directory, so without
+        this the computed half of a computed-versus-interpolated figure cannot
+        be named at all.
+        """
+        folder = pw_calculation_run(tmp_path, "02-bands", aiida_localhost, "bands")
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT"]
+
+    def test_a_dumped_scf_calculation_has_nothing_to_plot(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The control: an scf calculation publishes the same socket and is not bands.
+
+        ``output_band`` carries the mesh eigenvalues of an scf run, which are
+        not a path; only the declared calculation type tells the two apart, and
+        without the guard every scf step in a dumped tree would claim a band
+        structure.
+        """
+        folder = pw_calculation_run(tmp_path, "01-scf", aiida_localhost, "scf")
+
+        with pytest.raises(PlottingError, match="No band structure to plot"):
+            resolve_band_series([folder])
 
     def test_a_wannierization_yields_one_series_not_two(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
@@ -2156,6 +2205,129 @@ def wannierization_without_bands(tmp_path: Path, name: str, computer: orm.Comput
     )
     attach(calculation, "output_parameters", orm.Dict({"number_wfs": 2}))  # type: ignore[no-untyped-call]
     return write_run_folder(tmp_path, name, calculation)
+
+
+def wannierize_block_tree(tmp_path: Path, name: str, computer: orm.Computer) -> Path:
+    """Write a dumped wannierize block folder, laid out as a real dump is.
+
+    The block folder itself carries no metadata — the dump deletes every
+    workflow node's — and holds the preprocessing run, which interpolates
+    nothing, beside the minimization, which does.
+    """
+    block = tmp_path / name / "01-wannier90"
+    block.mkdir(parents=True)
+    wannierization_without_bands(block, "01-wannier90_pp", computer)
+    calculation = make_process(
+        W90_CALC, calcjob=True, computer=computer, process_label="Wannier90Calculation"
+    )
+    attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]], cell=CUBIC))
+    write_run_folder(block, "03-wannier90", calculation)
+    return tmp_path / name
+
+
+class TestRejectedFolderSuggestions:
+    """A directory holding no run of its own says what under it can be plotted."""
+
+    def test_a_step_folder_names_the_calculation_under_it(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The block folder is refused, and the wannier90 run under it is offered.
+
+        A step folder is the thing a reader is most likely to type, since it
+        is what the block is called; the dump leaves it without metadata, so
+        the message has to bridge the gap rather than just refuse.
+        """
+        folder = wannierize_block_tree(tmp_path, "04-wannierize_occ_1", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([folder])
+
+        message = str(caught.value)
+        assert "is not a koopmans run directory" in message
+        assert "have band structures to plot" in message
+        assert str(folder / "01-wannier90" / "03-wannier90") in message
+
+    def test_the_preprocessing_run_is_not_offered(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Only directories that hold a band structure are named.
+
+        The block folder holds two wannier90 calculations; the -pp run
+        interpolates nothing, and offering it would send the reader to a
+        directory that refuses them in turn.
+        """
+        folder = wannierize_block_tree(tmp_path, "04-wannierize_occ_1", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([folder])
+
+        assert "01-wannier90_pp" not in str(caught.value)
+
+    def test_the_path_it_prints_can_be_plotted(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The suggestion is taken from the message and passed straight back in.
+
+        A path that is merely printed is worth nothing; this is what makes it
+        a suggestion rather than a guess.
+        """
+        folder = wannierize_block_tree(tmp_path, "04-wannierize_occ_1", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([folder])
+        suggested = [
+            line.strip()
+            for line in str(caught.value).splitlines()
+            if line.startswith("  ") and "more." not in line
+        ]
+
+        found, _ = resolve_band_series([Path(path) for path in suggested])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_a_folder_with_nothing_under_it_says_so(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A directory that is simply not a run gets no list of paths.
+
+        The control for the suggestion: an empty offer would read as a bug,
+        and the reader needs to be told what to pass instead.
+        """
+        (tmp_path / "elsewhere").mkdir()
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([tmp_path / "elsewhere"])
+
+        message = str(caught.value)
+        assert "neither does anything beneath it" in message
+        assert "calculation directory inside one" in message
+
+    def test_a_long_list_is_capped_and_counted(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A run of many blocks names the first few and counts the rest.
+
+        Thirty paths are not read; the count is what tells the reader that
+        the list is a sample rather than the whole of it.
+        """
+        root = tmp_path / "si"
+        root.mkdir()
+        for index in range(SUGGESTION_LIMIT + 3):
+            calculation = make_process(
+                W90_CALC,
+                calcjob=True,
+                computer=aiida_localhost,
+                process_label="Wannier90Calculation",
+            )
+            attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+            write_run_folder(root, f"{index:02d}-wannier90", calculation)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([root])
+
+        listed = [line for line in str(caught.value).splitlines() if line.startswith("  ")]
+        assert len(listed) == SUGGESTION_LIMIT + 1
+        assert listed[-1].strip() == "... and 3 more."
 
 
 class TestEveryFolderContributes:
