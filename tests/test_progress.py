@@ -562,7 +562,7 @@ class TestDescribeLabel:
             ("scf_nscf", "Ground state"),
             ("nscf", "NSCF"),
             ("kcw-wann2kc", "Wannier gauge"),
-            ("merge_evc-merge_evc0_empty1", "Supercell wavefunctions (empty, spin 1)"),
+            ("merge_evc-merge_evc0_empty1", "Merged Wannier manifold (empty, spin 1)"),
             ("wann2kcp-fold_occ_1", "Supercell Wannier functions (occupied block 1)"),
             ("wannierize_occ_up_1", "Wannierization (occupied block 1, spin up)"),
             ("wannier90-wannier90_split_block_0", "Minimization (group 1)"),

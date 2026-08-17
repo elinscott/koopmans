@@ -107,8 +107,8 @@ Koopmans ΔSCF
     Supercell folding
       Supercell Wannier functions (occupied block 1)    wann2kcp.x
       Supercell Wannier functions (empty block 1)       wann2kcp.x
-      Supercell wavefunctions (occupied, spin 1)        merge_evc.x
-      Supercell wavefunctions (empty, spin 1)           merge_evc.x
+      Merged Wannier manifold (occupied, spin 1)        merge_evc.x
+      Merged Wannier manifold (empty, spin 1)           merge_evc.x
     DFT staging                                         kcp.x
     DFT initialization                                  kcp.x
   Screening parameters

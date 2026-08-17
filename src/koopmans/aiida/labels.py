@@ -15,7 +15,7 @@ Two conventions the entries follow:
 * a row that is pure mechanism gets a short mechanical name
   (``Preprocessing``, ``Overlaps``, ``Minimization``), and a step whose
   product the next step reads is named after that product (``Wannier
-  gauge``, ``Supercell wavefunctions``).
+  gauge``, ``Merged Wannier manifold``).
 
 Executables are quoted verbatim in a column of their own and never
 inflected, so no display name repeats one.
@@ -224,7 +224,7 @@ _ASSEMBLED_PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str]
     ),
     (
         re.compile(r"merge_evc0?_(occupied|empty)(\d+)"),
-        lambda m: f"Supercell wavefunctions ({m.group(1)}, spin {m.group(2)})",
+        lambda m: f"Merged Wannier manifold ({m.group(1)}, spin {m.group(2)})",
     ),
     (re.compile(r"dscf_snapshot_(\d+)"), lambda m: f"Snapshot {m.group(1)}"),
     (
