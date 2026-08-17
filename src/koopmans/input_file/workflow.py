@@ -82,7 +82,13 @@ class WorkflowConfig(BaseModel):
         description="if True, freeze the variational orbitals for the duration of the calculation once they've been initialized",
     )
     calculate_bands: bool = Field(
-        default=False, description="Calculate the band structure of the system (if relevant)"
+        default=False,
+        description="Calculate the band structure of the system along `kpoints.path`. A "
+        "$\\Delta$SCF singlepoint computes on a supercell, so its band structure is "
+        "recovered by unfolding the Koopmans Hamiltonian in the Wannier basis and "
+        "interpolating it, which this switch asks for; it requires "
+        "`init_orbitals = 'mlwfs'` or `'projwfs'`. The `dft_bands` and `wannierize` "
+        "tasks compute bands whenever the input names a path, and need no switch",
     )
     spin: SpinType = Field(
         default=SpinType.NONE,

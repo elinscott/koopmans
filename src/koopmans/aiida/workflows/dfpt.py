@@ -117,6 +117,12 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
         manifolds = _single_channel_dfpt_manifolds(koopmans_input, structure, nelec, nbnd, spin)
 
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    if koopmans_input.workflow.calculate_bands and bands_kpoints is None:
+        raise ValueError(
+            "`workflow.calculate_bands` needs a band path: kcw.x interpolates the "
+            "Koopmans Hamiltonian along the path in `kpoints: {path: ...}`, and the "
+            "input file names none."
+        )
 
     # load_codes loads every configured member of DfptCodes. ph.x is only
     # actually needed for the `eps_inf: auto` dielectric pre-computation,

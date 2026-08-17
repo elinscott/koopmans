@@ -12,6 +12,7 @@ from koopmans.aiida.conversion import (
     NORM_CONSERVING_DUAL,
     atoms_input_to_structure,
     input_to_pw_parameters,
+    kpoints_input_to_interpolation_path,
 )
 from koopmans.aiida.workflows import (
     load_codes,
@@ -112,6 +113,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     extra_kwargs: dict[str, Any] = {}
     if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
+    extra_kwargs.update(band_interpolation_inputs(koopmans_input, structure, wannier_init))
 
     # load_codes loads every configured member of DscfCodes. Every
     # NotRequired member exists for the Wannier-seeded initialisation;
@@ -317,6 +319,46 @@ def dscf_wannier_init_inputs(
         "wannier_overrides": wannier_overrides,
         "mp_correction": workflow.mp_correction,
         "eps_inf": workflow.eps_inf,
+    }
+
+
+def band_interpolation_inputs(
+    koopmans_input: KoopmansInput,
+    structure: orm.StructureData,
+    wannier_init: bool,
+) -> dict[str, Any]:
+    """Assemble the unfold-and-interpolate inputs, or none when not asked for.
+
+    A ΔSCF run computes on a Γ-point supercell, so its band structure has
+    to be recovered by unfolding the Koopmans Hamiltonian in the Wannier
+    basis and interpolating it. ``workflow.calculate_bands`` asks for that
+    and ``kpoints.path`` says where to interpolate; both are required
+    together.
+    """
+    if not koopmans_input.workflow.calculate_bands:
+        return {}
+    if not wannier_init:
+        raise NotImplementedError(
+            f"`workflow.calculate_bands` is not available with "
+            f"`init_orbitals = {koopmans_input.workflow.init_orbitals.value!r}`: a ΔSCF "
+            "band structure is recovered by unfolding the Koopmans Hamiltonian in the "
+            "Wannier basis, which only a Wannier-initialised run builds. Set "
+            "`workflow.init_orbitals` to 'mlwfs' or 'projwfs'."
+        )
+    kpath = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    if kpath is None:
+        raise ValueError(
+            "`workflow.calculate_bands` needs a band path to interpolate along; add "
+            "`kpoints: {path: ...}` to the input file."
+        )
+    # The DOS keeps the interpolation's own smearing and window: the input
+    # file has no block naming them.
+    return {
+        "calculate_bands": True,
+        "kpath": kpath,
+        "unfold_and_interpolate": (
+            koopmans_input.calculator_parameters.unfold_and_interpolate.model_dump()
+        ),
     }
 
 

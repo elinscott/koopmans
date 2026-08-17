@@ -91,6 +91,7 @@ raw:
       - graph_inputs
       - graph_inputs
       - graph_inputs
+      - graph_inputs
       - resolve_pseudo_family_task
       convert_spin1_to_spin2:
       - dft_init_nspin1
@@ -192,6 +193,7 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
+      - RunFinalKI
       - RunFinalKI
       - RunFinalKI
       - RunFinalKI
@@ -553,6 +555,10 @@ raw:
     from_task: ComputeScreeningParameters
     to_socket: parent_folder
     to_task: RunFinalKI
+  - from_socket: calculate_bands
+    from_task: graph_inputs
+    to_socket: write_hr
+    to_task: RunFinalKI
   - from_socket: parameters
     from_task: RunFinalKI
     to_socket: parameters
@@ -632,6 +638,14 @@ raw:
             required: false
         calculate_alpha:
           default: true
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        calculate_bands:
+          default: false
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -804,6 +818,15 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
+            required: false
+        kpath:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
         kpoints:
           dynamic: false
@@ -1223,6 +1246,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        plotting:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         pseudo_family:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1253,6 +1283,13 @@ raw:
             child_default_link_limit: 1
             required: true
         tot_magnetization:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        unfold_and_interpolate:
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -1325,6 +1362,20 @@ raw:
           meta:
             child_default_link_limit: 1
             required: true
+        band_structure:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.bands.BandsData
+            required: false
+        band_structure_reference:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            required: false
         bare_lambdas:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1411,6 +1462,25 @@ raw:
             meta:
               child_default_link_limit: 1
               required: true
+          meta:
+            child_default_link_limit: 1
+            required: false
+        dos:
+          dynamic: false
+          fields:
+            dos:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+            energies:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+          identifier: <scrubbed:identifier>
           meta:
             child_default_link_limit: 1
             required: false
@@ -1554,6 +1624,7 @@ raw:
       input_socket_meta: {}
       inputs:
         is_first_iteration: false
+        write_hr: false
       log: ''
       metadata:
         pk: <scrubbed:pk>
@@ -1887,6 +1958,7 @@ raw:
       inputs:
         alpha_numsteps: 1
         calculate_alpha: true
+        calculate_bands: false
         codes:
           kcp:
             __aiida_code__: kcp@localhost
@@ -1941,6 +2013,14 @@ raw:
                 required: false
             calculate_alpha:
               default: true
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            calculate_bands:
+              default: false
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2118,6 +2198,15 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                required: false
+            kpath:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             kpoints:
               dynamic: false
@@ -2537,6 +2626,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
+            plotting:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             pseudo_family:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2567,6 +2663,13 @@ raw:
                 child_default_link_limit: 1
                 required: true
             tot_magnetization:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            unfold_and_interpolate:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2670,6 +2773,20 @@ raw:
               meta:
                 child_default_link_limit: 1
                 required: true
+            band_structure:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.bands.BandsData
+                required: false
+            band_structure_reference:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
             bare_lambdas:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2756,6 +2873,25 @@ raw:
                 meta:
                   child_default_link_limit: 1
                   required: true
+              meta:
+                child_default_link_limit: 1
+                required: false
+            dos:
+              dynamic: false
+              fields:
+                dos:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+                energies:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+              identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
                 required: false

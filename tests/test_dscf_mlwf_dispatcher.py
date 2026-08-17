@@ -726,3 +726,86 @@ class TestCutoffLessPseudoFamily:
         assert pw.parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
         expected = fake_sg15_family_without_cutoffs.get_pseudos(structure=structure)
         assert pw.pseudos["Si"].uuid == expected["Si"].uuid
+
+
+class TestCalculateBands:
+    """``workflow.calculate_bands`` gates the unfold-and-interpolate stage.
+
+    Without it the ΔSCF route finishes on a supercell and there is nothing
+    to plot, which is the state these tests discriminate against.
+    """
+
+    @staticmethod
+    def _with_bands(**workflow_updates: Any) -> dict[str, Any]:
+        d = _si_dscf_dict(calculate_bands=True, **workflow_updates)
+        d["kpoints"]["path"] = "GXG"
+        return d
+
+    def test_the_stage_is_absent_by_default(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: a path alone does not build an interpolation."""
+        d = _si_dscf_dict()
+        d["kpoints"]["path"] = "GXG"
+        wg = _build(d)
+        assert "interpolate_band_structure" not in wg.get_task_names()
+        assert wg.tasks["RunFinalKI"].inputs["write_hr"].value == False  # noqa: E712
+
+    def test_asking_for_bands_builds_the_interpolation(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The switch adds the interpolation stage and its one required input."""
+        wg = _build(self._with_bands())
+        names = wg.get_task_names()
+        assert "interpolate_band_structure" in names, names
+        # The Hamiltonians the stage reads only exist because the final KI
+        # is asked to print them.
+        assert wg.tasks["RunFinalKI"].inputs["write_hr"].value == True  # noqa: E712
+
+    def test_the_input_path_reaches_the_interpolation(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Nothing downstream can recover a path the dispatcher does not hand over."""
+        d = self._with_bands()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+        kpath = wg.tasks["interpolate_band_structure"].inputs["kpath"].value
+        assert [label for _, label in kpath.labels] == ["GAMMA", "X"]
+
+    def test_the_knobs_reach_the_interpolation(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The `unfold_and_interpolate` block shapes the stage that runs."""
+        d = self._with_bands()
+        d["calculator_parameters"]["unfold_and_interpolate"] = {
+            "use_ws_distance": False,
+            "do_dos": False,
+        }
+        wg = _build(d)
+        stage = wg.tasks["interpolate_band_structure"]
+        assert stage.inputs["use_ws_distance"].value == False  # noqa: E712
+        assert stage.inputs["do_dos"].value == False  # noqa: E712
+
+    def test_bands_without_a_path_say_what_to_add(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Asking for bands with nowhere to interpolate names what to add."""
+        with pytest.raises(ValueError, match=r"kpoints: \{path"):
+            _build(_si_dscf_dict(calculate_bands=True))
+
+    def test_bands_on_the_molecular_route_name_the_gap(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A route with no Wannier basis to unfold says so."""
+        d = self._with_bands(init_orbitals="kohn-sham")
+        with pytest.raises(NotImplementedError, match="Wannier basis"):
+            _build(d)
+
+    def test_smooth_interpolation_is_refused_by_name(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """An input that cannot take effect raises rather than being dropped."""
+        d = self._with_bands()
+        d["calculator_parameters"]["unfold_and_interpolate"] = {"smooth_int_factor": 2}
+        with pytest.raises(NotImplementedError, match="smooth_int_factor"):
+            _build(d)
