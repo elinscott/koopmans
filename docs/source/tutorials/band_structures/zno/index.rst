@@ -138,22 +138,21 @@ it reads
        SCF Nscf                                                              finished
          Nscf                                                                finished
        Wannierize                                                            finished
-         Wannierize Occ 1                                                    finished
+         Wannierize Emp                                                      finished
            Wannier 90                                                        finished
              Wannier 90 Pp                                                   finished
              Pw 2 Wannier 90                                                 finished
+         Wannierize Occ 1                                                    finished
+           ...
          Wannierize Occ 2                                                    finished
            ...
          Wannierize Occ 3                                                    finished
            ...
          Wannierize Occ 4                                                    finished
            ...
-         Wannierize Emp                                                      finished
-           ...
        Dfpt                                                                  finished
          Wann 2 KC                                                           finished
          Ham                                                                 finished
-
     Workflow completed successfully!
 
 Three stages, in order:
@@ -163,7 +162,8 @@ Three stages, in order:
 ---------------------------------
 
 An LDA calculation, self-consistent on the 4×4×4 mesh and then repeated
-non-self-consistently for the fifty-two bands the Wannierization needs. LDA rather than
+non-self-consistently over the same mesh with symmetry switched off, which is the form
+the Wannierization reads its fifty-two bands from. LDA rather than
 PBE because of the pseudopotential library the input file names: the base functional a
 Koopmans calculation corrects is the one its pseudopotentials were generated with.
 
@@ -173,10 +173,10 @@ Koopmans calculation corrects is the one its pseudopotentials were generated wit
 
 One ``Wannierize`` step per block, five in all, each of which projects onto that block's
 projections and then minimizes the spread. They are independent of one another and run
-concurrently. The four filled blocks take exactly as many bands as they have
-projections, so there is nothing for them to choose; the empty block has two projections
-and twenty-six bands to find them in, and the two energy windows are what tells it where
-to look.
+concurrently, so the order they appear in above is not the order of the projections. The
+four filled blocks take exactly as many bands as they have projections, so there is
+nothing for them to choose; the empty block has two projections and twenty-six bands to
+find them in, and the two energy windows are what tells it where to look.
 
 The five sets of Wannier functions are then stitched into one manifold — a
 block-diagonal unitary matrix and one list of Wannier centres — which is what the next
@@ -206,13 +206,16 @@ mirror the outline above:
     │   ├── 01-scf
     │   └── 02-nscf
     ├── 02-wannierize
-    │   ├── 01-wannierize_occ_1
-    │   │   └── 01-wannier90
-    │   │       ├── 01-wannier90_pp
-    │   │       ├── 02-pw2wannier90
-    │   │       └── 03-wannier90
+    │   ├── 01-wannierize_emp
+    │   │   ├── 01-wannier90
+    │   │   │   ├── 01-wannier90_pp
+    │   │   │   ├── 02-pw2wannier90
+    │   │   │   └── 03-wannier90
+    │   │   └── 02-extract_wannier_output_files
+    │   ├── 02-wannierize_occ_1
+    │   │   └── ...
     │   ├── ...
-    │   └── 05-wannierize_emp
+    │   └── 05-wannierize_occ_4
     │       └── ...
     ├── 03-dfpt
     │   ├── 01-prepare_kcw_wannier_files
@@ -235,7 +238,8 @@ Two files are worth opening straight away. ``zno/03-dfpt/03-ham/inputs/file_alph
 lists the screening parameters the final Hamiltonian was built with, one per Wannier
 function, in the order the projections define them — the twenty-eight numbers from the
 input file, in this run. And ``zno/03-dfpt/03-ham/outputs/aiida.kho`` is the ``kcw.x``
-output, which ends with the interpolated eigenvalues at each point of the band path.
+output, which carries the interpolated eigenvalues at each of the twenty-five points of
+the band path.
 
 **************************
  Interpreting the results
@@ -243,32 +247,62 @@ output, which ends with the interpolated eigenvalues at each point of the band p
 
 .. question:: What is the KI band gap, and what does LDA make of it?
 
-    ZnO's gap is direct, at :math:`\Gamma`. Find the last block of interpolated
-    eigenvalues in ``zno/03-dfpt/03-ham/outputs/aiida.kho``:
+    ZnO's gap is direct, at :math:`\Gamma`. Find the block of interpolated eigenvalues
+    at ``k= 0 0 0`` in ``zno/03-dfpt/03-ham/outputs/aiida.kho``:
 
     .. code-block:: text
 
         KC interpolated eigenvalues at k=      0.0000      0.0000      0.0000
 
-        -122.5630  -122.4517   -75.4592   -75.4487   -75.3613   -75.3510   -75.3339   -75.3293
-         -11.8377   -11.0733    -0.4195    -0.4113    -0.3590     0.0329     0.0525     0.2164
-           0.2214     0.4945     1.0262     1.1818     2.1655     6.3615     6.4113     7.0942
-           7.1300     7.2304    10.7486    14.9226
+        -122.5628  -122.4515   -75.4591   -75.4485   -75.3611   -75.3509   -75.3337   -75.3291
+         -11.8377   -11.0732    -0.4194    -0.4115    -0.3589     0.0332     0.0518     0.2166
+           0.2211     0.4949     1.0259     1.1838     2.1654     6.3616     6.4114     7.0942
+           7.1302     7.2299    10.7444    14.8412
 
     The twenty-sixth of these is the valence band edge and the twenty-seventh the
-    conduction band edge, so the KI gap is 10.75 − 7.23 = 3.5 eV. For the LDA gap, look
+    conduction band edge, so the KI gap is 10.7444 − 7.2299 = 3.51 eV. Neither edge is
+    higher anywhere else on the path, so the gap really is direct. For the LDA gap, look
     in the ground-state output ``zno/01-scf_nscf/01-scf/outputs/aiida.out``:
 
     .. code-block:: text
 
          highest occupied, lowest unoccupied level (ev):     9.2875    9.9769
 
-    which is 0.7 eV.
+    which is 0.69 eV.
 
 LDA understates ZnO's gap by a factor of five; KI puts it within a few tenths of an
 electronvolt of the measured 3.4 eV. A converged calculation gives 3.6 eV
 :cite:`Colonna2022`; the difference is the coarse cutoff and mesh this tutorial uses to
 stay quick.
+
+Nothing so far has drawn a picture. ``koopmans plot`` does, given the directory the run
+wrote:
+
+.. code-block:: console
+
+    $ koopmans plot bandstructure zno/ -o zno_bandstructure.svg
+
+.. figure:: zno_bandstructure.svg
+    :width: 600
+    :align: center
+
+    The KI band structure of ZnO along the ``ALMGAHK`` path, with the valence band edge
+    at zero.
+
+The five blocks of projections are visible in it. Reading the figure from the bottom:
+two bands at −130 eV, six at −83 eV, two around −19 eV, then the sixteen filling the
+range from −8 eV up to zero — and above the gap, the two the empty block supplies. Those
+separations are the whole reason the manifold was split, and the :ref:`last section
+<zno-projections>` works back from them to the projections themselves.
+
+.. note::
+
+    Two things this figure is not. It is not a comparison against LDA: for that, pass
+    ``koopmans plot bandstructure`` both run directories at once and it puts them on one
+    set of axes with a shared energy zero — but the LDA bands along this path need a
+    ``dft_bands`` run, which the next section sets up anyway. And it is not zoomed: the
+    semicore bands set the vertical scale and the command has no y-range option, which
+    is why the gap above is read off the eigenvalues rather than off the picture.
 
 .. warning::
 
@@ -281,14 +315,6 @@ stay quick.
     and the gap that depends on them — as the quantity to check convergence of most
     carefully.
 
-.. note::
-
-    The natural thing to do with the interpolated eigenvalues is to plot them against
-    the LDA bands along the same path. ``koopmans`` does not draw band structures for
-    you yet — neither this comparison nor the plain LDA one — so for now the eigenvalues
-    have to be taken from the outputs and plotted by hand. The LDA bands along the path
-    need a ``dft_bands`` run, which the next section uses anyway.
-
 .. _zno-projections:
 
 **********************************
@@ -297,13 +323,23 @@ stay quick.
 
 The projections above were handed to you. Here is how to arrive at them.
 
-Start from the band structure of the underlying LDA calculation. Take the input file,
-change ``task: singlepoint`` to ``task: dft_bands``, and run it again: that runs the
-ground state and then the bands along the path, and nothing else. What it shows is that
-the filled bands of ZnO come in four groups, each separated from the next by a wide gap.
-That is where four of the five blocks come from — one per group of bands. The fifth is
-the pair of bands immediately above the gap, which are not separated from the empty
-bands above them in the same clean way — which is what the energy windows below are for.
+Start from the band structure of the underlying LDA calculation. Copy the input file to
+``zno_dft.yaml`` — a run writes to a directory named after its input file and overwrites
+what is there, so reusing ``zno.yaml`` would take the KI results with it — change
+``task: singlepoint`` to ``task: dft_bands``, and run that: it does the ground state and
+then the bands along the path, and nothing else. Draw the result the same way as before,
+and hand it the KI run too to get both on one set of axes:
+
+.. code-block:: console
+
+    $ koopmans run zno_dft.yaml
+    $ koopmans plot bandstructure zno_dft/ zno/
+
+What it shows is that the filled bands of ZnO come in four groups, each separated from
+the next by a wide gap. That is where four of the five blocks come from — one per group
+of bands. The fifth is the pair of bands immediately above the gap, which are not
+separated from the empty bands above them in the same clean way — which is what the
+energy windows below are for.
 
 Which atomic orbitals each group is made of is the other half of the answer, and here it
 is chemistry: two Zn 3s and six Zn 3p semicore bands, two O 2s, then sixteen bands of Zn
@@ -368,15 +404,30 @@ more bands than the block has Wannier functions is rejected outright, naming the
 and the energy to go below, and a block with more bands than Wannier functions and no
 window at all draws a warning that its Wannierization is unconstrained. What is left to
 your judgement is how localized the result is, which each block's ``.wout`` file reports
-as the final spread of every Wannier function.
+as the final spread of every Wannier function, in Å², under ``Final State``:
 
-.. question:: The two empty Wannier functions come out with large spreads. What went wrong?
+.. code-block:: console
 
-    Most likely the frozen window. If ``dis_froz_max`` is too low the two Wannier
-    functions are not required to reproduce the Zn 4s bands anywhere, and the
-    disentanglement is free to trade their accuracy for localization; if it is too high
-    it requires them to reproduce bands that are not Zn 4s at all, which two functions
-    cannot do. Move it, rerun, and watch the spreads.
+    $ grep -A3 'Final State' zno/02-wannierize/01-wannierize_emp/01-wannier90/03-wannier90/outputs/aiida.wout
+     Final State
+      WF centre and spread    1  (  0.017493,  1.883405,  2.792129 )     8.61129959
+      WF centre and spread    2  (  1.669861,  0.967310, -0.056234 )     7.65083379
+      Sum of centres and spreads (  1.687355,  2.850714,  2.735896 )    16.26213337
+
+.. question:: Why are the two empty Wannier functions so much less localized than the filled ones?
+
+    Partly the orbitals themselves: Zn 4s conduction states are diffuse where semicore
+    states are not. Partly the disentanglement, which has twenty-six bands to choose
+    from and only the two windows constraining the choice. In this run the four filled
+    blocks come out at 0.14, 0.19, 0.58, and between 0.39 and 1.06 Å² per function,
+    against 8.61 and 7.65 Å² for the two empty ones.
+
+    Those two numbers are the ones to watch. If they come out much worse, suspect the
+    windows: if ``dis_froz_max`` is too low the two Wannier functions are not required to
+    reproduce the Zn 4s bands anywhere, and the disentanglement is free to trade their
+    accuracy for localization; if it is too high it requires them to reproduce bands
+    that are not Zn 4s at all, which two functions cannot do. Move it, rerun, and watch
+    the spreads.
 
 Finally, the code can find the blocks itself. Setting
 ``block_wannierization_threshold`` to an energy in electronvolts — available on the
