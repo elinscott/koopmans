@@ -1497,9 +1497,9 @@ class TestCommand:
                 "plot",
                 "bandstructure",
                 str(pw),
+                str(wannier),
                 "--style",
                 "x",
-                str(wannier),
                 "--style",
                 "-",
                 "-o",
@@ -1520,12 +1520,13 @@ class TestCommand:
     def test_a_style_written_beside_its_folder_pairs_with_it(
         self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
     ) -> None:
-        """Interleaving folders and styles pairs them as written.
+        """The recommended interleaved form pairs a style and a label with its folder.
 
-        The help tells the reader to write each style beside its own folder;
-        this is what makes that literally true, rather than true only when
-        every folder happens to get one. The styles are different so that the
-        wrong pairing draws a different figure rather than the same one.
+        One --style and one --label per folder pairs them by listing order
+        regardless of where each was written, so this only pins that the
+        recommended interleaved spelling gives the pairing the help text
+        promises. The styles are different so that the wrong pairing draws a
+        different figure rather than the same one.
         """
         from koopmans.cli import cli
 
@@ -1639,12 +1640,20 @@ class TestCommand:
     def test_style_before_any_folder_is_refused(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:
-        """--style up front is refused by name, rather than becoming a global default."""
+        """With fewer styles than folders, one up front is refused by name.
+
+        One --style for two folders only pairs by position when the counts
+        match; short of that, a style before any folder has no folder to
+        bind to rather than becoming a global default.
+        """
         from koopmans.cli import cli
 
-        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
 
-        result = runner.invoke(cli, ["plot", "bandstructure", "--style", "rx", str(folder)])
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", "--style", "rx", str(first), str(second)]
+        )
 
         assert result.exit_code == 2
         assert "--style must follow the folder it applies to" in result.output
@@ -1655,9 +1664,12 @@ class TestCommand:
         """--label is refused the same way --style is, symmetrically."""
         from koopmans.cli import cli
 
-        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
 
-        result = runner.invoke(cli, ["plot", "bandstructure", "--label", "DFT", str(folder)])
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", "--label", "DFT", str(first), str(second)]
+        )
 
         assert result.exit_code == 2
         assert "--label must follow the folder it applies to" in result.output
@@ -1665,17 +1677,33 @@ class TestCommand:
     def test_a_second_style_for_the_same_folder_is_refused(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:
-        """A second --style for one folder is refused, not silently overwritten.
+        """Two styles for one folder, short of one per folder, is refused.
 
-        Silently keeping the last one would discard the first with no error —
-        the kind of silent drop this codebase refuses everywhere else.
+        Two --style values against three folders still pairs by adjacency,
+        not by position, so both landing on the same folder is not silently
+        resolved by keeping the last one — the kind of silent drop this
+        codebase refuses everywhere else — nor read as one style each for
+        two of the three folders.
         """
         from koopmans.cli import cli
 
-        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+        third = dft_run(tmp_path, "si_pz", 5.0, [[-6.5, 5.0], [-6.0, 7.5], [-5.5, 8.0]])
 
         result = runner.invoke(
-            cli, ["plot", "bandstructure", str(folder), "--style", "x", "--style", "rx"]
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "x",
+                "--style",
+                "rx",
+                str(second),
+                str(third),
+            ],
         )
 
         assert result.exit_code == 2
@@ -1688,15 +1716,151 @@ class TestCommand:
         """--label is refused a second time for one folder, symmetrically with --style."""
         from koopmans.cli import cli
 
-        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+        third = dft_run(tmp_path, "si_pz", 5.0, [[-6.5, 5.0], [-6.0, 7.5], [-5.5, 8.0]])
 
         result = runner.invoke(
-            cli, ["plot", "bandstructure", str(folder), "--label", "DFT", "--label", "KI"]
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--label",
+                "DFT",
+                "--label",
+                "KI",
+                str(second),
+                str(third),
+            ],
         )
 
         assert result.exit_code == 2
         assert "--label was already given for" in result.output
         assert "'DFT'" in result.output
+
+    def test_more_styles_than_folders_is_refused_by_the_command(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """More --style values than folders is refused outright, adjacency or not.
+
+        With three styles and two folders no pairing rule applies: it is not
+        one-per-folder, and short of that every value would still need a
+        folder of its own to bind to.
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "x",
+                str(second),
+                "--style",
+                "rx",
+                "--style",
+                "k--",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "3 --style values were given for 2 folder(s)" in result.output
+
+    def test_equal_counts_pair_by_position_whichever_form_is_written(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """One style per folder pairs positionally, agreeing with adjacency too.
+
+        Every style here is also written right after the folder it names, so
+        listing-order pairing (the rule that applies with one value per
+        folder) and adjacency pairing (the rule that applies with fewer)
+        agree on the outcome — this only pins that agreement, not which rule
+        actually decided it; ``test_a_second_style_for_the_same_folder_is_refused``
+        above is what shows adjacency, not position, governs a short count.
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+        third = dft_run(tmp_path, "si_pz", 5.0, [[-6.5, 5.0], [-6.0, 7.5], [-5.5, 8.0]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "x",
+                str(second),
+                "--style",
+                "rx",
+                str(third),
+                "--style",
+                "k--",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["x", "rx", "k--"]
+
+    def test_labels_pair_by_position_while_styles_pair_by_adjacency(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--style and --label can be in different pairing modes in one command.
+
+        Three --label values for three folders pair by listing order,
+        trailing after all of them; two --style values for the same three
+        folders are short of one each and bind to the folder each
+        immediately followed instead. The two options choose their mode
+        independently of one another.
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+        third = dft_run(tmp_path, "si_pz", 5.0, [[-6.5, 5.0], [-6.0, 7.5], [-5.5, 8.0]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "rx",
+                str(second),
+                str(third),
+                "--style",
+                "b-",
+                "--label",
+                "A",
+                "--label",
+                "B",
+                "--label",
+                "C",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["rx", None, "b-"]
+        assert [record["label"] for record in payload["series"]] == ["A", "B", "C"]
 
     def test_a_double_dash_escapes_a_dash_prefixed_folder(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
