@@ -232,13 +232,8 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
 
     cell = cell_in_angstrom(cell_params)
 
-    # Determine periodicity
-    pbc = cell_params.periodic
-    if isinstance(pbc, bool):
-        pbc = (pbc, pbc, pbc)
-
     # Create structure
-    structure = orm.StructureData(cell=cell, pbc=pbc)
+    structure = orm.StructureData(cell=cell, pbc=cell_params.periodic)
 
     # Add atoms
     units = positions.units
@@ -295,8 +290,6 @@ def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]
 
     cell = cell_in_angstrom(atoms.cell_parameters)
     pbc = atoms.cell_parameters.periodic
-    if isinstance(pbc, bool):
-        pbc = (pbc, pbc, pbc)
 
     structures: dict[str, orm.StructureData] = {}
     for index, frame in enumerate(frames, start=1):
@@ -617,9 +610,9 @@ def kpoints_input_to_interpolation_path(
 ) -> orm.KpointsData | None:
     """Return the input's k-path as a labelled explicit k-list, or ``None``.
 
-    ``None`` when the input states no ``kpoints.path``, and for a gamma-only
-    input, whose fixed ``path`` names the zone centre alone and so defines no
-    segment to interpolate along. Otherwise defers to
+    ``None`` unless the input names a path with a segment to interpolate
+    along (:func:`koopmans.input_file.names_band_path`, the same predicate
+    the input file's own band-path refusals read). Otherwise defers to
     :func:`kpoints_input_to_kpoints_path`. Callers use this to decide whether
     a step gets an explicit bands path or is left on its protocol default.
 
@@ -632,7 +625,9 @@ def kpoints_input_to_interpolation_path(
     Returns:
         AiiDA KpointsData node with the k-point path, or ``None``.
     """
-    if kpoints.gamma_only or kpoints.path is None:
+    from koopmans.input_file import names_band_path
+
+    if not names_band_path(kpoints):
         return None
     return kpoints_input_to_kpoints_path(kpoints, structure, density)
 

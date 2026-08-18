@@ -189,6 +189,23 @@ class TestDftEps:
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_eps"):
             build_workgraph(KoopmansInput.model_validate(d))
 
+    def test_a_band_path_is_rejected(self, read_input_dict: Any) -> None:
+        """ph.x computes a dielectric constant, so a path here would never be sampled.
+
+        Refused while the input file is read, so the reader gets the error
+        report rather than a traceback out of the graph build.
+        """
+        d = _si_eps_dict()
+        d["kpoints"]["path"] = "GX"
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_dict(d)
+
+        message = str(excinfo.value)
+        assert "Errors found in the input file" in message
+        assert "`kpoints.path`" in message
+        assert "dft_bands" in message
+
     def test_missing_ph_code_earns_preflight_advice(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
@@ -213,6 +230,52 @@ class TestDftEps:
         with pytest.raises(ValueError, match="`ph@localhost`") as excinfo:
             build_workgraph(inp)
         assert "koopmans install" in str(excinfo.value)
+
+
+class TestDftEpsSpin:
+    """``workflow.spin`` reaches the ground state, or is refused with the reason."""
+
+    def test_collinear_polarizes_the_scf(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """ph.x computes the LSDA dielectric response, so collinear is honored here.
+
+        The unpolarized build below is the control: before this wiring both
+        produced the same namelist.
+        """
+        d = _si_eps_dict(spin="collinear")
+        d["calculator_parameters"]["tot_magnetization"] = 0
+        wg = build_workgraph(KoopmansInput.model_validate(d))
+        system = wg.tasks["scf"].inputs["pw"]["parameters"].value.get_dict()["SYSTEM"]
+        assert system["nspin"] == 2
+        assert system["tot_magnetization"] == 0
+
+        unpolarized = build_workgraph(KoopmansInput.model_validate(_si_eps_dict()))
+        control = unpolarized.tasks["scf"].inputs["pw"]["parameters"].value.get_dict()["SYSTEM"]
+        assert "nspin" not in control
+
+    @pytest.mark.parametrize("spin", ["non_collinear", "spin_orbit"])
+    def test_spinor_regimes_are_refused(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+        spin: str,
+    ) -> None:
+        """ph.x has no electric-field perturbation for noncollinear magnetism.
+
+        The refusal is ``DielectricTask``'s, reached at build because this
+        route calls it as the entry graph: the user reads it before anything
+        is submitted, rather than a ph.x abort hours into the run.
+        """
+        inp = KoopmansInput.model_validate(_si_eps_dict(spin=spin))
+        with pytest.raises(NotImplementedError, match="not implemented for noncollinear"):
+            build_workgraph(inp)
 
 
 class TestDfptAutoEps:

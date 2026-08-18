@@ -39,6 +39,7 @@ from tests.fixtures import (  # noqa: F401
     localhost_code,
     localhost_computer,
     offline_sg15_archive,
+    read_input_dict,
     replay_probes,
     serialize_workgraph,
     si_external_projector_dir,
