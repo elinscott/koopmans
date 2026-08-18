@@ -73,7 +73,10 @@ dependencies = [
     "aiida-quantumespresso",
     "qe-tools", # QE's own unit-conversion constants
     "upf-tools", # reads a pseudopotential's UPF header
-    "matplotlib", # `koopmans plot`
+    # `koopmans plot`. Floored at the version whose private format-string
+    # parser `--style` reads (matplotlib publishes no public one); deliberately
+    # not capped, since a later rename fails loudly and only inside `--style`.
+    "matplotlib>=3.10",
     # Constraint only (not imported directly, but aiida-workgraph imports it):
     # every *released* aiida-shell subclasses the Code.Model API that
     # aiida-core removed after v2.8.0 (#6990), so this rides git master (see

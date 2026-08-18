@@ -8,12 +8,20 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from aiida_quantumespresso.common.types import SpinType
-from pydantic import AfterValidator, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import ErrorDetails
 from wannier90_input.models.parameters import Projection
 from yaml import safe_load
 
 from koopmans.base import BaseModel
+from koopmans.input_file._band_path import band_path_refusal
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
 from koopmans.input_file.cell_parameters import (
     CellParametersViaAlat,
@@ -355,6 +363,15 @@ class GridKpointsInput(BaseModel):
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput
 
 
+def names_band_path(kpoints: KpointsInput) -> bool:
+    """Report whether ``kpoints`` names a path with a segment to interpolate along.
+
+    A gamma-only input's ``path`` is fixed to the zone centre, which is a
+    point rather than a segment.
+    """
+    return not kpoints.gamma_only and kpoints.path is not None
+
+
 class SpinSpecificWannierInput(BaseModel):
     """Spin-specific Wannier90 input parameters."""
 
@@ -472,6 +489,27 @@ class KoopmansInput(BaseModel):
                 "unit length along `path`, and sitting beside `grid` it reads like "
                 "the density of a mesh. Rename it."
             )
+        return kpoints
+
+    @field_validator("kpoints", mode="after")
+    @classmethod
+    def check_the_task_can_interpolate_along_the_path(
+        cls, kpoints: KpointsInput, info: ValidationInfo
+    ) -> KpointsInput:
+        """Reject a ``kpoints.path`` the task about to run cannot interpolate along.
+
+        Every task that can produce a band structure does so whenever the
+        input names a path, so a task that cannot must say so rather than
+        drop it. Reads ``workflow`` and ``atoms``, both declared ahead of
+        ``kpoints`` and so already validated.
+        """
+        workflow = info.data.get("workflow")
+        atoms = info.data.get("atoms")
+        if workflow is None or atoms is None or not names_band_path(kpoints):
+            return kpoints
+        message = band_path_refusal(workflow, any(atoms.cell_parameters.periodic))
+        if message is not None:
+            raise ValueError(message)
         return kpoints
 
     @field_validator("version")

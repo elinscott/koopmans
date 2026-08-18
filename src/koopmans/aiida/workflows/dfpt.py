@@ -37,6 +37,10 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     and a ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the
     spinor variant (all bands singly occupied, ``num_wann`` doubled).
 
+    A ``kpoints.path`` in the input reaches the kcw.x ham step as its bands
+    path, so the run also emits the Koopmans band structure interpolated
+    along it.
+
     Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
     periodic, MLWF/projwf variational orbitals, and explicit projections.
     A manifold may span several projection blocks; their Wannier products
