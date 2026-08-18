@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DIVIDER_LABEL",
+    "StyleError",
+    "check_style",
     "draw_band_structures",
     "path_distances",
     "render_band_structures",
@@ -157,6 +159,54 @@ def _path_extent(distances: Sequence[np.ndarray]) -> tuple[float, float] | None:
     return None if last <= first else (first, last)
 
 
+class StyleError(ValueError):
+    """A style is not one of matplotlib's format strings."""
+
+
+def _format_parser() -> Any:
+    """Return matplotlib's own parser for format strings.
+
+    matplotlib publishes none, so this reads the private one rather than
+    keeping a second copy of the grammar beside it. A release that renames it
+    turns every ``--style`` into this message instead of a traceback.
+
+    :raises StyleError: if this matplotlib no longer carries it.
+    """
+    try:
+        from matplotlib.axes._base import (  # type: ignore[attr-defined]
+            _process_plot_format,
+        )
+    except ImportError as exc:
+        raise StyleError(
+            "this version of matplotlib cannot say whether a format string is "
+            "valid, so --style cannot be checked. Leave --style out, or install "
+            "matplotlib 3.10 or similar."
+        ) from exc
+    return _process_plot_format
+
+
+def _style_color(style: str) -> object | None:
+    """Return the color a matplotlib format string names, or ``None`` for none.
+
+    :raises StyleError: if matplotlib cannot read ``style`` as a format string.
+    """
+    parser = _format_parser()
+    try:
+        parsed = parser(style)
+    except ValueError as exc:
+        raise StyleError(str(exc)) from exc
+    color: object | None = parsed[2]
+    return color
+
+
+def check_style(style: str) -> None:
+    """Reject a string matplotlib cannot read as a format string.
+
+    :raises StyleError: if matplotlib cannot read it.
+    """
+    _style_color(style)
+
+
 def draw_band_structures(
     axes: Axes,
     series: Sequence[BandSeries],
@@ -172,6 +222,11 @@ def draw_band_structures(
     special point, and the x limits are the ends of the path itself. Only an
     overlay carries a legend.
 
+    A series carrying a ``style`` is drawn in that format string, color
+    included; where the string names no color the series keeps the one these
+    axes give it, so its bands are drawn in one color rather than in as many
+    as it has bands.
+
     :param axes: where to draw.
     :param series: the curves, each already carrying the figure's ``zero``.
     :param zero: which energy was subtracted, which the y axis names.
@@ -186,17 +241,24 @@ def draw_band_structures(
         distances = path_distances(item, cell)
         drawn_distances.append(distances)
         energies = np.asarray(item.energies, dtype=np.float64) - item.zero
-        color = f"C{index % 10}"
+        style = [item.style] if item.style else []
+        # One band is one plot call, and matplotlib advances its color cycle
+        # once per call, so a series whose style names no color still has to be
+        # given one — otherwise its bands come out in as many colors.
+        names_color = bool(style) and _style_color(style[0]) is not None
+        color = None if names_color else f"C{index % 10}"
         drawn = False
         for span in _segments(item):
             for band in range(energies.shape[1]):
-                axes.plot(
+                (line,) = axes.plot(
                     distances[span],
                     energies[span, band],
-                    color=color,
+                    *style,
                     linewidth=1.2,
                     label=None if drawn else item.label,
                 )
+                if color is not None:
+                    line.set_color(color)
                 drawn = True
 
     positions, names = _ticks(_tick_source(series), cell)

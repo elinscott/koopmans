@@ -1,8 +1,8 @@
 """Input schema for cell parameters."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BeforeValidator
+from pydantic import AfterValidator, BeforeValidator, Field
 
 from koopmans.base import BaseModel
 from koopmans.input_file._utils import tidy_units
@@ -13,6 +13,7 @@ __all__ = [
     "CellParametersViaIbrav",
     "CellParametersViaVectors",
     "Celldms",
+    "Periodic",
 ]
 
 
@@ -26,10 +27,28 @@ def _require_celldm1(celldms: dict[int, float]) -> dict[int, float]:
 Celldms = Annotated[dict[int, float], AfterValidator(_require_celldm1)]
 
 
+def _one_per_cell_vector(periodic: Any) -> Any:
+    """Expand a single ``periodic`` bool to one entry per cell vector."""
+    if isinstance(periodic, bool):
+        return (periodic, periodic, periodic)
+    return periodic
+
+
+Periodic = Annotated[
+    tuple[bool, bool, bool],
+    BeforeValidator(_one_per_cell_vector, json_schema_input_type=bool | tuple[bool, bool, bool]),
+]
+"""Periodicity per cell vector, which a single bool may state for all three."""
+
+
 class CellParametersBase(BaseModel):
     """Shared base for the cell parameter specification variants."""
 
-    periodic: bool | tuple[bool, bool, bool] = True
+    periodic: Periodic = Field(
+        default=(True, True, True),
+        description="whether the cell repeats along each of its three vectors; write a "
+        "single `true` or `false` to say the same of all three",
+    )
 
 
 class CellParametersViaIbrav(CellParametersBase):
