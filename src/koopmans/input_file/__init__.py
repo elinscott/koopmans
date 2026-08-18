@@ -7,6 +7,7 @@ from json import load
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from aiida_quantumespresso.common.types import SpinType
 from pydantic import AfterValidator, Field, ValidationError, field_validator, model_validator
 from pydantic_core import ErrorDetails
 from wannier90_input.models.parameters import Projection
@@ -42,6 +43,7 @@ __all__ = [
     "CellParametersViaVectors",
     "GammaOnlyKpointsInput",
     "GridKpointsInput",
+    "IntegerMagnetization",
     "KCPInputParameters",
     "KoopmansInput",
     "KpointOffset",
@@ -157,6 +159,22 @@ def _expressible_shift(value: float) -> float:
 #: One axis of a k-point mesh offset: 0 leaves it Gamma-centred, 0.5
 #: half-shifts it, and nothing else is expressible.
 KpointOffset = Annotated[float, AfterValidator(_expressible_shift)]
+
+
+def _whole_electrons(value: float) -> float:
+    """Reject a moment that splits an electron between the two channels."""
+    if not float(value).is_integer():
+        raise ValueError(
+            "the magnetization is a number of unpaired electrons, so it must be whole. "
+            "Every calculation koopmans runs fixes the occupations, which leaves no "
+            "fraction of an electron to place"
+        )
+    return value
+
+
+#: A magnetization, in unpaired electrons: the difference between the two
+#: channels' occupations, which are whole numbers of states.
+IntegerMagnetization = Annotated[float, AfterValidator(_whole_electrons)]
 
 
 def _no_shift(value: float) -> float:
@@ -364,7 +382,7 @@ class CalculatorParametersInput(BaseModel):
 
     ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
-    tot_magnetization: float | None = None
+    tot_magnetization: IntegerMagnetization | None = None
     ph: PHInputParameters = Field(default_factory=lambda: PHInputParameters())
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(
@@ -469,6 +487,30 @@ class KoopmansInput(BaseModel):
             )
         return version
 
+    @model_validator(mode="after")
+    def check_collinear_states_a_magnetization(self) -> KoopmansInput:
+        """Require a magnetization wherever the two spin channels may differ.
+
+        ``spin = 'collinear'`` alone leaves the moment unstated, and every
+        route needs one: the pw.x steps run at fixed occupations, and the
+        kcp.x and kcw.x steps split the electrons between the channels.
+
+        Raises:
+            ValueError: If ``workflow.spin = 'collinear'`` and
+                ``calculator_parameters.tot_magnetization`` is absent.
+        """
+        if self.workflow.spin != SpinType.COLLINEAR:
+            return self
+        if self.calculator_parameters.tot_magnetization is None:
+            raise ValueError(
+                "`workflow.spin = 'collinear'` needs "
+                "`calculator_parameters.tot_magnetization`, the number of unpaired "
+                "electrons. koopmans does not guess it for you: a spin-polarized run "
+                "at the wrong moment is a different calculation from the one you "
+                "asked for. Write 0 if the system is closed-shell."
+            )
+        return self
+
     @classmethod
     def from_file(cls, filename: str | Path) -> KoopmansInput:
         """Load an input file and return a KoopmansInput object."""
@@ -528,13 +570,17 @@ def convert_errors(e: ValidationError) -> list[ErrorDetails]:
 
 
 def prettify_errors(e: ValidationError) -> str:
-    """Return a prettified string of validation errors."""
+    """Return a prettified string of validation errors.
+
+    An error raised over the whole input file has no location of its own,
+    and an empty pair of backticks in front of it names nothing.
+    """
     errors = convert_errors(e)
     error_lines = []
     for error in errors:
         loc = ".".join(str(part) for part in error["loc"])
         msg = error["msg"]
-        error_lines.append(f" `{loc}` {msg}")
+        error_lines.append(f" `{loc}` {msg}" if loc else f" {msg}")
     return "\n".join(error_lines)
 
 

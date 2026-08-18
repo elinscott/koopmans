@@ -210,8 +210,10 @@ class TestGuards:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """Collinear spin is not wired into any Wannierization route yet."""
+        d = _si_split_dict(spin="collinear")
+        d["calculator_parameters"]["tot_magnetization"] = 0
         with pytest.raises(NotImplementedError, match="spin='none'"):
-            _build_via_route(_si_split_dict(spin="collinear"))
+            _build_via_route(d)
 
     def test_collinear_not_implemented_without_the_threshold(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -222,6 +224,7 @@ class TestGuards:
         be Wannierized as if it were unpolarized.
         """
         d = _si_split_dict(spin="collinear")
+        d["calculator_parameters"]["tot_magnetization"] = 0
         del d["workflow"]["block_wannierization_threshold"]
         with pytest.raises(NotImplementedError, match="spin='none'"):
             _build_via_route(d)
