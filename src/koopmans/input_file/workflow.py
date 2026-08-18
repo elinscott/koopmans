@@ -92,7 +92,8 @@ class WorkflowConfig(BaseModel):
     spin: SpinType = Field(
         default=SpinType.NONE,
         description="how to treat the spin degrees of freedom: 'none' (spin-unpolarized), "
-        "'collinear' (the system may break spin symmetry i.e. $n^{up}(r) != n^{down}(r)$), "
+        "'collinear' (the system may break spin symmetry i.e. $n^{up}(r) != n^{down}(r)$, and "
+        "``calculator_parameters.tot_magnetization`` states by how much), "
         "'non_collinear' (spinor wavefunctions), or 'spin_orbit' (spinor wavefunctions with "
         "spin-orbit coupling)",
     )
