@@ -683,6 +683,17 @@ class TestPerStepKpointMeshRejected:
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             _build(d)
 
+    def test_wannier90_density_raises(self) -> None:
+        """No interpolated band structure exists here for a density to describe.
+
+        The Wannier initialisation folds Wannier functions to a supercell,
+        not an interpolated band structure along a path.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
+            _build(d)
+
 
 class TestBandPathRejected:
     """The kcp.x route cannot yet unfold its supercell Hamiltonian onto a path."""

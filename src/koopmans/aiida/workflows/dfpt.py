@@ -10,6 +10,7 @@ from koopmans.aiida.workflows import (
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
+    reject_kpoint_overrides,
     require_configured_codes,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
@@ -92,6 +93,21 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
                 "``calculator_parameters.tot_magnetization`` to fix the per-channel "
                 "occupations."
             )
+
+    # Checked last among the pure-Python guards, after every workflow-scope
+    # rejection above (correction, init_orbitals, gamma_only, spin): an
+    # explicit override paired with one of those should surface the scope
+    # blocker first, not send the reader to fix the override and only then
+    # learn the run is unsupported regardless.
+    reject_kpoint_overrides(
+        koopmans_input,
+        {
+            "wannier90": "`kpoints.overrides.wannier90.path_density` is not yet wired "
+            "into the DFPT route: its own wannierization step interpolates along "
+            "`kpoints.path` at the top-level `kpoints.path_density`, with no socket "
+            "of its own yet for a denser interpolation."
+        },
+    )
 
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 

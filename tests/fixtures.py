@@ -975,6 +975,27 @@ def silicon_pw_input(
     return d
 
 
+def write_koopmans_input(directory: Path, name: str = "si.yaml") -> Path:
+    """Write :func:`silicon_pw_input` into ``directory`` and return its path."""
+    import yaml
+
+    path = directory / name
+    path.write_text(yaml.safe_dump(silicon_pw_input()))
+    return path
+
+
+def skip_profile_loading(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand in for ``load_koopmans_profile``: the test profile is already loaded.
+
+    ``koopmans.cli`` always loads the profile named "koopmans" by name,
+    which does not exist under the throwaway test profile the AiiDA
+    pytest fixtures set up.
+    """
+    import koopmans.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "load_koopmans_profile", lambda: None)
+
+
 def pw_step_from_overrides(code: Any, structure: Any, overrides: dict[str, Any]) -> Any:
     """Return the ``pw`` sub-builder one scf or nscf step assembles from ``overrides``.
 

@@ -151,6 +151,50 @@ class TestPerStepKpointMesh:
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 27
         assert wg.tasks["dfpt"].inputs["kgrid"].value == [3, 3, 3]
 
+    def test_wannier90_density_raises(self) -> None:
+        """Not yet wired into this route's own wannierization step.
+
+        The guard runs before any code or pseudopotential is loaded, so it
+        needs no profile.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*DFPT"):
+            _build(d)
+
+
+class TestScopeGuardOrdering:
+    """A scope blocker (correction, init_orbitals, ...) is reported before the override.
+
+    Both guards are pure Python and need no profile; a caller fixing
+    whichever error surfaces first should never resubmit into a second one
+    the first response never mentioned.
+    """
+
+    def test_an_unsupported_correction_masks_no_override_message(self) -> None:
+        """`correction='kipz'` plus an explicit override: the correction blocker wins.
+
+        The message must name the actual blocker (`kipz`) and say nothing
+        about `overrides.wannier90` — a reader who fixes the override would
+        resubmit only to learn kipz was never supported here.
+        """
+        d = _si_dfpt_dict(correction="kipz")
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(NotImplementedError, match="kipz") as excinfo:
+            _build(d)
+        assert "wannier90" not in str(excinfo.value)
+
+    def test_a_valid_input_still_gets_the_override_refused(self) -> None:
+        """Discriminates the above from a guard that fires too early or not at all.
+
+        A KI DFPT input that clears every scope check still refuses an
+        explicit override — the guard exists, just later in the sequence.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density"):
+            _build(d)
+
 
 class TestCollinear:
     """spin='collinear' fans out per spin channel and validates its inputs."""
