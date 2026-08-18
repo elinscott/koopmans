@@ -231,17 +231,17 @@ def prepare_common_inputs(
 
 
 def reject_kpoint_overrides(koopmans_input: KoopmansInput, messages: dict[str, str]) -> None:
-    """Raise for a per-step k-point mesh the route about to be built cannot honour.
+    """Raise for a per-step k-point override the route about to be built cannot honour.
 
-    ``messages`` maps a ``kpoints.overrides`` step name to what the user
+    ``messages`` maps a ``kpoints.overrides`` entry name to what the user
     should write instead.
 
     Args:
         koopmans_input: The parsed koopmans input.
-        messages: The message to raise for each step this route rejects.
+        messages: The message to raise for each entry this route rejects.
 
     Raises:
-        ValueError: If the input gives a mesh for one of those steps.
+        ValueError: If the input states an override for one of those entries.
     """
     for step, message in messages.items():
         if getattr(koopmans_input.kpoints.overrides, step) is not None:

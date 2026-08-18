@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pytest
 from aiida_koopmans.projections import get_wannier_indices
 
@@ -1108,16 +1109,161 @@ class TestInterpolatedBands:
     ) -> None:
         """The split flow takes the path for interpolation, not just for detection.
 
-        The same node feeds the pw.x band-group detection
-        (``bands_kpoints``) and the per-block interpolation
-        (``interpolation_kpoints``): both are the input file's one
-        ``kpoints.path``.
+        Both the pw.x band-group detection (``bands_kpoints``) and the
+        per-block interpolation (``interpolation_kpoints``) sample the input
+        file's one ``kpoints.path`` — same special points, same labels — but
+        as two separate nodes: the detection run keeps the top-level
+        ``kpoints.path_density`` (10/Å⁻¹ here), while the interpolation
+        defaults to ``overrides.wannier90.path_density`` (50/Å⁻¹), five
+        times denser since it costs wannier90 nothing extra to interpolate.
         """
         wg = _build(_si_split_dict())
         split_task = wg.tasks["wannierize_split_block_1"]
-        path = split_task.inputs["interpolation_kpoints"].value
-        assert path_labels(path) == ["GAMMA", "X"]
-        assert path.uuid == wg.tasks["bands"].inputs["kpoints"].value.uuid
+        interpolation_path = split_task.inputs["interpolation_kpoints"].value
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        assert path_labels(interpolation_path) == ["GAMMA", "X"]
+        assert path_labels(detection_path) == ["GAMMA", "X"]
+        assert interpolation_path.uuid != detection_path.uuid
+        assert len(interpolation_path.get_kpoints()) > len(detection_path.get_kpoints())
+
+
+class TestWannier90PathDensity:
+    """``kpoints.overrides.wannier90.path_density`` sets wannier90's own interpolation.
+
+    Threaded on every wannierize route and mode: the pw.x quality-check /
+    split-detection run always keeps the top-level ``kpoints.path_density``;
+    wannier90's own interpolation always takes
+    ``overrides.wannier90.path_density`` (default 50/Å⁻¹) instead. The two
+    are built as separate ``KpointsData`` nodes throughout.
+    """
+
+    def test_explicit_density_is_respected(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A stated density changes the interpolation node's point count alone."""
+        d = _si_split_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        wg = _build(d)
+        split_task = wg.tasks["wannierize_split_block_1"]
+        interpolation_path = split_task.inputs["interpolation_kpoints"].value
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        # 25/Å⁻¹ sits strictly between the 10/Å⁻¹ detection run and the
+        # 50/Å⁻¹ default checked in test_the_split_route_carries_the_path.
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+        default_wg = _build(_si_split_dict())
+        default_interpolation_path = (
+            default_wg.tasks["wannierize_split_block_1"].inputs["interpolation_kpoints"].value
+        )
+        assert len(interpolation_path.get_kpoints()) < len(default_interpolation_path.get_kpoints())
+
+    def test_equal_densities_give_identical_lists(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Matching the top-level density on `overrides.wannier90` reunifies the two lists.
+
+        The two nodes are still built separately (different node UUIDs),
+        but a user who wants the old single-density behaviour back gets it
+        exactly, point for point.
+        """
+        d = _si_split_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 10.0}}
+        wg = _build(d)
+        split_task = wg.tasks["wannierize_split_block_1"]
+        interpolation_path = split_task.inputs["interpolation_kpoints"].value
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        assert np.allclose(interpolation_path.get_kpoints(), detection_path.get_kpoints())
+
+    def test_no_split_route_decouples_the_two_densities(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Explicit projections with no threshold — the si tutorial's own shape.
+
+        No longer a single-socket route: an explicit
+        ``overrides.wannier90.path_density`` reaches wannier90's
+        interpolation alone, while the pw.x quality-check ``bands`` run
+        stays on the coarser top-level density.
+        """
+        d = _si_split_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        wg = _build(d)
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        interpolation_path = wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value
+        assert path_labels(detection_path) == ["GAMMA", "X"]
+        assert path_labels(interpolation_path) == ["GAMMA", "X"]
+        assert detection_path.uuid != interpolation_path.uuid
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+
+    def test_no_split_route_defaults_wannier90_density(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Leaving `overrides.wannier90` out still densifies the interpolation.
+
+        The pw.x quality-check run stays cheap at the top-level density
+        (10/Å⁻¹ here); wannier90's interpolation, free once the Wannier
+        functions are built, defaults to 50/Å⁻¹ regardless.
+        """
+        d = _si_split_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        wg = _build(d)
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        interpolation_path = wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value
+        assert path_labels(interpolation_path) == ["GAMMA", "X"]
+        assert detection_path.uuid != interpolation_path.uuid
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+
+    def test_whole_manifold_route_decouples_the_two_densities(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The auto-projections, no-threshold route also gets the two-density split."""
+        d = _si_auto_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        inp = KoopmansInput.model_validate(d)
+        wg = build_wannierize_workgraph(inp)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90 = w90_task.inputs["wannier90"]["wannier90"]
+        interpolation_path = w90["bands_kpoints"].value
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        assert path_labels(interpolation_path) == ["GAMMA", "X"]
+        assert path_labels(detection_path) == ["GAMMA", "X"]
+        assert detection_path.uuid != interpolation_path.uuid
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+
+    def test_si_tutorial_input_gets_the_densified_interpolation(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        tutorials_dir: Any,
+    ) -> None:
+        """The shipped ``si.json`` tutorial (explicit sp3 projections, no threshold).
+
+        States neither ``block_wannierization_threshold`` nor
+        ``kpoints.overrides``, so it rides the block route's plain (no-split)
+        path — the exact case this feature exists for: wannier90's
+        interpolated bands are visibly jagged at the same coarse density as
+        the pw.x quality-check run. This is the worked example the PR body
+        quotes: densities differ by construction, not by tutorial-specific
+        configuration.
+        """
+        import json
+
+        si_json = tutorials_dir / "band_structures/silicon_finite_differences/si.json"
+        d = json.loads(si_json.read_text())
+        assert d["workflow"].get("block_wannierization_threshold") is None
+        assert d["calculator_parameters"]["wannier90"]["projections"]
+        # Substitute a fast offline cutoffs family for the shipped
+        # PseudoDojo one; everything else is the tutorial's own input.
+        d["workflow"]["pseudo_library"] = fake_sg15_cutoffs_family.label
+        inp = KoopmansInput.model_validate(d)
+
+        wg = build_wannierize_workgraph(inp)
+
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        interpolation_path = wg.tasks["wannierize_occ_1"].inputs["interpolation_kpoints"].value
+        assert detection_path.uuid != interpolation_path.uuid
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
 
 
 @pytest.fixture

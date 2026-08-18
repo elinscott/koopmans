@@ -457,10 +457,10 @@ def make_progress_table(process_node: ProcessNode) -> Table | Group:
 
 def _walk_failed_descendants(
     node: ProcessNode,
-) -> list[tuple[int | None, str, int | None, str | None, str]]:
+) -> list[tuple[str, int | None, str | None, str]]:
     """Collect every terminated-not-ok process in the tree, including ``node`` itself.
 
-    Returns ``(pk, process_label, exit_status, message, state)`` tuples in
+    Returns ``(process_label, exit_status, message, state)`` tuples in
     creation order. ``state`` is ``"excepted"``, ``"killed"``, or
     ``"failed"`` (a normal finished-not-ok exit); ``message`` is the
     exception text for an excepted process, the exit message for a
@@ -471,7 +471,7 @@ def _walk_failed_descendants(
     nodes the progress table hides still appear here — a failure is
     diagnostic information whether or not it has a row.
     """
-    out: list[tuple[int | None, str, int | None, str | None, str]] = []
+    out: list[tuple[str, int | None, str | None, str]] = []
 
     def _visit(n: ProcessNode) -> None:
         if n.is_terminated and not n.is_finished_ok:
@@ -481,9 +481,7 @@ def _walk_failed_descendants(
                 state, message = "killed", n.exit_message
             else:
                 state, message = "failed", n.exit_message
-            out.append(
-                (n.pk, n.process_label or n.__class__.__name__, n.exit_status, message, state)
-            )
+            out.append((n.process_label or n.__class__.__name__, n.exit_status, message, state))
         try:
             children = sorted(n.called, key=lambda child: (child.ctime, child.pk or 0))
         except Exception:
@@ -521,11 +519,11 @@ def render_process_once(process_node: ProcessNode, console: Console | None = Non
     console.print()
     console.print(make_progress_table(process_node))
 
-    for pk, label, exit_status, message, state in _walk_failed_descendants(process_node):
+    for label, exit_status, message, state in _walk_failed_descendants(process_node):
         detail = f"exit status {exit_status}" if state == "failed" else state
         if message:
             detail += f": {message}"
-        console.print(f"  [red]{prettify_label(label)}[/red] (pk {pk}) — {detail}")
+        console.print(f"  [red]{prettify_label(label)}[/red] — {detail}")
 
     if process_node.is_terminated:
         _print_outcome_banner(console, process_node)
