@@ -1378,6 +1378,8 @@ raw:
         alpha_conv_thr: 0.001
         alpha_numsteps: 1
         eps_inf: 1.0
+        metadata:
+          label: Screening parameters
         mp_correction: false
         spin_polarized: false
       log: ''
@@ -1426,6 +1428,8 @@ raw:
       input_socket_meta: {}
       inputs:
         is_first_iteration: false
+        metadata:
+          label: Final KI
       log: ''
       metadata:
         pk: <scrubbed:pk>
@@ -1524,6 +1528,7 @@ raw:
       inputs:
         metadata:
           call_link_label: dft_init
+          label: DFT initialization
         name: dft_init
         nspin: 2
         outerloop: true
