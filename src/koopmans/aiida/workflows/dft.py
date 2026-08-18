@@ -43,7 +43,10 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         {
             "nscf": "`kpoints.overrides.nscf` cannot take effect in a `dft_bands` "
             "calculation: it runs an scf and then samples `kpoints.path`, with no "
-            "nscf mesh in between. Set `kpoints.overrides.scf` or `kpoints.grid`."
+            "nscf mesh in between. Set `kpoints.overrides.scf` or `kpoints.grid`.",
+            "wannier90": "`kpoints.overrides.wannier90.path_density` cannot take effect in "
+            "a `dft_bands` calculation: it runs no Wannierization, so there is no "
+            "wannier90 interpolation to densify. Set `kpoints.path_density` instead.",
         },
     )
 

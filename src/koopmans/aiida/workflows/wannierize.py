@@ -12,6 +12,7 @@ from koopmans.aiida.conversion import (
     atoms_input_to_structure,
     input_to_pw_parameters,
     kpoints_input_to_interpolation_path,
+    wannier90_path_density,
 )
 from koopmans.aiida.workflows import (
     load_codes,
@@ -243,7 +244,13 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, overrides)
 
+    # Two independent k-point lists: the pw.x quality-check run keeps the
+    # top-level path_density, wannier90's own interpolation takes
+    # overrides.wannier90.path_density.
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    interpolation_kpoints = kpoints_input_to_interpolation_path(
+        koopmans_input.kpoints, structure, density=wannier90_path_density(koopmans_input.kpoints)
+    )
 
     # load_codes loads projwfc, WannierizeCodes's one NotRequired member,
     # whenever it is configured. The upstream builder wires it only for
@@ -270,6 +277,7 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         kpoints=kpoints,
         mp_grid=mp_grid,
         bands_kpoints=bands_kpoints,
+        interpolation_kpoints=interpolation_kpoints,
         **extra_kwargs,
     )
 
@@ -393,10 +401,15 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, wannier_overrides)
 
-    # One node serves both uses of the input's k-path: the split-mode band
-    # detection samples it with pw.x, and every wannier90 run interpolates
-    # its band structure along it.
-    interpolation_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    # Two independent k-point lists, in every mode: the pw.x quality-check /
+    # split-detection run samples the top-level `kpoints.path_density`;
+    # wannier90's own interpolation samples
+    # `kpoints.overrides.wannier90.path_density` instead. `WannierizeBlocks`
+    # takes `bands_kpoints` for the former regardless of split mode.
+    bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    interpolation_kpoints = kpoints_input_to_interpolation_path(
+        koopmans_input.kpoints, structure, density=wannier90_path_density(koopmans_input.kpoints)
+    )
 
     # load_codes loads every configured member of WannierizeBlocksCodes.
     # wannierjl (the julia binary registered via
@@ -412,12 +425,13 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     codes = load_codes(WannierizeBlocksCodes)
     require_configured_codes(WannierizeBlocksCodes, codes)
 
-    # Without a threshold the graph splits nothing, and WannierizeBlocks
-    # rejects the split-only inputs rather than ignore them.
+    # split_threshold and num_occ_bands are split-only: without a threshold
+    # the graph splits nothing, and WannierizeBlocks rejects them rather
+    # than ignore them. bands_kpoints carries no such restriction — it
+    # sets the quality-check run's density in every mode.
     split_kwargs: dict[str, Any] = {}
     if threshold is not None:
         split_kwargs = {
-            "bands_kpoints": interpolation_kpoints,
             "num_occ_bands": num_occ_bands,
             "split_threshold": float(threshold),
         }
@@ -429,6 +443,7 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
         kpoints=kpoints,
         mp_grid=mp_grid,
         scf_kpoints=scf_kpoints,
+        bands_kpoints=bands_kpoints,
         **split_kwargs,
         interpolation_kpoints=interpolation_kpoints,
         pseudo_family=pseudo_family,
