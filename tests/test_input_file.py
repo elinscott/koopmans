@@ -578,12 +578,12 @@ class TestPerStepKpoints:
         from koopmans.input_file import (
             GammaOnlyKpointsInput,
             KpointsOverridesInput,
-            StepKpointsInput,
+            StepKpointsOverridesInput,
         )
 
         with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
             GammaOnlyKpointsInput(
-                overrides=KpointsOverridesInput(scf=StepKpointsInput(grid=(4, 4, 4)))
+                overrides=KpointsOverridesInput(scf=StepKpointsOverridesInput(grid=(4, 4, 4)))
             )
 
     @pytest.mark.parametrize("overrides", ["scf", [{"grid": [4, 4, 4]}], 4])

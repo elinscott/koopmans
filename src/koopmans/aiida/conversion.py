@@ -382,16 +382,16 @@ def step_grid_spacing(kpoints: KpointsInput, step: str) -> float | None:
 def wannier90_path_density(kpoints: KpointsInput) -> float:
     """Return the density wannier90 interpolates its band structure at.
 
-    Falls back to :class:`~koopmans.input_file.WannierPathOverrideInput`'s
+    Falls back to :class:`~koopmans.input_file.WannierKpointsOverridesInput`'s
     own default where ``kpoints.overrides.wannier90`` is unset.
 
     Args:
         kpoints: The kpoints input from KoopmansInput.
     """
-    from koopmans.input_file import WannierPathOverrideInput
+    from koopmans.input_file import WannierKpointsOverridesInput
 
     override = kpoints.overrides.wannier90
-    return (override or WannierPathOverrideInput()).path_density
+    return (override or WannierKpointsOverridesInput()).path_density
 
 
 def _parse_kpoints_path_string(
@@ -465,10 +465,10 @@ def _calculate_kpoints_along_path(
         density: Number of k-points per inverse angstrom, in the same 2π
             convention as ``reciprocal_cell`` (and as ``kpoints.grid_spacing``).
         reciprocal_cell: The cell's reciprocal lattice vectors as rows, in
-            1/angstrom, 2π convention (:func:`_reciprocal_cell`). Segment
-            lengths are measured in this Cartesian basis, so a converged
-            density carries between structures — crystal coordinates alone
-            say nothing about physical length.
+            1/angstrom, 2π convention (``aiida.orm.KpointsData.reciprocal_cell``).
+            Segment lengths are measured in this Cartesian basis, so a
+            converged density carries between structures — crystal
+            coordinates alone say nothing about physical length.
 
     Returns:
         Tuple of (kpoint_list, label_list) where kpoint_list contains crystal
@@ -507,18 +507,6 @@ def _calculate_kpoints_along_path(
         previous_end = end_label
 
     return kpoint_list, label_list
-
-
-def _reciprocal_cell(structure: orm.StructureData) -> Any:
-    """Return the cell's reciprocal lattice vectors as rows, in 1/angstrom.
-
-    The 2π convention: matches ``aiida.orm.KpointsData.reciprocal_cell``, the
-    basis ``kpoints.grid_spacing`` already measures against, so a k-path
-    density expressed against this basis carries the same physical meaning.
-    """
-    import numpy as np
-
-    return 2.0 * np.pi * np.linalg.inv(np.array(structure.cell)).T
 
 
 def _cell_special_points(structure: orm.StructureData) -> dict[str, list[float]]:
@@ -568,6 +556,12 @@ def kpoints_input_to_kpoints_path(
     """
     import numpy as np
 
+    kpts = orm.KpointsData()
+    # The cell fixes the reciprocal basis both the special points below and
+    # the segment-length measurement are expressed in. Set before either, and
+    # before the k-points, which are validated against it.
+    kpts.set_cell_from_structure(structure)  # type: ignore[no-untyped-call]
+
     if kpoints.path is not None:
         point_coords = _cell_special_points(structure)
         path = _parse_kpoints_path_string(kpoints.path, point_coords)
@@ -607,14 +601,9 @@ def kpoints_input_to_kpoints_path(
         path,
         point_coords,
         kpoints.path_density if density is None else density,
-        _reciprocal_cell(structure),
+        kpts.reciprocal_cell,  # 2π convention, shared with grid_spacing by construction
     )
 
-    kpts = orm.KpointsData()
-    # The cell fixes the reciprocal basis the crystal coordinates below are
-    # expressed in, so anything given this node can measure distances along
-    # the path. Set before the k-points, which are validated against it.
-    kpts.set_cell_from_structure(structure)  # type: ignore[no-untyped-call]
     kpts.set_kpoints(kpoint_list)  # type: ignore[no-untyped-call]
     kpts.labels = label_list
 

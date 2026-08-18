@@ -55,10 +55,10 @@ __all__ = [
     "Projection",
     "RestrictedWannier90InputParameters",
     "SpinSpecificWannierInput",
-    "StepKpointsInput",
+    "StepKpointsOverridesInput",
     "UnfoldAndInterpolateConfig",
     "Wannier90InputParametersWithUpDown",
-    "WannierPathOverrideInput",
+    "WannierKpointsOverridesInput",
     "WorkflowConfig",
     "migrate_input_dict",
     "read_input_file",
@@ -174,7 +174,7 @@ def _no_shift(value: float) -> float:
 NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
-class StepKpointsInput(BaseModel):
+class StepKpointsOverridesInput(BaseModel):
     """K-point sampling for one step, in place of the top-level values.
 
     Every attribute is absolute and every one left unset is taken from the
@@ -198,7 +198,7 @@ class StepKpointsInput(BaseModel):
     """
 
     @model_validator(mode="after")
-    def _one_statement_of_the_mesh(self) -> StepKpointsInput:
+    def _one_statement_of_the_mesh(self) -> StepKpointsOverridesInput:
         """Require ``grid_spacing`` to be the entry's only statement of the mesh."""
         if self.grid_spacing is None:
             return self
@@ -212,7 +212,7 @@ class StepKpointsInput(BaseModel):
         return self
 
 
-class WannierPathOverrideInput(BaseModel):
+class WannierKpointsOverridesInput(BaseModel):
     """The k-point path wannier90 interpolates its band structure along.
 
     Carries a density alone: the path itself, and its special points, are
@@ -236,16 +236,16 @@ class KpointsOverridesInput(BaseModel):
     Steps left out sample the top-level ``grid`` and ``offset``.
     """
 
-    scf: StepKpointsInput | None = None
+    scf: StepKpointsOverridesInput | None = None
     """The mesh the ground-state calculation converges the density on."""
 
-    nscf: StepKpointsInput | None = None
+    nscf: StepKpointsOverridesInput | None = None
     """The Gamma-centred mesh the Wannier functions are built from."""
 
-    wannier90: WannierPathOverrideInput | None = None
+    wannier90: WannierKpointsOverridesInput | None = None
     """The density wannier90 interpolates its band structure at.
 
-    Unset takes :attr:`WannierPathOverrideInput.path_density`'s default.
+    Unset takes :attr:`WannierKpointsOverridesInput.path_density`'s default.
     """
 
     @model_validator(mode="after")
