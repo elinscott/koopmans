@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
+    collinear_magnetization,
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
@@ -35,6 +36,10 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     per spin channel (needs per-spin projections in ``w90.up`` / ``w90.down``
     and a ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the
     spinor variant (all bands singly occupied, ``num_wann`` doubled).
+
+    A ``kpoints.path`` in the input reaches the kcw.x ham step as its bands
+    path, so the run also emits the Koopmans band structure interpolated
+    along it.
 
     Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
     periodic, MLWF/projwf variational orbitals, and explicit projections.
@@ -82,12 +87,6 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
                 "spin='collinear' DFPT screening needs per-spin projections: set "
                 "``calculator_parameters.w90.up.projections`` and "
                 "``calculator_parameters.w90.down.projections``."
-            )
-        if calc_params.tot_magnetization is None:
-            raise ValueError(
-                "spin='collinear' DFPT screening needs "
-                "``calculator_parameters.tot_magnetization`` to fix the per-channel "
-                "occupations."
             )
 
     # Checked last among the pure-Python guards, after every workflow-scope
@@ -238,15 +237,14 @@ def _collinear_dfpt_manifolds(
 
     workflow = koopmans_input.workflow
     w90 = koopmans_input.calculator_parameters.wannier90
-    tot_magnetization = koopmans_input.calculator_parameters.tot_magnetization
-    if w90.up is None or w90.down is None or tot_magnetization is None:
+    if w90.up is None or w90.down is None:
         # Already validated by build_singlepoint_dfpt_workgraph; re-checked
         # here so the collinear helper narrows its own inputs.
         raise ValueError(
             "spin='collinear' DFPT screening needs per-spin projections "
-            "(``w90.up`` / ``w90.down``) and ``tot_magnetization``."
+            "(``w90.up`` / ``w90.down``)."
         )
-    magnetization = int(tot_magnetization)
+    magnetization = collinear_magnetization(koopmans_input)
     if (nelec + magnetization) % 2:
         raise ValueError(
             f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "

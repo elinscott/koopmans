@@ -51,7 +51,9 @@ class BandSeries:
     are crystal coordinates of the reciprocal basis ``cell`` defines; without a
     cell the path can only be measured in those coordinates, which distorts the
     relative lengths of its segments. ``path_labels`` pairs a k-point index
-    with the name of the high-symmetry point sitting there.
+    with the name of the high-symmetry point sitting there. ``style`` is the
+    matplotlib format string the curve is drawn in, ``None`` leaving its
+    appearance to the figure.
     """
 
     label: str
@@ -60,6 +62,7 @@ class BandSeries:
     cell: list[list[float]] | None = None
     path_labels: list[tuple[int, str]] = field(default_factory=list)
     units: str = "eV"
+    style: str | None = None
     vbm: float | None = None
     fermi: float | None = None
     zero: float = 0.0

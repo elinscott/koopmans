@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from koopmans.aiida.workflows import (
     load_codes,
+    pin_spin_regime,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
@@ -20,6 +21,12 @@ if TYPE_CHECKING:
 
 def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for DFT bands calculation.
+
+    All four ``workflow.spin`` regimes run here: ``collinear`` needs a
+    ``calculator_parameters.tot_magnetization`` alongside it, and
+    ``spin_orbit`` a fully-relativistic ``pseudo_library`` (pw.x otherwise
+    averages the scalar-relativistic channels and the spin-orbit splitting
+    comes out zero).
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -44,6 +51,7 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     )
 
     structure, _pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "bands"])
+    spin = pin_spin_regime(koopmans_input, overrides)
 
     # RunPwBands binds its code eagerly (aiida-koopmans#97: not yet
     # converted to node_graph.reference); the pre-flight catches a missing pw
@@ -60,4 +68,5 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         parallelization=koopmans_input.parallelization.as_mapping() or None,
         scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
         bands_kpoints=bands_kpoints,
+        spin_type=spin,
     )
