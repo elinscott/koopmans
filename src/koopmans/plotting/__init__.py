@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from koopmans.plotting.render import (
     DIVIDER_LABEL,
+    StyleError,
+    check_style,
     draw_band_structures,
     path_distances,
     render_band_structures,
@@ -18,6 +20,7 @@ from koopmans.plotting.resolve import (
     BAND_PRODUCERS,
     BandProducer,
     PlottingError,
+    RunNotInProfileError,
     resolve_band_series,
     run_node,
 )
@@ -42,8 +45,11 @@ __all__ = [
     "NoEnergyZeroError",
     "PathMismatchError",
     "PlottingError",
+    "RunNotInProfileError",
+    "StyleError",
     "apply_energy_zero",
     "check_paths_agree",
+    "check_style",
     "describe_energy_zero",
     "draw_band_structures",
     "energy_axis_label",
