@@ -615,7 +615,7 @@ class TestResolver:
             link_label="build_band_structure",
             calcjob=True,
             computer=aiida_localhost,
-            inputs={"reference": orm.Float(1.25).store()},
+            inputs={"reference": orm.Float(1.25).store()},  # type: ignore[no-untyped-call]
         )
         attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 1.25, 4.0]]))
         folder = write_run_folder(tmp_path, "si_dscf", root)
