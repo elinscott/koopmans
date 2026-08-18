@@ -180,6 +180,27 @@ class TestTwoRunsOfTheSameStep:
         assert "pk" not in output
         assert "(pk " not in output
 
+    def test_a_failure_carries_no_node_identifier(self, aiida_profile_clean: Any) -> None:
+        """The walk reports what failed, where, and how, and nothing that names a node.
+
+        Pinned whole: putting a pk back on a line means re-plumbing it
+        here, where this test fails.
+        """
+        root = make_process(process_label="WorkGraph<Tiny>", exit_status=1)
+
+        failures = progress._walk_failed_descendants(root)
+
+        assert failures == [
+            progress.ProcessFailure(
+                name="Tiny",
+                code=None,
+                path=(),
+                exit_status=1,
+                message=None,
+                state="failed",
+            )
+        ]
+
 
 class TestRenderProcessOnce:
     """The one-shot render ``koopmans status`` and a terminated ``attach`` use."""
@@ -244,6 +265,31 @@ class TestRenderProcessOnce:
         assert "402" in output
         assert "pw.x did not converge" in output
         assert "finished with status: 1" in output
+
+    def test_a_failed_step_is_named_without_a_node_identifier(
+        self, aiida_profile_clean: Any
+    ) -> None:
+        """The step's name and its exit status are the whole line.
+
+        A pk names the process for anyone reading AiiDA's own database
+        and nothing for anyone else, so the failed step is identified by
+        the name it carries in the table above it.
+        """
+        root = make_process(process_label="WorkGraph<Tiny>", exit_status=1)
+        make_process(
+            caller=root,
+            link_label="scf",
+            process_label="PwBaseWorkChain",
+            exit_status=402,
+            exit_message="pw.x did not converge",
+        )
+        console, buffer = _capturing_console()
+
+        progress.render_process_once(root, console=console)
+
+        # Pinned whole: any identifier added back lands on this line.
+        line = next(text for text in buffer.getvalue().splitlines() if "SCF —" in text)
+        assert line.strip() == "SCF — exit status 402: pw.x did not converge"
 
     def test_a_killed_step_says_killed_not_excepted(self, aiida_profile_clean: Any) -> None:
         """A killed descendant has no exit status, but it was not excepted either.

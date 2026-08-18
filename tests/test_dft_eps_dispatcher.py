@@ -81,6 +81,20 @@ def _si_dfpt_auto_dict() -> dict[str, Any]:
     }
 
 
+class TestDftEpsNoWannierStep:
+    """`dft_eps` runs no Wannierization: `overrides.wannier90` has nothing to reach."""
+
+    def test_explicit_wannier90_density_raises(
+        self, aiida_profile: Any, installed_pw_code: Any, installed_ph_code: Any
+    ) -> None:
+        """ph.x measures a dielectric constant, not a band structure to interpolate."""
+        d = _si_eps_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*dft_eps"):
+            build_workgraph(inp)
+
+
 class TestDftEps:
     """task='dft_eps' routes to the scf → ph.x → extract sequence."""
 

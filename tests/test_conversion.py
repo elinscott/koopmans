@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 from qe_tools import CONSTANTS
 
@@ -67,6 +68,11 @@ POINT_COORDS = {
     "K": [0.375, 0.375, 0.75],
 }
 
+#: An identity reciprocal cell: crystal and Cartesian coordinates coincide,
+#: so tests that only care about path topology (not physical density) can
+#: reuse the crystal-space ``POINT_COORDS`` distances directly.
+_IDENTITY_RECIPROCAL_CELL = np.eye(3)
+
 
 class TestKpointsPath:
     """Tests for explicit k-path parsing and sampling."""
@@ -76,7 +82,9 @@ class TestKpointsPath:
         path = _parse_kpoints_path_string("GXG", POINT_COORDS)
         assert path == [("GAMMA", "X"), ("X", "GAMMA")]
 
-        kpoints, labels = _calculate_kpoints_along_path(path, POINT_COORDS, density=10.0)
+        kpoints, labels = _calculate_kpoints_along_path(
+            path, POINT_COORDS, density=10.0, reciprocal_cell=_IDENTITY_RECIPROCAL_CELL
+        )
         label_names = [name for _, name in labels]
         assert label_names == ["GAMMA", "X", "GAMMA"]
         # X appears exactly once in the sampled points
@@ -87,7 +95,9 @@ class TestKpointsPath:
         path = _parse_kpoints_path_string("GX,MK", POINT_COORDS)
         assert path == [("GAMMA", "X"), ("M", "K")]
 
-        kpoints, labels = _calculate_kpoints_along_path(path, POINT_COORDS, density=10.0)
+        kpoints, labels = _calculate_kpoints_along_path(
+            path, POINT_COORDS, density=10.0, reciprocal_cell=_IDENTITY_RECIPROCAL_CELL
+        )
         label_names = [name for _, name in labels]
         assert label_names == ["GAMMA", "X", "M", "K"]
         # M is present as a sampled point, adjacent to X
@@ -95,6 +105,60 @@ class TestKpointsPath:
         x_index = next(i for i, name in labels if name == "X")
         assert kpoints[m_index] == POINT_COORDS["M"]
         assert m_index == x_index + 1
+
+
+class TestPathDensityIsPhysical:
+    """``path_density`` counts points per inverse angstrom, not per crystal unit.
+
+    ``point_coords`` (both the ASE-bandpath and the seekpath branch) are
+    crystal coordinates: their norm scales with the reciprocal cell, not with
+    physical length. Two cells sharing a shape but differing in lattice
+    constant must therefore get the same point spacing per angstrom, not the
+    same point count.
+    """
+
+    @staticmethod
+    def _fcc_structure(a: float) -> Any:
+        from aiida import orm
+
+        cell = (np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2).tolist()
+        structure = orm.StructureData(cell=cell)
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(-a / 4, a / 4, a / 4), symbols="Si"
+        )
+        return structure
+
+    def test_same_density_gives_same_physical_spacing_across_cells(
+        self, aiida_profile: Any
+    ) -> None:
+        """A small and a large cell of the same shape get the same points-per-angstrom.
+
+        Before the fix, both cells give ``n_points=8`` on the G-X segment
+        despite the physical segment length differing by ~3.7x between them
+        (0.7071 fractional units regardless of scale): 6.9 vs 25.5
+        points/angstrom^-1 at ``path_density=10``. After the fix both must
+        land within one point's rounding of 10 points/angstrom^-1.
+        """
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX", path_density=10.0)
+
+        small = self._fcc_structure(5.43)
+        large = self._fcc_structure(20.0)
+
+        for structure in (small, large):
+            kpts = kpoints_input_to_kpoints_path(kpoints, structure)
+            coords = kpts.get_kpoints()  # type: ignore[no-untyped-call]
+            recip = 2 * np.pi * np.linalg.inv(np.array(structure.cell)).T
+            cart_length = np.linalg.norm((coords[-1] - coords[0]) @ recip)
+            points_per_inv_angstrom = (len(coords) - 1) / cart_length
+            assert points_per_inv_angstrom == pytest.approx(10.0, rel=0.15), (
+                f"a={np.linalg.norm(structure.cell[0]) * 2:.1f}: "
+                f"{len(coords)} points over {cart_length:.4f} 1/A "
+                f"= {points_per_inv_angstrom:.2f} points/(1/A), expected ~10"
+            )
 
 
 class TestSeekpathBasisGuard:
