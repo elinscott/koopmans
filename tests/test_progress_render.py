@@ -58,7 +58,9 @@ class TestWalkFailedDescendants:
 
         assert len(failures) == 1
         assert failures[0].name == "SCF"
-        assert failures[0].code == "pw.x"
+        # A workchain runs whatever its calculations run, and is named
+        # next to nothing; the calculation under it carries the binary.
+        assert failures[0].code is None
         assert failures[0].exit_status == 402
         assert failures[0].message == "pw.x did not converge"
         assert failures[0].state == "failed"
@@ -196,14 +198,37 @@ class TestRenderProcessOnce:
         assert "Workflow completed successfully!" in output
 
     def test_a_failed_step_prints_its_exit_status_and_message(
-        self, aiida_profile_clean: Any
+        self, aiida_profile_clean: Any, localhost_computer: Any
     ) -> None:
-        """A failed step's detail is printed alongside the state table."""
+        """A failed step's detail is printed alongside the state table.
+
+        The binary comes off the code the calculation ran, so the step
+        that names one here is the pw.x call rather than the workchain
+        around it.
+        """
+        from aiida.orm import InstalledCode
+
+        code = InstalledCode(
+            label="pw",
+            computer=localhost_computer,
+            default_calc_job_plugin="quantumespresso.pw",
+            filepath_executable="/opt/qe/bin/pw.x",
+        ).store()
         root = make_process(process_label="WorkGraph<Tiny>", exit_status=1)
-        make_process(
+        scf = make_process(
             caller=root,
             link_label="scf",
             process_label="PwBaseWorkChain",
+            exit_status=402,
+            exit_message="pw.x did not converge",
+        )
+        make_process(
+            caller=scf,
+            link_label="iteration_01",
+            process_label="PwCalculation",
+            calcjob=True,
+            computer=localhost_computer,
+            inputs={"code": code},
             exit_status=402,
             exit_message="pw.x did not converge",
         )
@@ -249,7 +274,7 @@ class TestRenderProcessOnce:
         output = buffer.getvalue()
         assert "Workflow was killed!" in output
         # The step's own detail line says killed, above the closing banner.
-        killed_line_index = output.index("SCF (pw.x)")
+        killed_line_index = output.index("SCF —")
         banner_index = output.index("Workflow was killed!")
         assert killed_line_index < banner_index
         detail_line = output[killed_line_index:banner_index]

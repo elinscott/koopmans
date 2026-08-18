@@ -36,7 +36,7 @@ Wannierization
       Preprocessing                                     wannier90.x
       Overlaps                                          pw2wannier90.x
       Minimization                                      wannier90.x
-    Parallel-transport split                            wannier.jl
+    Parallel-transport split                            julia
     Per-group Wannierization
       Minimization (group 1)                            wannier90.x
       Minimization (group 2)                            wannier90.x
@@ -141,7 +141,7 @@ Koopmans ΔSCF
           DFT (N+1)                                     kcp.x
   Final KI                                              kcp.x
 
-########## singlepoint / DFPT
+########## singlepoint / DFPT (eps_inf auto, multi-block manifolds)
 Koopmans DFPT
   Dielectric constant
     SCF                                                 pw.x
@@ -150,9 +150,6 @@ Koopmans DFPT
     SCF                                                 pw.x
     NSCF                                                pw.x
   Wannierization
-    Ground state
-      SCF                                               pw.x
-      NSCF                                              pw.x
     Band structure                                      pw.x
     Atomic projections                                  projwfc.x
     Wannierization (occupied block 1)
@@ -176,9 +173,6 @@ Koopmans DFPT
     SCF                                                 pw.x
     NSCF                                                pw.x
   Wannierization
-    Ground state
-      SCF                                               pw.x
-      NSCF                                              pw.x
     Band structure                                      pw.x
     Atomic projections                                  projwfc.x
     Wannierization (occupied block)
@@ -202,9 +196,6 @@ Koopmans DFPT
     SCF                                                 pw.x
     NSCF                                                pw.x
   Wannierization (spin up)
-    Ground state
-      SCF                                               pw.x
-      NSCF                                              pw.x
     Band structure                                      pw.x
     Atomic projections                                  projwfc.x
     Wannierization (occupied block 1, spin up)
@@ -222,9 +213,6 @@ Koopmans DFPT
       Orbital 5                                         kcw.x
     Koopmans Hamiltonian                                kcw.x
   Wannierization (spin down)
-    Ground state
-      SCF                                               pw.x
-      NSCF                                              pw.x
     Band structure                                      pw.x
     Atomic projections                                  projwfc.x
     Wannierization (occupied block 1, spin down)

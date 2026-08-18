@@ -43,9 +43,17 @@ TABLES_FILE = Path(__file__).parent / "data" / "progress_tables.txt"
 
 @dataclass
 class FakeNode:
-    """A stand-in for a ProcessNode, carrying only what the assembler reads."""
+    """A stand-in for a ProcessNode, carrying only what the assembler reads.
 
+    ``link`` is the call link label provenance reads; ``label`` is the
+    name ``aiida-koopmans`` puts on the process node, which is what a
+    reader is shown. A node left without one stands for a process from a
+    run made before the plugin named its steps.
+    """
+
+    link: str = ""
     label: str = ""
+    executable: str | None = None
     state: str = "waiting"
     kind: str = "workchain"
     seconds: float = 0.0
@@ -55,6 +63,15 @@ class FakeNode:
     finished_ok: bool = True
     process_label: str | None = None
     pk: int = field(default_factory=lambda: next(_pk_counter))
+
+    @property
+    def inputs(self) -> SimpleNamespace:
+        """The process's inputs, of which only ``code`` is ever read."""
+        if self.executable is None:
+            return SimpleNamespace()
+        return SimpleNamespace(
+            code=SimpleNamespace(filepath_executable=f"/usr/local/bin/{self.executable}")
+        )
 
     @property
     def ctime(self) -> datetime:
@@ -81,7 +98,7 @@ class FakeNode:
 def stubbed_lookups(registry: dict[int, FakeNode]) -> Iterator[None]:
     """Point the assembler's three AiiDA lookups at a fake node tree."""
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(progress, "get_node_label", lambda node, include_code=True: node.label)
+        patch.setattr(progress, "get_node_label", lambda node, include_code=True: node.link)
         patch.setattr(progress, "get_node_type", lambda node: node.kind)
         patch.setattr(progress, "_is_process_function_node", lambda node: node.is_pyfunction)
         patch.setattr(progress, "_reload", lambda pk: registry[pk])
@@ -109,6 +126,21 @@ def render() -> Iterator[Callable[[FakeNode], list[progress.ProcessRow]]]:
         yield _render
 
 
+#: What the ``describe`` fixture hands back: one fake node, described.
+type _Describe = Callable[..., progress.LabelDisplay]
+
+
+@pytest.fixture
+def describe() -> Iterator[Callable[..., progress.LabelDisplay]]:
+    """Return a function describing one fake node the way a row would."""
+    with stubbed_lookups({}):
+
+        def _describe(node: FakeNode, is_root: bool = False) -> progress.LabelDisplay:
+            return progress.describe_process(cast("ProcessNode", node), is_root=is_root)
+
+        yield _describe
+
+
 @pytest.fixture
 def step_paths() -> Iterator[Callable[[FakeNode], dict[int, tuple[str, ...]]]]:
     """Return a function mapping each process of a fake tree to its step path."""
@@ -125,8 +157,8 @@ def step_paths() -> Iterator[Callable[[FakeNode], dict[int, tuple[str, ...]]]]:
 
 def _wrapped_calcjob(state: str = "waiting", **kwargs: Any) -> FakeNode:
     """Build root → ``DFT initialization (nspin=1)`` → the one kcp.x call it wraps."""
-    calcjob = FakeNode(label="kcp-dft_init", kind="calcjob", state=state, **kwargs)
-    wrapper = FakeNode(label="dft_init_nspin1", children=[calcjob])
+    calcjob = FakeNode(link="dft_init", kind="calcjob", executable="kcp.x", state=state, **kwargs)
+    wrapper = FakeNode(link="dft_init_nspin1", children=[calcjob])
     return FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[wrapper])
 
 
@@ -200,8 +232,8 @@ class TestStableRows:
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
     ) -> None:
         """Across a run's snapshots, every label present stays present."""
-        calcjob = FakeNode(label="kcp-dft_init", kind="calcjob", state="created")
-        wrapper = FakeNode(label="dft_init_nspin1", state="created", children=[calcjob])
+        calcjob = FakeNode(link="kcp-dft_init", kind="calcjob", state="created")
+        wrapper = FakeNode(link="dft_init_nspin1", state="created", children=[calcjob])
         root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[wrapper])
 
         seen: set[str] = set()
@@ -230,8 +262,8 @@ class TestStableRows:
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
     ) -> None:
         """Plumbing tasks add no rows, nor do the processes they call."""
-        buried = FakeNode(label="pw-scf", kind="calcjob")
-        helper = FakeNode(label="build_iter_source", is_pyfunction=True, children=[buried])
+        buried = FakeNode(link="scf", kind="calcjob", executable="pw.x")
+        helper = FakeNode(link="build_iter_source", is_pyfunction=True, children=[buried])
         root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[helper])
 
         assert [row.label for row in render(root)] == ["Koopmans ΔSCF"]
@@ -243,16 +275,18 @@ class TestCollapsingAndTransparency:
     def _scf_nscf(self, scf_attempts: int = 1) -> FakeNode:
         """Build the ``scf_nscf`` sub-graph, with a restartable SCF beneath it."""
         scf = FakeNode(
-            label="scf",
+            link="scf",
             children=[
-                FakeNode(label="pw-scf", kind="calcjob", seconds=index)
+                FakeNode(link="scf", kind="calcjob", executable="pw.x", seconds=index)
                 for index in range(scf_attempts)
             ],
         )
         nscf = FakeNode(
-            label="nscf", seconds=10.0, children=[FakeNode(label="pw-nscf", kind="calcjob")]
+            link="nscf",
+            seconds=10.0,
+            children=[FakeNode(link="nscf", kind="calcjob", executable="pw.x")],
         )
-        ground_state = FakeNode(label="scf_nscf", children=[scf, nscf])
+        ground_state = FakeNode(link="scf_nscf", children=[scf, nscf])
         return FakeNode(process_label="WorkGraph<SinglepointDFPTWorkflow>", children=[ground_state])
 
     def test_a_step_is_not_deleted_by_what_its_parent_is_called(
@@ -298,13 +332,16 @@ class TestCollapsingAndTransparency:
     ) -> None:
         """``PwBandsWorkChain`` adds nothing the root does not already say."""
         wrapper = FakeNode(
-            label="PwBandsWorkChain",
+            link="PwBandsWorkChain",
             children=[
-                FakeNode(label="scf", children=[FakeNode(label="pw-scf", kind="calcjob")]),
                 FakeNode(
-                    label="bands",
+                    link="scf",
+                    children=[FakeNode(link="scf", kind="calcjob", executable="pw.x")],
+                ),
+                FakeNode(
+                    link="bands",
                     seconds=1.0,
-                    children=[FakeNode(label="pw-bands", kind="calcjob")],
+                    children=[FakeNode(link="bands", kind="calcjob", executable="pw.x")],
                 ),
             ],
         )
@@ -323,9 +360,9 @@ class TestCollapsingAndTransparency:
     ) -> None:
         """A paused wrapper with no row of its own still reaches the display."""
         wrapper = FakeNode(
-            label="PwBandsWorkChain",
+            link="PwBandsWorkChain",
             paused=True,
-            children=[FakeNode(label="scf", state="running")],
+            children=[FakeNode(link="scf", state="running")],
         )
         root = FakeNode(process_label="WorkGraph<RunPwBands>", children=[wrapper])
 
@@ -336,19 +373,21 @@ class TestCollapsingAndTransparency:
     ) -> None:
         """One link label, two meanings, told apart by the process behind it."""
         workchain = FakeNode(
-            label="wannier90",
+            link="wannier90",
             process_label="Wannier90WorkChain",
             children=[
                 FakeNode(
-                    label="wannier90_pp",
+                    link="wannier90_pp",
                     process_label="Wannier90BaseWorkChain",
-                    children=[FakeNode(label="wannier90-wannier90_pp", kind="calcjob")],
+                    children=[
+                        FakeNode(link="wannier90_pp", kind="calcjob", executable="wannier90.x")
+                    ],
                 ),
                 FakeNode(
-                    label="wannier90",
+                    link="wannier90",
                     seconds=1.0,
                     process_label="Wannier90BaseWorkChain",
-                    children=[FakeNode(label="wannier90-wannier90", kind="calcjob")],
+                    children=[FakeNode(link="wannier90", kind="calcjob", executable="wannier90.x")],
                 ),
             ],
         )
@@ -369,11 +408,11 @@ class TestScreeningIterationNumbering:
     def _iteration(self, label: str, seconds: float) -> FakeNode:
         """Build one screening iteration, with a trial KI inside it."""
         return FakeNode(
-            label=label,
+            link=label,
             seconds=seconds,
             children=[
-                FakeNode(label="kcp-ki_trial", kind="calcjob"),
-                FakeNode(label="compute_orbital_screening_parameters", seconds=seconds + 0.1),
+                FakeNode(link="ki_trial", kind="calcjob", executable="kcp.x"),
+                FakeNode(link="compute_orbital_screening_parameters", seconds=seconds + 0.1),
             ],
         )
 
@@ -388,17 +427,17 @@ class TestScreeningIterationNumbering:
         at three different indents.
         """
         innermost = FakeNode(
-            label="refine_screening_parameters",
+            link="refine_screening_parameters",
             seconds=3.0,
             children=[self._iteration("screening_iteration", 3.1)],
         )
         refine = FakeNode(
-            label="refine_screening_parameters",
+            link="refine_screening_parameters",
             seconds=2.0,
             children=[self._iteration("screening_iteration", 2.1), innermost],
         )
         compute = FakeNode(
-            label="ComputeScreeningParameters",
+            link="ComputeScreeningParameters",
             children=[self._iteration("ScreeningIteration", 1.0), refine],
         )
         root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[compute])
@@ -416,7 +455,7 @@ class TestScreeningIterationNumbering:
     ) -> None:
         """A converged-first-time run reads ``Iteration 1``, not a bare ``Iteration``."""
         compute = FakeNode(
-            label="ComputeScreeningParameters",
+            link="ComputeScreeningParameters",
             children=[self._iteration("ScreeningIteration", 1.0)],
         )
         root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[compute])
@@ -430,9 +469,9 @@ class TestScreeningIterationNumbering:
         leaf, which is the shape that used to put it within reach of its
         own parent's collapse.
         """
-        calcjob = FakeNode(label="kcp-ki_trial", kind="calcjob")
-        iteration = FakeNode(label="ScreeningIteration", children=[calcjob])
-        compute = FakeNode(label="ComputeScreeningParameters", children=[iteration])
+        calcjob = FakeNode(link="ki_trial", kind="calcjob", executable="kcp.x")
+        iteration = FakeNode(link="ScreeningIteration", children=[calcjob])
+        compute = FakeNode(link="ComputeScreeningParameters", children=[iteration])
         root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[compute])
         return root, compute, iteration, calcjob
 
@@ -474,7 +513,7 @@ class TestSiblingOrder:
     def _fan_out(self, indices: list[int], seconds: list[float]) -> FakeNode:
         """Build a per-orbital fan-out whose creation order is not its index order."""
         children = [
-            FakeNode(label=f"compute_alpha_orb_{index}", seconds=second)
+            FakeNode(link=f"compute_alpha_orb_{index}", seconds=second)
             for index, second in zip(indices, seconds, strict=True)
         ]
         return FakeNode(process_label="ComputeScreeningParameters", children=children)
@@ -496,8 +535,8 @@ class TestSiblingOrder:
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(label="wannierize", seconds=1.0),
-                FakeNode(label="bands", seconds=2.0),
+                FakeNode(link="wannierize", seconds=1.0),
+                FakeNode(link="bands", seconds=2.0),
             ],
         )
 
@@ -518,9 +557,9 @@ class TestSiblingOrder:
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(label="dft_init_nspin1", seconds=1.0),
-                FakeNode(label="dft_init_nspin2_dummy", seconds=2.0),
-                FakeNode(label="dft_init_nspin2", seconds=3.0),
+                FakeNode(link="dft_init_nspin1", seconds=1.0),
+                FakeNode(link="dft_init_nspin2_dummy", seconds=2.0),
+                FakeNode(link="dft_init_nspin2", seconds=3.0),
             ],
         )
 
@@ -544,9 +583,9 @@ class TestSiblingOrder:
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(label="compute_alpha_orb_2", seconds=1.0),
-                FakeNode(label="ki_final", seconds=2.0),
-                FakeNode(label="compute_alpha_orb_1", seconds=3.0),
+                FakeNode(link="compute_alpha_orb_2", seconds=1.0),
+                FakeNode(link="ki_final", seconds=2.0),
+                FakeNode(link="compute_alpha_orb_1", seconds=3.0),
             ],
         )
 
@@ -561,11 +600,11 @@ class TestSiblingOrder:
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(label="ki_trial", seconds=1.0),
-                FakeNode(label="compute_alpha_orb_1", seconds=2.0),
-                FakeNode(label="compute_alpha_orb_10", seconds=3.0),
-                FakeNode(label="compute_alpha_orb_2", seconds=4.0),
-                FakeNode(label="ki_final", seconds=5.0),
+                FakeNode(link="ki_trial", seconds=1.0),
+                FakeNode(link="compute_alpha_orb_1", seconds=2.0),
+                FakeNode(link="compute_alpha_orb_10", seconds=3.0),
+                FakeNode(link="compute_alpha_orb_2", seconds=4.0),
+                FakeNode(link="ki_final", seconds=5.0),
             ],
         )
 
@@ -583,8 +622,8 @@ class TestSiblingOrder:
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
     ) -> None:
         """Two identical labels created in the same instant still get a fixed order."""
-        later = FakeNode(label="pw-scf", kind="calcjob", pk=99, seconds=1.0)
-        earlier = FakeNode(label="pw-scf", kind="calcjob", pk=7, seconds=1.0)
+        later = FakeNode(link="pw-scf", kind="calcjob", pk=99, seconds=1.0)
+        earlier = FakeNode(link="pw-scf", kind="calcjob", pk=7, seconds=1.0)
         root = FakeNode(process_label="WorkGraph<Wannierize>", children=[later, earlier])
 
         rows = render(root)
@@ -597,7 +636,7 @@ class TestSiblingOrder:
     ) -> None:
         """A fan-out nested under a step is ordered like a top-level one."""
         fan_out = self._fan_out([2, 10, 1], [0.0, 0.1, 0.2])
-        fan_out.label = "compute_orbital_screening_parameters"
+        fan_out.link = "compute_orbital_screening_parameters"
         root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[fan_out])
 
         rows = render(root)
@@ -611,24 +650,65 @@ class TestSiblingOrder:
         ]
 
 
+class TestDescribeProcess:
+    """A step is named by its own process, and the lookup names the rest."""
+
+    def test_the_name_comes_from_the_process(self, describe: _Describe) -> None:
+        """``aiida-koopmans`` sets it; the display shows what it says."""
+        node = FakeNode(link="dfpt", label="DFPT screening (spin down)")
+
+        assert describe(node).text == "DFPT screening (spin down)"
+
+    def test_the_lookup_names_a_process_that_carries_none(self, describe: _Describe) -> None:
+        """Every run made before the plugin named its steps reads this way."""
+        assert describe(FakeNode(link="dfpt")).text == "DFPT screening"
+
+    def test_the_root_is_named_by_the_run_it_is(self, describe: _Describe) -> None:
+        """The root has no call link to read, so its name comes from the run."""
+        node = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>")
+
+        assert describe(node, is_root=True).text == "Koopmans ΔSCF"
+
+    def test_the_binary_is_read_off_the_code_that_ran(self, describe: _Describe) -> None:
+        """A code registered under a name of its own still answers with its binary.
+
+        ``decompose`` is a second pw2wannier90.x, registered separately so
+        a build with the decompose mode can be pointed at explicitly.
+        """
+        node = FakeNode(link="decompose_occ_1", kind="calcjob", executable="pw2wannier90.x")
+
+        assert describe(node).code == "pw2wannier90.x"
+
+    def test_a_workflow_reports_no_binary(self, describe: _Describe) -> None:
+        """A calculation runs one program; a workflow runs whatever its steps run."""
+        assert describe(FakeNode(link="dfpt")).code is None
+
+    def test_a_role_is_read_from_the_step_and_not_from_its_name(self, describe: _Describe) -> None:
+        """Which processes get rows is the display's own question, not the plugin's."""
+        transparent = FakeNode(link="wannier90", process_label="Wannier90WorkChain")
+
+        assert describe(transparent).transparent
+        assert describe(FakeNode(link="ScreeningIteration", label="Iteration")).numbered
+
+
 class TestDescribeLabel:
-    """Every name is looked up; nothing is guessed at."""
+    """The fallback lookup: every name is looked up, nothing is guessed at."""
 
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
             ("scf_nscf", "Ground state"),
             ("nscf", "NSCF"),
-            ("kcw-wann2kc", "Wannier gauge"),
-            ("merge_evc-merge_evc0_empty1", "Merged Wannier manifold (empty, spin 1)"),
-            ("wann2kcp-fold_occ_1", "Supercell Wannier functions (occupied block 1)"),
+            ("wann2kc", "Wannier gauge"),
+            ("merge_evc0_empty1", "Merged Wannier manifold (empty, spin 1)"),
+            ("fold_occ_1", "Supercell Wannier functions (occupied block 1)"),
             ("wannierize_occ_up_1", "Wannierization (occupied block 1, spin up)"),
             ("wannierize_occ", "Wannierization (occupied block)"),
             ("wannierize_emp", "Wannierization (empty block)"),
             ("wannierize_occ_up", "Wannierization (occupied block, spin up)"),
-            ("decompose-decompose_emp_down", "Decomposition (empty block, spin down)"),
-            ("wannier90-wannier90_split_block_0", "Minimization (group 1)"),
-            ("kcw-screen_up_orb_2", "Orbital 2 (spin up)"),
+            ("decompose_emp_down", "Decomposition (empty block, spin down)"),
+            ("wannier90_split_block_0", "Minimization (group 1)"),
+            ("screen_up_orb_2", "Orbital 2 (spin up)"),
             ("dfpt_down", "DFPT screening (spin down)"),
             ("dscf_snapshot_3", "Snapshot 3"),
         ],
@@ -640,8 +720,8 @@ class TestDescribeLabel:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ("kcp-dft_n_plus_1_dummy", "DFT (N+1, staging)"),
-            ("kcp-pz_print", "PZ staging"),
+            ("dft_n_plus_1_dummy", "DFT (N+1, staging)"),
+            ("pz_print", "PZ staging"),
             ("dft_init_nspin2_dummy", "DFT initialization (nspin=2, staging)"),
         ],
     )
@@ -659,7 +739,7 @@ class TestDescribeLabel:
             ("nscf", "Nscf"),
             ("dfpt", "Dfpt"),
             ("projwfc", "Projwfc"),
-            ("kcw-wann2kc", "Wann 2 KC"),
+            ("wann2kc", "Wann 2 KC"),
         ],
     )
     def test_the_tokenizer_spellings_are_gone(self, raw: str, no_longer: str) -> None:
@@ -681,7 +761,13 @@ class TestDescribeLabel:
     def test_the_wannier90_protocol_reads_as_the_mechanism_it_is(
         self, raw: str, expected: str
     ) -> None:
-        """Three calls, one Wannierization: the rows name the steps of the protocol."""
+        """Three calls, one Wannierization: the rows name the steps of the protocol.
+
+        These are not names of last resort: the upstream workchain
+        replaces the metadata of its two wannier90.x steps before
+        submitting them, so a label given from outside never reaches
+        either, and the lookup names both on every run.
+        """
         assert progress.prettify_label(raw) == expected
 
     def test_an_unmapped_label_is_shown_exactly_as_written(self) -> None:
@@ -700,19 +786,6 @@ class TestDescribeLabel:
         assert progress.prettify_label("PwCalculation") == "pw.x"
         assert progress.prettify_label("Wann2kcCalculation") == "kcw.x"
         assert progress.prettify_label("Pw2wannier90Calculation") == "pw2wannier90.x"
-
-    def test_only_a_name_that_is_an_executable_answers_as_one(self) -> None:
-        """The failure summary's second column holds a binary or nothing.
-
-        A process label whose display name is a step rather than a
-        program has no executable to report, and neither has one the
-        table does not name at all.
-        """
-        assert progress.executable_for("PwBaseWorkChain") == "pw.x"
-        assert progress.executable_for("KcpCalculation") == "kcp.x"
-        assert progress.executable_for("ScreeningIteration") is None
-        assert progress.executable_for("PwBandsWorkChain") is None
-        assert progress.executable_for("SomeNewWorkChain") is None
 
     def test_the_failure_summary_names_a_pyfunction_by_its_function_name(self) -> None:
         """It is keyed on ``process_label``, which for a PyFunction is the function's name."""
@@ -749,106 +822,130 @@ class TestDescribeLabel:
         """Nothing has emitted these since the Map zones became for-loops."""
         assert progress.prettify_label(raw) == raw
 
-    def test_a_code_prefix_becomes_the_executable_and_leaves_the_name_alone(self) -> None:
-        """The code travels in its own column, spelled the way its authors spell it."""
-        assert progress.describe_label("pw-scf") == progress.LabelDisplay("SCF", "pw.x")
-        assert progress.describe_label("wannierjl-split_wannierization").code == "wannier.jl"
-
-    def test_the_two_wannier90_rows_carry_the_same_executable(self) -> None:
-        """No mode flag in the code column: the labels tell the rows apart."""
-        assert progress.describe_label("wannier90-wannier90_pp").code == "wannier90.x"
-        assert progress.describe_label("wannier90-wannier90").code == "wannier90.x"
-
 
 # --- the whole table, route by route ----------------------------------
 #
 # The tree shapes come from the built WorkGraphs (top level) plus the
 # ``call_link_label`` map of the nested ``@task.graph`` bodies in
-# ``aiida-koopmans2``.
+# ``aiida-koopmans2``, and each node's ``label`` is the name that package
+# sets on it. The two wannier90.x steps of an upstream
+# ``Wannier90WorkChain`` carry none: it replaces their metadata before
+# submitting them, so the lookup still names those two.
 
 
-def _graph(label: str, *children: FakeNode) -> FakeNode:
+def _graph(link: str, display: str, *children: FakeNode) -> FakeNode:
     """Build a ``@task.graph`` call: a container with a link label of its own."""
-    return FakeNode(label=label, kind="workgraph", children=list(children))
+    return FakeNode(link=link, label=display, kind="workgraph", children=list(children))
 
 
-def _chain(label: str, *children: FakeNode, process_label: str = "") -> FakeNode:
+def _chain(link: str, display: str, *children: FakeNode, process_label: str = "") -> FakeNode:
     """Build a WorkChain call, optionally carrying the class name that names it."""
     return FakeNode(
-        label=label,
+        link=link,
+        label=display,
         kind="workchain",
         children=list(children),
         process_label=process_label or None,
     )
 
 
-def _calc(label: str) -> FakeNode:
+def _calc(link: str, display: str, executable: str) -> FakeNode:
     """Build a CalcJob: a leaf that runs one executable."""
-    return FakeNode(label=label, kind="calcjob")
+    return FakeNode(link=link, label=display, executable=executable, kind="calcjob")
 
 
-def _func(label: str) -> FakeNode:
+def _func(link: str) -> FakeNode:
     """Build a PyFunction: plumbing, never displayed."""
-    return FakeNode(label=label, kind="calcfunc", is_pyfunction=True)
+    return FakeNode(link=link, kind="calcfunc", is_pyfunction=True)
 
 
 def _ground_state() -> FakeNode:
-    return _graph("scf_nscf", _chain("scf", _calc("pw-scf")), _chain("nscf", _calc("pw-nscf")))
+    return _graph(
+        "scf_nscf",
+        "Ground state",
+        _chain("scf", "SCF", _calc("scf", "SCF", "pw.x")),
+        _chain("nscf", "NSCF", _calc("nscf", "NSCF", "pw.x")),
+    )
 
 
 def _wannier90_workchain() -> FakeNode:
     return _chain(
         "wannier90",
-        _chain("wannier90_pp", _calc("wannier90-wannier90_pp")),
-        _chain("pw2wannier90", _calc("pw2wannier90-pw2wannier90")),
-        _chain("wannier90", _calc("wannier90-wannier90")),
+        "",
+        _chain("wannier90_pp", "", _calc("wannier90_pp", "", "wannier90.x")),
+        _chain("pw2wannier90", "Overlaps", _calc("pw2wannier90", "Overlaps", "pw2wannier90.x")),
+        _chain("wannier90", "", _calc("wannier90", "", "wannier90.x")),
         process_label="Wannier90WorkChain",
     )
 
 
-def _wannierize_block(label: str) -> FakeNode:
+def _wannierize_block(label: str, block: str) -> FakeNode:
     return _graph(
         f"wannierize_{label}",
+        f"Wannierization ({block})",
         _func("emit_wannier90_parameters"),
         _wannier90_workchain(),
         _func("extract_wannier_output_files"),
     )
 
 
-def _wannierize_blocks(*block_labels: str) -> list[FakeNode]:
+def _wannierize_blocks(*blocks: tuple[str, str], ground_state: bool = True) -> list[FakeNode]:
+    """Build the per-block Wannierization's children.
+
+    ``ground_state`` is what a caller that hands over an nscf scratch of
+    its own leaves out: the DFPT route runs the ground state once and
+    passes it in, so only the routes that own the Wannierization run it
+    here.
+    """
     return [
-        _ground_state(),
-        _chain("bands", _calc("pw-bands")),
-        _graph("projwfc", _chain("projwfc", _calc("projwfc-projwfc"))),
-        *[_wannierize_block(label) for label in block_labels],
+        *([_ground_state()] if ground_state else []),
+        _chain("bands", "Band structure", _calc("bands", "Band structure", "pw.x")),
+        _graph(
+            "projwfc",
+            "Atomic projections",
+            _chain(
+                "projwfc",
+                "Atomic projections",
+                _calc("projwfc", "Atomic projections", "projwfc.x"),
+            ),
+        ),
+        *[_wannierize_block(label, block) for label, block in blocks],
         _func("collect_wannier_functions"),
     ]
 
 
-def _alpha_filled(key: str) -> FakeNode:
-    return _graph(f"compute_alpha_{key}", _calc("kcp-dft_n_minus_1"), _func("compute_alpha"))
-
-
-def _alpha_empty(key: str) -> FakeNode:
+def _alpha_filled(key: str, orbital: str) -> FakeNode:
     return _graph(
         f"compute_alpha_{key}",
-        _calc("kcp-dft_n_plus_1_dummy"),
-        _calc("kcp-pz_print"),
-        _calc("kcp-dft_n_plus_1"),
+        orbital,
+        _calc("dft_n_minus_1", "DFT (N-1)", "kcp.x"),
         _func("compute_alpha"),
     )
 
 
-def _screening_iteration(label: str) -> FakeNode:
+def _alpha_empty(key: str, orbital: str) -> FakeNode:
     return _graph(
-        label,
-        _calc("kcp-ki_trial"),
+        f"compute_alpha_{key}",
+        orbital,
+        _calc("dft_n_plus_1_dummy", "DFT (N+1, staging)", "kcp.x"),
+        _calc("pz_print", "PZ staging", "kcp.x"),
+        _calc("dft_n_plus_1", "DFT (N+1)", "kcp.x"),
+        _func("compute_alpha"),
+    )
+
+
+def _screening_iteration(link: str) -> FakeNode:
+    return _graph(
+        link,
+        "Iteration",
+        _calc("ki_trial", "Trial KI", "kcp.x"),
         _func("extract_self_hartree_from_kcp"),
         _graph(
             "compute_orbital_screening_parameters",
-            _alpha_filled("orb_1"),
-            _alpha_filled("orb_2"),
-            _alpha_empty("orb_5"),
+            "Orbital screening",
+            _alpha_filled("orb_1", "Orbital 1"),
+            _alpha_filled("orb_2", "Orbital 2"),
+            _alpha_empty("orb_5", "Orbital 5"),
             _func("assemble_alpha_screening"),
         ),
         _func("max_alpha_error"),
@@ -858,14 +955,17 @@ def _screening_iteration(label: str) -> FakeNode:
 def _screening_parameters() -> FakeNode:
     return _graph(
         "ComputeScreeningParameters",
+        "Screening parameters",
         _func("generate_alphas"),
         _screening_iteration("ScreeningIteration"),
         _graph(
             "refine_screening_parameters",
+            "",
             _func("echo_alpha_screening"),
             _screening_iteration("screening_iteration"),
             _graph(
                 "refine_screening_parameters",
+                "",
                 _screening_iteration("screening_iteration"),
             ),
         ),
@@ -880,98 +980,157 @@ def _dscf_body(*, mlwf: bool) -> list[FakeNode]:
             *head,
             _graph(
                 "wannier_initialization",
-                _graph("wannierize", *_wannierize_blocks("occ_1", "emp_1")),
+                "Wannier initialization",
+                _graph(
+                    "wannierize",
+                    "Wannierization",
+                    *_wannierize_blocks(("occ_1", "occupied block 1"), ("emp_1", "empty block 1")),
+                ),
                 _graph(
                     "fold_to_supercell",
+                    "Supercell folding",
                     _func("extract_occ_1"),
-                    _calc("wann2kcp-fold_occ_1"),
+                    _calc(
+                        "fold_occ_1",
+                        "Supercell Wannier functions (occupied block 1)",
+                        "wann2kcp.x",
+                    ),
                     _func("extract_emp_1"),
-                    _calc("wann2kcp-fold_emp_1"),
-                    _calc("merge_evc-merge_evc_occupied1"),
-                    _calc("merge_evc-merge_evc0_empty1"),
+                    _calc(
+                        "fold_emp_1",
+                        "Supercell Wannier functions (empty block 1)",
+                        "wann2kcp.x",
+                    ),
+                    _calc(
+                        "merge_evc_occupied1",
+                        "Merged Wannier manifold (occupied, spin 1)",
+                        "merge_evc.x",
+                    ),
+                    _calc(
+                        "merge_evc0_empty1",
+                        "Merged Wannier manifold (empty, spin 1)",
+                        "merge_evc.x",
+                    ),
                 ),
-                _calc("kcp-dft_dummy"),
-                _calc("kcp-dft_init"),
+                _calc("dft_dummy", "DFT staging", "kcp.x"),
+                _calc("dft_init", "DFT initialization", "kcp.x"),
                 _func("merge_groups"),
             ),
         ]
     else:
         head = [
             *head,
-            _graph("dft_init_nspin1", _calc("kcp-dft_init")),
-            _graph("dft_init_nspin2_dummy", _calc("kcp-dft_init")),
+            # The three init sub-steps differ by the graph that wraps each;
+            # the kcp.x call inside every one is the same calculation, so
+            # they share its name and are told apart by their rows.
+            _graph(
+                "dft_init_nspin1",
+                "DFT initialization (nspin=1)",
+                _calc("dft_init", "DFT initialization", "kcp.x"),
+            ),
+            _graph(
+                "dft_init_nspin2_dummy",
+                "DFT initialization (nspin=2, staging)",
+                _calc("dft_init", "DFT initialization", "kcp.x"),
+            ),
             _func("convert_spin1_to_spin2"),
-            _graph("dft_init_nspin2", _calc("kcp-dft_init")),
+            _graph(
+                "dft_init_nspin2",
+                "DFT initialization (nspin=2)",
+                _calc("dft_init", "DFT initialization", "kcp.x"),
+            ),
         ]
-    return [*head, _screening_parameters(), _graph("RunFinalKI", _calc("kcp-ki_final"))]
+    return [
+        *head,
+        _screening_parameters(),
+        _graph("RunFinalKI", "Final KI", _calc("ki_final", "Final KI", "kcp.x")),
+    ]
 
 
-def _dfpt(suffix: str) -> FakeNode:
+def _dfpt(suffix: str, channel: str) -> FakeNode:
     return _graph(
         f"dfpt{suffix}",
+        f"DFPT screening{channel}",
         _func("prepare_kcw_wannier_files"),
-        _calc("kcw-wann2kc"),
+        _calc("wann2kc", "Wannier gauge", "kcw.x"),
         _func("assign_orbital_groups"),
         _graph(
             "grouped_screen",
-            _calc("kcw-screen_orb_1"),
+            "Orbital screening",
+            _calc("screen_orb_1", "Orbital 1", "kcw.x"),
             _func("alpha_orb_1"),
-            _calc("kcw-screen_orb_5"),
+            _calc("screen_orb_5", "Orbital 5", "kcw.x"),
             _func("alpha_orb_5"),
             _func("alphas_in_orbital_order"),
         ),
-        _calc("kcw-ham"),
+        _calc("ham", "Koopmans Hamiltonian", "kcw.x"),
     )
 
 
 ROUTES: dict[str, FakeNode] = {
     "dft_bands": FakeNode(
         process_label="WorkGraph<RunPwBands>",
+        label="DFT band structure",
         kind="workgraph",
         children=[
             _chain(
                 "PwBandsWorkChain",
+                "",
                 _func("seekpath"),
-                _chain("scf", _calc("pw-scf")),
-                _chain("bands", _calc("pw-bands")),
+                _chain("scf", "SCF", _calc("scf", "SCF", "pw.x")),
+                _chain("bands", "Band structure", _calc("bands", "Band structure", "pw.x")),
             )
         ],
     ),
     "dft_eps": FakeNode(
         process_label="WorkGraph<DielectricTask>",
+        label="Dielectric constant",
         kind="workgraph",
         children=[
-            _chain("scf", _calc("pw-scf")),
-            _chain("ph", _calc("ph-ph")),
+            _chain("scf", "SCF", _calc("scf", "SCF", "pw.x")),
+            _chain("ph", "Dielectric response", _calc("ph", "Dielectric response", "ph.x")),
             _func("extract_dielectric_constant"),
         ],
     ),
     "wannierize (per-block)": FakeNode(
         process_label="WorkGraph<WannierizeBlocks>",
+        label="Wannierization",
         kind="workgraph",
-        children=_wannierize_blocks("occ_1", "emp_1"),
+        children=_wannierize_blocks(("occ_1", "occupied block 1"), ("emp_1", "empty block 1")),
     ),
     "wannierize (split)": FakeNode(
         process_label="WorkGraph<WannierizeBlocks>",
+        label="Wannierization",
         kind="workgraph",
         children=[
             _ground_state(),
-            _chain("bands", _calc("pw-bands")),
-            _graph("projwfc", _chain("projwfc", _calc("projwfc-projwfc"))),
+            _chain("bands", "Band structure", _calc("bands", "Band structure", "pw.x")),
+            _graph(
+                "projwfc",
+                "Atomic projections",
+                _chain(
+                    "projwfc",
+                    "Atomic projections",
+                    _calc("projwfc", "Atomic projections", "projwfc.x"),
+                ),
+            ),
             _func("detect_band_groups"),
             _graph(
                 "wannierize_split_block_1",
+                "Split Wannierization (block 1)",
                 _graph(
                     "wannierize_whole_block",
+                    "Whole-block Wannierization",
                     _func("emit_wannier90_parameters"),
                     _wannier90_workchain(),
                 ),
                 _func("extract_win_file"),
-                _calc("wannierjl-split_wannierization"),
+                _calc("split_wannierization", "Parallel-transport split", "julia"),
                 _graph(
                     "rewannierize_split_blocks",
-                    _calc("wannier90-wannier90_split_block_0"),
-                    _calc("wannier90-wannier90_split_block_1"),
+                    "Per-group Wannierization",
+                    _calc("wannier90_split_block_0", "Minimization (group 1)", "wannier90.x"),
+                    _calc("wannier90_split_block_1", "Minimization (group 2)", "wannier90.x"),
                     _func("merge_split_block_products"),
                 ),
             ),
@@ -980,89 +1139,160 @@ ROUTES: dict[str, FakeNode] = {
     ),
     "wannierize (whole manifold)": FakeNode(
         process_label="WorkGraph<Wannierize>",
+        label="Wannierization",
         kind="workgraph",
         children=[
             _chain(
                 "Wannier90WorkChain",
-                _chain("scf", _calc("pw-scf")),
-                _chain("nscf", _calc("pw-nscf")),
-                _chain("projwfc", _calc("projwfc-projwfc")),
-                _chain("wannier90_pp", _calc("wannier90-wannier90_pp")),
-                _chain("pw2wannier90", _calc("pw2wannier90-pw2wannier90")),
-                _chain("wannier90", _calc("wannier90-wannier90")),
+                "",
+                _chain("scf", "SCF", _calc("scf", "SCF", "pw.x")),
+                _chain("nscf", "NSCF", _calc("nscf", "NSCF", "pw.x")),
+                _chain(
+                    "projwfc",
+                    "Atomic projections",
+                    _calc("projwfc", "Atomic projections", "projwfc.x"),
+                ),
+                _chain("wannier90_pp", "", _calc("wannier90_pp", "", "wannier90.x")),
+                _chain(
+                    "pw2wannier90", "Overlaps", _calc("pw2wannier90", "Overlaps", "pw2wannier90.x")
+                ),
+                _chain("wannier90", "", _calc("wannier90", "", "wannier90.x")),
             ),
-            _chain("bands", _calc("pw-bands")),
-            _graph("projwfc", _chain("projwfc", _calc("projwfc-projwfc"))),
+            _chain("bands", "Band structure", _calc("bands", "Band structure", "pw.x")),
+            _graph(
+                "projwfc",
+                "Atomic projections",
+                _chain(
+                    "projwfc",
+                    "Atomic projections",
+                    _calc("projwfc", "Atomic projections", "projwfc.x"),
+                ),
+            ),
         ],
     ),
     "singlepoint / DSCF (molecular)": FakeNode(
         process_label="WorkGraph<KoopmansDSCFWorkflow>",
+        label="Koopmans ΔSCF",
         kind="workgraph",
         children=_dscf_body(mlwf=False),
     ),
     "singlepoint / DSCF (periodic, mlwfs)": FakeNode(
         process_label="WorkGraph<KoopmansDSCFWorkflow>",
+        label="Koopmans ΔSCF",
         kind="workgraph",
         children=_dscf_body(mlwf=True),
     ),
-    "singlepoint / DFPT": FakeNode(
+    # ``eps_inf: auto`` adds the ph.x dielectric run; the manifolds are
+    # Wannierized as several blocks each, so every block is numbered.
+    "singlepoint / DFPT (eps_inf auto, multi-block manifolds)": FakeNode(
         process_label="WorkGraph<SinglepointDFPTWorkflow>",
+        label="Koopmans DFPT",
         kind="workgraph",
         children=[
-            _graph("dielectric", _chain("scf", _calc("pw-scf")), _chain("ph", _calc("ph-ph"))),
+            _graph(
+                "dielectric",
+                "Dielectric constant",
+                _chain("scf", "SCF", _calc("scf", "SCF", "pw.x")),
+                _chain("ph", "Dielectric response", _calc("ph", "Dielectric response", "ph.x")),
+            ),
             _ground_state(),
-            _graph("wannierize", *_wannierize_blocks("occ_1", "emp_1")),
-            _dfpt(""),
+            _graph(
+                "wannierize",
+                "Wannierization",
+                *_wannierize_blocks(
+                    ("occ_1", "occupied block 1"),
+                    ("emp_1", "empty block 1"),
+                    ground_state=False,
+                ),
+            ),
+            _dfpt("", ""),
         ],
     ),
     # A manifold Wannierized as one block is labelled ``occ`` / ``emp``,
     # without an index — the shape every unsplit DFPT run has.
     "singlepoint / DFPT (one block per manifold)": FakeNode(
         process_label="WorkGraph<SinglepointDFPTWorkflow>",
+        label="Koopmans DFPT",
         kind="workgraph",
         children=[
             _ground_state(),
-            _graph("wannierize", *_wannierize_blocks("occ", "emp")),
-            _dfpt(""),
+            _graph(
+                "wannierize",
+                "Wannierization",
+                *_wannierize_blocks(
+                    ("occ", "occupied block"), ("emp", "empty block"), ground_state=False
+                ),
+            ),
+            _dfpt("", ""),
         ],
     ),
     "singlepoint / DFPT (collinear)": FakeNode(
         process_label="WorkGraph<SinglepointDFPTWorkflow>",
+        label="Koopmans DFPT",
         kind="workgraph",
         children=[
             _ground_state(),
-            _graph("wannierize_up", *_wannierize_blocks("occ_up_1", "emp_up_1")),
-            _dfpt("_up"),
-            _graph("wannierize_down", *_wannierize_blocks("occ_down_1", "emp_down_1")),
-            _dfpt("_down"),
+            _graph(
+                "wannierize_up",
+                "Wannierization (spin up)",
+                *_wannierize_blocks(
+                    ("occ_up_1", "occupied block 1, spin up"),
+                    ("emp_up_1", "empty block 1, spin up"),
+                    ground_state=False,
+                ),
+            ),
+            _dfpt("_up", " (spin up)"),
+            _graph(
+                "wannierize_down",
+                "Wannierization (spin down)",
+                *_wannierize_blocks(
+                    ("occ_down_1", "occupied block 1, spin down"),
+                    ("emp_down_1", "empty block 1, spin down"),
+                    ground_state=False,
+                ),
+            ),
+            _dfpt("_down", " (spin down)"),
         ],
     ),
     "trajectory (ml train)": FakeNode(
         process_label="WorkGraph<TrajectoryWorkflow>",
+        label="Trajectory",
         kind="workgraph",
         children=[
-            _graph("dscf_snapshot_1", *_dscf_body(mlwf=False)),
-            _graph("dscf_snapshot_2", *_dscf_body(mlwf=False)),
+            _graph("dscf_snapshot_1", "Snapshot 1", *_dscf_body(mlwf=False)),
+            _graph("dscf_snapshot_2", "Snapshot 2", *_dscf_body(mlwf=False)),
             _func("train_screening_model"),
         ],
     ),
     "trajectory (ml test, power_spectrum)": FakeNode(
         process_label="WorkGraph<TrajectoryWorkflow>",
+        label="Trajectory",
         kind="workgraph",
         children=[
             _graph(
                 "dscf_snapshot_1",
+                "Snapshot 1",
                 _graph(
                     "PredictScreeningParameters",
-                    _calc("kcp-ki_trial"),
+                    "Predicted screening parameters",
+                    _calc("ki_trial", "Trial KI", "kcp.x"),
                     _graph(
                         "predicted_descriptors",
-                        _calc("decompose-decompose_occ_1"),
+                        "Descriptors",
+                        _calc(
+                            "decompose_occ_1",
+                            "Decomposition (occupied block 1)",
+                            "pw2wannier90.x",
+                        ),
                         _func("descriptors_occ_1"),
                     ),
                     _func("predict_alphas"),
                 ),
-                _graph("run_final_ki_predicted", _calc("kcp-ki_final")),
+                _graph(
+                    "run_final_ki_predicted",
+                    "Final KI (predicted alphas)",
+                    _calc("ki_final", "Final KI", "kcp.x"),
+                ),
             ),
             _func("evaluate_screening_model"),
         ],

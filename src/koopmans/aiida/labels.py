@@ -1,8 +1,17 @@
-"""Display names for the steps the progress table lists.
+"""Fallback display names for the steps the progress table lists.
 
-Every name is looked up, never derived. A label the table does not name is
-shown exactly as it is written, so a missing entry reads as an internal
-name rather than as a guess at one.
+A step is named by the process that runs it: ``aiida-koopmans`` sets
+``metadata.label`` on every workchain, calculation and sub-graph it
+creates, and the table shows that. This module names the rest:
+
+* a process from a run made before the plugin labelled its steps, which
+  is every run already in the user's database;
+* the two wannier90.x steps of an upstream ``Wannier90WorkChain``, whose
+  ``metadata`` that workchain replaces wholesale before submitting each.
+
+Every name here is looked up, never derived. A label the table does not
+name is shown exactly as it is written, so a missing entry reads as an
+internal name rather than as a guess at one.
 
 The lookup is keyed on the pair ``(link label, process label)``, falling
 back to the link label alone: one string can name a container in one place
@@ -17,47 +26,34 @@ Two conventions the entries follow:
   product the next step reads is named after that product (``Wannier
   gauge``, ``Merged Wannier manifold``).
 
-Executables are quoted verbatim in a column of their own and never
-inflected, so no display name repeats one.
+Executables are read off the code each calculation ran and shown in a
+column of their own, so no display name repeats one.
 """
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, NamedTuple
+from pathlib import PurePosixPath
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__ = ["LabelDisplay", "describe_label", "executable_for", "prettify_label"]
+__all__ = ["LabelDisplay", "describe_label", "executable_of", "prettify_label"]
 
 
 class LabelDisplay(NamedTuple):
-    """How one process is shown: its name, its executable, and its role."""
+    """How one process is shown: its name, its executable, and its role.
+
+    ``code`` is filled from the process itself (:func:`executable_of`),
+    not from its label, so a lookup leaves it unset.
+    """
 
     text: str
     code: str | None = None
     transparent: bool = False
     numbered: bool = False
 
-
-# The executable each code label runs, spelled the way its authors spell
-# it. ``get_node_label`` prefixes a CalcJob's label with the label of the
-# code it ran (``pw-scf``); the prefix names the code, the rest names the
-# step. A code label with no entry here is shown as configured.
-_EXECUTABLES = {
-    "pw": "pw.x",
-    "ph": "ph.x",
-    "projwfc": "projwfc.x",
-    "wannier90": "wannier90.x",
-    "pw2wannier90": "pw2wannier90.x",
-    "decompose": "pw2wannier90.x",
-    "kcp": "kcp.x",
-    "kcw": "kcw.x",
-    "wann2kcp": "wann2kcp.x",
-    "merge_evc": "merge_evc.x",
-    "wannierjl": "wannier.jl",
-}
 
 # Containers that add no idea the row above does not already state. They
 # get no row; their children rise to the parent's depth. A container that
@@ -177,10 +173,6 @@ _DISPLAY: dict[str | tuple[str, str], str] = {
     "MergeEvcCalculation": "merge_evc.x",
 }
 
-# The names of :data:`_EXECUTABLES`, so a display name can be recognised
-# as naming a binary rather than a step.
-_EXECUTABLE_NAMES = frozenset(_EXECUTABLES.values())
-
 _SPIN = {"up": "spin up", "down": "spin down"}
 _MANIFOLD = {"occ": "occupied block", "emp": "empty block", "block": "block"}
 
@@ -271,19 +263,16 @@ def _assembled(raw: str) -> str | None:
 def describe_label(raw: str, process_label: str = "") -> LabelDisplay:
     """Return how one process is displayed, given its label.
 
-    ``raw`` is a call link label as :func:`~koopmans.aiida.utils.get_node_label`
-    builds it — prefixed with the code label for a CalcJob (``pw-scf``) —
-    or a ``process_label`` for the root row and the failure summary.
-    ``process_label`` disambiguates a link label that names different
-    things in different places.
+    ``raw`` is the call link label :func:`~koopmans.aiida.utils.get_node_label`
+    builds, or a ``process_label`` for the root row and the failure
+    summary. ``process_label`` disambiguates a link label that names
+    different things in different places.
 
     Examples:
-    >>> describe_label("pw-scf").text
+    >>> describe_label("scf").text
     'SCF'
-    >>> describe_label("pw-scf").code
-    'pw.x'
-    >>> describe_label("wannier90-wannier90_pp")
-    LabelDisplay(text='Preprocessing', code='wannier90.x', transparent=False, numbered=False)
+    >>> describe_label("wannier90_pp")
+    LabelDisplay(text='Preprocessing', code=None, transparent=False, numbered=False)
     >>> describe_label("wannier90", "Wannier90WorkChain").transparent
     True
     >>> describe_label("beam_me_up").text
@@ -291,10 +280,6 @@ def describe_label(raw: str, process_label: str = "") -> LabelDisplay:
     """
     if not raw:
         return LabelDisplay(raw)
-    code: str | None = None
-    if "-" in raw and raw.split("-", 1)[0].islower():
-        prefix, raw = raw.split("-", 1)
-        code = _EXECUTABLES.get(prefix, prefix)
     # ``aiida-workgraph`` wraps the top-level process_label as
     # ``WorkGraph<KoopmansDSCFWorkflow>``; the root row is the only place
     # it appears, and there the envelope says nothing the context does not.
@@ -303,25 +288,27 @@ def describe_label(raw: str, process_label: str = "") -> LabelDisplay:
         raw = match.group(1)
     text = _DISPLAY.get((raw, process_label)) or _DISPLAY.get(raw) or _assembled(raw) or raw
     transparent = (raw, process_label) in _TRANSPARENT or raw in _TRANSPARENT
-    return LabelDisplay(text, code, transparent, raw in _NUMBERED)
+    return LabelDisplay(text, None, transparent, raw in _NUMBERED)
 
 
-def executable_for(process_label: str) -> str | None:
-    """Return the executable a process label names, or ``None``.
+def executable_of(process_node: Any) -> str | None:
+    """Return the name of the binary one process ran, or ``None``.
 
-    Only a display name filed under one of the entries of
-    :data:`_EXECUTABLES` qualifies, so a process named after a step
-    rather than after a binary, and one the table does not name at all,
-    both answer ``None``.
+    A calculation runs one program and is shown next to it; a workflow
+    runs whatever its steps run and is shown next to nothing. The two are
+    told apart by the ``code`` input, which only a calculation takes.
 
-    Examples:
-    >>> executable_for("PwBaseWorkChain")
-    'pw.x'
-    >>> executable_for("ScreeningIteration") is None
-    True
+    The name is the basename of that code's own ``filepath_executable``,
+    so it is spelled the way the code was installed — a code registered
+    under a label of its own (``decompose``, a second pw2wannier90.x)
+    still answers with the binary behind it.
     """
-    name = _DISPLAY.get(process_label)
-    return name if name in _EXECUTABLE_NAMES else None
+    try:
+        code = process_node.inputs.code
+    except (AttributeError, KeyError, TypeError):
+        return None
+    path = getattr(code, "filepath_executable", None)
+    return None if path is None else PurePosixPath(str(path)).name
 
 
 def prettify_label(raw: str, process_label: str = "") -> str:
@@ -330,7 +317,7 @@ def prettify_label(raw: str, process_label: str = "") -> str:
     Examples:
     >>> prettify_label("ki_trial")
     'Trial KI'
-    >>> prettify_label("kcp-dft_n_plus_1_dummy")
+    >>> prettify_label("dft_n_plus_1_dummy")
     'DFT (N+1, staging)'
     >>> prettify_label("WorkGraph<KoopmansDSCFWorkflow>")
     'Koopmans ΔSCF'

@@ -77,17 +77,25 @@ def outputs(pk: int) -> dict[str, Any]:
 def launch(workgraph: WorkGraph, *, blocking: bool, wait: bool = False) -> orm.ProcessNode:
     """Start ``workgraph`` — the single call site every verb goes through.
 
+    The name :func:`~koopmans.aiida.workflows.name_run` gave the run
+    reaches its process node here, since that node is created by the
+    launch.
+
     If upstream's launch inversion lands (aiida-core#7261 /
     aiida-workgraph#768: ``engine.run(workgraph)`` replacing
     ``workgraph.run()``), this helper is the only place to migrate.
     """
+    from koopmans.aiida.workflows import run_label
+
+    label = run_label(workgraph)
+    metadata = {"label": label} if label else None
     if blocking:
-        workgraph.run()
+        workgraph.run(metadata=metadata)
     else:
         from koopmans.aiida.setup.daemon import ensure_daemon_running
 
         ensure_daemon_running()
-        workgraph.submit(wait=wait)
+        workgraph.submit(wait=wait, metadata=metadata)
     node: orm.ProcessNode = workgraph.process
     return node
 

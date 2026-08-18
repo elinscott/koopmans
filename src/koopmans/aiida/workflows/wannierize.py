@@ -15,6 +15,7 @@ from koopmans.aiida.conversion import (
 )
 from koopmans.aiida.workflows import (
     load_codes,
+    name_run,
     pin_step_kpoints,
     prepare_common_inputs,
     require_configured_codes,
@@ -259,18 +260,21 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     codes = load_codes(WannierizeCodes)
     require_configured_codes(WannierizeCodes, codes)
 
-    return Wannierize.build(
-        codes=codes,
-        structure=structure,
-        overrides=overrides,
-        pseudo_family=pseudo_family,
-        print_summary=False,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        scf_kpoints=scf_kpoints,
-        kpoints=kpoints,
-        mp_grid=mp_grid,
-        bands_kpoints=bands_kpoints,
-        **extra_kwargs,
+    return name_run(
+        Wannierize.build(
+            codes=codes,
+            structure=structure,
+            overrides=overrides,
+            pseudo_family=pseudo_family,
+            print_summary=False,
+            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            scf_kpoints=scf_kpoints,
+            kpoints=kpoints,
+            mp_grid=mp_grid,
+            bands_kpoints=bands_kpoints,
+            **extra_kwargs,
+        ),
+        "Wannierization",
     )
 
 
@@ -422,19 +426,22 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
             "split_threshold": float(threshold),
         }
 
-    return WannierizeBlocks.build(
-        codes=codes,
-        structure=structure,
-        blocks=blocks,
-        kpoints=kpoints,
-        mp_grid=mp_grid,
-        scf_kpoints=scf_kpoints,
-        **split_kwargs,
-        interpolation_kpoints=interpolation_kpoints,
-        pseudo_family=pseudo_family,
-        overrides=wannier_overrides,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        **external_kwargs,
+    return name_run(
+        WannierizeBlocks.build(
+            codes=codes,
+            structure=structure,
+            blocks=blocks,
+            kpoints=kpoints,
+            mp_grid=mp_grid,
+            scf_kpoints=scf_kpoints,
+            **split_kwargs,
+            interpolation_kpoints=interpolation_kpoints,
+            pseudo_family=pseudo_family,
+            overrides=wannier_overrides,
+            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            **external_kwargs,
+        ),
+        "Wannierization",
     )
 
 

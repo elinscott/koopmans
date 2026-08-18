@@ -8,6 +8,7 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
     load_codes,
+    name_run,
     pin_step_kpoints,
     prepare_common_inputs,
     require_configured_codes,
@@ -133,23 +134,26 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
     nscf_mesh = step_kpoints_mesh(koopmans_input.kpoints, "nscf")
 
-    return SinglepointDFPTWorkflow.build(
-        codes=codes,
-        structure=structure,
-        kpoints=nscf_mesh,
-        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
-        bands_kpoints=bands_kpoints,
-        pseudo_family=pseudo_family,
-        overrides=overrides,
-        # 'auto' prepends the scf + ph.x dielectric steps inside
-        # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
-        # periodic default, on).
-        eps_inf=eps_inf,
-        l_vcut=workflow.gb_correction,
-        spin=spin,
-        manifolds=manifolds,
-        group_orbitals_tol=group_orbitals_tol,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+    return name_run(
+        SinglepointDFPTWorkflow.build(
+            codes=codes,
+            structure=structure,
+            kpoints=nscf_mesh,
+            scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
+            bands_kpoints=bands_kpoints,
+            pseudo_family=pseudo_family,
+            overrides=overrides,
+            # 'auto' prepends the scf + ph.x dielectric steps inside
+            # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
+            # periodic default, on).
+            eps_inf=eps_inf,
+            l_vcut=workflow.gb_correction,
+            spin=spin,
+            manifolds=manifolds,
+            group_orbitals_tol=group_orbitals_tol,
+            parallelization=koopmans_input.parallelization.as_mapping() or None,
+        ),
+        "Koopmans DFPT",
     )
 
 

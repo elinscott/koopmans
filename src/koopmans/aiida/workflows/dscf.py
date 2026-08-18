@@ -15,6 +15,7 @@ from koopmans.aiida.conversion import (
 )
 from koopmans.aiida.workflows import (
     load_codes,
+    name_run,
     reject_kpoint_overrides,
     require_configured_codes,
     require_cutoffs_for_family,
@@ -123,12 +124,15 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     codes = load_codes(DscfCodes)
     require_configured_codes(DscfCodes, codes)
 
-    return KoopmansDSCFWorkflow.build(
-        codes=codes,
-        structure=structure,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        **inputs,
-        **extra_kwargs,
+    return name_run(
+        KoopmansDSCFWorkflow.build(
+            codes=codes,
+            structure=structure,
+            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            **inputs,
+            **extra_kwargs,
+        ),
+        "Koopmans ΔSCF",
     )
 
 

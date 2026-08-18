@@ -48,6 +48,29 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
+#: Where a run's display name waits between being built and being launched.
+_RUN_LABEL_ATTRIBUTE = "koopmans_run_label"
+
+
+def name_run(workgraph: WorkGraph, display: str) -> WorkGraph:
+    """Name the whole run for a reader, and return ``workgraph``.
+
+    The name reaches the run's process node at launch
+    (:func:`koopmans.api.launch`), which is the first moment that node
+    exists. Naming the run belongs here rather than in the plugin: the
+    plugin's entry graphs cannot see which of them the user's ``task``
+    and ``method`` selected.
+    """
+    setattr(workgraph, _RUN_LABEL_ATTRIBUTE, display)
+    return workgraph
+
+
+def run_label(workgraph: WorkGraph) -> str | None:
+    """Return the name :func:`name_run` gave ``workgraph``, or ``None``."""
+    label: str | None = getattr(workgraph, _RUN_LABEL_ATTRIBUTE, None)
+    return label
+
+
 def load_code(name: str, executable: str) -> orm.AbstractCode:
     """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
     try:

@@ -12,7 +12,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from koopmans.aiida.labels import LabelDisplay, describe_label, executable_for, prettify_label
+from koopmans.aiida.labels import LabelDisplay, describe_label, executable_of, prettify_label
 from koopmans.aiida.utils import get_node_label, suppress_stdout
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 # Re-exported so the display names stay reachable as ``progress.<name>``,
 # the way every caller already spells them.
-__all__ = ["LabelDisplay", "describe_label", "executable_for", "prettify_label"]
+__all__ = ["LabelDisplay", "describe_label", "describe_process", "executable_of", "prettify_label"]
 
 
 # Status display styling
@@ -154,6 +154,34 @@ def _promoted_state(state: str) -> str:
     return "running" if state in _TERMINAL_STATES else state
 
 
+def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelDisplay:
+    """Return how one process is shown: its name, its executable, its role.
+
+    The name is the process's own ``label``, which ``aiida-koopmans`` sets
+    from the step the process stands for. A process that carries none —
+    one from a run made before the plugin labelled its steps, or one an
+    upstream workchain submits with its own metadata — falls back to the
+    lookup in :mod:`koopmans.aiida.labels`.
+
+    Whether a process gets a row of its own, and whether its row is
+    numbered among its siblings, stay questions about the step rather
+    than about its name, so both are answered from the labels either way.
+
+    Args:
+        process_node: The process to describe.
+        is_root: Whether this is the root of the whole display, which is
+            named by the workflow it runs rather than by a call link.
+    """
+    if is_root:
+        raw = getattr(process_node, "process_label", None) or "WorkGraph"
+        role = describe_label(raw)
+    else:
+        raw = get_node_label(process_node, include_code=False)
+        role = describe_label(raw, getattr(process_node, "process_label", None) or "")
+    name = (getattr(process_node, "label", "") or "").strip()
+    return role._replace(text=name or role.text, code=executable_of(process_node))
+
+
 def _reload(pk: int) -> ProcessNode:
     """Re-fetch a node by pk.
 
@@ -198,11 +226,7 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[LabelDisplay, Pro
             continue
         if _is_process_function_node(child):
             continue
-        display = describe_label(
-            get_node_label(child, include_code=True),
-            getattr(child, "process_label", None) or "",
-        )
-        entries.append((display, child))
+        entries.append((describe_process(child), child))
 
     entries.sort(key=lambda entry: (entry[1].ctime, entry[1].pk or 0))
 
@@ -250,7 +274,7 @@ def build_progress_rows(process_node: ProcessNode) -> list[ProcessRow]:
     Returns:
         The table's rows, parents before their children.
     """
-    root = describe_label(getattr(process_node, "process_label", None) or "WorkGraph")
+    root = describe_process(process_node, is_root=True)
     rows, _ = _collect_rows(process_node, root, is_root=True)
     return _flatten(rows, depth=0)
 
@@ -271,7 +295,7 @@ def build_step_paths(process_node: ProcessNode) -> dict[int, tuple[str, ...]]:
     Returns:
         One path per displayed process, keyed by pk.
     """
-    root = describe_label(getattr(process_node, "process_label", None) or "WorkGraph")
+    root = describe_process(process_node, is_root=True)
     rows, _ = _collect_rows(process_node, root, is_root=True)
     return {pk: path[1:] for pk, path in _row_paths(rows, ()).items()}
 
@@ -507,9 +531,9 @@ def _walk_failed_descendants(node: ProcessNode) -> list[ProcessFailure]:
     A process is named by its row, which is what the reader watched go
     past and which carries the index that tells two runs of one step
     apart; ``path`` places that row in the run. A process with no row —
-    a PyFunction, a wrapper the table sees through — falls back to the
-    display name of its process label, under the path of the nearest row
-    above it.
+    a PyFunction, a wrapper the table sees through — is named by its own
+    label, or by the display name of its process label when it carries
+    none, under the path of the nearest row above it.
     """
     paths = build_step_paths(node)
     out: list[ProcessFailure] = []
@@ -527,8 +551,8 @@ def _walk_failed_descendants(node: ProcessNode) -> list[ProcessFailure]:
             named = n.pk in paths and bool(path)
             out.append(
                 ProcessFailure(
-                    name=path[-1] if named else prettify_label(label),
-                    code=executable_for(label) if named else None,
+                    name=path[-1] if named else (n.label or prettify_label(label)),
+                    code=executable_of(n),
                     path=path[:-1] if named else path,
                     exit_status=n.exit_status,
                     message=message,

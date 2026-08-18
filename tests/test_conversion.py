@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -554,10 +555,10 @@ class TestDispatcherThreadsParallelization:
 
         captured: dict[str, Any] = {}
 
-        def fake_build(**kwargs: Any) -> str:
-            """Capture the builder call's kwargs."""
+        def fake_build(**kwargs: Any) -> SimpleNamespace:
+            """Capture the builder call's kwargs, standing in for the workgraph."""
             captured.update(kwargs)
-            return "workgraph"
+            return SimpleNamespace()
 
         # Stub the profile-dependent structure/pseudo setup and the graph build
         # so the test isolates the dispatcher's threading logic.
@@ -586,9 +587,13 @@ class TestDispatcherThreadsParallelization:
         monkeypatch.setattr(
             dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
         )
-        monkeypatch.setattr(
-            pw_module.RunPwBands, "build", staticmethod(lambda **kw: captured.update(kw))
-        )
+
+        def fake_build(**kwargs: Any) -> SimpleNamespace:
+            """Capture the builder call's kwargs, standing in for the workgraph."""
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
 
         build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()))
         assert captured["parallelization"] is None
