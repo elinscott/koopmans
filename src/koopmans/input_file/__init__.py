@@ -57,9 +57,10 @@ __all__ = [
     "Projection",
     "RestrictedWannier90InputParameters",
     "SpinSpecificWannierInput",
-    "StepKpointsInput",
+    "StepKpointsOverridesInput",
     "UnfoldAndInterpolateConfig",
     "Wannier90InputParametersWithUpDown",
+    "WannierKpointsOverridesInput",
     "WorkflowConfig",
     "migrate_input_dict",
     "read_input_file",
@@ -191,7 +192,7 @@ def _no_shift(value: float) -> float:
 NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
-class StepKpointsInput(BaseModel):
+class StepKpointsOverridesInput(BaseModel):
     """K-point sampling for one step, in place of the top-level values.
 
     Every attribute is absolute and every one left unset is taken from the
@@ -215,7 +216,7 @@ class StepKpointsInput(BaseModel):
     """
 
     @model_validator(mode="after")
-    def _one_statement_of_the_mesh(self) -> StepKpointsInput:
+    def _one_statement_of_the_mesh(self) -> StepKpointsOverridesInput:
         """Require ``grid_spacing`` to be the entry's only statement of the mesh."""
         if self.grid_spacing is None:
             return self
@@ -229,17 +230,41 @@ class StepKpointsInput(BaseModel):
         return self
 
 
+class WannierKpointsOverridesInput(BaseModel):
+    """The k-point path wannier90 interpolates its band structure along.
+
+    Carries a density alone: the path itself, and its special points, are
+    the same ones the route's own k-path uses, so the interpolated bands
+    stay lined up against the diagonalized ones the plot overlays them with.
+    """
+
+    path_density: float = 50.0
+    """Number of k-points per inverse angstrom (2π convention) wannier90
+    interpolates its band structure at.
+
+    Independent of the top-level ``path_density``: wannier90's interpolation
+    is nearly free once the Wannier functions are built, so it defaults far
+    denser than a diagonalized pw.x bands run would.
+    """
+
+
 class KpointsOverridesInput(BaseModel):
     """K-point sampling for individual steps, in place of the top-level values.
 
     Steps left out sample the top-level ``grid`` and ``offset``.
     """
 
-    scf: StepKpointsInput | None = None
+    scf: StepKpointsOverridesInput | None = None
     """The mesh the ground-state calculation converges the density on."""
 
-    nscf: StepKpointsInput | None = None
+    nscf: StepKpointsOverridesInput | None = None
     """The Gamma-centred mesh the Wannier functions are built from."""
+
+    wannier90: WannierKpointsOverridesInput | None = None
+    """The density wannier90 interpolates its band structure at.
+
+    Unset takes :attr:`WannierKpointsOverridesInput.path_density`'s default.
+    """
 
     @model_validator(mode="after")
     def _nscf_states_a_mesh_koopmans_builds(self) -> KpointsOverridesInput:
@@ -275,7 +300,11 @@ class GammaOnlyKpointsInput(BaseModel):
 
     path: Literal["G"] = "G"
     path_density: float = 10.0
-    """Number of k-points per inverse angstrom along ``path``."""
+    """Number of k-points per inverse angstrom (2π convention) along ``path``.
+
+    Measured in the same Cartesian reciprocal basis as ``grid_spacing``, so a
+    converged value carries from one structure to the next.
+    """
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, which a gamma-only calculation cannot have."""
@@ -286,12 +315,18 @@ class GammaOnlyKpointsInput(BaseModel):
         cls, overrides: KpointsOverridesInput
     ) -> KpointsOverridesInput:
         """Reject a per-step mesh: every step of a gamma-only run samples Gamma."""
-        for step in type(overrides).model_fields:
+        for step in ("scf", "nscf"):
             if getattr(overrides, step) is not None:
                 raise ValueError(
                     f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
                     "every step samples Gamma alone. Give a `grid` instead of `gamma_only`."
                 )
+        if overrides.wannier90 is not None:
+            raise ValueError(
+                "`overrides.wannier90` cannot be used together with `gamma_only`: every "
+                "step samples Gamma alone, so there is no band structure to interpolate. "
+                "Give a `grid` instead of `gamma_only`."
+            )
         return overrides
 
 
@@ -305,7 +340,11 @@ class GridKpointsInput(BaseModel):
 
     path: str | None = None
     path_density: float = 10.0
-    """Number of k-points per inverse angstrom along ``path``."""
+    """Number of k-points per inverse angstrom (2π convention) along ``path``.
+
+    Measured in the same Cartesian reciprocal basis as ``grid_spacing``, so a
+    converged value carries from one structure to the next.
+    """
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, in place of ``grid`` and ``offset``."""
