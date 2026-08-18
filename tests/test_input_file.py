@@ -200,6 +200,82 @@ class TestCutoffsMustBePositive:
         assert "must be greater than 0" in message
 
 
+class TestCalculateBandsRemoved:
+    """A band structure is asked for by ``kpoints.path``, not by a switch."""
+
+    def test_the_removed_keyword_names_the_path_instead(self, tmp_path: Path) -> None:
+        """The message points the reader at ``kpoints.path``, not at ``extra_forbidden``."""
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "calculate_bands")
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`workflow.calculate_bands` no longer exists" in message
+        assert "`kpoints.path`" in message
+        assert "is not a valid keyword" not in message
+
+    def test_the_removed_keyword_is_rejected_however_it_is_set(self) -> None:
+        """``false`` is refused too: the keyword no longer states anything."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "calculate_bands", False)
+
+        with pytest.raises(ValidationError, match="no longer exists"):
+            KoopmansInput.model_validate(d)
+
+
+class TestPeriodicIsOnePerCellVector:
+    """``periodic`` is canonical after validation, whichever way it was written."""
+
+    @pytest.mark.parametrize(
+        ("written", "expected"),
+        [
+            (True, (True, True, True)),
+            (False, (False, False, False)),
+            ([True, True, False], (True, True, False)),
+        ],
+    )
+    def test_a_bool_states_the_same_of_all_three(
+        self, written: object, expected: tuple[bool, bool, bool]
+    ) -> None:
+        """A single bool expands; an explicit triple passes through."""
+        d = _minimal_si_input()
+        _set_keyword(d, "atoms.cell_parameters", "periodic", written)
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.atoms.cell_parameters.periodic == expected
+
+    def test_a_wrong_length_is_rejected(self) -> None:
+        """Two entries name no third cell vector."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "atoms.cell_parameters", "periodic", [True, False])
+
+        with pytest.raises(ValidationError):
+            KoopmansInput.model_validate(d)
+
+    def test_the_canonical_form_round_trips(self) -> None:
+        """``model_dump`` emits the triple, and re-validating it changes nothing.
+
+        koopmans re-validates dumped inputs, so a normalization only the raw
+        file survived would drift on the second pass.
+        """
+        inp = KoopmansInput.model_validate(_minimal_si_input())
+
+        dumped = inp.model_dump()
+        periodic = dumped["atoms"]["cell_parameters"]["periodic"]
+
+        assert periodic == (True, True, True)
+        assert KoopmansInput.model_validate(dumped).atoms.cell_parameters.periodic == periodic
+
+
 def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object]:
     """Return the minimal silicon input, its ``calculator_parameters`` replaced."""
     d = _minimal_si_input()

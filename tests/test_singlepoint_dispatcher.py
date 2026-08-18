@@ -72,8 +72,12 @@ class TestOzoneInputParse:
         assert ozone_input.workflow.pseudo_library == "SG15/1.2/PBE/SR"
 
     def test_ozone_is_non_periodic(self, ozone_input: KoopmansInput) -> None:
-        """The ozone tutorial should be non-periodic (molecule in a box)."""
-        assert ozone_input.atoms.cell_parameters.periodic is False
+        """The ozone tutorial should be non-periodic (molecule in a box).
+
+        The file writes a single ``periodic: false``, which validation
+        expands to one entry per cell vector.
+        """
+        assert ozone_input.atoms.cell_parameters.periodic == (False, False, False)
 
     def test_ozone_has_three_oxygen_atoms(self, ozone_input: KoopmansInput) -> None:
         """The ozone tutorial should have three oxygens at the expected positions."""
