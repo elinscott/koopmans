@@ -15,7 +15,9 @@ from koopmans.aiida.conversion import (
     kpoints_input_to_interpolation_path,
 )
 from koopmans.aiida.workflows import (
+    collinear_magnetization,
     load_codes,
+    optional_magnetization,
     reject_kpoint_overrides,
     require_configured_codes,
     require_cutoffs_for_family,
@@ -247,12 +249,7 @@ def dscf_wannier_init_inputs(
                 "``calculator_parameters.w90.up.projections`` and "
                 "``calculator_parameters.w90.down.projections``."
             )
-        magnetization = _coerce_optional_int(calc_params.tot_magnetization)
-        if magnetization is None:
-            raise ValueError(
-                "spin='collinear' Wannier initialisation needs "
-                "``calculator_parameters.tot_magnetization``."
-            )
+        magnetization = collinear_magnetization(koopmans_input)
         if (nelec + magnetization) % 2:
             raise ValueError(
                 f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "
@@ -458,7 +455,7 @@ def kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         # KI requires nspin=2 for per-spin orbital-dependent screening, regardless
         # of what ``spin`` says — closed-shell molecules still need two channels.
         nspin=2,
-        tot_magnetization=_coerce_optional_int(calc_params.tot_magnetization),
+        tot_magnetization=optional_magnetization(koopmans_input),
         correction=workflow.correction,
         init_orbitals=workflow.init_orbitals,
         alpha_numsteps=workflow.alpha_numsteps,
@@ -467,8 +464,3 @@ def kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         spin_polarized=workflow.spin == SpinType.COLLINEAR,
         orbital_groups_self_hartree_tol=grouping_tol(workflow),
     )
-
-
-def _coerce_optional_int(value: float | None) -> int | None:
-    """Return ``int(value)`` when value is given, else ``None``."""
-    return int(value) if value is not None else None
