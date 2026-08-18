@@ -23,6 +23,7 @@ from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.kcw import KCWInputParameters
 from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.parallelization import ParallelizationInput
+from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
@@ -49,15 +50,17 @@ __all__ = [
     "KpointsOverridesInput",
     "MLConfig",
     "NoOffset",
+    "PHInputParameters",
     "PW2Wannier90InputParameters",
     "PWInputParameters",
     "ParallelizationInput",
     "Projection",
     "RestrictedWannier90InputParameters",
     "SpinSpecificWannierInput",
-    "StepKpointsInput",
+    "StepKpointsOverridesInput",
     "UnfoldAndInterpolateConfig",
     "Wannier90InputParametersWithUpDown",
+    "WannierKpointsOverridesInput",
     "WorkflowConfig",
     "migrate_input_dict",
     "read_input_file",
@@ -173,7 +176,7 @@ def _no_shift(value: float) -> float:
 NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
-class StepKpointsInput(BaseModel):
+class StepKpointsOverridesInput(BaseModel):
     """K-point sampling for one step, in place of the top-level values.
 
     Every attribute is absolute and every one left unset is taken from the
@@ -197,7 +200,7 @@ class StepKpointsInput(BaseModel):
     """
 
     @model_validator(mode="after")
-    def _one_statement_of_the_mesh(self) -> StepKpointsInput:
+    def _one_statement_of_the_mesh(self) -> StepKpointsOverridesInput:
         """Require ``grid_spacing`` to be the entry's only statement of the mesh."""
         if self.grid_spacing is None:
             return self
@@ -211,17 +214,41 @@ class StepKpointsInput(BaseModel):
         return self
 
 
+class WannierKpointsOverridesInput(BaseModel):
+    """The k-point path wannier90 interpolates its band structure along.
+
+    Carries a density alone: the path itself, and its special points, are
+    the same ones the route's own k-path uses, so the interpolated bands
+    stay lined up against the diagonalized ones the plot overlays them with.
+    """
+
+    path_density: float = 50.0
+    """Number of k-points per inverse angstrom (2π convention) wannier90
+    interpolates its band structure at.
+
+    Independent of the top-level ``path_density``: wannier90's interpolation
+    is nearly free once the Wannier functions are built, so it defaults far
+    denser than a diagonalized pw.x bands run would.
+    """
+
+
 class KpointsOverridesInput(BaseModel):
     """K-point sampling for individual steps, in place of the top-level values.
 
     Steps left out sample the top-level ``grid`` and ``offset``.
     """
 
-    scf: StepKpointsInput | None = None
+    scf: StepKpointsOverridesInput | None = None
     """The mesh the ground-state calculation converges the density on."""
 
-    nscf: StepKpointsInput | None = None
+    nscf: StepKpointsOverridesInput | None = None
     """The Gamma-centred mesh the Wannier functions are built from."""
+
+    wannier90: WannierKpointsOverridesInput | None = None
+    """The density wannier90 interpolates its band structure at.
+
+    Unset takes :attr:`WannierKpointsOverridesInput.path_density`'s default.
+    """
 
     @model_validator(mode="after")
     def _nscf_states_a_mesh_koopmans_builds(self) -> KpointsOverridesInput:
@@ -257,7 +284,11 @@ class GammaOnlyKpointsInput(BaseModel):
 
     path: Literal["G"] = "G"
     path_density: float = 10.0
-    """Number of k-points per inverse angstrom along ``path``."""
+    """Number of k-points per inverse angstrom (2π convention) along ``path``.
+
+    Measured in the same Cartesian reciprocal basis as ``grid_spacing``, so a
+    converged value carries from one structure to the next.
+    """
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, which a gamma-only calculation cannot have."""
@@ -268,12 +299,18 @@ class GammaOnlyKpointsInput(BaseModel):
         cls, overrides: KpointsOverridesInput
     ) -> KpointsOverridesInput:
         """Reject a per-step mesh: every step of a gamma-only run samples Gamma."""
-        for step in type(overrides).model_fields:
+        for step in ("scf", "nscf"):
             if getattr(overrides, step) is not None:
                 raise ValueError(
                     f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
                     "every step samples Gamma alone. Give a `grid` instead of `gamma_only`."
                 )
+        if overrides.wannier90 is not None:
+            raise ValueError(
+                "`overrides.wannier90` cannot be used together with `gamma_only`: every "
+                "step samples Gamma alone, so there is no band structure to interpolate. "
+                "Give a `grid` instead of `gamma_only`."
+            )
         return overrides
 
 
@@ -287,7 +324,11 @@ class GridKpointsInput(BaseModel):
 
     path: str | None = None
     path_density: float = 10.0
-    """Number of k-points per inverse angstrom along ``path``."""
+    """Number of k-points per inverse angstrom (2π convention) along ``path``.
+
+    Measured in the same Cartesian reciprocal basis as ``grid_spacing``, so a
+    converged value carries from one structure to the next.
+    """
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, in place of ``grid`` and ``offset``."""
@@ -326,6 +367,7 @@ class CalculatorParametersInput(BaseModel):
     ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
     tot_magnetization: float | None = None
+    ph: PHInputParameters = Field(default_factory=lambda: PHInputParameters())
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(
         default_factory=lambda: PW2Wannier90InputParameters()
@@ -339,37 +381,34 @@ class CalculatorParametersInput(BaseModel):
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
     kcw: KCWInputParameters = Field(default_factory=lambda: KCWInputParameters())
 
-    @model_validator(mode="after")
-    def check_cutoffs_agree(self) -> CalculatorParametersInput:
-        """Validate that the stated wavefunction cutoffs agree, and the density ones.
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_per_calculator_cutoffs(cls, data: Any) -> Any:
+        """Point a per-calculator cutoff at the single ``ecutwfc`` field.
 
-        pw.x and kcp.x read their cutoffs from different keys, so two stated
-        values that differ put the two codes on different grids. A
-        ``kcp.system`` cutoff of zero is unset rather than a stated zero.
+        ``pw.system``/``kcp.system`` no longer carry their own
+        ``ecutwfc``/``ecutrho``: pw.x and kcp.x always share one grid, derived
+        from ``calculator_parameters.ecutwfc``. Runs before field validation,
+        so it reports the removed spelling instead of the generic
+        "extra_forbidden" error the nested model would otherwise raise.
 
         Raises:
-            ValueError: If two keys state the same cutoff at different values.
+            ValueError: If any of the four removed keys is present.
         """
-        wavefunction = {
-            "calculator_parameters.ecutwfc": self.ecutwfc,
-            "calculator_parameters.pw.system.ecutwfc": self.pw.system.ecutwfc,
-            "calculator_parameters.kcp.system.ecutwfc": self.kcp.system.ecutwfc or None,
-        }
-        density = {
-            "calculator_parameters.pw.system.ecutrho": self.pw.system.ecutrho,
-            "calculator_parameters.kcp.system.ecutrho": self.kcp.system.ecutrho or None,
-        }
-
-        for cutoff, keys in (("wavefunction", wavefunction), ("density", density)):
-            stated = {key: value for key, value in keys.items() if value is not None}
-            if len(set(stated.values())) > 1:
-                listed = [f"`{key}` = {value:g} Ry" for key, value in stated.items()]
-                raise ValueError(
-                    f"{', '.join(listed[:-1])} and {listed[-1]} disagree. pw.x and kcp.x "
-                    f"must run on the same grid, so state one {cutoff} cutoff: give these "
-                    "keys the same value, or drop all but one of them."
-                )
-        return self
+        if not isinstance(data, dict):
+            return data
+        for calc in ("pw", "kcp"):
+            system = data.get(calc)
+            if not isinstance(system, dict) or not isinstance(system.get("system"), dict):
+                continue
+            for key in ("ecutwfc", "ecutrho"):
+                if key in system["system"]:
+                    raise ValueError(
+                        f"`calculator_parameters.{calc}.system.{key}` no longer exists. "
+                        "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four "
+                        "times it."
+                    )
+        return data
 
 
 class KoopmansInput(BaseModel):

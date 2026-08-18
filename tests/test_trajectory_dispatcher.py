@@ -48,7 +48,6 @@ def _trajectory_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str,
         "calculator_parameters": {
             "ecutwfc": 65.0,
             "nbnd": 6,
-            "kcp": {"system": {"ecutrho": 260.0}},
         },
         "ml": {
             "mode": "train",
@@ -793,7 +792,7 @@ class TestModelNodeRoute:
         d = _trajectory_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "model": wrong.pk, "descriptor": "self_hartree"}
 
-        with pytest.raises(ValueError, match="must name the stored trained-model Dict"):
+        with pytest.raises(TypeError, match="must name the stored trained-model Dict"):
             build_trajectory_workgraph(KoopmansInput.model_validate(d))
 
     def test_model_and_model_file_are_exclusive(self) -> None:
@@ -894,6 +893,20 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
+            build_trajectory_workgraph(koopmans_input)
+
+    def test_wannier90_density_raises(self, tmp_path: Path) -> None:
+        """No interpolated band structure exists here for a density to describe."""
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["kpoints"] = {
+            "grid": [2, 2, 2],
+            "overrides": {"wannier90": {"path_density": 25.0}},
+        }
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
             build_trajectory_workgraph(koopmans_input)
 
     def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:

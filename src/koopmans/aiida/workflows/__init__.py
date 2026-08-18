@@ -6,7 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -59,6 +59,32 @@ def load_code(name: str, executable: str) -> orm.AbstractCode:
         ) from exc
 
 
+def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
+    """Load every configured ``<member>@localhost`` code a codes TypedDict declares.
+
+    ``codes_spec`` is the workflow's graph-input TypedDict, declared beside
+    the workflow entry point it feeds (e.g.
+    ``aiida_koopmans.workgraphs.kcp.DscfCodes``) — the single declaration of
+    which codes the workflow wires. Every member — required and
+    ``NotRequired`` alike — is loaded when a ``<member>@localhost`` code is
+    configured, and left out when it is not: which codes a run actually
+    needs is now a structural property of the graph it builds (its
+    TypedDict specs carry the requiredness), not a decision made here from
+    the input file. A route missing a code the run actually needs finds out
+    at graph validation, translated to install advice at the CLI boundary
+    (:func:`advice_for`).
+    """
+    from aiida.common.exceptions import NotExistent
+
+    codes: dict[str, orm.AbstractCode] = {}
+    for name in get_type_hints(codes_spec, include_extras=True):
+        try:
+            codes[name] = orm.load_code(f"{name}@localhost")
+        except NotExistent:
+            pass
+    return cast("CodesT", codes)
+
+
 def _socket_help(hint: Any) -> str | None:
     """Return the ``SocketMeta`` help attached to a codes-TypedDict member annotation."""
     if get_origin(hint) is NotRequired:
@@ -70,14 +96,19 @@ def _socket_help(hint: Any) -> str | None:
     return None
 
 
-def _missing_codes_message(missing: list[tuple[str, str | None]]) -> str:
-    """List missing codes with their purpose, ending in the install advice."""
-    lines = []
-    for name, help_text in missing:
-        line = f"  - `{name}@localhost`"
-        if help_text:
-            line += f" ({help_text})"
-        lines.append(line)
+def _render_missing_codes_advice(help_by_name: Mapping[str, str | None]) -> str:
+    """Render a ``name -> declared help`` mapping as the shared install-advice message.
+
+    The one rendering both :func:`_missing_inputs_advice` (the submit-time
+    translation of a structural ``MissingRequiredInputsError``) and
+    :func:`require_configured_codes` (the build-time pre-flight) use, so the
+    two call sites can never drift into two different wordings for the same
+    fact.
+    """
+    lines = [
+        f"  - `{name}@localhost`" + (f" ({help_text})" if help_text else "")
+        for name, help_text in sorted(help_by_name.items())
+    ]
     return (
         "This calculation needs codes that are not configured:\n"
         + "\n".join(lines)
@@ -85,65 +116,34 @@ def _missing_codes_message(missing: list[tuple[str, str | None]]) -> str:
     )
 
 
-def load_codes[CodesT: Mapping[str, Any]](
-    codes_spec: type[CodesT], require: Iterable[str] = ()
-) -> CodesT:
-    """Load the ``<member>@localhost`` code for each member of a workflow's codes TypedDict.
+def require_configured_codes[CodesT: Mapping[str, Any]](
+    codes_spec: type[CodesT], codes: CodesT
+) -> None:
+    """Raise install advice for any of ``codes_spec``'s required members absent from ``codes``.
 
-    ``codes_spec`` is the workflow's graph-input TypedDict, declared
-    beside the workflow entry point it feeds (e.g.
-    ``aiida_koopmans.workgraphs.kcp.DscfCodes``) — the single declaration
-    of which codes the workflow wires. Its required members must be
-    configured;
-    ``require`` names the ``NotRequired`` members the input at hand turns on
-    (e.g. ``wannierjl`` when ``block_wannierization_threshold`` is set), so
-    their absence raises here — with the member's declared purpose — instead
-    of surfacing as a raw ``KeyError`` inside the graph body. The remaining
-    ``NotRequired`` members are left out: what the graph receives is fixed
-    by the input file, not by which codes the profile happens to hold.
+    A build-time fast path for what the graph's own structural check
+    already enforces at submit (:func:`advice_for`'s translation of
+    ``MissingRequiredInputsError``) — redundant by design, and only worth
+    keeping because some entry graphs still bind a required code by direct
+    dict subscript rather than through ``node_graph.reference``, which dies as a
+    bare ``KeyError`` mid-``build()`` with no chance for the structural
+    check to run at all (see ``tests/test_code_loading.py``'s
+    ``TestPreFlightAdvice`` for which routes currently need this). Safe to
+    delete once every such body defers instead.
 
-    Raises:
-        ValueError: Naming every missing required code and how to install it.
+    Checks ``__required_keys__`` alone, never ``NotRequired`` members: which
+    of those a particular input additionally turns on is conditional
+    knowledge this function does not have and must not guess at (e.g.
+    DFPT's ``ph``, needed only under ``eps_inf: auto``) — that stays the
+    structural check's job, at submit.
     """
-    from aiida.common.exceptions import NotExistent
-
     hints = get_type_hints(codes_spec, include_extras=True)
     # Every codes_spec argument is a TypedDict class, which carries
     # __required_keys__ at runtime; the Mapping bound cannot say so.
     required_keys: frozenset[str] = codes_spec.__required_keys__  # type: ignore[attr-defined]
-    needed = set(required_keys) | set(require)
-    undeclared = needed - hints.keys()
-    if undeclared:
-        raise ValueError(
-            f"{sorted(undeclared)} are not members of {codes_spec.__name__}; "
-            "`require` may only name its NotRequired members."
-        )
-
-    codes: dict[str, orm.AbstractCode] = {}
-    missing: list[tuple[str, str | None]] = []
-    for name in sorted(needed):
-        try:
-            codes[name] = orm.load_code(f"{name}@localhost")
-        except NotExistent:
-            missing.append((name, _socket_help(hints[name])))
+    missing = {name: _socket_help(hints[name]) for name in required_keys if name not in codes}
     if missing:
-        raise ValueError(_missing_codes_message(missing))
-    return cast("CodesT", codes)
-
-
-def configured_projwfc() -> orm.AbstractCode | None:
-    """Return the ``projwfc@localhost`` code, or ``None`` when none is configured.
-
-    projwfc is an optional member of the wannierize / DFPT codes namespaces:
-    whether the projected DOS runs — and the warning when it cannot — is the
-    graphs' decision, so the dispatcher only makes the code available.
-    """
-    from aiida.common.exceptions import NotExistent
-
-    try:
-        return orm.load_code("projwfc@localhost")
-    except NotExistent:
-        return None
+        raise ValueError(_render_missing_codes_advice(missing))
 
 
 def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -> None:
@@ -167,8 +167,7 @@ def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -
         raise ValueError(
             f"The pseudopotential family `{pseudo_family}` publishes no recommended "
             "cutoffs, so they must come from the input file: set "
-            "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it "
-            "unless `calculator_parameters.pw.system.ecutrho` states otherwise."
+            "`calculator_parameters.ecutwfc`. `ecutrho` follows at four times it."
         )
 
 
@@ -232,17 +231,17 @@ def prepare_common_inputs(
 
 
 def reject_kpoint_overrides(koopmans_input: KoopmansInput, messages: dict[str, str]) -> None:
-    """Raise for a per-step k-point mesh the route about to be built cannot honour.
+    """Raise for a per-step k-point override the route about to be built cannot honour.
 
-    ``messages`` maps a ``kpoints.overrides`` step name to what the user
+    ``messages`` maps a ``kpoints.overrides`` entry name to what the user
     should write instead.
 
     Args:
         koopmans_input: The parsed koopmans input.
-        messages: The message to raise for each step this route rejects.
+        messages: The message to raise for each entry this route rejects.
 
     Raises:
-        ValueError: If the input gives a mesh for one of those steps.
+        ValueError: If the input states an override for one of those entries.
     """
     for step, message in messages.items():
         if getattr(koopmans_input.kpoints.overrides, step) is not None:
@@ -346,21 +345,37 @@ def _parallelization_advice(exc: ParallelizationError) -> str:
 def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
     """Phrase graph-level missing-code sockets as install advice.
 
-    A workflow body that wires a code member it was not given surfaces
-    as unfilled ``workgraph.code`` sockets at graph validation. Every
-    codes-TypedDict member is annotated, so an entry carries its declared
-    purpose in ``help``; a bare entry is named without one. Entries of
-    other socket types are not code-installation problems, so an error
-    naming only those earns no advice.
+    A workflow body that wires a code member it was not given surfaces as
+    unfilled ``workgraph.code`` sockets at graph validation — one per socket
+    the missing code was threaded to, so the same code can be named several
+    times over (a route's own top-level ``codes.pw`` alongside every
+    downstream task it feeds). Grouped here by member name, read off each
+    socket path's last segment (dropping a ``_code`` suffix a task's own
+    kwarg may add): every entry for the same code names the same
+    ``<name>@localhost``, so one line covers all of them. A segment of
+    plain ``code`` names no member and is skipped, since ``code@localhost``
+    would tell the reader nothing to install. The purpose shown is any
+    ``help`` an entry carries, preferring one under the route's own
+    top-level ``graph_inputs.codes.*`` namespace, since that names the code
+    in the vocabulary of the route the user asked for. Entries of other
+    socket types are not code-installation problems, so an error naming
+    only those earns no advice.
     """
-    missing = [
-        (entry.socket_path.rsplit(".", 1)[-1], entry.help)
-        for entry in exc.missing
-        if entry.identifier == "workgraph.code"
-    ]
-    if not missing:
+    help_by_name: dict[str, str | None] = {}
+    for entry in exc.missing:
+        if entry.identifier != "workgraph.code":
+            continue
+        name = entry.socket_path.rsplit(".", 1)[-1].removesuffix("_code")
+        if name == "code":
+            continue
+        route_level = entry.socket_path.startswith("graph_inputs.codes.")
+        if name not in help_by_name:
+            help_by_name[name] = entry.help
+        elif entry.help and (route_level or help_by_name[name] is None):
+            help_by_name[name] = entry.help
+    if not help_by_name:
         return None
-    return _missing_codes_message(missing)
+    return _render_missing_codes_advice(help_by_name)
 
 
 def _model_mismatch_advice(exc: ModelMismatchError) -> str:

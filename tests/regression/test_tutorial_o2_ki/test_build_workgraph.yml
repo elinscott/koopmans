@@ -1615,6 +1615,8 @@ raw:
         codes:
           kcp:
             __aiida_code__: kcp@localhost
+          pw:
+            __aiida_code__: pw@localhost
         correction: ki
         ecutrho: 160.0
         ecutwfc: 40.0

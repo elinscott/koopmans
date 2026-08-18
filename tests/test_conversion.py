@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pytest
 from qe_tools import CONSTANTS
 
@@ -12,9 +13,11 @@ from koopmans.aiida.conversion import (
     _parse_kpoints_path_string,
     atoms_input_to_structure,
     input_to_kcw_overrides,
+    input_to_ph_parameters,
     input_to_pw_parameters,
 )
 from koopmans.input_file import AtomsInput
+from tests.fixtures import path_labels
 from tests.fixtures import silicon_pw_input as _pw_input
 
 SI_ALAT_BOHR = 10.2622
@@ -65,6 +68,11 @@ POINT_COORDS = {
     "K": [0.375, 0.375, 0.75],
 }
 
+#: An identity reciprocal cell: crystal and Cartesian coordinates coincide,
+#: so tests that only care about path topology (not physical density) can
+#: reuse the crystal-space ``POINT_COORDS`` distances directly.
+_IDENTITY_RECIPROCAL_CELL = np.eye(3)
+
 
 class TestKpointsPath:
     """Tests for explicit k-path parsing and sampling."""
@@ -74,7 +82,9 @@ class TestKpointsPath:
         path = _parse_kpoints_path_string("GXG", POINT_COORDS)
         assert path == [("GAMMA", "X"), ("X", "GAMMA")]
 
-        kpoints, labels = _calculate_kpoints_along_path(path, POINT_COORDS, density=10.0)
+        kpoints, labels = _calculate_kpoints_along_path(
+            path, POINT_COORDS, density=10.0, reciprocal_cell=_IDENTITY_RECIPROCAL_CELL
+        )
         label_names = [name for _, name in labels]
         assert label_names == ["GAMMA", "X", "GAMMA"]
         # X appears exactly once in the sampled points
@@ -85,7 +95,9 @@ class TestKpointsPath:
         path = _parse_kpoints_path_string("GX,MK", POINT_COORDS)
         assert path == [("GAMMA", "X"), ("M", "K")]
 
-        kpoints, labels = _calculate_kpoints_along_path(path, POINT_COORDS, density=10.0)
+        kpoints, labels = _calculate_kpoints_along_path(
+            path, POINT_COORDS, density=10.0, reciprocal_cell=_IDENTITY_RECIPROCAL_CELL
+        )
         label_names = [name for _, name in labels]
         assert label_names == ["GAMMA", "X", "M", "K"]
         # M is present as a sampled point, adjacent to X
@@ -93,6 +105,60 @@ class TestKpointsPath:
         x_index = next(i for i, name in labels if name == "X")
         assert kpoints[m_index] == POINT_COORDS["M"]
         assert m_index == x_index + 1
+
+
+class TestPathDensityIsPhysical:
+    """``path_density`` counts points per inverse angstrom, not per crystal unit.
+
+    ``point_coords`` (both the ASE-bandpath and the seekpath branch) are
+    crystal coordinates: their norm scales with the reciprocal cell, not with
+    physical length. Two cells sharing a shape but differing in lattice
+    constant must therefore get the same point spacing per angstrom, not the
+    same point count.
+    """
+
+    @staticmethod
+    def _fcc_structure(a: float) -> Any:
+        from aiida import orm
+
+        cell = (np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2).tolist()
+        structure = orm.StructureData(cell=cell)
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(-a / 4, a / 4, a / 4), symbols="Si"
+        )
+        return structure
+
+    def test_same_density_gives_same_physical_spacing_across_cells(
+        self, aiida_profile: Any
+    ) -> None:
+        """A small and a large cell of the same shape get the same points-per-angstrom.
+
+        Before the fix, both cells give ``n_points=8`` on the G-X segment
+        despite the physical segment length differing by ~3.7x between them
+        (0.7071 fractional units regardless of scale): 6.9 vs 25.5
+        points/angstrom^-1 at ``path_density=10``. After the fix both must
+        land within one point's rounding of 10 points/angstrom^-1.
+        """
+        from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX", path_density=10.0)
+
+        small = self._fcc_structure(5.43)
+        large = self._fcc_structure(20.0)
+
+        for structure in (small, large):
+            kpts = kpoints_input_to_kpoints_path(kpoints, structure)
+            coords = kpts.get_kpoints()  # type: ignore[no-untyped-call]
+            recip = 2 * np.pi * np.linalg.inv(np.array(structure.cell)).T
+            cart_length = np.linalg.norm((coords[-1] - coords[0]) @ recip)
+            points_per_inv_angstrom = (len(coords) - 1) / cart_length
+            assert points_per_inv_angstrom == pytest.approx(10.0, rel=0.15), (
+                f"a={np.linalg.norm(structure.cell[0]) * 2:.1f}: "
+                f"{len(coords)} points over {cart_length:.4f} 1/A "
+                f"= {points_per_inv_angstrom:.2f} points/(1/A), expected ~10"
+            )
 
 
 class TestSeekpathBasisGuard:
@@ -231,6 +297,64 @@ class TestSeekpathBasisGuard:
         assert list(kpts.pbc) == [True, True, True]
 
 
+class TestInterpolationPathHelper:
+    """``kpoints_input_to_interpolation_path`` decides whether a step samples a path.
+
+    Shared by the ``dft_bands``, wannierize and DFPT routes. The DFPT route
+    cannot exercise the gamma-only branch end to end — it rejects
+    gamma-only inputs before it ever builds a path — so this tests the
+    helper directly, which is exactly what that route now relies on.
+    """
+
+    @staticmethod
+    def _fcc_silicon() -> Any:
+        import numpy as np
+        from aiida import orm
+
+        a = 5.43
+        cell = np.array([[-1, 0, 1], [0, 1, 1], [-1, 1, 0]]) * a / 2
+        structure = orm.StructureData(cell=cell.tolist())
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        structure.append_atom(  # type: ignore[no-untyped-call]
+            position=(-a / 4, a / 4, a / 4), symbols="Si"
+        )
+        return structure
+
+    def test_gamma_only_returns_none(self, aiida_profile: Any) -> None:
+        """A gamma-only input's fixed path names the zone centre alone, so no path is built."""
+        from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        kpoints = GammaOnlyKpointsInput(gamma_only=True)
+        assert kpoints_input_to_interpolation_path(kpoints, self._fcc_silicon()) is None
+
+    def test_no_path_returns_none(self, aiida_profile: Any) -> None:
+        """With no ``path`` set, the helper leaves the step on its protocol default."""
+        from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput(grid=(2, 2, 2))
+        assert kpoints_input_to_interpolation_path(kpoints, self._fcc_silicon()) is None
+
+    def test_explicit_path_matches_kpoints_input_to_kpoints_path(self, aiida_profile: Any) -> None:
+        """An explicit path is sampled, exactly as ``kpoints_input_to_kpoints_path`` directly."""
+        import numpy as np
+
+        from koopmans.aiida.conversion import (
+            kpoints_input_to_interpolation_path,
+            kpoints_input_to_kpoints_path,
+        )
+        from koopmans.input_file import GridKpointsInput
+
+        structure = self._fcc_silicon()
+        kpoints = GridKpointsInput(grid=(2, 2, 2), path="GX")
+        expected = kpoints_input_to_kpoints_path(kpoints, structure)
+        actual = kpoints_input_to_interpolation_path(kpoints, structure)
+        assert actual is not None
+        assert dict(actual.labels) == dict(expected.labels)
+        assert np.allclose(actual.get_kpoints(), expected.get_kpoints())  # type: ignore[no-untyped-call]
+
+
 class TestInputToPwParameters:
     """The shared pw parameter dict carries no calculation type of its own."""
 
@@ -242,43 +366,12 @@ class TestInputToPwParameters:
         parameters = input_to_pw_parameters(inp)
         assert "calculation" not in parameters.get("CONTROL", {})
 
-    def test_ecutrho_follows_the_kcp_block_when_it_is_set(self, aiida_profile: Any) -> None:
-        """An explicit ``kcp.system.ecutrho`` puts pw.x on the CP supercell grid.
-
-        100 Ry rather than the four-times-20 the pair would take on its own,
-        so the assertion cannot be satisfied by the derivation. Off the
-        norm-conserving ratio it warns as a stated pw pair does, naming the
-        ``kcp`` key it came from rather than the ``pw`` one the input leaves
-        unset.
-        """
+    def test_ecutrho_derives_from_ecutwfc(self, aiida_profile: Any) -> None:
+        """``ecutrho`` is always four times ``ecutwfc``, with no other source."""
         from koopmans.input_file import KoopmansInput
 
-        inp = KoopmansInput.model_validate(
-            _pw_input(
-                calculator_parameters={"ecutwfc": 20.0, "kcp": {"system": {"ecutrho": 100.0}}}
-            )
-        )
-        with pytest.warns(UserWarning, match=r"`calculator_parameters\.kcp\.system\.ecutrho`"):
-            parameters = input_to_pw_parameters(inp)
-
-        assert parameters["SYSTEM"]["ecutrho"] == pytest.approx(100.0)
-
-    def test_ecutrho_from_the_kcp_block_on_the_ratio_is_silent(self, aiida_profile: Any) -> None:
-        """A ``kcp`` density cutoff already at four times ``ecutwfc`` warns about nothing.
-
-        Separates the warning from the source: it is the ratio that is
-        reported, not the fact that the value came from the ``kcp`` block.
-        """
-        import warnings
-
-        from koopmans.input_file import KoopmansInput
-
-        inp = KoopmansInput.model_validate(
-            _pw_input(calculator_parameters={"ecutwfc": 20.0, "kcp": {"system": {"ecutrho": 80.0}}})
-        )
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
-            parameters = input_to_pw_parameters(inp)
+        inp = KoopmansInput.model_validate(_pw_input(calculator_parameters={"ecutwfc": 20.0}))
+        parameters = input_to_pw_parameters(inp)
 
         assert parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
 
@@ -447,6 +540,28 @@ class TestSmearingWithoutDegaussRejected:
         parameters = input_to_pw_parameters(inp)
         assert parameters["SYSTEM"]["occupations"] == "smearing"
         assert parameters["SYSTEM"]["degauss"] == pytest.approx(0.02)
+
+
+class TestInputToPhParameters:
+    """``input_to_ph_parameters`` carries user overrides, nothing else."""
+
+    def test_empty_by_default(self, aiida_profile: Any) -> None:
+        """With no ``ph`` block, ``INPUTPH`` states nothing explicitly."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        parameters = input_to_ph_parameters(inp)
+        assert parameters == {"INPUTPH": {}}
+
+    def test_user_value_survives(self, aiida_profile: Any) -> None:
+        """A tightened ``tr2_ph`` reaches the ``INPUTPH`` dict."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(calculator_parameters={"ecutwfc": 20.0, "ph": {"tr2_ph": 1.0e-14}})
+        )
+        parameters = input_to_ph_parameters(inp)
+        assert parameters["INPUTPH"]["tr2_ph"] == pytest.approx(1.0e-14)
 
 
 class TestCodeParallelizationHelper:
@@ -695,6 +810,68 @@ class TestDftBandsScfMesh:
         )
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_bands"):
             build_workgraph(inp)
+
+    def test_an_explicit_path_reaches_bands_kpoints(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """``kpoints.path`` bypasses seekpath, reaching the workchain as ``bands_kpoints``.
+
+        Regression for koopmans#159: the route used to forward only a
+        ``bands_kpoints_distance``, so seekpath always chose its own path
+        even when the input asked for a specific one.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                pseudo_library="SG15/1.0/PBE/SR",
+                kpoints={"grid": [2, 2, 2], "offset": [0, 0, 0], "path": "GXG"},
+            )
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        bands_kpoints = task_inputs["bands_kpoints"].value
+        assert path_labels(bands_kpoints) == ["GAMMA", "X", "GAMMA"]
+        assert task_inputs["bands_kpoints_distance"].value is None
+
+    def test_no_path_leaves_seekpath_in_charge(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """With no ``kpoints.path`` the route still sends only a distance."""
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(pseudo_library="SG15/1.0/PBE/SR", kpoints={"grid": [2, 2, 2]})
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        assert task_inputs["bands_kpoints"].value is None
+        assert task_inputs["bands_kpoints_distance"].value is not None
+
+    def test_gamma_only_leaves_seekpath_in_charge(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A gamma-only input's fixed ``path: "G"`` names no segment to sample.
+
+        ``GammaOnlyKpointsInput.path`` defaults to the literal ``"G"`` and
+        can never be ``None``, so a bare ``kpoints.path is not None`` guard
+        would always fire here and hand the single-label path to
+        ``kpoints_input_to_kpoints_path``, which raises building an empty
+        k-point list. The route must fall back to the protocol's own
+        ``bands_kpoints_distance`` instead, exactly as with no path at all.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(pseudo_library="SG15/1.0/PBE/SR", kpoints={"gamma_only": True})
+        )
+        wg = build_workgraph(inp)
+        task_inputs = wg.tasks["PwBandsWorkChain"].inputs
+        assert task_inputs["bands_kpoints"].value is None
+        assert task_inputs["bands_kpoints_distance"].value is not None
 
 
 class TestStepKpointsMesh:

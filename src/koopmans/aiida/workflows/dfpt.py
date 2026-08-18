@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, Any, cast
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
-    configured_projwfc,
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
+    reject_kpoint_overrides,
+    require_configured_codes,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
@@ -45,7 +46,7 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
         input_to_kcw_overrides,
-        kpoints_input_to_kpoints_path,
+        kpoints_input_to_interpolation_path,
         step_kpoints_mesh,
     )
 
@@ -90,6 +91,21 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
                 "occupations."
             )
 
+    # Checked last among the pure-Python guards, after every workflow-scope
+    # rejection above (correction, init_orbitals, gamma_only, spin): an
+    # explicit override paired with one of those should surface the scope
+    # blocker first, not send the reader to fix the override and only then
+    # learn the run is unsupported regardless.
+    reject_kpoint_overrides(
+        koopmans_input,
+        {
+            "wannier90": "`kpoints.overrides.wannier90.path_density` is not yet wired "
+            "into the DFPT route: its own wannierization step interpolates along "
+            "`kpoints.path` at the top-level `kpoints.path_density`, with no socket "
+            "of its own yet for a denser interpolation."
+        },
+    )
+
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
@@ -117,20 +133,18 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     else:
         manifolds = _single_channel_dfpt_manifolds(koopmans_input, structure, nelec, nbnd, spin)
 
-    bands_kpoints = (
-        kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
-        if koopmans_input.kpoints.path is not None
-        else None
-    )
+    bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
-    # DfptCodes's ph.x member is only required for the `eps_inf: auto`
-    # dielectric pre-computation; projwfc merely rides along when
-    # configured (:func:`configured_projwfc`) — the graph decides whether
-    # the quality-check projected DOS runs.
-    codes = load_codes(DfptCodes, require=("ph",) if eps_inf == "auto" else ())
-    projwfc = configured_projwfc()
-    if projwfc is not None:
-        codes["projwfc"] = projwfc
+    # load_codes loads every configured member of DfptCodes. ph.x is only
+    # actually needed for the `eps_inf: auto` dielectric pre-computation,
+    # and projwfc only for the quality-check projected DOS; whether either
+    # runs, and whether a missing code the run does need is fatal, is now
+    # the graph's own structural requirement — checked at graph validation,
+    # not here. require_configured_codes only ever looks at pw/kcw (the
+    # required members): it has no notion of eps_inf, so ph never gets
+    # demanded here.
+    codes = load_codes(DfptCodes)
+    require_configured_codes(DfptCodes, codes)
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.

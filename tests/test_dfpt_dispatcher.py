@@ -151,6 +151,50 @@ class TestPerStepKpointMesh:
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 27
         assert wg.tasks["dfpt"].inputs["kgrid"].value == [3, 3, 3]
 
+    def test_wannier90_density_raises(self) -> None:
+        """Not yet wired into this route's own wannierization step.
+
+        The guard runs before any code or pseudopotential is loaded, so it
+        needs no profile.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*DFPT"):
+            _build(d)
+
+
+class TestScopeGuardOrdering:
+    """A scope blocker (correction, init_orbitals, ...) is reported before the override.
+
+    Both guards are pure Python and need no profile; a caller fixing
+    whichever error surfaces first should never resubmit into a second one
+    the first response never mentioned.
+    """
+
+    def test_an_unsupported_correction_masks_no_override_message(self) -> None:
+        """`correction='kipz'` plus an explicit override: the correction blocker wins.
+
+        The message must name the actual blocker (`kipz`) and say nothing
+        about `overrides.wannier90` — a reader who fixes the override would
+        resubmit only to learn kipz was never supported here.
+        """
+        d = _si_dfpt_dict(correction="kipz")
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(NotImplementedError, match="kipz") as excinfo:
+            _build(d)
+        assert "wannier90" not in str(excinfo.value)
+
+    def test_a_valid_input_still_gets_the_override_refused(self) -> None:
+        """Discriminates the above from a guard that fires too early or not at all.
+
+        A KI DFPT input that clears every scope check still refuses an
+        explicit override — the guard exists, just later in the sequence.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density"):
+            _build(d)
+
 
 class TestCollinear:
     """spin='collinear' fans out per spin channel and validates its inputs."""
@@ -459,20 +503,25 @@ class TestProjwfcQualityCheck:
         assert codes_socket._links
         assert wg.tasks["dfpt"].inputs["projwfc"]._links
 
-    def test_unconfigured_projwfc_leaves_dfpt_unwired(
+    def test_unconfigured_projwfc_still_wires_dfpt_from_the_pseudos_alone(
         self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """Negative control: without a projwfc code, ``dfpt`` gets no projwfc input.
+        """A missing projwfc code no longer gates the projwfc data wiring.
 
-        The bands path alone (no projwfc code in ``dfpt_codes``) still
-        threads ``wannierize_bands``; only the projected-DOS wiring depends
-        on the code.
+        WannierizeBlocks' projwfc entry is decided by
+        projected_dos_supported(...) alone — fake_sg15_pseudo_family
+        supports it — so the projwfc data link into dfpt exists regardless
+        of whether dfpt_codes carries a projwfc code. A code that's
+        actually missing surfaces as the framework's structural
+        missing-input error at submission (aiida-koopmans' own contract,
+        pinned in its test_codes_by_need.py and test_wannierize_workgraph.py),
+        not a build-time absence of this link.
         """
         d = _si_dfpt_dict()
         d["kpoints"]["path"] = "GX"
         wg = _build(d)
         assert wg.tasks["dfpt"].inputs["wannierize_bands"]._links
-        assert not wg.tasks["dfpt"].inputs["projwfc"]._links
+        assert wg.tasks["dfpt"].inputs["projwfc"]._links
 
     def test_no_path_skips_the_wannierize_quality_check(
         self, aiida_profile_clean: Any, dfpt_pdos_codes: Any, fake_sg15_pseudo_family: Any

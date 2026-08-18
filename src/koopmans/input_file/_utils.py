@@ -20,9 +20,12 @@ def reject_route_owned_fields(model: BaseModel, owners: dict[str, str], block: s
     for the error message. Compares against the field's own declared
     default rather than ``model_fields_set``: ``model_dump()`` states every
     field explicitly, so a "was it written" check misfires on any input
-    round-tripped through dump + re-validate (as
-    ``KoopmansInput.model_copy`` — shallow — dumps, mutates, and
-    re-validates).
+    round-tripped through ``model_dump()`` -> ``model_validate()`` — a
+    pattern koopmans itself uses to re-validate a modified input (e.g.
+    ``KoopmansInput.model_copy``, which dumps, mutates, and re-validates).
+    A field the caller always forces to a value other than its inherited
+    default should redeclare that default on the subclass, so "the field's
+    own declared default" and "what actually runs" agree.
 
     Raises:
         ValueError: If a key of ``owners`` is set away from its default.

@@ -170,8 +170,6 @@ class TestRemovedKeywordsRejected:
 
 
 _CUTOFF_KEYS = [
-    ("calculator_parameters.pw.system", "ecutwfc"),
-    ("calculator_parameters.pw.system", "ecutrho"),
     ("calculator_parameters", "ecutwfc"),
 ]
 
@@ -210,106 +208,49 @@ def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object
     return d
 
 
-_DISAGREEING_CUTOFFS = [
-    (
-        "pw and kcp state different wavefunction cutoffs",
-        {"pw": {"system": {"ecutwfc": 45.0}}, "kcp": {"system": {"ecutwfc": 20.0}}},
-        ["calculator_parameters.pw.system.ecutwfc", "calculator_parameters.kcp.system.ecutwfc"],
-    ),
-    (
-        "pw and kcp state different density cutoffs",
-        {
-            "ecutwfc": 45.0,
-            "pw": {"system": {"ecutrho": 180.0}},
-            "kcp": {"system": {"ecutrho": 300.0}},
-        },
-        ["calculator_parameters.pw.system.ecutrho", "calculator_parameters.kcp.system.ecutrho"],
-    ),
-    (
-        "a pw block overrides the shorthand kcp falls back to",
-        {"ecutwfc": 20.0, "nbnd": 8, "pw": {"system": {"ecutwfc": 45.0}}},
-        ["calculator_parameters.ecutwfc", "calculator_parameters.pw.system.ecutwfc"],
-    ),
-    (
-        "a kcp block states what the shorthand overrides",
-        {"ecutwfc": 20.0, "kcp": {"system": {"ecutwfc": 30.0}}},
-        ["calculator_parameters.ecutwfc", "calculator_parameters.kcp.system.ecutwfc"],
-    ),
-]
-
-_AGREEING_CUTOFFS = [
-    ("the shorthand alone", {"ecutwfc": 20.0}),
-    ("a pw block restating the shorthand", {"ecutwfc": 20.0, "pw": {"system": {"ecutwfc": 20.0}}}),
-    (
-        "pw and kcp stating one wavefunction cutoff",
-        {"pw": {"system": {"ecutwfc": 45.0}}, "kcp": {"system": {"ecutwfc": 45.0}}},
-    ),
-    (
-        "pw and kcp stating one density cutoff",
-        {
-            "ecutwfc": 45.0,
-            "pw": {"system": {"ecutrho": 180.0}},
-            "kcp": {"system": {"ecutrho": 180.0}},
-        },
-    ),
-    ("a pw cutoff with no kcp block", {"pw": {"system": {"ecutwfc": 45.0}}}),
-    (
-        "a kcp density cutoff with no pw block",
-        {"ecutwfc": 40.0, "kcp": {"system": {"ecutrho": 160.0}}},
-    ),
+_REMOVED_PER_CALCULATOR_CUTOFFS = [
+    ("pw", "ecutwfc"),
+    ("pw", "ecutrho"),
+    ("kcp", "ecutwfc"),
+    ("kcp", "ecutrho"),
 ]
 
 
-class TestCutoffsMustAgreeAcrossBlocks:
-    """pw.x and kcp.x read their cutoffs from different keys, and must get one grid."""
+class TestPerCalculatorCutoffsRemoved:
+    """pw.x and kcp.x always share one grid, stated once via ``ecutwfc``."""
 
     @pytest.mark.parametrize(
-        ("label", "calculator_parameters", "keys"),
-        _DISAGREEING_CUTOFFS,
-        ids=[case[0] for case in _DISAGREEING_CUTOFFS],
+        ("calculator", "keyword"),
+        _REMOVED_PER_CALCULATOR_CUTOFFS,
+        ids=[f"{calc}.{kw}" for calc, kw in _REMOVED_PER_CALCULATOR_CUTOFFS],
     )
-    def test_disagreeing_cutoffs_are_rejected(
-        self,
-        label: str,
-        calculator_parameters: dict[str, object],
-        keys: list[str],
-        tmp_path: Path,
+    def test_a_removed_key_names_its_replacement(
+        self, calculator: str, keyword: str, tmp_path: Path
     ) -> None:
-        """The message names every key that stated a value, so the user can pick one.
-
-        The shorthand cases are the reproduced defect: an input naming only
-        ``pw.system.ecutwfc`` beside the shorthand ran pw.x at 45 Ry and kcp.x
-        at 20 Ry, and neither block stated the cutoff twice.
-        """
+        """Each retired spelling points the reader at ``calculator_parameters.ecutwfc``."""
         input_file = tmp_path / "input.json"
-        input_file.write_text(json.dumps(_si_input_with(calculator_parameters)))
+        input_file.write_text(json.dumps(_si_input_with({calculator: {"system": {keyword: 45.0}}})))
 
         with pytest.raises(ValueError) as excinfo:
             read_input_file(input_file)
 
         message = str(excinfo.value)
-        for key in keys:
-            assert f"`{key}`" in message
-        assert "must run on the same grid" in message
+        assert f"`calculator_parameters.{calculator}.system.{keyword}`" in message
+        assert "`calculator_parameters.ecutwfc`" in message
 
-    @pytest.mark.parametrize(
-        ("label", "calculator_parameters"),
-        _AGREEING_CUTOFFS,
-        ids=[case[0] for case in _AGREEING_CUTOFFS],
-    )
-    def test_agreeing_cutoffs_are_accepted(
-        self, label: str, calculator_parameters: dict[str, object], tmp_path: Path
-    ) -> None:
-        """Restating a cutoff, and leaving one block silent, both stay legal.
+    def test_a_single_ecutwfc_reaches_both_pw_and_kcp(self, tmp_path: Path) -> None:
+        """One stated cutoff derives both codes' grids, at the norm-conserving ratio."""
+        from koopmans.aiida.conversion import input_to_pw_parameters
+        from koopmans.aiida.workflows.dscf import kcp_dscf_inputs
 
-        Separates disagreement from mere repetition: a rule keyed on "two
-        blocks mention it" rather than on the values would reject these, and
-        the last case is the shape the O2 tutorial ships.
-        """
         input_file = tmp_path / "input.json"
-        input_file.write_text(json.dumps(_si_input_with(calculator_parameters)))
+        input_file.write_text(json.dumps(_si_input_with({"ecutwfc": 45.0, "nbnd": 8})))
+        inp = read_input_file(input_file)
 
-        read_input_file(input_file)
+        pw_system = input_to_pw_parameters(inp)["SYSTEM"]
+        kcp = kcp_dscf_inputs(inp)
+        assert (pw_system["ecutwfc"], pw_system["ecutrho"]) == pytest.approx((45.0, 180.0))
+        assert (kcp["ecutwfc"], kcp["ecutrho"]) == pytest.approx((45.0, 180.0))
 
 
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
@@ -560,11 +501,71 @@ class TestPerStepKpoints:
         assert inp.kpoints.overrides.scf is not None
         assert inp.kpoints.overrides.scf.offset == (0.5, 0.5, 0.5)
 
+    def test_wannier90_density_is_unset_without_being_stated(self) -> None:
+        """Left out, the entry is unset, like ``scf``/``nscf``: no override to apply."""
+        from koopmans.aiida.conversion import wannier90_path_density
+
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(grid=[2, 2, 2]))
+        assert inp.kpoints.overrides.wannier90 is None
+        assert wannier90_path_density(inp.kpoints) == 50.0
+
+    def test_wannier90_density_can_be_set_explicitly(self) -> None:
+        """A stated ``overrides.wannier90.path_density`` overrides the default."""
+        from koopmans.aiida.conversion import wannier90_path_density
+
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(grid=[2, 2, 2], overrides={"wannier90": {"path_density": 80.0}})
+        )
+        assert inp.kpoints.overrides.wannier90 is not None
+        assert inp.kpoints.overrides.wannier90.path_density == 80.0
+        assert wannier90_path_density(inp.kpoints) == 80.0
+
+    def test_wannier90_override_survives_a_dump_and_revalidate_round_trip(self) -> None:
+        """An unset entry must not look "stated" after ``model_dump`` re-validates.
+
+        ``model_dump`` serializes every field, default or not; if the unset
+        sentinel were anything other than ``None`` the round trip used to
+        build input variants throughout the test suite would make every
+        input look like it explicitly gave ``overrides.wannier90``.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(gamma_only=True))
+        round_tripped = KoopmansInput.model_validate(inp.model_dump())
+        assert round_tripped.kpoints.overrides.wannier90 is None
+
+    def test_wannier90_entry_has_no_mesh_fields(self, tmp_path: Path) -> None:
+        """The wannier90 entry states a density, not a mesh: it has no `grid` to give."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(
+                _si_input_with_kpoints(grid=[2, 2, 2], overrides={"wannier90": {"grid": [4, 4, 4]}})
+            )
+        )
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.grid.*is not a valid keyword"):
+            read_input_file(input_file)
+
     def test_gamma_only_has_no_steps_to_override(self) -> None:
         """Every step of a gamma-only calculation samples the same one point."""
         with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
             KoopmansInput.model_validate(
                 _si_input_with_kpoints(gamma_only=True, overrides={"scf": {"grid": [4, 4, 4]}})
+            )
+
+    def test_gamma_only_accepts_an_unstated_wannier90_default(self) -> None:
+        """A gamma-only input never mentioning `overrides.wannier90` still validates.
+
+        `wannier90` is unset by default, like `scf`/`nscf`; only an input
+        that states it itself has anything to reject.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(gamma_only=True))
+        assert inp.kpoints.overrides.wannier90 is None
+
+    def test_gamma_only_rejects_a_stated_wannier90_density(self) -> None:
+        """Gamma-only samples one point, so there is no band structure to interpolate."""
+        with pytest.raises(ValueError, match=r"overrides\.wannier90.*gamma_only"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(
+                    gamma_only=True, overrides={"wannier90": {"path_density": 80.0}}
+                )
             )
 
     def test_gamma_only_rejects_a_mesh_built_as_a_model(self) -> None:
@@ -577,12 +578,12 @@ class TestPerStepKpoints:
         from koopmans.input_file import (
             GammaOnlyKpointsInput,
             KpointsOverridesInput,
-            StepKpointsInput,
+            StepKpointsOverridesInput,
         )
 
         with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
             GammaOnlyKpointsInput(
-                overrides=KpointsOverridesInput(scf=StepKpointsInput(grid=(4, 4, 4)))
+                overrides=KpointsOverridesInput(scf=StepKpointsOverridesInput(grid=(4, 4, 4)))
             )
 
     @pytest.mark.parametrize("overrides", ["scf", [{"grid": [4, 4, 4]}], 4])
@@ -809,3 +810,72 @@ class TestKcwCalculatorParameters:
         assert kcw.wannier.model_fields_set == set()
         assert kcw.screen.model_fields_set == set()
         assert kcw.ham.model_fields_set == set()
+
+
+# (keyword, a value the dft_eps route would never accept from the user, a
+# substring of what actually owns it).
+_PH_ROUTE_OWNED_KEYS = [
+    ("epsil", False, "dft_eps route"),
+    ("trans", True, "dft_eps route"),
+    ("verbosity", "low", "aiida-quantumespresso"),
+]
+
+# (keyword, the value the route always forces — restating it is accepted).
+_PH_ROUTE_FORCED_VALUES = [
+    ("epsil", True),
+    ("trans", False),
+    ("verbosity", "high"),
+]
+
+
+class TestPhCalculatorParameters:
+    """``calculator_parameters.ph`` mounts the ph.x ``INPUTPH`` namelist (koopmans2#162)."""
+
+    @pytest.mark.parametrize(("keyword", "value", "owner_snippet"), _PH_ROUTE_OWNED_KEYS)
+    def test_route_owned_key_is_rejected(
+        self, keyword: str, value: object, owner_snippet: str
+    ) -> None:
+        """A user-set route-owned key fails at parse, naming the key and its owner."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, "calculator_parameters.ph", keyword, value)
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`calculator_parameters.ph.{keyword}`" in message
+        assert owner_snippet in message
+
+    def test_a_plugin_managed_key_is_an_unknown_field(self) -> None:
+        """``outdir`` is absent from the schema: aiida-quantumespresso forces it for every run."""
+        from pydantic import ValidationError
+
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, "calculator_parameters.ph", "outdir", "custom")
+
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize(("keyword", "value"), _PH_ROUTE_FORCED_VALUES)
+    def test_restating_the_forced_value_is_accepted(self, keyword: str, value: object) -> None:
+        """A route-owned key stated at the value the route actually forces is not rejected."""
+        d = _si_input_with({"ecutwfc": 20.0, "ph": {keyword: value}})
+        inp = KoopmansInput.model_validate(d)
+        assert getattr(inp.calculator_parameters.ph, keyword) == value
+
+    def test_dump_and_revalidate_roundtrips(self) -> None:
+        """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks."""
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        KoopmansInput.model_validate(inp.model_dump())
+
+    def test_non_owned_keywords_pass_through(self) -> None:
+        """A user-set expert keyword outside the owned set is accepted as-is."""
+        d = _si_input_with({"ecutwfc": 20.0, "ph": {"tr2_ph": 1.0e-14, "nmix_ph": 6}})
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.ph.tr2_ph == pytest.approx(1.0e-14)
+        assert inp.calculator_parameters.ph.nmix_ph == 6
+
+    def test_defaults_leave_the_namelist_unset(self) -> None:
+        """With no ``ph`` block, the namelist states nothing explicitly."""
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        assert inp.calculator_parameters.ph.model_fields_set == set()

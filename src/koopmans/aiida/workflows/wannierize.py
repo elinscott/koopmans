@@ -8,12 +8,17 @@ from typing import TYPE_CHECKING, Any
 from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
+from koopmans.aiida.conversion import (
+    atoms_input_to_structure,
+    input_to_pw_parameters,
+    kpoints_input_to_interpolation_path,
+    wannier90_path_density,
+)
 from koopmans.aiida.workflows import (
-    configured_projwfc,
     load_codes,
     pin_step_kpoints,
     prepare_common_inputs,
+    require_configured_codes,
     require_cutoffs_for_family,
 )
 from koopmans.aiida.workflows.blocks import (
@@ -130,22 +135,6 @@ def _kpoint_sampling(
     return scf_kpoints, get_explicit_kpoints(mesh), mp_grid
 
 
-def _interpolation_path(
-    koopmans_input: KoopmansInput, structure: orm.StructureData
-) -> orm.KpointsData | None:
-    """Return the input's k-path as a labelled explicit k-list, or ``None``.
-
-    ``None`` when the input states no ``kpoints.path``, and for a gamma-only
-    input, whose fixed ``path`` names the zone centre alone and so defines no
-    segment to interpolate along.
-    """
-    from koopmans.aiida.conversion import kpoints_input_to_kpoints_path
-
-    if koopmans_input.kpoints.gamma_only or koopmans_input.kpoints.path is None:
-        return None
-    return kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
-
-
 def _external_projector_kwargs(
     koopmans_input: KoopmansInput, structure: orm.StructureData
 ) -> dict[str, Any]:
@@ -167,6 +156,20 @@ def _external_projector_kwargs(
     }
 
 
+def _get_user_w90_overrides(koopmans_input: KoopmansInput) -> dict[str, Any]:
+    """Return the wannier90 keywords the user set, flat and unwrapped.
+
+    Disentanglement windows, iteration counts, convergence tolerances — every
+    field of ``calculator_parameters.w90`` the user gave a value, keyed by its
+    wannier90 name. Excludes ``projections``/``up``/``down``: the routes
+    derive or reject those themselves rather than forward them as wannier90
+    parameters.
+    """
+    return koopmans_input.calculator_parameters.wannier90.model_dump(
+        exclude_unset=True, exclude={"projections", "up", "down"}
+    )
+
+
 def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for Wannierization.
 
@@ -186,11 +189,11 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     bands path, so each Wannierization also emits ``interpolated_bands`` —
     its band structure Wannier-interpolated along that path. A pw.x bands
     run along the same path supplies the explicit eigenvalues the
-    interpolation is judged against. The dispatcher passes a configured
-    projwfc code along (:func:`~koopmans.aiida.workflows.configured_projwfc`);
-    whether a projected DOS runs from the bands run — and the warning when the
-    pseudopotentials' missing ``PP_PSWFC`` wavefunctions make it
-    impossible — is the graphs' decision. The path always travels as an
+    interpolation is judged against. A configured projwfc code rides along
+    whenever ``load_codes`` finds one; whether a projected DOS runs from the
+    bands run — and the warning when the pseudopotentials' missing
+    ``PP_PSWFC`` wavefunctions make it impossible — is the graphs'
+    decision. The path always travels as an
     explicit labelled k-list: the graphs run the pw.x quality check only
     for that form — a symbolic ``kpoint_path`` leaves wannier90 to
     discretize the path itself, with no pw.x eigenvalues to compare
@@ -223,6 +226,15 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
+    # User wannier90 keywords (disentanglement windows, iteration counts, ...)
+    # feed the single Wannier90WorkChain this route runs. The upstream
+    # builder reads them from a nested wannier90.wannier90.parameters
+    # namespace, unlike the flat dict the per-block route's plugin builder
+    # expects.
+    w90_user_overrides = _get_user_w90_overrides(koopmans_input)
+    if w90_user_overrides:
+        overrides["wannier90"] = {"wannier90": {"parameters": w90_user_overrides}}
+
     # The automatically derived projections are the pseudopotentials' atomic
     # orbitals (upstream's ATOMIC_PROJECTORS_QE mechanism) unless external
     # projector files supply the projector functions instead.
@@ -232,16 +244,27 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, overrides)
 
-    bands_kpoints = _interpolation_path(koopmans_input, structure)
+    # Two independent k-point lists: the pw.x quality-check run keeps the
+    # top-level path_density, wannier90's own interpolation takes
+    # overrides.wannier90.path_density.
+    bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    interpolation_kpoints = kpoints_input_to_interpolation_path(
+        koopmans_input.kpoints, structure, density=wannier90_path_density(koopmans_input.kpoints)
+    )
 
-    # WannierizeCodes's one NotRequired member is projwfc. The upstream
-    # builder wires it only for SCDM projections and frozen_type
-    # energy_auto, which koopmans never asks for; here it rides along for
-    # the projected DOS accompanying the quality-check bands run.
+    # load_codes loads projwfc, WannierizeCodes's one NotRequired member,
+    # whenever it is configured. The upstream builder wires it only for
+    # SCDM projections and frozen_type energy_auto, which koopmans never
+    # asks for; here it rides along for the projected DOS accompanying the
+    # quality-check bands run — whether that run actually happens is the
+    # graph's own decision.
+    #
+    # Wannierize hands its whole codes namespace to an upstream
+    # get_builder_from_protocol call, which raises its own eager error on
+    # a missing required member; the pre-flight gets there first with the
+    # same install advice every other route gives.
     codes = load_codes(WannierizeCodes)
-    projwfc = configured_projwfc()
-    if projwfc is not None:
-        codes["projwfc"] = projwfc
+    require_configured_codes(WannierizeCodes, codes)
 
     return Wannierize.build(
         codes=codes,
@@ -254,6 +277,7 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         kpoints=kpoints,
         mp_grid=mp_grid,
         bands_kpoints=bands_kpoints,
+        interpolation_kpoints=interpolation_kpoints,
         **extra_kwargs,
     )
 
@@ -371,38 +395,43 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
     # feed every per-block wannierisation; flat by design (see
     # ``WannierizeOverrides``).
-    w90_user = calc_params.wannier90.model_dump(
-        exclude_unset=True, exclude={"projections", "up", "down"}
-    )
-    if w90_user:
-        wannier_overrides["wannier90"] = w90_user
+    w90_user_overrides = _get_user_w90_overrides(koopmans_input)
+    if w90_user_overrides:
+        wannier_overrides["wannier90"] = w90_user_overrides
 
     scf_kpoints, kpoints, mp_grid = _kpoint_sampling(koopmans_input, wannier_overrides)
 
-    # One node serves both uses of the input's k-path: the split-mode band
-    # detection samples it with pw.x, and every wannier90 run interpolates
-    # its band structure along it.
-    interpolation_kpoints = _interpolation_path(koopmans_input, structure)
-
-    # ``WannierizeBlocksCodes``'s NotRequired members are turned on one by
-    # one: the threshold requires wannierjl (the julia binary registered
-    # via aiida_wannierjl.helpers.get_wannierjl_code) for the split
-    # machinery, while projwfc merely rides along when configured — the
-    # graph decides whether the projected DOS runs.
-    codes = load_codes(
-        WannierizeBlocksCodes,
-        require=("wannierjl",) if threshold is not None else (),
+    # Two independent k-point lists, in every mode: the pw.x quality-check /
+    # split-detection run samples the top-level `kpoints.path_density`;
+    # wannier90's own interpolation samples
+    # `kpoints.overrides.wannier90.path_density` instead. `WannierizeBlocks`
+    # takes `bands_kpoints` for the former regardless of split mode.
+    bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    interpolation_kpoints = kpoints_input_to_interpolation_path(
+        koopmans_input.kpoints, structure, density=wannier90_path_density(koopmans_input.kpoints)
     )
-    projwfc = configured_projwfc()
-    if projwfc is not None:
-        codes["projwfc"] = projwfc
 
-    # Without a threshold the graph splits nothing, and WannierizeBlocks
-    # rejects the split-only inputs rather than ignore them.
+    # load_codes loads every configured member of WannierizeBlocksCodes.
+    # wannierjl (the julia binary registered via
+    # aiida_wannierjl.helpers.get_wannierjl_code) is only actually needed
+    # behind the threshold, and projwfc only for the quality-check
+    # projected DOS; whether either runs, and whether a missing code the
+    # run does need is fatal, is the graph's own structural requirement.
+    #
+    # The quality-check-bands helper (entered whenever a k-path is given)
+    # binds pw eagerly (aiida-koopmans#97: not yet converted to
+    # node_graph.reference); the pre-flight catches a missing required member
+    # before that bare subscript can raise a bare KeyError.
+    codes = load_codes(WannierizeBlocksCodes)
+    require_configured_codes(WannierizeBlocksCodes, codes)
+
+    # split_threshold and num_occ_bands are split-only: without a threshold
+    # the graph splits nothing, and WannierizeBlocks rejects them rather
+    # than ignore them. bands_kpoints carries no such restriction — it
+    # sets the quality-check run's density in every mode.
     split_kwargs: dict[str, Any] = {}
     if threshold is not None:
         split_kwargs = {
-            "bands_kpoints": interpolation_kpoints,
             "num_occ_bands": num_occ_bands,
             "split_threshold": float(threshold),
         }
@@ -414,6 +443,7 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
         kpoints=kpoints,
         mp_grid=mp_grid,
         scf_kpoints=scf_kpoints,
+        bands_kpoints=bands_kpoints,
         **split_kwargs,
         interpolation_kpoints=interpolation_kpoints,
         pseudo_family=pseudo_family,
