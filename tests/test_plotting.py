@@ -26,8 +26,10 @@ from koopmans.plotting import (
     NoEnergyZeroError,
     PathMismatchError,
     PlottingError,
+    StyleError,
     apply_energy_zero,
     check_paths_agree,
+    check_style,
     describe_energy_zero,
     draw_band_structures,
     path_distances,
@@ -35,6 +37,7 @@ from koopmans.plotting import (
     resolve_band_series,
     write_series_json,
 )
+from koopmans.plotting.resolve import SUGGESTION_LIMIT
 from tests.fixtures import make_process
 
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
@@ -42,6 +45,7 @@ PW_BASE = "aiida.workflows:quantumespresso.pw.base"
 KCW_HAM = "aiida.calculations:koopmans.kcw_ham"
 W90_BASE = "aiida.workflows:wannier90_workflows.base.wannier90"
 W90_CALC = "aiida_wannier90.calculations.wannier90.Wannier90Calculation"
+PW_CALC = "aiida.calculations:quantumespresso.pw"
 W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
 MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands"
 BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.dscf.build_band_structure"
@@ -381,6 +385,27 @@ class TestResolver:
         assert found[0].vbm == pytest.approx(-4.0)
         assert found[0].cell == CUBIC
         assert found[0].path_labels == [(0, "G"), (1, "X")]
+
+    def test_a_calculation_directory_is_a_folder_of_its_own(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A dumped calculation plots on its own, without its run around it.
+
+        A dump keeps a metadata file beside every calculation, so a single
+        step of a run can be given to the command and styled apart from the
+        rest. This pins that the resolver reads such a directory: a folder is
+        anything holding the metadata file, not only the root of a run.
+        """
+        calculation = make_process(
+            W90_CALC, calcjob=True, computer=aiida_localhost, process_label="Wannier90Calculation"
+        )
+        attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "03-wannier90", calculation)
+
+        found, warnings = resolve_band_series([folder], ("Wannier",), ("b-",))
+
+        assert warnings == []
+        assert [(item.label, item.style) for item in found] == [("Wannier", "b-")]
 
     def test_fermi_falls_back_to_the_scf(self, aiida_profile: Any, tmp_path: Path) -> None:
         """A bands step that inherited no Fermi level takes the scf's.
@@ -739,7 +764,12 @@ class TestResolver:
         assert not any(label.rsplit("(", 1)[-1].rstrip(")").strip().isdigit() for label in labels)
 
     def test_not_a_run_directory(self, aiida_profile: Any, tmp_path: Path) -> None:
-        """A folder with no metadata file is named, along with what to pass."""
+        """A folder that is not a run is named, along with what to pass.
+
+        The bookkeeping file the dump writes is not named: the reader neither
+        writes it nor can act on it, and every message on this path says the
+        same thing.
+        """
         folder = tmp_path / "somewhere"
         folder.mkdir()
 
@@ -748,6 +778,26 @@ class TestResolver:
 
         assert "is not a koopmans run directory" in str(excinfo.value)
         assert "koopmans run" in str(excinfo.value)
+        assert NODE_METADATA_FILE not in str(excinfo.value)
+
+    def test_unreadable_metadata_names_the_folder_not_the_file(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A folder whose metadata records no uuid is named by its own path.
+
+        The reader passed the folder, not the file inside it, and rerunning is
+        the only thing they can do about either.
+        """
+        folder = write_run_folder(tmp_path, "zno", None)
+        (folder / NODE_METADATA_FILE).write_text(yaml.dump({"Node data": {"pk": 1}}))
+
+        with pytest.raises(PlottingError) as excinfo:
+            resolve_band_series([folder])
+
+        message = str(excinfo.value)
+        assert "does not record which run it came from" in message
+        assert str(folder) in message
+        assert NODE_METADATA_FILE not in message
 
     def test_uuid_absent_from_this_profile(self, aiida_profile: Any, tmp_path: Path) -> None:
         """A folder from another machine says so, rather than "node not found"."""
@@ -824,8 +874,8 @@ class TestResolver:
         message = str(excinfo.value)
         assert "KoopmansDSCFWorkflow" in message
         assert "supercell" in message
-        # The reason names the switch that turns the interpolation on.
-        assert "calculate_bands" in message
+        # The reason names the input line that asks for the interpolation.
+        assert "kpoints: {path" in message
 
     def test_unknown_route_lists_what_koopmans_plots(
         self, aiida_profile: Any, tmp_path: Path
@@ -1138,6 +1188,104 @@ class TestRenderer:
 
 
 # ----------------------------------------------------------------------
+# How a series is drawn
+# ----------------------------------------------------------------------
+
+
+def as_rgba(color: Any) -> tuple[float, float, float, float]:
+    """Return a color in the one form 'k', 'C1' and a drawn line's own all take."""
+    from matplotlib.colors import to_rgba
+
+    return to_rgba(color)
+
+
+class TestSeriesStyles:
+    """A series drawn in a matplotlib format string of its own."""
+
+    def test_a_style_sets_the_marker_and_line_of_every_band(self) -> None:
+        """The format string reaches each of the series' bands, not just its first.
+
+        A band is a plot call of its own, so a style applied where the series
+        is set up rather than where each curve is drawn would style one band
+        and leave the rest solid.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT", style="x")])
+
+        lines = band_lines(axes)
+        assert len(lines) == 2
+        assert {line.get_marker() for line in lines} == {"x"}
+        assert {line.get_linestyle() for line in lines} == {"None"}
+
+    def test_an_unstyled_series_keeps_the_plain_curve(self) -> None:
+        """The control: without a style the bands are solid lines, as before."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")])
+
+        lines = band_lines(axes)
+        assert {line.get_linestyle() for line in lines} == {"-"}
+        assert {line.get_marker() for line in lines} == {"None"}
+        assert {as_rgba(line.get_color()) for line in lines} == {as_rgba("C0")}
+
+    def test_a_color_in_the_style_replaces_the_assigned_one(self) -> None:
+        """A style naming a color owns it; the unstyled series keeps its own.
+
+        Handing matplotlib both a format string and a ``color`` keyword lets
+        the keyword win, which would make an explicit 'k-' come out in the
+        automatic color it was given to escape.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT"), series("KI", style="k-")])
+
+        first, second = band_lines(axes)[:2], band_lines(axes)[2:]
+        assert {as_rgba(line.get_color()) for line in first} == {as_rgba("C0")}
+        assert {as_rgba(line.get_color()) for line in second} == {as_rgba("k")}
+
+    def test_a_style_naming_no_color_keeps_one_color_per_series(self) -> None:
+        """Crosses come out in the series' own color, not one per band.
+
+        matplotlib advances its color cycle once per plot call and a series is
+        drawn a band at a time, so leaving the color to a format string that
+        names none draws a single band structure in as many colors as it has
+        bands.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT"), series("KI", style="x")])
+
+        first, second = band_lines(axes)[:2], band_lines(axes)[2:]
+        assert {as_rgba(line.get_color()) for line in second} == {as_rgba("C1")}
+        assert {as_rgba(line.get_color()) for line in first} == {as_rgba("C0")}
+
+    def test_the_matplotlib_vocabulary_is_accepted(self) -> None:
+        """The strings the option's help offers are all readable as written."""
+        for style in ("x", "-", "--", "k--", "rx", "C1--", "o", "k--x"):
+            check_style(style)
+
+    def test_a_string_matplotlib_cannot_read_is_refused(self) -> None:
+        """A typo is caught by the check rather than by the drawing."""
+        with pytest.raises(StyleError, match="not a valid format string"):
+            check_style("zz")
+
+    def test_a_matplotlib_without_the_parser_says_so(self, monkeypatch: Any) -> None:
+        """A renamed parser is reported, not raised as a bare ImportError.
+
+        matplotlib publishes no format-string parser, so koopmans reads a
+        private one and is unpinned against it moving; this is what that costs
+        the reader when it does.
+        """
+        from matplotlib.axes import _base
+
+        monkeypatch.delattr(_base, "_process_plot_format")
+
+        with pytest.raises(StyleError, match="cannot say whether a format string is valid"):
+            check_style("rx")
+
+
+# ----------------------------------------------------------------------
 # The command
 # ----------------------------------------------------------------------
 
@@ -1324,10 +1472,16 @@ class TestCommand:
         assert result.exit_code == 0, result.output
         assert drawn_axes[-1].get_legend() is None
 
-    def test_a_label_count_mismatch_is_reported(
+    def test_a_label_after_the_second_folder_pairs_with_it(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:
-        """The message states both counts, rather than padding or truncating."""
+        """A lone --label names the folder it followed, not every folder.
+
+        Only the second folder is followed by --label here, so it takes the
+        given name and the first keeps its default folder-prefixed one:
+        fewer --label values than folders is not an error, it names only the
+        folders that were followed by one.
+        """
         from koopmans.cli import cli
 
         first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
@@ -1335,11 +1489,521 @@ class TestCommand:
 
         result = runner.invoke(
             cli,
-            ["plot", "bandstructure", str(first), str(second), "--label", "DFT"],
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                str(second),
+                "--label",
+                "DFT",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
         )
 
-        assert result.exit_code == 1
-        assert "1 --label value(s) were given for 2 folder(s)" in result.output
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["label"] for record in payload["series"]] == ["si_lda: DFT", "DFT"]
+
+    def test_styles_draw_the_folders_in_the_order_they_are_listed(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """Crosses for the computed bands, a line for the interpolated ones.
+
+        The two folders are drawn differently and the right way round, which
+        the marker of each folder's own curves shows; the data file records
+        what each was drawn in, so the figure can be redrawn from it.
+        """
+        from koopmans.cli import cli
+
+        pw = dft_run(tmp_path, "pw", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        wannier = dft_run(tmp_path, "wannier", 6.0, [[-5.1, 6.1], [-4.6, 7.1], [-4.1, 7.6]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(pw),
+                str(wannier),
+                "--style",
+                "x",
+                "--style",
+                "-",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        crosses, line = band_lines(drawn_axes[-1])[:2], band_lines(drawn_axes[-1])[2:]
+        assert {item.get_marker() for item in crosses} == {"x"}
+        assert {item.get_marker() for item in line} == {"None"}
+        assert {item.get_linestyle() for item in line} == {"-"}
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["x", "-"]
+
+    def test_a_style_written_beside_its_folder_pairs_with_it(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """The recommended interleaved form pairs a style and a label with its folder.
+
+        One --style and one --label per folder pairs them by listing order
+        regardless of where each was written, so this only pins that the
+        recommended interleaved spelling gives the pairing the help text
+        promises. The styles are different so that the wrong pairing draws a
+        different figure rather than the same one.
+        """
+        from koopmans.cli import cli
+
+        pw = dft_run(tmp_path, "pw", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        wannier = dft_run(tmp_path, "wannier", 6.0, [[-5.1, 6.1], [-4.6, 7.1], [-4.1, 7.6]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(pw),
+                "--style",
+                "rx",
+                "--label",
+                "pw.x",
+                str(wannier),
+                "--style",
+                "b-",
+                "--label",
+                "wannier90",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [(record["label"], record["style"]) for record in payload["series"]] == [
+            ("pw.x", "rx"),
+            ("wannier90", "b-"),
+        ]
+        crosses, line = band_lines(drawn_axes[-1])[:2], band_lines(drawn_axes[-1])[2:]
+        assert {item.get_marker() for item in crosses} == {"x"}
+        assert {as_rgba(item.get_color()) for item in line} == {as_rgba("b")}
+
+    def test_a_style_after_the_second_folder_pairs_with_it(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """A lone --style stays with the folder it followed, as --label does."""
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                str(second),
+                "--style",
+                "x",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == [None, "x"]
+        unstyled, styled = band_lines(drawn_axes[-1])[:2], band_lines(drawn_axes[-1])[2:]
+        assert {item.get_marker() for item in unstyled} == {"None"}
+        assert {item.get_marker() for item in styled} == {"x"}
+
+    def test_mixed_styled_and_unstyled_folders_pair_by_position(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """A reference band structure styled apart from a couple of default ones.
+
+        The number of --style values need not match the number of folders:
+        each one names the single folder it follows, so a folder with none
+        after it is drawn as the figure would draw it on its own, whatever
+        order the styled and unstyled folders come in.
+        """
+        from koopmans.cli import cli
+
+        reference = dft_run(tmp_path, "bands", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        occ = dft_run(tmp_path, "occ", 6.0, [[-5.1, 6.1], [-4.6, 7.1], [-4.1, 7.6]])
+        emp = dft_run(tmp_path, "emp", 6.0, [[-5.2, 6.2], [-4.7, 7.2], [-4.2, 7.7]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(reference),
+                "--style",
+                "rx",
+                str(occ),
+                str(emp),
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["rx", None, None]
+        lines = band_lines(drawn_axes[-1])
+        assert {item.get_marker() for item in lines[:2]} == {"x"}
+        assert {item.get_marker() for item in lines[2:]} == {"None"}
+
+    def test_style_before_any_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """With fewer styles than folders, one up front is refused by name.
+
+        One --style for two folders only pairs by position when the counts
+        match; short of that, a style before any folder has no folder to
+        bind to rather than becoming a global default.
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", "--style", "rx", str(first), str(second)]
+        )
+
+        assert result.exit_code == 2
+        assert "--style must follow the folder it applies to" in result.output
+
+    def test_label_before_any_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--label is refused the same way --style is, symmetrically."""
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", "--label", "DFT", str(first), str(second)]
+        )
+
+        assert result.exit_code == 2
+        assert "--label must follow the folder it applies to" in result.output
+
+    def test_a_second_style_for_the_same_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """Two styles for one folder, short of one per folder, is refused.
+
+        Two --style values against three folders still pairs by adjacency,
+        not by position, so both landing on the same folder is not silently
+        resolved by keeping the last one — the kind of silent drop this
+        codebase refuses everywhere else — nor read as one style each for
+        two of the three folders.
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+        third = dft_run(tmp_path, "si_pz", 5.0, [[-6.5, 5.0], [-6.0, 7.5], [-5.5, 8.0]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "x",
+                "--style",
+                "rx",
+                str(second),
+                str(third),
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "--style was already given for" in result.output
+        assert "'x'" in result.output
+
+    def test_a_second_label_for_the_same_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--label is refused a second time for one folder, symmetrically with --style."""
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+        third = dft_run(tmp_path, "si_pz", 5.0, [[-6.5, 5.0], [-6.0, 7.5], [-5.5, 8.0]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--label",
+                "DFT",
+                "--label",
+                "KI",
+                str(second),
+                str(third),
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "--label was already given for" in result.output
+        assert "'DFT'" in result.output
+
+    def test_more_styles_than_folders_is_refused_by_the_command(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """More --style values than folders is refused outright, adjacency or not.
+
+        With three styles and two folders no pairing rule applies: it is not
+        one-per-folder, and short of that every value would still need a
+        folder of its own to bind to.
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "x",
+                str(second),
+                "--style",
+                "rx",
+                "--style",
+                "k--",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "3 --style values were given for 2 folder(s)" in result.output
+
+    def test_equal_counts_pair_by_position_whichever_form_is_written(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """One style per folder pairs positionally, agreeing with adjacency too.
+
+        Every style here is also written right after the folder it names, so
+        listing-order pairing (the rule that applies with one value per
+        folder) and adjacency pairing (the rule that applies with fewer)
+        agree on the outcome — this only pins that agreement, not which rule
+        actually decided it; ``test_a_second_style_for_the_same_folder_is_refused``
+        above is what shows adjacency, not position, governs a short count.
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+        third = dft_run(tmp_path, "si_pz", 5.0, [[-6.5, 5.0], [-6.0, 7.5], [-5.5, 8.0]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "x",
+                str(second),
+                "--style",
+                "rx",
+                str(third),
+                "--style",
+                "k--",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["x", "rx", "k--"]
+
+    def test_labels_pair_by_position_while_styles_pair_by_adjacency(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--style and --label can be in different pairing modes in one command.
+
+        Three --label values for three folders pair by listing order,
+        trailing after all of them; two --style values for the same three
+        folders are short of one each and bind to the folder each
+        immediately followed instead. The two options choose their mode
+        independently of one another.
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+        third = dft_run(tmp_path, "si_pz", 5.0, [[-6.5, 5.0], [-6.0, 7.5], [-5.5, 8.0]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "rx",
+                str(second),
+                str(third),
+                "--style",
+                "b-",
+                "--label",
+                "A",
+                "--label",
+                "B",
+                "--label",
+                "C",
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["rx", None, "b-"]
+        assert [record["label"] for record in payload["series"]] == ["A", "B", "C"]
+
+    def test_a_double_dash_escapes_a_dash_prefixed_folder(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """-- ends option parsing, so a dash-prefixed folder is still a folder.
+
+        Without honoring click's own "--" escape hatch, a folder spelled with
+        a leading dash looks like an unrecognized option to the scanner that
+        pairs --style with the folder before it.
+        """
+        from koopmans.cli import cli
+
+        with runner.isolated_filesystem(temp_dir=tmp_path) as workdir:
+            dft_run(Path(workdir), "-oldrun", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+            result = runner.invoke(cli, ["plot", "bandstructure", "--", "-oldrun"])
+
+        assert result.exit_code == 0, result.output
+        assert "1 series" in result.output
+
+    def test_a_double_dash_hands_everything_after_it_to_click_as_folders(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """After --, --style is a folder name too, exactly as click's own parser reads it.
+
+        Before honoring --, this raised the misleading "--style must follow
+        the folder it applies to" — misleading because a folder (-oldrun) had
+        in fact just been given. What's left after fixing that is click's own
+        "no such folder" complaint about the two names that are not real
+        directories, which is at least an honest error.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(cli, ["plot", "bandstructure", "--", str(folder), "--style", "rx"])
+
+        assert result.exit_code == 2
+        assert "--style must follow the folder it applies to" not in result.output
+
+    def test_an_explicit_empty_style_is_distinct_from_no_style(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--style '' is a value the user typed, not the internal "unset" marker.
+
+        Both draw the same plain curve, since an empty format string tells
+        matplotlib nothing different from no format string at all — but the
+        dumped record still says what was actually typed rather than
+        silently collapsing it into "nothing was asked for here".
+        """
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(first),
+                "--style",
+                "",
+                str(second),
+                "-o",
+                str(tmp_path / "si.png"),
+                "--data",
+                str(tmp_path / "si.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "si.json").read_text())
+        assert [record["style"] for record in payload["series"]] == ["", None]
+
+    def test_an_unreadable_style_is_refused_with_what_to_write(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """A style matplotlib cannot read is refused before anything is drawn.
+
+        matplotlib's own complaint names the character it choked on and stops
+        there, so the message goes on to say what a format string is made of.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(cli, ["plot", "bandstructure", str(folder), "--style", "dashed"])
+
+        assert result.exit_code == 2
+        assert "not a valid format string" in result.output
+        assert "'k-' is a black line" in result.output
+
+    def test_a_style_alone_leaves_the_legend_off(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """Saying how a curve is drawn is not asking for it to be named.
+
+        A lone --label brings the key back because a name has nowhere else to
+        appear; a style shows on the curve itself.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(folder), "--style", "x", "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert drawn_axes[-1].get_legend() is None
+        assert {line.get_marker() for line in band_lines(drawn_axes[-1])} == {"x"}
 
     def test_an_inverted_ylim_is_refused(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
@@ -1366,6 +2030,29 @@ class TestCommand:
 
         assert result.exit_code == 1
         assert "is not a koopmans run directory" in result.output
+
+    def test_positional_recording_canary(self, monkeypatch: Any) -> None:
+        """A renamed click parser internal is reported, not raised bare.
+
+        ``_PositionalAwareOption`` learns how many folders preceded each
+        ``--style``/``--label`` occurrence by reading undocumented parser
+        internals (``click.parser.Option.process``,
+        ``click.parser.ParsingState.largs``); this is what it costs the
+        reader when a future click stops exposing one of them.
+        """
+        import click
+        import click.parser
+
+        from koopmans.cli import bandstructure
+
+        monkeypatch.delattr(click.parser.Option, "process")
+
+        ctx = click.Context(bandstructure)
+
+        with pytest.raises(
+            RuntimeError, match=r"click\.parser\.Option no longer exposes 'process'"
+        ):
+            bandstructure.make_parser(ctx)
 
 
 # ----------------------------------------------------------------------
@@ -1421,6 +2108,23 @@ class TestValenceBandEdge:
 # ----------------------------------------------------------------------
 
 
+def pw_calculation_run(tmp_path: Path, name: str, computer: orm.Computer, calculation: str) -> Path:
+    """Write a folder naming a pw.x calculation that ran ``calculation``.
+
+    What a dumped ``02-bands`` or ``01-scf`` directory holds: the calculation
+    itself, its declared namelists, and the eigenvalues it wrote.
+    """
+    step = make_process(
+        PW_CALC,
+        calcjob=True,
+        computer=computer,
+        process_label="PwCalculation",
+        inputs={"parameters": orm.Dict({"CONTROL": {"calculation": calculation}})},  # type: ignore[no-untyped-call]
+    )
+    attach(step, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0]], cell=CUBIC))
+    return write_run_folder(tmp_path, name, step)
+
+
 class TestProducerOwnership:
     """A step that declares a band structure owns everything below it."""
 
@@ -1455,6 +2159,36 @@ class TestProducerOwnership:
 
         assert [item.label for item in found] == ["Wannier interpolation"]
         assert found[0].energies == [[-5.0]]
+
+    def test_a_dumped_bands_calculation_is_plotted(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A pw.x calculation that sampled a path plots on its own.
+
+        The bands step of a dumped run is a calculation directory, so without
+        this the computed half of a computed-versus-interpolated figure cannot
+        be named at all.
+        """
+        folder = pw_calculation_run(tmp_path, "02-bands", aiida_localhost, "bands")
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT"]
+
+    def test_a_dumped_scf_calculation_has_nothing_to_plot(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The control: an scf calculation publishes the same socket and is not bands.
+
+        ``output_band`` carries the mesh eigenvalues of an scf run, which are
+        not a path; only the declared calculation type tells the two apart, and
+        without the guard every scf step in a dumped tree would claim a band
+        structure.
+        """
+        folder = pw_calculation_run(tmp_path, "01-scf", aiida_localhost, "scf")
+
+        with pytest.raises(PlottingError, match="No band structure to plot"):
+            resolve_band_series([folder])
 
     def test_a_wannierization_yields_one_series_not_two(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
@@ -1559,6 +2293,41 @@ class TestProducerOwnership:
         )
         attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-5.0, 5.0]]]))
         folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT"]
+
+    def test_a_dumped_calculation_reads_the_same_declared_inputs(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A calculation directory collapses degenerate channels as its run does.
+
+        The calculation carries its namelists at ``inputs.parameters`` and the
+        workchain above it at ``inputs.pw.parameters``. Reading only the latter
+        would leave a dumped step drawing two identical channels while the run
+        it belongs to draws one.
+        """
+        calculation = make_process(
+            PW_CALC,
+            calcjob=True,
+            computer=aiida_localhost,
+            process_label="PwCalculation",
+            inputs={
+                "parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {
+                        "CONTROL": {"calculation": "bands"},
+                        "SYSTEM": {"nspin": 2, "starting_magnetization": {"Zn": 0.0, "O": 0.0}},
+                    }
+                )
+            },
+        )
+        attach(
+            calculation,
+            "output_band",
+            make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-5.0, 5.0]]]),
+        )
+        folder = write_run_folder(tmp_path, "02-bands", calculation)
 
         found, _ = resolve_band_series([folder])
 
@@ -1877,6 +2646,95 @@ class TestFolderLabels:
             resolve_band_series([missing], ("DFT", "KI"))
 
 
+class TestFolderStyles:
+    """``--style`` draws a folder, and every curve that folder contributes."""
+
+    def test_each_style_draws_its_own_folder(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Styles pair with the folders positionally, in the order given.
+
+        Each style is checked against the bands of the folder it was given
+        for, which pairing the two the other way round would fail.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second], styles=("x", "k-"))
+
+        styled = {item.style: item for item in found}
+        assert list(styled) == ["x", "k-"]
+        assert styled["x"].vbm == pytest.approx(6.0)
+        assert styled["k-"].vbm == pytest.approx(5.4)
+
+    def test_no_styles_leaves_the_appearance_to_the_figure(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The control: unstyled folders carry no format string at all."""
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second])
+
+        assert [item.style for item in found] == [None, None]
+
+    def test_a_style_covers_every_curve_of_its_folder(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A collinear folder becomes two curves, and one style draws both.
+
+        A style says how a folder is drawn, not which of its curves is which;
+        the spin channel is still what tells them apart, and it survives.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+        chain = make_process(PW_BANDS, caller=root, link_label="bands")
+        attach(
+            chain,
+            "band_structure",
+            make_spin_bands(
+                [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+                [[[-5.0, 5.0], [-4.0, 6.0]], [[-5.2, 5.2], [-4.2, 6.2]]],
+            ),
+        )
+        folder = write_run_folder(tmp_path, "fe", root)
+
+        found, _ = resolve_band_series([folder], ("Iron",), ("x",))
+
+        assert [item.style for item in found] == ["x", "x"]
+        assert [item.label for item in found] == ["Iron (up)", "Iron (down)"]
+
+    def test_fewer_styles_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Cycling a short list would draw two folders alike without saying so."""
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([first, second], styles=("x",))
+
+        assert "1 --style value(s) were given for 2 folder(s)" in str(caught.value)
+
+    def test_more_styles_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The extra style belongs to a folder that was left off the command."""
+        folder = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([folder], styles=("x", "k-"))
+
+        assert "2 --style value(s) were given for 1 folder(s)" in str(caught.value)
+
+    def test_styling_and_naming_are_counted_apart(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """One name and no styles is not a miscount, and neither is the reverse.
+
+        The two options are independent, so a folder may be named without
+        being styled; counting them together would refuse that.
+        """
+        folder = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        named, _ = resolve_band_series([folder], ("DFT",))
+        drawn, _ = resolve_band_series([folder], styles=("x",))
+
+        assert [(item.label, item.style) for item in named] == [("DFT", None)]
+        assert [(item.label, item.style) for item in drawn] == [("DFT", "x")]
+
+
 # ----------------------------------------------------------------------
 # A folder that carries nothing
 # ----------------------------------------------------------------------
@@ -1894,6 +2752,185 @@ def wannierization_without_bands(tmp_path: Path, name: str, computer: orm.Comput
     )
     attach(calculation, "output_parameters", orm.Dict({"number_wfs": 2}))  # type: ignore[no-untyped-call]
     return write_run_folder(tmp_path, name, calculation)
+
+
+def wannierize_block_tree(tmp_path: Path, name: str, computer: orm.Computer) -> Path:
+    """Write a dumped wannierize block folder, laid out as a real dump is.
+
+    The block folder itself carries no metadata — the dump deletes every
+    workflow node's — and holds the preprocessing run, which interpolates
+    nothing, beside the minimization, which does.
+    """
+    block = tmp_path / name / "01-wannier90"
+    block.mkdir(parents=True)
+    wannierization_without_bands(block, "01-wannier90_pp", computer)
+    calculation = make_process(
+        W90_CALC, calcjob=True, computer=computer, process_label="Wannier90Calculation"
+    )
+    attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]], cell=CUBIC))
+    write_run_folder(block, "03-wannier90", calculation)
+    return tmp_path / name
+
+
+class TestRejectedFolderSuggestions:
+    """A directory holding no run of its own says what under it can be plotted."""
+
+    def test_a_step_folder_names_the_calculation_under_it(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The block folder is refused, and the wannier90 run under it is offered.
+
+        A step folder is the thing a reader is most likely to type, since it
+        is what the block is called; the dump leaves it without metadata, so
+        the message has to bridge the gap rather than just refuse.
+        """
+        folder = wannierize_block_tree(tmp_path, "04-wannierize_occ_1", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([folder])
+
+        message = str(caught.value)
+        assert "is not a koopmans run directory" in message
+        assert "have band structures to plot" in message
+        assert str(folder / "01-wannier90" / "03-wannier90") in message
+        assert NODE_METADATA_FILE not in message
+
+    def test_the_preprocessing_run_is_not_offered(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Only directories that hold a band structure are named.
+
+        The block folder holds two wannier90 calculations; the -pp run
+        interpolates nothing, and offering it would send the reader to a
+        directory that refuses them in turn.
+        """
+        folder = wannierize_block_tree(tmp_path, "04-wannierize_occ_1", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([folder])
+
+        assert "01-wannier90_pp" not in str(caught.value)
+
+    def test_the_path_it_prints_can_be_plotted(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The suggestion is taken from the message and passed straight back in.
+
+        A path that is merely printed is worth nothing; this is what makes it
+        a suggestion rather than a guess.
+        """
+        folder = wannierize_block_tree(tmp_path, "04-wannierize_occ_1", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([folder])
+        suggested = [
+            line.strip()
+            for line in str(caught.value).splitlines()
+            if line.startswith("  ") and "more." not in line
+        ]
+
+        found, _ = resolve_band_series([Path(path) for path in suggested])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_a_folder_with_nothing_under_it_says_so(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A directory that is simply not a run gets no list of paths.
+
+        The control for the suggestion: an empty offer would read as a bug,
+        and the reader needs to be told what to pass instead.
+        """
+        (tmp_path / "elsewhere").mkdir()
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([tmp_path / "elsewhere"])
+
+        message = str(caught.value)
+        assert "nothing beneath it has a band structure to plot" in message
+        assert "calculation directory inside one" in message
+        assert NODE_METADATA_FILE not in message
+
+    def test_a_run_root_outranks_its_own_steps(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The whole run is listed first, not cut off after its own steps.
+
+        Ordering by path alone sorts a root's metadata after every ``NN-step/``
+        beneath it, so the one entry that draws everything falls past the cap
+        on a run of a dozen steps.
+        """
+        holder = tmp_path / "runs"
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        for index in range(SUGGESTION_LIMIT + 2):
+            step = make_process(W90_BASE, caller=root, link_label=f"wannierize_{index}")
+            attach(step, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        run = write_run_folder(holder, "zno", root)
+        for index in range(SUGGESTION_LIMIT + 2):
+            calculation = make_process(
+                W90_CALC,
+                calcjob=True,
+                computer=aiida_localhost,
+                process_label="Wannier90Calculation",
+            )
+            attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+            write_run_folder(run, f"{index:02d}-wannier90", calculation)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([holder])
+
+        listed = [line.strip() for line in str(caught.value).splitlines() if line.startswith("  ")]
+        assert listed[0] == str(run)
+
+    def test_descendants_from_another_profile_are_not_called_empty(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A copied dump says its runs are elsewhere, not that it holds nothing.
+
+        Skipping every descendant because this profile does not hold it, then
+        reporting that nothing beneath has a band structure, tells the reader
+        the opposite of what is wrong — and this is the case the root folder's
+        own message exists for.
+        """
+        holder = tmp_path / "copied"
+        step = write_run_folder(holder, "01-bands", None)
+        (step / NODE_METADATA_FILE).write_text(
+            yaml.dump({"Node data": {"uuid": "00000000-0000-0000-0000-000000000000"}})
+        )
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([holder])
+
+        message = str(caught.value)
+        assert "not in this AiiDA profile" in message
+        assert "nothing beneath it has a band structure" not in message
+
+    def test_a_long_list_is_capped_and_counted(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A run of many blocks names the first few and counts the rest.
+
+        Thirty paths are not read; the count is what tells the reader that
+        the list is a sample rather than the whole of it.
+        """
+        root = tmp_path / "si"
+        root.mkdir()
+        for index in range(SUGGESTION_LIMIT + 3):
+            calculation = make_process(
+                W90_CALC,
+                calcjob=True,
+                computer=aiida_localhost,
+                process_label="Wannier90Calculation",
+            )
+            attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+            write_run_folder(root, f"{index:02d}-wannier90", calculation)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([root])
+
+        listed = [line for line in str(caught.value).splitlines() if line.startswith("  ")]
+        assert len(listed) == SUGGESTION_LIMIT + 1
+        assert listed[-1].strip() == "... and 3 more."
 
 
 class TestEveryFolderContributes:

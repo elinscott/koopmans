@@ -88,13 +88,6 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     ml_config = koopmans_input.ml
     ml_mode, ml_model = _resolve_trajectory_ml(ml_config, workflow)
 
-    if workflow.calculate_bands:
-        raise NotImplementedError(
-            "`workflow.calculate_bands` is not available on the trajectory task, which "
-            "screens each snapshot and reports screening parameters and eigenvalues. "
-            "Run a `singlepoint` on the structure whose bands you want."
-        )
-
     snapshots = atoms_input_to_structures(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
 

@@ -25,6 +25,14 @@ __all__ = [
 
 FloatGE1 = Annotated[float, Field(ge=1.0)]
 
+#: Keywords retired from ``workflow``, each with what to write instead.
+_REMOVED_WORKFLOW_KEYWORDS: dict[str, str] = {
+    "calculate_bands": (
+        "A band structure is computed whenever `kpoints.path` names a path and the "
+        "task can interpolate along it; set `kpoints.path`."
+    ),
+}
+
 
 class Task(Enum):
     """Valid tasks that ``koopmans`` can perform."""
@@ -80,15 +88,6 @@ class WorkflowConfig(BaseModel):
     frozen_orbitals: bool | None = Field(
         default=None,
         description="if True, freeze the variational orbitals for the duration of the calculation once they've been initialized",
-    )
-    calculate_bands: bool = Field(
-        default=False,
-        description="Calculate the band structure of the system along `kpoints.path`. A "
-        "$\\Delta$SCF singlepoint computes on a supercell, so its band structure is "
-        "recovered by unfolding the Koopmans Hamiltonian in the Wannier basis and "
-        "interpolating it, which this switch asks for; it requires "
-        "`init_orbitals = 'mlwfs'` or `'projwfs'`. The `dft_bands` and `wannierize` "
-        "tasks compute bands whenever the input names a path, and need no switch",
     )
     spin: SpinType = Field(
         default=SpinType.NONE,
@@ -196,6 +195,24 @@ class WorkflowConfig(BaseModel):
             if len(v) == 0 or not isinstance(v[0], list):
                 v = [v]
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_workflow_keywords(cls, data: Any) -> Any:
+        """Point a retired ``workflow`` keyword at what replaced it.
+
+        Runs before field validation, so it reports the removed spelling
+        instead of the generic "extra_forbidden" error.
+
+        Raises:
+            ValueError: If a removed key is present.
+        """
+        if not isinstance(data, dict):
+            return data
+        for key, replacement in _REMOVED_WORKFLOW_KEYWORDS.items():
+            if key in data:
+                raise ValueError(f"`workflow.{key}` no longer exists. {replacement}")
+        return data
 
     @model_validator(mode="before")
     @classmethod

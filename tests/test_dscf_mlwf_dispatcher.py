@@ -695,6 +695,66 @@ class TestPerStepKpointMeshRejected:
             _build(d)
 
 
+class TestBandPathRejected:
+    """Where a ΔSCF band path still has nowhere to go."""
+
+    def test_a_molecular_kohn_sham_path_is_rejected(self, read_input_dict: Any) -> None:
+        """A molecule has no band structure, whatever the interpolation can do.
+
+        Refused while the input file is read, so the reader gets the error
+        report rather than a traceback out of the graph build.
+        """
+        d = _si_dscf_dict(init_orbitals="kohn-sham")
+        d["atoms"]["cell_parameters"] = {
+            "periodic": False,
+            "units": "angstrom",
+            "vectors": [[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        }
+        d["kpoints"]["path"] = "GX"
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_dict(d)
+
+        message = str(excinfo.value)
+        assert "Errors found in the input file" in message
+        assert "`kpoints.path`" in message
+        assert "periodic along no direction" in message
+
+    def test_the_same_input_periodic_and_wannier_initialized_parses(
+        self, read_input_dict: Any
+    ) -> None:
+        """Discriminates the refusal from a blanket one on the kcp.x route.
+
+        The periodic Wannier-initialised route interpolates the same path,
+        so only the molecular input may be refused.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"]["path"] = "GX"
+
+        read_input_dict(d)
+
+    def test_a_periodic_kohn_sham_input_hears_its_own_blocker_first(
+        self, aiida_profile_clean: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Pins the refusal behind the initialisation-route check.
+
+        kcp.x runs no periodic ``kohn-sham`` route at all, and refusing the
+        band path first would send the reader to ``screening_method =
+        'dfpt'`` — which refuses the same input again, for wanting Wannier
+        orbitals. So this input must parse, and the blocker must arrive on
+        the first hop when it is built.
+        """
+        d = _si_dscf_dict(init_orbitals="kohn-sham")
+        d["kpoints"]["path"] = "GX"
+
+        with pytest.raises(NotImplementedError) as excinfo:
+            _build(d)
+
+        message = str(excinfo.value)
+        assert "init_orbitals='kohn-sham' on a periodic structure" in message
+        assert "`kpoints.path`" not in message
+
+
 class TestCutoffLessPseudoFamily:
     """A family recommending no cutoffs drives this route's pw steps from the input.
 
@@ -739,33 +799,31 @@ class TestCutoffLessPseudoFamily:
         assert pw.pseudos["Si"].uuid == expected["Si"].uuid
 
 
-class TestCalculateBands:
-    """``workflow.calculate_bands`` gates the unfold-and-interpolate stage.
+class TestBandPathBuildsTheInterpolation:
+    """``kpoints.path`` gates the unfold-and-interpolate stage.
 
-    Without it the ΔSCF route finishes on a supercell and there is nothing
-    to plot, which is the state these tests discriminate against.
+    Without a path the ΔSCF route finishes on a supercell and there is
+    nothing to plot, which is the state these tests discriminate against.
     """
 
     @staticmethod
     def _with_bands(**workflow_updates: Any) -> dict[str, Any]:
-        d = _si_dscf_dict(calculate_bands=True, **workflow_updates)
+        d = _si_dscf_dict(**workflow_updates)
         d["kpoints"]["path"] = "GXG"
         return d
 
-    def test_the_stage_is_absent_by_default(
+    def test_the_stage_is_absent_without_a_path(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """Negative control: a path alone does not build an interpolation."""
-        d = _si_dscf_dict()
-        d["kpoints"]["path"] = "GXG"
-        wg = _build(d)
+        """Negative control: the same input naming no path builds no interpolation."""
+        wg = _build(_si_dscf_dict())
         assert "interpolate_band_structure" not in wg.get_task_names()
         assert wg.tasks["RunFinalKI"].inputs["write_hr"].value == False  # noqa: E712
 
-    def test_asking_for_bands_builds_the_interpolation(
+    def test_a_path_builds_the_interpolation(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """The switch adds the interpolation stage and its one required input."""
+        """The path adds the interpolation stage and its one required input."""
         wg = _build(self._with_bands())
         names = wg.get_task_names()
         assert "interpolate_band_structure" in names, names
@@ -797,19 +855,13 @@ class TestCalculateBands:
         assert stage.inputs["use_ws_distance"].value == False  # noqa: E712
         assert stage.inputs["do_dos"].value == False  # noqa: E712
 
-    def test_bands_without_a_path_say_what_to_add(
+    def test_the_knobs_alone_are_refused(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """Asking for bands with nowhere to interpolate names what to add."""
+        """Settings that shape a stage no path asks for cannot take effect."""
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["unfold_and_interpolate"] = {"do_dos": False}
         with pytest.raises(ValueError, match=r"kpoints: \{path"):
-            _build(_si_dscf_dict(calculate_bands=True))
-
-    def test_bands_on_the_molecular_route_name_the_gap(
-        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
-    ) -> None:
-        """A route with no Wannier basis to unfold says so."""
-        d = self._with_bands(init_orbitals="kohn-sham")
-        with pytest.raises(NotImplementedError, match="Wannier basis"):
             _build(d)
 
     def test_smooth_interpolation_is_refused_by_name(

@@ -68,7 +68,6 @@ raw:
       - graph_inputs
       - graph_inputs
       - graph_inputs
-      - graph_inputs
       - resolve_pseudo_family_task
       count_electrons_task:
       - graph_inputs
@@ -143,7 +142,6 @@ raw:
       - ComputeScreeningParameters
       - ComputeScreeningParameters
       - ComputeScreeningParameters
-      - RunFinalKI
       - RunFinalKI
       - RunFinalKI
       - RunFinalKI
@@ -427,10 +425,6 @@ raw:
     from_task: ComputeScreeningParameters
     to_socket: parent_folder
     to_task: RunFinalKI
-  - from_socket: calculate_bands
-    from_task: graph_inputs
-    to_socket: write_hr
-    to_task: RunFinalKI
   - from_socket: parameters
     from_task: RunFinalKI
     to_socket: parameters
@@ -510,14 +504,6 @@ raw:
             required: false
         calculate_alpha:
           default: true
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            required: false
-        calculate_bands:
-          default: false
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -1448,6 +1434,8 @@ raw:
         alpha_conv_thr: 0.001
         alpha_numsteps: 1
         eps_inf: 1.0
+        metadata:
+          label: Screening parameters
         mp_correction: false
         spin_polarized: false
       log: ''
@@ -1496,6 +1484,8 @@ raw:
       input_socket_meta: {}
       inputs:
         is_first_iteration: false
+        metadata:
+          label: Final KI
         write_hr: false
       log: ''
       metadata:
@@ -1595,6 +1585,7 @@ raw:
       inputs:
         metadata:
           call_link_label: dft_init
+          label: DFT initialization
         name: dft_init
         nspin: 2
         outerloop: true
@@ -1683,7 +1674,6 @@ raw:
       inputs:
         alpha_numsteps: 2
         calculate_alpha: true
-        calculate_bands: false
         codes:
           kcp:
             __aiida_code__: kcp@localhost
@@ -1740,14 +1730,6 @@ raw:
                 required: false
             calculate_alpha:
               default: true
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                required: false
-            calculate_bands:
-              default: false
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:

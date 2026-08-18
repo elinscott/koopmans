@@ -30,6 +30,7 @@ from koopmans.aiida.workflows.blocks import (
 from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
 from koopmans.aiida.workflows.grouping import grouping_tol
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
+from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
@@ -126,7 +127,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     extra_kwargs: dict[str, Any] = {}
     if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
-    extra_kwargs.update(band_interpolation_inputs(koopmans_input, structure, wannier_init))
+    extra_kwargs.update(band_interpolation_inputs(koopmans_input, structure))
 
     # load_codes loads every configured member of DscfCodes. Every
     # NotRequired member exists for the Wannier-seeded initialisation;
@@ -333,41 +334,32 @@ def dscf_wannier_init_inputs(
 def band_interpolation_inputs(
     koopmans_input: KoopmansInput,
     structure: orm.StructureData,
-    wannier_init: bool,
 ) -> dict[str, Any]:
-    """Assemble the unfold-and-interpolate inputs, or none when not asked for.
+    """Assemble the unfold-and-interpolate inputs, or none when no path is named.
 
     A ΔSCF run computes on a Γ-point supercell, so its band structure has
     to be recovered by unfolding the Koopmans Hamiltonian in the Wannier
-    basis and interpolating it. ``workflow.calculate_bands`` asks for that
-    and ``kpoints.path`` says where to interpolate; both are required
-    together.
+    basis and interpolating it along ``kpoints.path``. An input naming no
+    path asks for no band structure, and must then leave
+    ``unfold_and_interpolate`` at its defaults.
+
+    Raises:
+        ValueError: If the input shapes an interpolation it does not ask for.
     """
-    if not koopmans_input.workflow.calculate_bands:
-        return {}
-    if not wannier_init:
-        raise NotImplementedError(
-            f"`workflow.calculate_bands` is not available with "
-            f"`init_orbitals = {koopmans_input.workflow.init_orbitals.value!r}`: a ΔSCF "
-            "band structure is recovered by unfolding the Koopmans Hamiltonian in the "
-            "Wannier basis, which only a Wannier-initialised run builds. Set "
-            "`workflow.init_orbitals` to 'mlwfs' or 'projwfs'."
-        )
     kpath = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    settings = koopmans_input.calculator_parameters.unfold_and_interpolate
     if kpath is None:
-        raise ValueError(
-            "`workflow.calculate_bands` needs a band path to interpolate along; add "
-            "`kpoints: {path: ...}` to the input file."
-        )
+        if settings.model_dump() != UnfoldAndInterpolateConfig().model_dump():
+            raise ValueError(
+                "`calculator_parameters.unfold_and_interpolate` shapes the band "
+                "structure interpolation, and this input asks for none. Add the path "
+                "to interpolate along as `kpoints: {path: ...}`, or restore the "
+                "block's defaults."
+            )
+        return {}
     # The DOS keeps the interpolation's own smearing and window: the input
     # file has no block naming them.
-    return {
-        "calculate_bands": True,
-        "kpath": kpath,
-        "unfold_and_interpolate": (
-            koopmans_input.calculator_parameters.unfold_and_interpolate.model_dump()
-        ),
-    }
+    return {"kpath": kpath, "unfold_and_interpolate": settings.model_dump()}
 
 
 def require_supported_correction(correction: Correction) -> None:

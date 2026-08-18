@@ -8,6 +8,7 @@ the pattern used by the sibling ``aiida-koopmans2/tests/fixtures.py``.
 from __future__ import annotations
 
 import io
+import json
 import re
 import shutil
 import subprocess
@@ -26,6 +27,25 @@ import pytest
 def tutorials_dir() -> Path:
     """Return the path to the tutorials directory shipped with the docs."""
     return Path(__file__).parent.parent / "docs" / "source" / "tutorials"
+
+
+@pytest.fixture
+def read_input_dict(tmp_path: Path) -> Callable[[dict[str, Any]], Any]:
+    """Return a callable parsing an input dict the way the CLI reads a file.
+
+    Writes the dict to JSON and hands it to
+    :func:`koopmans.input_file.read_input_file`, so a rejected input raises
+    the ``ValueError`` carrying the input-file error report rather than a
+    raw ``ValidationError``.
+    """
+    from koopmans.input_file import read_input_file
+
+    def _read(input_dict: dict[str, Any]) -> Any:
+        path = tmp_path / "input.json"
+        path.write_text(json.dumps(input_dict))
+        return read_input_file(path)
+
+    return _read
 
 
 @pytest.fixture
@@ -1137,6 +1157,13 @@ def _scrub(value: Any) -> Any:  # noqa: C901
         # structured items (dicts, sub-lists) are left in place — their
         # order tends to carry semantic meaning (e.g. socket-connection
         # order).
+        #
+        # The DFPT route breaks that assumption: its ``links`` entries for
+        # ``codes.pw`` / ``codes.wannier90`` swap places between processes,
+        # so three builds of one input give three orderings. Nothing
+        # snapshots a DFPT graph today; whoever first does will need those
+        # entries sorted by ``(from_socket, to_socket)`` here, or the
+        # snapshot will be flaky.
         if scrubbed and all(isinstance(v, str) for v in scrubbed):
             scrubbed.sort()
         return scrubbed
