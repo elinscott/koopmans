@@ -201,6 +201,82 @@ class TestCutoffsMustBePositive:
         assert "must be greater than 0" in message
 
 
+class TestCalculateBandsRemoved:
+    """A band structure is asked for by ``kpoints.path``, not by a switch."""
+
+    def test_the_removed_keyword_names_the_path_instead(self, tmp_path: Path) -> None:
+        """The message points the reader at ``kpoints.path``, not at ``extra_forbidden``."""
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "calculate_bands")
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`workflow.calculate_bands` no longer exists" in message
+        assert "`kpoints.path`" in message
+        assert "is not a valid keyword" not in message
+
+    def test_the_removed_keyword_is_rejected_however_it_is_set(self) -> None:
+        """``false`` is refused too: the keyword no longer states anything."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "calculate_bands", False)
+
+        with pytest.raises(ValidationError, match="no longer exists"):
+            KoopmansInput.model_validate(d)
+
+
+class TestPeriodicIsOnePerCellVector:
+    """``periodic`` is canonical after validation, whichever way it was written."""
+
+    @pytest.mark.parametrize(
+        ("written", "expected"),
+        [
+            (True, (True, True, True)),
+            (False, (False, False, False)),
+            ([True, True, False], (True, True, False)),
+        ],
+    )
+    def test_a_bool_states_the_same_of_all_three(
+        self, written: object, expected: tuple[bool, bool, bool]
+    ) -> None:
+        """A single bool expands; an explicit triple passes through."""
+        d = _minimal_si_input()
+        _set_keyword(d, "atoms.cell_parameters", "periodic", written)
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.atoms.cell_parameters.periodic == expected
+
+    def test_a_wrong_length_is_rejected(self) -> None:
+        """Two entries name no third cell vector."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "atoms.cell_parameters", "periodic", [True, False])
+
+        with pytest.raises(ValidationError):
+            KoopmansInput.model_validate(d)
+
+    def test_the_canonical_form_round_trips(self) -> None:
+        """``model_dump`` emits the triple, and re-validating it changes nothing.
+
+        koopmans re-validates dumped inputs, so a normalization only the raw
+        file survived would drift on the second pass.
+        """
+        inp = KoopmansInput.model_validate(_minimal_si_input())
+
+        dumped = inp.model_dump()
+        periodic = dumped["atoms"]["cell_parameters"]["periodic"]
+
+        assert periodic == (True, True, True)
+        assert KoopmansInput.model_validate(dumped).atoms.cell_parameters.periodic == periodic
+
+
 def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object]:
     """Return the minimal silicon input, its ``calculator_parameters`` replaced."""
     d = _minimal_si_input()
@@ -686,3 +762,153 @@ class TestPhCalculatorParameters:
         """With no ``ph`` block, the namelist states nothing explicitly."""
         inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
         assert inp.calculator_parameters.ph.model_fields_set == set()
+
+
+def _collinear_input(**calculator_parameters: object) -> dict[str, object]:
+    """Return the minimal silicon input at ``spin = 'collinear'``."""
+    d = _si_input_with({"ecutwfc": 20.0, **calculator_parameters})
+    _set_keyword(d, "workflow", "spin", "collinear")
+    return d
+
+
+class TestCollinearNeedsAMagnetization:
+    """``spin = 'collinear'`` states its moment; koopmans does not pick one."""
+
+    def test_an_input_without_one_is_refused(self) -> None:
+        """The refusal names the field to set."""
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(_collinear_input())
+
+        assert "`calculator_parameters.tot_magnetization`" in str(excinfo.value)
+
+    def test_zero_is_a_statement(self) -> None:
+        """A closed-shell collinear run is a deliberate input, not a missing one."""
+        inp = KoopmansInput.model_validate(_collinear_input(tot_magnetization=0))
+        assert inp.calculator_parameters.tot_magnetization == 0
+
+    @pytest.mark.parametrize("task", [task.value for task in Task])
+    def test_every_task_is_held_to_it(self, task: str) -> None:
+        """The rule belongs to the input file, so no task escapes it.
+
+        The discriminator against a route-local check: the refusal used to
+        sit inside individual route builders, so which task enforced it —
+        and which path within a task — varied.
+        """
+        d = _collinear_input()
+        _set_keyword(d, "workflow", "task", task)
+
+        with pytest.raises(ValueError, match="tot_magnetization"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize("spin", ["none", "non_collinear", "spin_orbit"])
+    def test_the_other_regimes_need_no_moment(self, spin: str) -> None:
+        """Only collinear splits the electrons between two channels.
+
+        ``none`` has one channel, and the two spinor regimes pin no moment
+        along any axis, so a magnetization is neither needed nor meaningful.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, "workflow", "spin", spin)
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.tot_magnetization is None
+
+    def test_the_pw_namelist_spelling_does_not_satisfy_it(self) -> None:
+        """``pw.system.tot_magnetization`` reaches pw.x alone, and not on every route.
+
+        The kcp.x and kcw.x steps read the shared field, so a moment given
+        only to pw.x leaves those channels unstated.
+        """
+        d = _collinear_input(pw={"system": {"tot_magnetization": 2}})
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        assert "`calculator_parameters.tot_magnetization`" in str(excinfo.value)
+
+    def test_the_file_level_refusal_names_no_empty_location(self, tmp_path: Path) -> None:
+        """A rule over the whole file has no field to point at, and says so.
+
+        Every other refusal is reported against the field that carries it,
+        which this one has none of; the reader should not be handed an empty
+        pair of backticks.
+        """
+        input_file = tmp_path / "collinear.json"
+        input_file.write_text(json.dumps(_collinear_input()))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        assert "``" not in str(excinfo.value)
+        assert "tot_magnetization" in str(excinfo.value)
+
+    def test_a_dumped_input_is_still_refused(self) -> None:
+        """The check reads the moment's value, not whether the key is present.
+
+        ``model_dump()`` states every field, the moment nobody set included,
+        so an input that reached the check as a dumped model would satisfy a
+        key-presence test while stating nothing.
+        """
+        dumped = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0})).model_dump()
+        _set_keyword(dumped, "workflow", "spin", "collinear")
+
+        with pytest.raises(ValueError, match="tot_magnetization"):
+            KoopmansInput.model_validate(dumped)
+
+
+class TestTheMomentIsWholeElectrons:
+    """A magnetization counts unpaired electrons, so it cannot be a fraction."""
+
+    @pytest.mark.parametrize("magnetization", [0.5, 2.7, -1.5])
+    def test_a_fraction_is_refused(self, magnetization: float) -> None:
+        """Truncating would run a different calculation than the one asked for.
+
+        ``0.5`` is the discriminating value: rounded down it becomes a
+        closed-shell run, which pw.x accepts and nothing downstream records
+        as a substitution.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(_collinear_input(tot_magnetization=magnetization))
+
+        assert "whole" in str(excinfo.value)
+
+    @pytest.mark.parametrize("magnetization", [0, 2, 2.0, -1])
+    def test_a_whole_number_passes_however_it_is_written(self, magnetization: float) -> None:
+        """The rule is the value, not the JSON type: ``2.0`` states two electrons."""
+        inp = KoopmansInput.model_validate(_collinear_input(tot_magnetization=magnetization))
+        assert inp.calculator_parameters.tot_magnetization == pytest.approx(magnetization)
+
+    @pytest.mark.parametrize("task", [task.value for task in Task])
+    def test_every_task_is_held_to_it(self, task: str) -> None:
+        """Every route fixes its occupations, so none of them can place half an electron.
+
+        The discriminator against a route-local check: the coercion this
+        replaces sat in the dispatcher, so a task reaching pw.x by another
+        path silently rounded instead.
+        """
+        d = _si_input_with({"ecutwfc": 20.0, "tot_magnetization": 0.5})
+        _set_keyword(d, "workflow", "task", task)
+
+        with pytest.raises(ValueError, match="whole"):
+            KoopmansInput.model_validate(d)
+
+    def test_the_pw_namelist_spelling_is_untouched(self) -> None:
+        """``pw.system.tot_magnetization`` reaches pw.x alone, under the user's occupations.
+
+        A fractional moment is legal there — with smearing, QE takes one —
+        so the rule belongs to the shared field the fixed-occupation routes
+        read, not to the namelist keyword.
+        """
+        d = _si_input_with(
+            {
+                "ecutwfc": 20.0,
+                "pw": {
+                    "system": {
+                        "tot_magnetization": 0.5,
+                        "occupations": "smearing",
+                        "degauss": 0.01,
+                    }
+                },
+            }
+        )
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.pw.system.tot_magnetization == pytest.approx(0.5)
