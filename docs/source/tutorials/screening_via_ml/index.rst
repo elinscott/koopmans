@@ -87,7 +87,7 @@ is the model. ``descriptor`` decides what the model sees of an orbital: with
 ``self_hartree`` it sees a single number, the electrostatic self-interaction energy of
 that orbital's density, which the calculation prints anyway and which therefore costs
 nothing to collect. (The other option, ``power_spectrum``, describes each orbital
-density in far more detail, but is not yet available for prediction.) ``estimator``
+density in far more detail.) ``estimator``
 decides how the model fits screening parameters to that number, and
 ``occ_and_emp_together: false`` fits the filled and the empty orbitals separately — one
 screening parameter says what happens when an electron leaves an orbital, the other what
@@ -309,8 +309,6 @@ the Wannierization, the initialization, the trial and the final calculation — 
 sets the floor on how cheap a predicted Koopmans calculation can be.
 
 .. warning::
-
-    ``mode: predict`` works with ``descriptor: self_hartree`` only.
 
     And it is worth being clear about what these particular predictions are worth: on
     this system they moved the orbital energies by 187 meV RMS. Predict on a system you
