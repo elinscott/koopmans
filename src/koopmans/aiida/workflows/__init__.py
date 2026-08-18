@@ -19,6 +19,7 @@ from typing import (
 
 from aiida import orm
 from aiida_koopmans.ml import MLMode
+from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
@@ -272,6 +273,77 @@ def pin_step_kpoints(
         overrides.setdefault(step, {})["kpoints_distance"] = spacing
         return None
     return step_kpoints_mesh(koopmans_input.kpoints, step)
+
+
+def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
+    """Return the moment a collinear run splits its electrons by.
+
+    Call only where ``workflow.spin`` is ``collinear``; validating an input
+    in that regime requires ``calculator_parameters.tot_magnetization``.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+
+    Returns:
+        ``calculator_parameters.tot_magnetization``, as a count of unpaired
+        electrons. The field is whole by validation
+        (:data:`~koopmans.input_file.IntegerMagnetization`), so the count is
+        exact.
+
+    Raises:
+        ValueError: If the input carries no magnetization.
+    """
+    magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    if magnetization is None:
+        raise ValueError(
+            "a collinear calculation needs `calculator_parameters.tot_magnetization`, "
+            "the number of unpaired electrons."
+        )
+    return int(magnetization)
+
+
+def optional_magnetization(koopmans_input: KoopmansInput) -> int | None:
+    """Return the stated moment as a count of unpaired electrons, or ``None``.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+
+    Returns:
+        ``calculator_parameters.tot_magnetization`` where the input states
+        one, else ``None``.
+    """
+    magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    return None if magnetization is None else int(magnetization)
+
+
+def pin_spin_regime(
+    koopmans_input: KoopmansInput,
+    overrides: dict[str, Any],
+) -> SpinType:
+    """Return the run's spin regime, recording a collinear magnetization in ``overrides``.
+
+    The pw.x steps of a plain-DFT route take their spin keywords from
+    aiida-quantumespresso's ``spin_type``, which the returned value feeds.
+    Only the magnetization has to travel separately: those steps run with
+    fixed occupations, and pw.x rejects those under LSDA unless
+    ``tot_magnetization`` is set.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+        overrides: The route's per-step override dict (mutated in place).
+
+    Returns:
+        The regime named by ``workflow.spin``.
+    """
+    spin = koopmans_input.workflow.spin
+    if spin != SpinType.COLLINEAR:
+        return spin
+
+    magnetization = collinear_magnetization(koopmans_input)
+    for step in overrides:
+        system = overrides[step]["pw"]["parameters"].setdefault("SYSTEM", {})
+        system["tot_magnetization"] = magnetization
+    return spin
 
 
 def _projection_site_advice(exc: ProjectionSiteError) -> str:
