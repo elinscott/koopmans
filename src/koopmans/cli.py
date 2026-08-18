@@ -22,11 +22,13 @@ executed twice:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
+import click.parser
 
 from koopmans.aiida.dumping import MODEL_FILENAME, dump_workgraph, trained_model_output
 from koopmans.aiida.progress import run_with_progress
@@ -794,15 +796,86 @@ ylim_option = click.option(
 )
 
 
+class _PositionalAwareOption(click.Option):
+    """A ``multiple=True`` option that records how many folders preceded each use.
+
+    click hands a ``multiple=True`` option's callback the fully-parsed tuple
+    of values, with no memory of where among a ``nargs=-1`` argument's
+    positionals each one was written — exactly what ``_FolderPairingCommand``
+    needs to pair a ``--style``/``--label`` with the folder it followed.
+    click's own parser already knows this while it parses:
+    :class:`click.parser.ParsingState` builds ``largs`` up as a running list
+    of the positional tokens seen so far, in the same single left-to-right
+    pass that calls an option's low-level :meth:`click.parser.Option.process`
+    the moment its flag is read — so ``len(state.largs)`` at that moment is
+    the number of folders written before this occurrence. This wraps the
+    ``process`` callable that :meth:`click.Option.add_to_parser` registers
+    for this option's flags, to record that count for every occurrence in
+    encounter order — the same order click builds the ``multiple=True``
+    tuple in, so the two line up positionally once parsing finishes.
+
+    ``ParsingState.largs`` and ``click.parser.Option.process`` are
+    undocumented parser internals; ``test_positional_recording_canary``
+    fails loudly, naming what moved, if a future click stops exposing them.
+    """
+
+    def positions_key(self) -> str:
+        """Return the ``ctx.meta`` key this option's recorded positions live under."""
+        return f"_folder_pairing_positions:{self.name}"
+
+    def add_to_parser(self, parser: click.parser.OptionParser, ctx: click.Context) -> None:
+        super().add_to_parser(parser, ctx)
+        positions: list[int] = []
+        ctx.meta[self.positions_key()] = positions
+
+        seen: set[int] = set()
+        for internal in (*parser._long_opt.values(), *parser._short_opt.values()):
+            if internal.dest != self.name or id(internal) in seen:
+                continue
+            seen.add(id(internal))
+            try:
+                original_process = internal.process
+            except AttributeError as exc:
+                raise RuntimeError(
+                    "click.parser.Option no longer exposes 'process'; "
+                    "_PositionalAwareOption's position-recording recipe needs "
+                    "updating for this click version."
+                ) from exc
+            internal.process = _recording_process(  # type: ignore[assignment]
+                original_process, positions
+            )
+
+
+def _recording_process(
+    process: Callable[[Any, click.parser.ParsingState], None], positions: list[int]
+) -> Callable[[Any, click.parser.ParsingState], None]:
+    """Wrap a parser option's ``process`` to record its folder count first."""
+
+    def wrapped(value: Any, state: click.parser.ParsingState) -> None:
+        try:
+            largs = state.largs
+        except AttributeError as exc:
+            raise RuntimeError(
+                "click.parser.ParsingState no longer exposes 'largs'; "
+                "_PositionalAwareOption's position-recording recipe needs "
+                "updating for this click version."
+            ) from exc
+        positions.append(len(largs))
+        process(value, state)
+
+    return wrapped
+
+
 class _FolderPairingCommand(click.Command):
     """A command whose ``--style``/``--label`` pair with the folder argument.
 
     click gathers a ``nargs=-1`` argument and a ``multiple=True`` option into
     two separate lists, so by the time a callback sees them the order they
     were interleaved in is gone — only "the nth folder" and "the nth style"
-    remain, not which folder each style was written after. This command reads
-    the raw tokens once, before click's own parser sees them, to recover that
-    per paired option:
+    remain, not which folder each style was written after.
+    :class:`_PositionalAwareOption` recovers that, per paired option, from
+    click's own parser; this command turns each recovered position into a
+    binding:
 
     - given once per folder, the values pair with the folders positionally,
       in listing order, wherever among the folders they were written.
@@ -812,8 +885,8 @@ class _FolderPairingCommand(click.Command):
     - given for more folders than that, there is no folder left for the
       extra values to mean, and the command refuses.
 
-    Everything else — other options, ``--help``, error formatting — is left
-    to click.
+    Everything else — tokenizing, ``--``, ``--help``, error formatting — is
+    left to click.
     """
 
     #: Parameter names paired with the folder argument, one per folder.
@@ -821,131 +894,10 @@ class _FolderPairingCommand(click.Command):
     _folder_param = "folders"
 
     @staticmethod
-    def _consumption_map(
-        params: list[click.Parameter], paired: dict[str, click.Parameter]
-    ) -> dict[str, int]:
-        """Return how many extra tokens each other option's flag consumes.
-
-        ``0`` for a flag, else the option's ``nargs``; ``paired`` is excluded
-        since those flags are handled separately, not by counting tokens.
-        """
-        return {
-            opt: (0 if p.is_flag else p.nargs)
-            for p in params
-            if isinstance(p, click.Option) and p.name not in paired
-            for opt in (*p.opts, *p.secondary_opts)
-        }
-
-    @staticmethod
-    def _take_paired_value(
-        args: list[str], i: int, name: str, sep: str, inline: str
-    ) -> tuple[str, int]:
-        """Return a paired option's value and the index just past it.
-
-        :raises click.UsageError: if it was given with no value to follow.
-        """
-        if sep:
-            return inline, i + 1
-        if i + 1 >= len(args):
-            raise click.UsageError(f"Option {name!r} requires an argument.")
-        return args[i + 1], i + 2
-
-    @staticmethod
-    def _skip_other_option(args: list[str], i: int, sep: str, nargs: int) -> int:
-        """Return the index just past an ordinary option and the values it takes."""
-        if sep:
-            return i + 1
-        for _ in range(nargs):
-            i += 1
-        return i + 1
-
-    def _scan(
-        self, args: list[str], opt_to_param: dict[str, str], consumes: dict[str, int]
-    ) -> tuple[list[str], dict[str, list[tuple[int, str]]], list[str]]:
-        """Split raw tokens into what click parses and what pairs with a folder.
-
-        Returns the tokens click's own parser should see (folders and every
-        option other than the paired ones); per paired parameter name, the
-        ``(folder_index, value)`` pairs it was given, in the order they were
-        written, where ``folder_index`` is the index of the folder the value
-        most recently followed among folders seen so far, or ``-1`` before
-        any folder; and the folder tokens themselves, in listing order. A
-        literal ``--`` ends option parsing exactly as it does for click's own
-        parser: everything after it, however it is spelled, is a folder.
-        Deciding whether a value's position matters — and whether ``-1`` or a
-        repeated index is an error — is left to the caller, once it knows how
-        many values and how many folders there were in total.
-
-        :raises click.UsageError: if a paired option is given with no value.
-        """
-        remaining: list[str] = []
-        occurrences: dict[str, list[tuple[int, str]]] = {
-            name: [] for name in set(opt_to_param.values())
-        }
-        folder_tokens: list[str] = []
-        folder_count = 0
-        past_double_dash = False
-
-        i = 0
-        while i < len(args):
-            arg = args[i]
-
-            if not past_double_dash and arg == "--":
-                past_double_dash = True
-                remaining.append(arg)
-                i += 1
-                continue
-
-            if past_double_dash:
-                remaining.append(arg)
-                folder_tokens.append(arg)
-                folder_count += 1
-                i += 1
-                continue
-
-            name, sep, inline = arg.partition("=") if arg.startswith("--") else (arg, "", "")
-
-            if name in opt_to_param:
-                value, i = self._take_paired_value(args, i, name, sep, inline)
-                occurrences[opt_to_param[name]].append((folder_count - 1, value))
-                continue
-
-            if name in consumes:
-                end = self._skip_other_option(args, i, sep, consumes[name])
-                remaining.extend(args[i:end])
-                i = end
-                continue
-
-            remaining.append(arg)
-            if not arg.startswith("-") or arg == "-":
-                folder_tokens.append(arg)
-                folder_count += 1
-            i += 1
-
-        return remaining, occurrences, folder_tokens
-
-    @staticmethod
-    def _validate_values(ctx: click.Context, param: click.Parameter, values: list[str]) -> None:
-        """Run a paired option's own callback on the values it was given.
-
-        The tokens click's own parser sees have had these values stripped
-        out, so click will not run the callback (matplotlib format checking,
-        for --style) on them itself.
-        """
-        callback = param.callback
-        if values and callback is not None:
-            # types-click pins a callback's third argument to str; at
-            # runtime a multiple=True option's callback receives the whole
-            # tuple of values, as click itself does when it calls this same
-            # callback further down in super().parse_args().
-            callback(ctx, param, tuple(values))  # type: ignore[arg-type]
-
-    @staticmethod
     def _bind_values(
         flag: str,
         occurrences: list[tuple[int, str]],
-        folder_tokens: list[str],
-        nfolders: int,
+        folder_tokens: tuple[Path, ...],
     ) -> tuple[str | None, ...] | None:
         """Return one value per folder for a paired option, or ``None`` if unused.
 
@@ -962,6 +914,7 @@ class _FolderPairingCommand(click.Command):
             — the last two only matter when the count fell short, since an
             exact count pairs by position and ignores where each was written.
         """
+        nfolders = len(folder_tokens)
         count = len(occurrences)
         if count == 0:
             return None
@@ -991,25 +944,20 @@ class _FolderPairingCommand(click.Command):
         return tuple(bound.get(i) for i in range(nfolders))
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-        """Bind each paired option to its folder(s), then parse normally."""
-        params = self.get_params(ctx)
-        paired = {p.name: p for p in params if p.name in self._paired_params}
-        opt_to_param = {opt: name for name, p in paired.items() for opt in p.opts}
-        consumes = self._consumption_map(params, paired)
+        """Parse normally, then rebind each paired option to its folder(s)."""
+        rv = super().parse_args(ctx, args)
 
-        remaining, occurrences, folder_tokens = self._scan(args, opt_to_param, consumes)
+        params = {p.name: p for p in self.get_params(ctx) if p.name is not None}
+        folder_tokens: tuple[Path, ...] = ctx.params[self._folder_param]
 
-        bound: dict[str, tuple[str | None, ...] | None] = {}
-        for name, occ in occurrences.items():
-            param = paired[name]
-            self._validate_values(ctx, param, [value for _, value in occ])
-            bound[name] = self._bind_values(param.opts[0], occ, folder_tokens, len(folder_tokens))
-
-        rv = super().parse_args(ctx, remaining)
-
-        for name, values in bound.items():
-            if values is not None:
-                ctx.params[name] = values
+        for name in self._paired_params:
+            param = params[name]
+            if not isinstance(param, _PositionalAwareOption):
+                raise TypeError(f"{name!r} must be declared with cls=_PositionalAwareOption.")
+            positions = ctx.meta.pop(param.positions_key(), [])
+            values: tuple[str, ...] = ctx.params[name]
+            occurrences = list(zip((p - 1 for p in positions), values, strict=True))
+            ctx.params[name] = self._bind_values(param.opts[0], occurrences, folder_tokens)
 
         return rv
 
@@ -1029,6 +977,7 @@ class _FolderPairingCommand(click.Command):
 @click.option(
     "--label",
     "labels",
+    cls=_PositionalAwareOption,
     multiple=True,
     metavar="TEXT",
     help="Name a folder on the legend. One per folder pairs them in listing "
@@ -1039,6 +988,7 @@ class _FolderPairingCommand(click.Command):
 @click.option(
     "--style",
     "styles",
+    cls=_PositionalAwareOption,
     multiple=True,
     metavar="FORMAT",
     callback=_check_styles,

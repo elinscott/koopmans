@@ -2001,6 +2001,29 @@ class TestCommand:
         assert result.exit_code == 1
         assert "is not a koopmans run directory" in result.output
 
+    def test_positional_recording_canary(self, monkeypatch: Any) -> None:
+        """A renamed click parser internal is reported, not raised bare.
+
+        ``_PositionalAwareOption`` learns how many folders preceded each
+        ``--style``/``--label`` occurrence by reading undocumented parser
+        internals (``click.parser.Option.process``,
+        ``click.parser.ParsingState.largs``); this is what it costs the
+        reader when a future click stops exposing one of them.
+        """
+        import click
+        import click.parser
+
+        from koopmans.cli import bandstructure
+
+        monkeypatch.delattr(click.parser.Option, "process")
+
+        ctx = click.Context(bandstructure)
+
+        with pytest.raises(
+            RuntimeError, match=r"click\.parser\.Option no longer exposes 'process'"
+        ):
+            bandstructure.make_parser(ctx)
+
 
 # ----------------------------------------------------------------------
 # Occupations that are not exactly 0 or 2
