@@ -98,13 +98,13 @@ class TestLaunchFunnel:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, Any]] = []
 
-            def run(self, metadata: Any = None) -> None:
-                """Record an in-interpreter run and the metadata it carries."""
-                self.calls.append(("run", metadata))
+            def run(self) -> None:
+                """Record an in-interpreter run."""
+                self.calls.append(("run", None))
 
-            def submit(self, wait: bool = False, metadata: Any = None) -> None:
-                """Record a daemon submission, its wait flag and its metadata."""
-                self.calls.append(("submit", (wait, metadata)))
+            def submit(self, wait: bool = False) -> None:
+                """Record a daemon submission and its wait flag."""
+                self.calls.append(("submit", wait))
 
         blocking_wg = FakeWorkGraph()
         node = launch(blocking_wg, blocking=True)
@@ -114,29 +114,8 @@ class TestLaunchFunnel:
 
         daemon_wg = FakeWorkGraph()
         launch(daemon_wg, blocking=False, wait=True)
-        assert daemon_wg.calls == [("submit", (True, None))]
+        assert daemon_wg.calls == [("submit", True)]
         assert daemon_checks == [True]
-
-    def test_the_run_carries_the_name_the_route_gave_it(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The run's process node is created by the launch, so its name arrives here."""
-        from koopmans.aiida.workflows import name_run
-
-        class FakeWorkGraph:
-            """Record the metadata the launch helper passes on."""
-
-            process = "the-node"
-            metadata: Any = None
-
-            def run(self, metadata: Any = None) -> None:
-                """Record the metadata of an in-interpreter run."""
-                self.metadata = metadata
-
-        workgraph = FakeWorkGraph()
-        launch(name_run(workgraph, "Koopmans DFPT"), blocking=True)
-
-        assert workgraph.metadata == {"label": "Koopmans DFPT"}
 
 
 def _finished_dscf_node(

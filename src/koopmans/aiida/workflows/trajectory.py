@@ -11,7 +11,6 @@ from koopmans.aiida.conversion import atoms_input_to_structures
 from koopmans.aiida.workflows import (
     load_code,
     load_codes,
-    name_run,
     reject_kpoint_overrides,
     require_configured_codes,
 )
@@ -119,20 +118,17 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
-    return name_run(
-        TrajectoryWorkflow.build(
-            codes=codes,
-            snapshots=snapshots,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
-            **inputs,
-            **extra_kwargs,
-            ml_mode=ml_mode,
-            ml_model=ml_model,
-            estimator=ml_config.estimator,
-            descriptor=ml_config.descriptor,
-            occ_and_emp_together=ml_config.occ_and_emp_together,
-        ),
-        "Trajectory",
+    return TrajectoryWorkflow.build(
+        codes=codes,
+        snapshots=snapshots,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        **inputs,
+        **extra_kwargs,
+        ml_mode=ml_mode,
+        ml_model=ml_model,
+        estimator=ml_config.estimator,
+        descriptor=ml_config.descriptor,
+        occ_and_emp_together=ml_config.occ_and_emp_together,
     )
 
 

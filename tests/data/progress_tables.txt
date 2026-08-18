@@ -265,6 +265,7 @@ Trajectory
             PZ staging                                  kcp.x
             DFT (N+1)                                   kcp.x
     Final KI                                            kcp.x
+  Descriptors (snapshot 1)                              pw2wannier90.x
   Snapshot 2
     DFT initialization (nspin=1)                        kcp.x
     DFT initialization (nspin=2, staging)               kcp.x
@@ -298,6 +299,7 @@ Trajectory
             PZ staging                                  kcp.x
             DFT (N+1)                                   kcp.x
     Final KI                                            kcp.x
+  Descriptors (snapshot 2)                              pw2wannier90.x
 
 ########## trajectory (ml test, power_spectrum)
 Trajectory

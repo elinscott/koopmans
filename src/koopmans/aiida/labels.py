@@ -183,7 +183,6 @@ _BLOCK_STEMS = (
     ("wannierize_", "Wannierization"),
     ("fold_", "Supercell Wannier functions"),
     ("decompose_", "Decomposition"),
-    ("descriptors_", "Descriptors"),
 )
 
 # Stems whose remainder identifies one orbital. The parent row already
@@ -230,6 +229,10 @@ _ASSEMBLED_PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str]
         lambda m: f"Merged Wannier manifold ({m.group(1)}, spin {m.group(2)})",
     ),
     (re.compile(r"dscf_snapshot_(\d+)"), lambda m: f"Snapshot {m.group(1)}"),
+    (
+        re.compile(r"descriptors_snapshot_(\d+)"),
+        lambda m: f"Descriptors (snapshot {m.group(1)})",
+    ),
     (
         re.compile(r"alpha_and_eigenvalue_deltas_snapshot_(\d+)"),
         lambda m: f"Alpha and eigenvalue deltas (snapshot {m.group(1)})",

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from koopmans.aiida.workflows import (
     load_codes,
-    name_run,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
@@ -60,14 +59,11 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     codes = load_codes(DielectricCodes)
     require_configured_codes(DielectricCodes, codes)
 
-    return name_run(
-        DielectricTask.build(
-            codes=codes,
-            structure=structure,
-            pseudo_family=pseudo_family,
-            overrides=overrides,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
-            scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
-        ),
-        "Dielectric constant",
+    return DielectricTask.build(
+        codes=codes,
+        structure=structure,
+        pseudo_family=pseudo_family,
+        overrides=overrides,
+        parallelization=koopmans_input.parallelization.as_mapping() or None,
+        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
     )

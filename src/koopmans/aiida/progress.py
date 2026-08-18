@@ -154,6 +154,28 @@ def _promoted_state(state: str) -> str:
     return "running" if state in _TERMINAL_STATES else state
 
 
+def _is_a_name(label: str, process_node: ProcessNode) -> bool:
+    """Return whether ``label`` names the process rather than identifying it.
+
+    ``aiida-workgraph`` overwrites the label of every process it launches
+    for a ``@task.graph`` with that graph's own task name, discarding the
+    one the plugin gave it (``WorkGraphEngine.on_create``, aiida-workgraph
+    0.8). What is left is the call link label, or the graph function's
+    name for the run as a whole — the same identifiers the lookup is
+    keyed on, so a label equal to either carries no name and the lookup
+    answers instead.
+
+    Drop this once a graph task's label survives; the plugin already sets
+    the names, and they will start arriving here on their own.
+    """
+    process_label = getattr(process_node, "process_label", None) or ""
+    envelope = re.fullmatch(r"WorkGraph<(.+)>", process_label)
+    return label not in {
+        get_node_label(process_node, include_code=False),
+        envelope.group(1) if envelope else process_label,
+    }
+
+
 def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelDisplay:
     """Return how one process is shown: its name, its executable, its role.
 
@@ -161,7 +183,8 @@ def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelD
     from the step the process stands for. A process that carries none —
     one from a run made before the plugin labelled its steps, or one an
     upstream workchain submits with its own metadata — falls back to the
-    lookup in :mod:`koopmans.aiida.labels`.
+    lookup in :mod:`koopmans.aiida.labels`, as does one whose label is an
+    identifier rather than a name (:func:`_is_a_name`).
 
     Whether a process gets a row of its own, and whether its row is
     numbered among its siblings, stay questions about the step rather
@@ -179,6 +202,8 @@ def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelD
         raw = get_node_label(process_node, include_code=False)
         role = describe_label(raw, getattr(process_node, "process_label", None) or "")
     name = (getattr(process_node, "label", "") or "").strip()
+    if name and not _is_a_name(name, process_node):
+        name = ""
     return role._replace(text=name or role.text, code=executable_of(process_node))
 
 

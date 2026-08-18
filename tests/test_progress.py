@@ -19,6 +19,7 @@ Regenerate that file after an intended change with::
 from __future__ import annotations
 
 import itertools
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -94,11 +95,23 @@ class FakeNode:
         return self.finished_ok
 
 
+def _fake_node_label(node: FakeNode, include_code: bool = True) -> str:
+    """Stand in for :func:`~koopmans.aiida.utils.get_node_label`.
+
+    The real one prefixes a CalcJob's link label with its code's label
+    when asked; the assembler never asks, and this raises rather than
+    quietly return the wrong string if it starts to.
+    """
+    if include_code:
+        raise AssertionError("the display reads link labels without a code prefix")
+    return node.link
+
+
 @contextmanager
 def stubbed_lookups(registry: dict[int, FakeNode]) -> Iterator[None]:
     """Point the assembler's three AiiDA lookups at a fake node tree."""
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(progress, "get_node_label", lambda node, include_code=True: node.link)
+        patch.setattr(progress, "get_node_label", _fake_node_label)
         patch.setattr(progress, "get_node_type", lambda node: node.kind)
         patch.setattr(progress, "_is_process_function_node", lambda node: node.is_pyfunction)
         patch.setattr(progress, "_reload", lambda pk: registry[pk])
@@ -1260,7 +1273,19 @@ ROUTES: dict[str, FakeNode] = {
         kind="workgraph",
         children=[
             _graph("dscf_snapshot_1", "Snapshot 1", *_dscf_body(mlwf=False)),
+            _graph(
+                "descriptors_snapshot_1",
+                "Descriptors (snapshot 1)",
+                _calc("decompose_occ_1", "Decomposition (occupied block 1)", "pw2wannier90.x"),
+                _func("descriptors_occ_1"),
+            ),
             _graph("dscf_snapshot_2", "Snapshot 2", *_dscf_body(mlwf=False)),
+            _graph(
+                "descriptors_snapshot_2",
+                "Descriptors (snapshot 2)",
+                _calc("decompose_occ_1", "Decomposition (occupied block 1)", "pw2wannier90.x"),
+                _func("descriptors_occ_1"),
+            ),
             _func("train_screening_model"),
         ],
     ),
@@ -1303,6 +1328,7 @@ ROUTES: dict[str, FakeNode] = {
 def _unnamed(node: FakeNode) -> FakeNode:
     """Return a copy of ``node``'s tree with every process's label removed.
 
+    What a run made before ``aiida-koopmans`` named its steps looks like.
     Fresh pks throughout, so the copy and the original can be resolved
     side by side.
     """
@@ -1311,6 +1337,27 @@ def _unnamed(node: FakeNode) -> FakeNode:
         label="",
         pk=next(_pk_counter),
         children=[_unnamed(child) for child in node.children],
+    )
+
+
+def _as_the_engine_names_them(node: FakeNode, is_root: bool = False) -> FakeNode:
+    """Return a copy of ``node``'s tree labelled the way a live run is.
+
+    ``aiida-workgraph`` overwrites the label of every process it launches
+    for a ``@task.graph`` with that graph's task name — the call link
+    label, or the graph function's name for the run as a whole — so the
+    names the plugin gives those never reach the database. Everything
+    else keeps its label.
+    """
+    label = node.label
+    if node.kind == "workgraph":
+        envelope = re.fullmatch(r"WorkGraph<(.+)>", node.process_label or "")
+        label = envelope.group(1) if is_root and envelope else node.link
+    return replace(
+        node,
+        label=label,
+        pk=next(_pk_counter),
+        children=[_as_the_engine_names_them(child) for child in node.children],
     )
 
 
@@ -1357,6 +1404,26 @@ class TestEveryRouteTable:
                 _register(unnamed, registry)
                 assert progress.build_progress_rows(
                     cast("ProcessNode", unnamed)
+                ) == progress.build_progress_rows(cast("ProcessNode", root)), name
+
+    def test_a_run_named_as_the_engine_names_it_renders_the_same(self) -> None:
+        """A ``@task.graph``'s name is discarded before it reaches the database.
+
+        ``aiida-workgraph`` overwrites it with the graph's task name, so
+        what a live run carries on those processes is the call link label
+        the lookup is keyed on rather than a name. The rows must read the
+        same either way, or the table would show internal identifiers on
+        every route as long as that holds — and would change again, of
+        its own accord, once it stops.
+        """
+        registry: dict[int, FakeNode] = {}
+        with stubbed_lookups(registry):
+            for name, root in ROUTES.items():
+                as_run = _as_the_engine_names_them(root, is_root=True)
+                _register(root, registry)
+                _register(as_run, registry)
+                assert progress.build_progress_rows(
+                    cast("ProcessNode", as_run)
                 ) == progress.build_progress_rows(cast("ProcessNode", root)), name
 
     def test_no_route_shows_a_python_class_name(self) -> None:
