@@ -1,10 +1,10 @@
 [build-system]
-requires = ["uv_build>=0.11.2,<1.0"]
-build-backend = "uv_build"
+requires = ["hatchling>=1.27", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
 
 [project]
 name = "koopmans"
-version = "0.0.1-dev"
+dynamic = ["version"]
 description = "Automated Koopmans functional calculations and workflows"
 readme = "README.md"
 authors = [
@@ -72,6 +72,7 @@ dependencies = [
     "ase>=3.23", # Bravais-lattice special k-points for explicit band paths
     "aiida-quantumespresso",
     "qe-tools", # QE's own unit-conversion constants
+    "upf-tools", # reads a pseudopotential's UPF header
     "matplotlib", # `koopmans plot`
     # Constraint only (not imported directly, but aiida-workgraph imports it):
     # every *released* aiida-shell subclasses the Code.Model API that
@@ -238,8 +239,6 @@ ignore = [
 
 # See https://docs.astral.sh/ruff/settings/#per-file-ignores
 [tool.ruff.lint.per-file-ignores]
-# Ignore security issues in the version.py, which are inconsistent
-"src/koopmans/version.py" = ["S603", "S607"]
 # Ignore commented out code in Sphinx configuration file
 "docs/source/conf.py" = ["ERA001"]
 # Prints are okay in notebooks
@@ -266,45 +265,31 @@ known-first-party = [
 # see https://docs.astral.sh/ruff/settings/#format_docstring-code-format
 docstring-code-format = true
 
-[tool.bumpversion]
-current_version = "0.0.1-dev"
-parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)(?:-(?P<release>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+(?P<build>[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?"
-serialize = [
-    "{major}.{minor}.{patch}-{release}+{build}",
-    "{major}.{minor}.{patch}+{build}",
-    "{major}.{minor}.{patch}-{release}",
-    "{major}.{minor}.{patch}",
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+fallback_version = "0.0.0+unknown"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/koopmans"]
+
+[tool.hatch.build.targets.sdist]
+# Hatchling's default sdist ships the whole repo (.claude/, .github/,
+# CLAUDE.md, agent configs, ...) since nothing here uses a MANIFEST-style
+# opt-out list. Scope it to what a source install or a from-sdist test run
+# actually needs.
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CITATION.cff",
+    "/.git_archival.txt",
+    "/.gitattributes",
 ]
-commit = true
-tag = false
-
-[tool.bumpversion.parts.release]
-optional_value = "production"
-first_value = "dev"
-values = [
-    "dev",
-    "production",
-]
-
-[[tool.bumpversion.files]]
-filename = "pyproject.toml"
-search = "version = \"{current_version}\""
-replace = "version = \"{new_version}\""
-
-[[tool.bumpversion.files]]
-filename = "docs/source/conf.py"
-search = "release = \"{current_version}\""
-replace = "release = \"{new_version}\""
-
-[[tool.bumpversion.files]]
-filename = "src/koopmans/version.py"
-search = "VERSION = \"{current_version}\""
-replace = "VERSION = \"{new_version}\""
-
-[[tool.bumpversion.files]]
-filename = "CITATION.cff"
-search = "version: {current_version}"
-replace = "version: {new_version}"
 
 [tool.uv]
 # QE-driven workflows only run on unix; without this, universal resolution
@@ -317,13 +302,14 @@ environments = [
 
 [tool.uv.sources]
 pydantic-espresso = { path = "../pydantic_espresso" }
-aiida-core = { path = "../aiida-core" }
+aiida-core = { path = "../aiida-core", editable = true }
 aiida-koopmans = { path = "../aiida-koopmans2", editable = true }
 aiida-wannierjl = { path = "../aiida-wannierjl", editable = true }
 aiida-quantumespresso = { path = "../aiida-quantumespresso", editable = true }
 aiida-workgraph = { path = "../aiida-workgraph", editable = true }
 node-graph = { path = "../node-graph", editable = true }
 plumpy = { path = "../plumpy", editable = true }
+upf-tools = { path = "../upf-tools", editable = true }
 # Post-v2.8 aiida-core removed the Code.Model pydantic API (#6990); no
 # aiida-shell release is compatible yet, so pin the adapted git master.
 aiida-shell = { git = "https://github.com/sphuber/aiida-shell", rev = "e2f4ff1c96e5e38d7bafacb0ca65495ebe492167" }

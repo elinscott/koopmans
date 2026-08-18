@@ -2,7 +2,8 @@
 
 The resolver tests build process nodes directly rather than running
 workflows: what is under test is which producer/socket pairs count as a band
-structure, and that is decided by ``process_type`` alone.
+structure, and that is decided by ``process_type`` plus, for the pw.x base
+run, the calculation type its own inputs declare.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ import pytest
 import yaml
 from aiida import orm
 from aiida.common.links import LinkType
-from plumpy.process_states import ProcessState
 
 from koopmans.aiida.dumping import NODE_METADATA_FILE
 from koopmans.plotting import (
@@ -27,7 +27,6 @@ from koopmans.plotting import (
     PathMismatchError,
     PlottingError,
     apply_energy_zero,
-    apply_labels,
     check_paths_agree,
     describe_energy_zero,
     draw_band_structures,
@@ -36,12 +35,15 @@ from koopmans.plotting import (
     resolve_band_series,
     write_series_json,
 )
+from tests.fixtures import make_process
 
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
 PW_BASE = "aiida.workflows:quantumespresso.pw.base"
 KCW_HAM = "aiida.calculations:koopmans.kcw_ham"
 W90_BASE = "aiida.workflows:wannier90_workflows.base.wannier90"
+W90_CALC = "aiida_wannier90.calculations.wannier90.Wannier90Calculation"
 W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
+MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands"
 
 #: A cubic cell, so that reciprocal-space distances are easy to reason about.
 CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
@@ -54,12 +56,16 @@ CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
 
 def make_bands(
     kpoints: list[list[float]],
-    energies: list[list[float]],
+    energies: list[list[float]] | list[list[list[float]]],
     cell: list[list[float]] | None = None,
     labels: list[tuple[int, str]] | None = None,
     occupations: list[list[float]] | None = None,
 ) -> orm.BandsData:
-    """Return an unstored ``BandsData`` holding the given eigenvalues."""
+    """Return an unstored ``BandsData`` holding the given eigenvalues.
+
+    ``energies`` is ``[N_kpoints, N_bands]``, or ``[N_spin, N_kpoints,
+    N_bands]`` for a collinear calculation's two channels.
+    """
     bands = orm.BandsData()
     if cell is not None:
         bands.set_cell(cell)  # type: ignore[no-untyped-call]
@@ -70,32 +76,13 @@ def make_bands(
     return bands
 
 
-def make_process(
-    process_type: str,
-    caller: orm.ProcessNode | None = None,
-    link_label: str = "step",
-    label: str = "",
-    exit_status: int = 0,
-    exit_message: str | None = None,
-    calcjob: bool = False,
-    computer: orm.Computer | None = None,
-) -> orm.ProcessNode:
-    """Return a stored, finished process node of the given ``process_type``."""
-    node: orm.ProcessNode = orm.CalcJobNode() if calcjob else orm.WorkflowNode()
-    node.process_type = process_type
-    node.label = label
-    if calcjob:
-        node.computer = computer
-        node.set_option("resources", {"num_machines": 1})
-    if caller is not None:
-        link_type = LinkType.CALL_CALC if calcjob else LinkType.CALL_WORK
-        node.base.links.add_incoming(caller, link_type=link_type, link_label=link_label)
-    node.store()
-    node.set_process_state(ProcessState.FINISHED)
-    node.set_exit_status(exit_status)
-    if exit_message is not None:
-        node.set_exit_message(exit_message)
-    return node
+def make_spin_bands(kpoints: list[list[float]], energies: list[list[list[float]]]) -> orm.BandsData:
+    """Return a ``BandsData`` holding one table per spin channel."""
+    bands = orm.BandsData()
+    bands.set_cell(CUBIC)  # type: ignore[no-untyped-call]
+    bands.set_kpoints(kpoints)  # type: ignore[no-untyped-call]
+    bands.set_bands(np.asarray(energies, dtype=float), units="eV")  # type: ignore[no-untyped-call]
+    return bands
 
 
 def attach(node: orm.ProcessNode, socket: str, data: orm.Data) -> orm.Data:
@@ -157,6 +144,20 @@ def blank_axes() -> Any:
     import matplotlib.pyplot as plt
 
     return plt.subplots()[1]
+
+
+@pytest.fixture(autouse=True)
+def close_figures() -> Any:
+    """Close every figure a test opened.
+
+    Held-open figures accumulate across the module until matplotlib warns
+    about it, and the warning lands in the output a ``CliRunner`` test then
+    asserts on.
+    """
+    yield
+    import matplotlib.pyplot as plt
+
+    plt.close("all")
 
 
 def broken_path() -> BandSeries:
@@ -288,19 +289,6 @@ class TestEnergyZero:
 
 class TestSeriesRecords:
     """The records the resolver hands the renderer."""
-
-    def test_labels_are_applied_in_order(self) -> None:
-        """``--label`` renames the leading series and leaves the rest alone."""
-        first, second = series("DFT"), series("KI")
-
-        apply_labels([first, second], ("LDA",))
-
-        assert (first.label, second.label) == ("LDA", "KI")
-
-    def test_too_many_labels_is_an_error(self) -> None:
-        """More labels than series is a typo, not a silent no-op."""
-        with pytest.raises(ValueError, match="only 1 band structure"):
-            apply_labels([series()], ("one", "two"))
 
     def test_data_file_holds_the_energies_and_the_zero(self, tmp_path: Path) -> None:
         """``--data`` writes energies as computed plus the shift that was applied.
@@ -489,6 +477,239 @@ class TestResolver:
 
         assert sorted(item.label for item in found) == ["DFT (ham_down)", "DFT (ham_up)"]
 
+    def test_call_chain_disambiguates_a_per_block_fan_out(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A per-block Wannierization names every wannier90 call the same.
+
+        Each block's wannier90 run sits under a sub-graph call named after
+        the block; wannier90 itself is always called "wannier90", so the
+        immediate step name ties and disambiguation has to walk up to the
+        sub-graph call that actually names the block.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
+        for block in ("wannierize_emp", "wannierize_occ_1"):
+            sub_graph = make_process(
+                "aiida.workflows:workgraph.engine", caller=root, link_label=block
+            )
+            base = make_process(W90_BASE, caller=sub_graph, link_label="wannier90")
+            attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == [
+            "Wannier interpolation (emp)",
+            "Wannier interpolation (occ 1)",
+        ]
+
+    def test_nested_single_producer_stays_unqualified(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The same sub-graph nesting with only one producer needs no suffix.
+
+        Disambiguation is triggered by a tied series name, not by sitting
+        under a sub-graph call.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        sub_graph = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize_occ"
+        )
+        base = make_process(W90_BASE, caller=sub_graph, link_label="wannier90")
+        attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_no_common_depth_falls_back_to_numbering(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A tied pair with no depth in common everywhere is told apart by number.
+
+        One producer is called directly by the run root; another with the
+        same immediate call label sits one level deeper. No depth compares
+        across the whole group, so nothing structural distinguishes them.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        direct = make_process(W90_BASE, caller=root, link_label="wannier90")
+        attach(direct, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        mid = make_process("aiida.workflows:workgraph.engine", caller=root, link_label="mid")
+        nested = make_process(W90_BASE, caller=mid, link_label="wannier90")
+        attach(nested, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.1]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == [
+            "Wannier interpolation (1)",
+            "Wannier interpolation (2)",
+        ]
+
+    def test_labels_with_no_shared_prefix_are_rendered_unstripped(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """Distinguishing labels that share no lead-in are used exactly as they are.
+
+        Prefix-stripping only fires on the part the tied group's labels
+        actually share; two sub-graph calls named without any common
+        lead-in still disambiguate correctly once the shared immediate
+        ``wannier90`` label forces the walk to escalate.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
+        for block in ("north", "south"):
+            sub_graph = make_process(
+                "aiida.workflows:workgraph.engine", caller=root, link_label=block
+            )
+            base = make_process(W90_BASE, caller=sub_graph, link_label="wannier90")
+            attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == [
+            "Wannier interpolation (north)",
+            "Wannier interpolation (south)",
+        ]
+
+    def test_merge_interpolated_bands_is_recognized(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The split-mode merge calcfunction's output is a plottable band structure.
+
+        Before this producer is registered, a folder addressing this
+        calcfunction directly reports that no step of it produced a
+        plottable output.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        merged = make_process(
+            MERGE_INTERPOLATED_BANDS,
+            caller=root,
+            link_label="merge_interpolated_bands",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(merged, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_split_mode_names_the_gauge_fragments_and_merge(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A whole-run plot of one split block shows every reachable curve.
+
+        The pre-split whole-block gauge, each re-Wannierised group, and the
+        block-wide merge all share the "Wannier interpolation" series name
+        and are told apart structurally, without falling back to bare
+        numbering; a sibling block wannierized directly is unaffected.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+
+        direct = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize_occ"
+        )
+        direct_leaf = make_process(W90_BASE, caller=direct, link_label="wannier90")
+        attach(direct_leaf, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+
+        split = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize_split_emp"
+        )
+        gauge = make_process(
+            "aiida.workflows:workgraph.engine", caller=split, link_label="wannierize_whole_block"
+        )
+        gauge_leaf = make_process(W90_BASE, caller=gauge, link_label="wannier90")
+        attach(gauge_leaf, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.1]]))
+
+        rewannierize = make_process(
+            "aiida.workflows:workgraph.engine", caller=split, link_label="rewannierize_split_blocks"
+        )
+        for i in range(2):
+            fragment = make_process(
+                W90_CALC,
+                caller=rewannierize,
+                link_label=f"wannier90_split_block_{i}",
+                calcjob=True,
+                computer=aiida_localhost,
+            )
+            attach(fragment, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.2 - i]]))
+        merged = make_process(
+            MERGE_INTERPOLATED_BANDS,
+            caller=rewannierize,
+            link_label="merge_interpolated_bands",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(merged, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.4]]))
+
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+        labels = sorted(item.label for item in found)
+
+        # Five curves, every one distinct, and none of them bare numbering:
+        # a whole-block gauge, two split fragments, a merge, and the
+        # sibling block wannierized directly.
+        assert len(labels) == len(set(labels)) == 5
+        assert not any(label.rsplit("(", 1)[-1].rstrip(")").strip().isdigit() for label in labels)
+        assert "Wannier interpolation (occ)" in labels
+
+    def test_split_mode_two_blocks_combines_depths_for_matching_fragments(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Two split blocks each contribute a same-indexed fragment and a merge.
+
+        Fragment 0 of one block and fragment 0 of the other tie at every
+        depth their own sub-graph shares (the fragment index, the
+        "rewannierize_split_blocks" wrapper); only the block name two
+        levels up (which itself only distinguishes once combined with the
+        fragment index) tells them apart, so disambiguation has to combine
+        more than one depth rather than stopping at the first that splits
+        anything.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+
+        for block in ("occ", "emp"):
+            split = make_process(
+                "aiida.workflows:workgraph.engine",
+                caller=root,
+                link_label=f"wannierize_split_{block}",
+            )
+            rewannierize = make_process(
+                "aiida.workflows:workgraph.engine",
+                caller=split,
+                link_label="rewannierize_split_blocks",
+            )
+            for i in range(2):
+                fragment = make_process(
+                    W90_CALC,
+                    caller=rewannierize,
+                    link_label=f"wannier90_split_block_{i}",
+                    calcjob=True,
+                    computer=aiida_localhost,
+                )
+                attach(fragment, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0 - i]]))
+            merged = make_process(
+                MERGE_INTERPOLATED_BANDS,
+                caller=rewannierize,
+                link_label="merge_interpolated_bands",
+                calcjob=True,
+                computer=aiida_localhost,
+            )
+            attach(merged, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.5]]))
+
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+        labels = sorted(item.label for item in found)
+
+        # Six curves: two fragments and a merge, per block, all distinct.
+        assert len(labels) == len(set(labels)) == 6
+        assert not any(label.rsplit("(", 1)[-1].rstrip(")").strip().isdigit() for label in labels)
+
     def test_not_a_run_directory(self, aiida_profile: Any, tmp_path: Path) -> None:
         """A folder with no metadata file is named, along with what to pass."""
         folder = tmp_path / "somewhere"
@@ -534,6 +755,33 @@ class TestResolver:
         assert len(warnings) == 1
         assert "scf failed" in warnings[0]
         assert "Out of walltime" in warnings[0]
+
+    def test_a_root_level_failure_with_no_failed_step_blames_the_run_itself(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A run that fails with no failed descendant blames the run, not a step.
+
+        The engine can except before any child it started went on to fail —
+        every descendant still finishes fine, so the run's own root is the
+        only node left to name. The root carries no CALL link of its own, so
+        the step-naming fallback has to use its process label instead.
+        """
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            label="RunPwBands",
+            exit_status=500,
+            exit_message="WorkGraph excepted",
+        )
+        chain = make_process(PW_BANDS, caller=root, link_label="bands")
+        attach(chain, "band_structure", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_excepted", root)
+
+        found, warnings = resolve_band_series([folder])
+
+        assert len(found) == 1
+        assert len(warnings) == 1
+        assert "did not finish" in warnings[0]
+        assert "WorkGraph excepted" in warnings[0]
 
     def test_nothing_plottable_names_the_route_and_the_reason(
         self, aiida_profile: Any, tmp_path: Path
@@ -784,6 +1032,80 @@ class TestRenderer:
 
         assert [text.get_text() for text in axes.get_xticklabels()] == ["\u0393", "X"]
 
+    def test_the_legend_can_be_asked_for_on_one_curve(self) -> None:
+        """A caller that named its one series gets a key naming it.
+
+        The control is ``test_one_series_carries_no_legend`` above: the same
+        single series draws no key when nothing asks for one.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")], legend=True)
+
+        legend = axes.get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == ["DFT"]
+
+    def test_the_legend_can_be_refused_on_an_overlay(self) -> None:
+        """Asking for no key overrides the rule that an overlay carries one."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT"), series("KI")], legend=False)
+
+        assert axes.get_legend() is None
+
+    def test_the_energy_axis_spans_the_bands_by_default(self) -> None:
+        """With no range asked for, every band stays on the figure.
+
+        The control for the clipping tests below: the limits must start out
+        wide enough that a narrower window is visibly the option's doing.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT")])
+
+        low, high = axes.get_ylim()
+        assert low <= -5.0 and high >= 6.0
+
+    def test_the_energy_axis_is_clipped_to_the_range_asked_for(self) -> None:
+        """A window narrower than the bands is what the axes show.
+
+        A semicore band 130 eV down otherwise compresses the gap region into
+        a sliver, which is the whole reason to ask for a range.
+        """
+        axes = blank_axes()
+        deep = series("DFT", energies=[[-130.0, 5.0], [-130.0, 5.5], [-130.0, 6.0]])
+
+        draw_band_structures(axes, [deep], ylim=(-2.0, 8.0))
+
+        assert axes.get_ylim() == pytest.approx((-2.0, 8.0))
+
+    def test_clipping_measures_the_range_from_the_zero(self) -> None:
+        """The range is read in the shifted energies the axis is drawn in.
+
+        Applying it to the raw energies would frame a different window for
+        every choice of ``--zero``, while the axis is labelled ``E - E_VBM``.
+        """
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("DFT", zero=6.0)], ylim=(-1.0, 1.0))
+
+        assert axes.get_ylim() == pytest.approx((-1.0, 1.0))
+        # -5.0 eV as computed is -11.0 eV once the zero is subtracted, so it
+        # is outside the window rather than at its lower edge.
+        assert band_lines(axes)[0].get_ydata()[0] == pytest.approx(-11.0)
+
+    def test_clipping_keeps_the_figure_conventions(self) -> None:
+        """A clipped figure still carries its rules, labels and tight x limits."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [three_corner_path()], ylim=(-4.5, -3.5))
+
+        assert divider_positions(axes) == pytest.approx([np.pi / 4])
+        assert [text.get_text() for text in axes.get_xticklabels()] == ["\u0393", "X", "M"]
+        assert axes.get_xlim() == pytest.approx((0.0, np.pi / 2))
+        assert axes.get_title() == ""
+
 
 # ----------------------------------------------------------------------
 # The command
@@ -799,6 +1121,28 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(koopmans.cli, "load_koopmans_profile", lambda: None)
     return CliRunner()
+
+
+@pytest.fixture
+def drawn_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Return the axes each figure the command draws was drawn on, in order.
+
+    The command closes its figure before returning, so the axes are only
+    reachable while it runs. Drawing itself is left alone, which is what makes
+    a test on these axes a test of the figure rather than of the call.
+    """
+    from koopmans.plotting import render
+
+    seen: list[Any] = []
+    original = render.draw_band_structures
+
+    def record(axes: Any, *args: Any, **kwargs: Any) -> None:
+        """Call through to the renderer, keeping the axes it drew."""
+        seen.append(axes)
+        original(axes, *args, **kwargs)
+
+    monkeypatch.setattr(render, "draw_band_structures", record)
+    return seen
 
 
 def dft_run(tmp_path: Path, name: str, vbm: float, energies: list[list[float]]) -> Path:
@@ -872,6 +1216,113 @@ class TestCommand:
             pytest.approx(6.2452),
             pytest.approx(6.2452),
         ]
+
+    def test_ylim_clips_the_figure_it_writes(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """The range reaches the axes, and the data written stays as computed."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-130.0, 6.0], [-130.0, 7.0], [-130.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--ylim",
+                "-2",
+                "8",
+                "-o",
+                str(tmp_path / "zno.png"),
+                "--data",
+                str(tmp_path / "zno.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "zno.png").is_file()
+        assert drawn_axes[-1].get_ylim() == pytest.approx((-2.0, 8.0))
+        # Clipping frames the figure; it does not discard the bands behind it.
+        payload = json.loads((tmp_path / "zno.json").read_text())
+        assert payload["series"][0]["energies"][0][0] == pytest.approx(-130.0)
+
+    def test_a_label_names_the_curve_and_brings_the_legend_back(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """Naming one folder's series is asking for it to be named on the figure.
+
+        The rule that a single curve carries no key exists to keep noise off a
+        figure nobody asked to annotate; an explicit --label is that asking, and
+        without this the label would be input with no effect.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--label",
+                "KI@LDA",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        legend = drawn_axes[-1].get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == ["KI@LDA"]
+
+    def test_one_folder_unnamed_still_carries_no_legend(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """The control: the key comes back for the label, not for the option's sake."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert drawn_axes[-1].get_legend() is None
+
+    def test_a_label_count_mismatch_is_reported(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The message states both counts, rather than padding or truncating."""
+        from koopmans.cli import cli
+
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(first), str(second), "--label", "DFT"],
+        )
+
+        assert result.exit_code == 1
+        assert "1 --label value(s) were given for 2 folder(s)" in result.output
+
+    def test_an_inverted_ylim_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """MIN above MAX would silently flip the axis upside down."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(cli, ["plot", "bandstructure", str(folder), "--ylim", "8", "-2"])
+
+        assert result.exit_code == 2
+        assert "MIN must be below MAX" in result.output
 
     def test_not_a_run_directory_is_reported(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
@@ -956,6 +1407,237 @@ class TestProducerOwnership:
 
         assert [item.label for item in found] == ["Wannier interpolation"]
 
+    def test_a_dumped_wannier90_calculation_is_plotted(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A folder naming the calculation alone yields its interpolated bands.
+
+        A dump writes ``aiida_node_metadata.yaml`` for calculations and for
+        the run's root, so the calculation is the only wannier90 step a folder
+        can name; recognizing the workchain above it and not the calculation
+        leaves that folder unplottable.
+        """
+        calculation = make_process(W90_CALC, calcjob=True, computer=aiida_localhost)
+        attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "03-wannier90", calculation)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+        assert found[0].energies == [[-5.0]]
+
+    def test_a_wannierization_yields_one_series_not_two(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The workchain returns the bands its calculation created, once.
+
+        Both steps carry the same socket, so a walk that did not stop at the
+        first would draw one band structure twice and give the figure a
+        legend keying two names to one curve.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        base = make_process(W90_BASE, caller=root, link_label="wannier90")
+        calculation = make_process(
+            W90_CALC,
+            caller=base,
+            link_label="iteration_01",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        bands = attach(calculation, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        bands.base.links.add_incoming(
+            base, link_type=LinkType.RETURN, link_label="interpolated_bands"
+        )
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["Wannier interpolation"]
+
+    def test_a_path_bands_run_is_plotted_as_dft(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A bare pw.x run declaring ``calculation='bands'`` joins the DFT series.
+
+        The wannierize routes run it off their scf density as the explicit
+        eigenvalues the Wannier interpolation is judged against; its Fermi
+        level is the one ``output_parameters`` reports back from the parent
+        density's restart.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={"pw__parameters": orm.Dict({"CONTROL": {"calculation": "bands"}})},  # type: ignore[no-untyped-call]
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        attach(run, "output_parameters", orm.Dict({"fermi_energy": 1.25}))  # type: ignore[no-untyped-call]
+        base = make_process(W90_BASE, caller=root, link_label="wannier90")
+        attach(base, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.1]]))
+        folder = write_run_folder(tmp_path, "si_w90", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT", "Wannier interpolation"]
+        assert found[0].fermi == pytest.approx(1.25)
+
+    def test_a_mesh_run_with_declared_inputs_is_not_plotted(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """An scf run's ``output_band`` stays off the axes even with inputs present.
+
+        Same process type, same socket, same shape of data as the path
+        run: only the declared ``calculation`` type separates the mesh
+        eigenvalues from the path eigenvalues.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="scf",
+            inputs={"pw__parameters": orm.Dict({"CONTROL": {"calculation": "scf"}})},  # type: ignore[no-untyped-call]
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "si_scf", root)
+
+        with pytest.raises(PlottingError, match="No band structure to plot"):
+            resolve_band_series([folder])
+
+    def test_degenerate_spin_channels_collapse_to_one_series(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """nspin=2 with no declared magnetization draws one channel, not two.
+
+        A quality-check bands run can inherit nspin=2 from a magnetic-capable
+        restart density without declaring any magnetic moment of its own; the
+        two channels are then identical by construction, so only one belongs
+        on the legend. The two channels are not compared numerically — the
+        declared inputs are the only evidence used.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {
+                        "CONTROL": {"calculation": "bands"},
+                        "SYSTEM": {"nspin": 2, "starting_magnetization": {"Zn": 0.0, "O": 0.0}},
+                    }
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-5.0, 5.0]]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT"]
+
+    def test_declared_magnetization_keeps_the_spin_split(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A run that declares a nonzero moment keeps its (up)/(down) split."""
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {
+                        "CONTROL": {"calculation": "bands"},
+                        "SYSTEM": {"nspin": 2, "starting_magnetization": {"Fe": 0.5}},
+                    }
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-4.0, 6.0]]]))
+        folder = write_run_folder(tmp_path, "fe", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == ["DFT (down)", "DFT (up)"]
+
+    def test_nspin_one_is_unaffected_by_the_collapse_rule(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A plain nspin=1 run stays single-channel; the rule never fires."""
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {"CONTROL": {"calculation": "bands"}, "SYSTEM": {"nspin": 1}}
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 5.0]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["DFT"]
+
+    def test_a_declared_system_of_none_does_not_crash_the_collapse_check(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A malformed ``SYSTEM: None`` is read as no declared inputs, not a crash.
+
+        Not a shape QE itself would ever validate through, but the resolver
+        reads the declared inputs of whatever process the profile holds, and
+        should not raise for a namelist it cannot make sense of.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {"CONTROL": {"calculation": "bands"}, "SYSTEM": None}
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-4.0, 6.0]]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == ["DFT (down)", "DFT (up)"]
+
+    def test_a_non_dict_magnetization_keeps_the_spin_split(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A malformed, non-dict ``starting_magnetization`` keeps both channels.
+
+        Not a shape QE itself would ever validate through, but the resolver
+        should not guess at degeneracy when it cannot make sense of the
+        declared inputs.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="WannierizeBlocks")
+        run = make_process(
+            PW_BASE,
+            caller=root,
+            link_label="bands",
+            inputs={
+                "pw__parameters": orm.Dict(  # type: ignore[no-untyped-call]
+                    {
+                        "CONTROL": {"calculation": "bands"},
+                        "SYSTEM": {"nspin": 2, "starting_magnetization": [0.0, 0.0]},
+                    }
+                )
+            },
+        )
+        attach(run, "output_band", make_bands([[0.0, 0.0, 0.0]], [[[-5.0, 5.0]], [[-4.0, 6.0]]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == ["DFT (down)", "DFT (up)"]
+
     def test_the_optimize_scan_yields_one_series(self, aiida_profile: Any, tmp_path: Path) -> None:
         """Only the optimize workchain's own output counts, not its trials.
 
@@ -979,6 +1661,285 @@ class TestProducerOwnership:
 
         assert [item.label for item in found] == ["Wannier interpolation"]
         assert found[0].energies == [[-4.0]]
+
+
+# ----------------------------------------------------------------------
+# Naming the folders
+# ----------------------------------------------------------------------
+
+
+class TestFolderLabels:
+    """``--label`` names a folder, and every curve that folder contributes."""
+
+    def test_each_label_names_its_own_folder(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Labels pair with the folders positionally, in the order given.
+
+        Asserting the order of the names alone would pass just as well if the
+        two were paired the other way round, so each name is checked against
+        the bands of the folder it was given for.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second], ("DFT", "KI@LDA"))
+
+        named = {item.label: item for item in found}
+        assert list(named) == ["DFT", "KI@LDA"]
+        assert named["DFT"].vbm == pytest.approx(6.0)
+        assert named["KI@LDA"].vbm == pytest.approx(5.4)
+
+    def test_no_labels_keeps_the_derived_names(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The control: without labels the folder-qualified names stand.
+
+        Distinguishes naming from the prefixing that happens either way, which
+        a test only of the labelled case would leave unpinned.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second])
+
+        assert [item.label for item in found] == ["si_lda: DFT", "si_ki: DFT"]
+
+    def test_a_label_replaces_the_folder_prefix(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A named folder is not also prefixed with its own directory name.
+
+        The prefix exists to tell two folders apart; a name the user chose
+        already does that, and 'si_lda: DFT' spends the legend twice over.
+        """
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second], ("DFT", "KI"))
+
+        assert all("si_" not in item.label for item in found)
+
+    def test_a_label_keeps_the_spin_channel(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A collinear folder becomes two curves, and one name covers both.
+
+        The channel is what tells them apart, so the name is applied to it
+        rather than in place of it; dropping it would key the legend twice to
+        the same text.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+        chain = make_process(PW_BANDS, caller=root, link_label="bands")
+        attach(
+            chain,
+            "band_structure",
+            make_spin_bands(
+                [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+                [[[-5.0, 5.0], [-4.0, 6.0]], [[-5.2, 5.2], [-4.2, 6.2]]],
+            ),
+        )
+        folder = write_run_folder(tmp_path, "fe", root)
+
+        found, _ = resolve_band_series([folder], ("Iron",))
+
+        assert [item.label for item in found] == ["Iron (up)", "Iron (down)"]
+
+    def test_a_label_keeps_the_block_qualifier(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """A per-block fan-out keeps the step name each curve ran under."""
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        for block in ("wannierize_occ", "wannierize_emp"):
+            step = make_process(W90_BASE, caller=root, link_label=block)
+            attach(step, "interpolated_bands", make_bands([[0.0, 0.0, 0.0]], [[-5.0]]))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        found, _ = resolve_band_series([folder], ("Wannier",))
+
+        assert [item.label for item in found] == [
+            "Wannier (wannierize_occ)",
+            "Wannier (wannierize_emp)",
+        ]
+
+    def test_a_label_tells_apart_curves_of_different_series(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Curves named by their series alone still get one name each.
+
+        A run holding both a pw.x bands step and a kcw.x one needs no
+        qualifier to tell its curves apart, because their series names already
+        do; one chosen name over both would key the legend twice to the same
+        text.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="MixedRun")
+        dft = make_process(PW_BANDS, caller=root, link_label="dft_bands")
+        attach(dft, "band_structure", make_bands([[0.0, 0.0, 0.0]], [[-5.0]], cell=CUBIC))
+        ham = make_process(
+            KCW_HAM, caller=root, link_label="ham", calcjob=True, computer=aiida_localhost
+        )
+        attach(ham, "bands", make_bands([[0.0, 0.0, 0.0]], [[-3.0]], cell=CUBIC))
+        folder = write_run_folder(tmp_path, "zno", root)
+
+        plain, _ = resolve_band_series([folder])
+        named, _ = resolve_band_series([folder], ("ZnO",))
+
+        assert [item.label for item in plain] == ["DFT", "KI"]
+        assert [item.label for item in named] == ["ZnO (DFT)", "ZnO (KI)"]
+
+    def test_a_label_tells_apart_per_channel_series_names(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The optimize workchain names its channels in the series, not beside it.
+
+        Its per-spin outputs are separate declared producers, so neither is
+        disambiguated against the other and both would take the bare name.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="Wannierize")
+        optimize = make_process(W90_OPTIMIZE, caller=root, link_label="wannier90")
+        for namespace in ("wannier90_optimal_up", "wannier90_optimal_down"):
+            attach(
+                optimize,
+                f"{namespace}__interpolated_bands",
+                make_bands([[0.0, 0.0, 0.0]], [[-5.0]]),
+            )
+        folder = write_run_folder(tmp_path, "fe", root)
+
+        named, _ = resolve_band_series([folder], ("Iron",))
+
+        assert len({item.label for item in named}) == len(named) > 1
+        assert [item.label for item in named] == [
+            "Iron (Wannier interpolation (up))",
+            "Iron (Wannier interpolation (down))",
+        ]
+
+    def test_one_curve_takes_the_bare_label(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The control: a folder drawn as one curve is named and nothing more.
+
+        Qualifying a lone curve would put the derived name back on a figure
+        whose whole point was to replace it.
+        """
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        found, _ = resolve_band_series([folder], ("ZnO",))
+
+        assert [item.label for item in found] == ["ZnO"]
+
+    def test_fewer_labels_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Padding the rest with derived names would hide the typo."""
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([first, second], ("DFT",))
+
+        assert "1 --label value(s) were given for 2 folder(s)" in str(caught.value)
+
+    def test_more_labels_than_folders_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """The extra name belongs to a folder that was left off the command."""
+        folder = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        with pytest.raises(ValueError) as caught:
+            resolve_band_series([folder], ("DFT", "KI"))
+
+        assert "2 --label value(s) were given for 1 folder(s)" in str(caught.value)
+
+    def test_the_count_is_checked_before_the_folders_are_read(self, tmp_path: Path) -> None:
+        """A miscount is reported without a profile or a run behind the folders.
+
+        The check is on the command line alone, so it does not depend on the
+        folders being readable, let alone on their runs being in this profile.
+        """
+        missing = tmp_path / "not_a_run"
+        missing.mkdir()
+
+        with pytest.raises(ValueError, match="--label"):
+            resolve_band_series([missing], ("DFT", "KI"))
+
+
+# ----------------------------------------------------------------------
+# A folder that carries nothing
+# ----------------------------------------------------------------------
+
+
+def wannierization_without_bands(tmp_path: Path, name: str, computer: orm.Computer) -> Path:
+    """Write a folder naming a wannier90 calculation that interpolated nothing.
+
+    What a wannierize run without a k-point path leaves on disk: wannier90
+    is never asked to interpolate, so the calculation finishes and publishes
+    no ``interpolated_bands``.
+    """
+    calculation = make_process(
+        W90_CALC, calcjob=True, computer=computer, process_label="Wannier90Calculation"
+    )
+    attach(calculation, "output_parameters", orm.Dict({"number_wfs": 2}))  # type: ignore[no-untyped-call]
+    return write_run_folder(tmp_path, name, calculation)
+
+
+class TestEveryFolderContributes:
+    """A folder that yields no series is said so, not quietly dropped."""
+
+    def test_an_empty_folder_beside_a_full_one_is_reported(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Two folders in, one series out is a figure that misrepresents itself.
+
+        The reader is given a legend of one against a command line of two, and
+        nothing on the axes says the second run is missing.
+        """
+        ki = dft_run(tmp_path, "03-ham", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        empty = wannierization_without_bands(tmp_path, "03-wannier90", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([ki, empty])
+
+        message = str(caught.value)
+        assert "03-wannier90" in message
+        # The folder that did carry a band structure is not blamed for it.
+        assert "03-ham" not in message
+        assert "kpoints: {path: ...}" in message
+        assert "Leave out the folders above" in message
+
+    def test_two_full_folders_raise_nothing(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The control: the rule fires on emptiness, not on having two folders."""
+        first = dft_run(tmp_path, "si_lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        second = dft_run(tmp_path, "si_ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        found, _ = resolve_band_series([first, second])
+
+        assert len(found) == 2
+
+    def test_the_only_folder_being_empty_still_reads_as_before(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """One folder and nothing in it keeps its message, without the aside.
+
+        There is no rest of the figure to draw, so telling the reader to leave
+        the folder out would leave them with no command at all.
+        """
+        empty = wannierization_without_bands(tmp_path, "03-wannier90", aiida_localhost)
+
+        with pytest.raises(PlottingError) as caught:
+            resolve_band_series([empty])
+
+        assert "Leave out the folders above" not in str(caught.value)
+        # The advice names the one thing to change: give the input a k-path.
+        assert "kpoints: {path: ...}" in str(caught.value)
+        assert "k-point path" in str(caught.value)
+
+    def test_a_folder_with_no_bands_is_named(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, runner: Any, tmp_path: Path
+    ) -> None:
+        """The command fails naming the folder rather than drawing one series.
+
+        Reproduces the ZnO tutorial's invocation: the kcw.x run and the
+        wannier90 step it was built from, of which only the first has bands.
+        """
+        from koopmans.cli import cli
+
+        ham = dft_run(tmp_path, "03-ham", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        empty = wannierization_without_bands(tmp_path, "03-wannier90", aiida_localhost)
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(ham), str(empty), "-o", str(tmp_path / "out.png")],
+        )
+
+        assert result.exit_code == 1
+        assert "03-wannier90" in result.output
+        assert not (tmp_path / "out.png").exists()
 
 
 # ----------------------------------------------------------------------

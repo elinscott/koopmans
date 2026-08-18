@@ -7,7 +7,6 @@ AiiDA-compatible data structures for use with workgraphs.
 from __future__ import annotations
 
 import math
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -102,8 +101,6 @@ def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
     Returns:
         3x3 list of cell vectors in Angstrom.
     """
-    import math
-
     a = celldms[1] * BOHR_TO_ANGSTROM  # celldm(1) is in Bohr
     b = celldms.get(2, 1.0) * a if 2 in celldms else a
     c = celldms.get(3, 1.0) * a if 3 in celldms else a
@@ -382,6 +379,21 @@ def step_grid_spacing(kpoints: KpointsInput, step: str) -> float | None:
     return None if override is None else override.grid_spacing
 
 
+def wannier90_path_density(kpoints: KpointsInput) -> float:
+    """Return the density wannier90 interpolates its band structure at.
+
+    Falls back to :class:`~koopmans.input_file.WannierKpointsOverridesInput`'s
+    own default where ``kpoints.overrides.wannier90`` is unset.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+    """
+    from koopmans.input_file import WannierKpointsOverridesInput
+
+    override = kpoints.overrides.wannier90
+    return (override or WannierKpointsOverridesInput()).path_density
+
+
 def _parse_kpoints_path_string(
     path_string: str, point_coords: dict[str, list[float]]
 ) -> list[tuple[str, str]]:
@@ -442,17 +454,26 @@ def _calculate_kpoints_along_path(
     path: list[tuple[str, str]],
     point_coords: dict[str, list[float]],
     density: float,
+    reciprocal_cell: Any,
 ) -> tuple[list[list[float]], list[tuple[int, str]]]:
     """Calculate k-points along a path with the specified density.
 
     Args:
         path: List of (start_label, end_label) tuples defining path segments.
-        point_coords: Dict mapping special point labels to their coordinates.
-        density: Number of k-points per reciprocal space unit.
+        point_coords: Dict mapping special point labels to their crystal
+            (fractional reciprocal) coordinates.
+        density: Number of k-points per inverse angstrom, in the same 2π
+            convention as ``reciprocal_cell`` (and as ``kpoints.grid_spacing``).
+        reciprocal_cell: The cell's reciprocal lattice vectors as rows, in
+            1/angstrom, 2π convention (``aiida.orm.KpointsData.reciprocal_cell``).
+            Segment lengths are measured in this Cartesian basis, so a
+            converged density carries between structures — crystal
+            coordinates alone say nothing about physical length.
 
     Returns:
-        Tuple of (kpoint_list, label_list) where kpoint_list contains coordinates
-        and label_list contains (index, label) tuples for special points.
+        Tuple of (kpoint_list, label_list) where kpoint_list contains crystal
+        coordinates and label_list contains (index, label) tuples for special
+        points.
     """
     import numpy as np
 
@@ -464,7 +485,7 @@ def _calculate_kpoints_along_path(
         start_coord = np.array(point_coords[start_label])
         end_coord = np.array(point_coords[end_label])
 
-        segment_length = np.linalg.norm(end_coord - start_coord)
+        segment_length = np.linalg.norm((end_coord - start_coord) @ reciprocal_cell)
         n_points = max(2, int(np.ceil(segment_length * density)))
 
         for i in range(n_points):
@@ -512,6 +533,7 @@ def _cell_special_points(structure: orm.StructureData) -> dict[str, list[float]]
 def kpoints_input_to_kpoints_path(
     kpoints: KpointsInput,
     structure: orm.StructureData,
+    density: float | None = None,
 ) -> orm.KpointsData:
     """Convert KpointsInput to AiiDA KpointsData for bands calculations.
 
@@ -525,11 +547,20 @@ def kpoints_input_to_kpoints_path(
     Args:
         kpoints: The kpoints input from KoopmansInput.
         structure: The structure to generate k-path for.
+        density: Points per inverse angstrom to sample the path at. Defaults
+            to ``kpoints.path_density``; a caller wiring a different step's
+            interpolation density passes its own value instead.
 
     Returns:
         AiiDA KpointsData node with k-point path.
     """
     import numpy as np
+
+    kpts = orm.KpointsData()
+    # The cell fixes the reciprocal basis both the special points below and
+    # the segment-length measurement are expressed in. Set before either, and
+    # before the k-points, which are validated against it.
+    kpts.set_cell_from_structure(structure)  # type: ignore[no-untyped-call]
 
     if kpoints.path is not None:
         point_coords = _cell_special_points(structure)
@@ -567,66 +598,54 @@ def kpoints_input_to_kpoints_path(
             }
 
     kpoint_list, label_list = _calculate_kpoints_along_path(
-        path, point_coords, kpoints.path_density
+        path,
+        point_coords,
+        kpoints.path_density if density is None else density,
+        kpts.reciprocal_cell,  # 2π convention, shared with grid_spacing by construction
     )
 
-    kpts = orm.KpointsData()
-    # The cell fixes the reciprocal basis the crystal coordinates below are
-    # expressed in, so anything given this node can measure distances along
-    # the path. Set before the k-points, which are validated against it.
-    kpts.set_cell_from_structure(structure)  # type: ignore[no-untyped-call]
     kpts.set_kpoints(kpoint_list)  # type: ignore[no-untyped-call]
     kpts.labels = label_list
 
     return kpts
 
 
-def _resolve_pw_cutoffs(system: dict[str, Any], kcp_ecutrho: float) -> None:
-    """Complete the ``SYSTEM`` cutoff pair in place, from ``ecutwfc``.
+def kpoints_input_to_interpolation_path(
+    kpoints: KpointsInput,
+    structure: orm.StructureData,
+    density: float | None = None,
+) -> orm.KpointsData | None:
+    """Return the input's k-path as a labelled explicit k-list, or ``None``.
 
-    An unstated ``ecutrho`` becomes ``kcp_ecutrho``, or
-    ``NORM_CONSERVING_DUAL * ecutwfc`` when that is unset too. Whatever its
-    source, an ``ecutrho`` that is not :data:`NORM_CONSERVING_DUAL` times
-    ``ecutwfc`` takes effect with a warning naming the key it came from. With
-    neither cutoff stated the pair is left empty, for the pseudopotential
-    family to recommend.
+    ``None`` when the input states no ``kpoints.path``, and for a gamma-only
+    input, whose fixed ``path`` names the zone centre alone and so defines no
+    segment to interpolate along. Otherwise defers to
+    :func:`kpoints_input_to_kpoints_path`. Callers use this to decide whether
+    a step gets an explicit bands path or is left on its protocol default.
 
-    Raises:
-        ValueError: If ``ecutrho`` is stated and ``ecutwfc`` is not.
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        structure: The structure to generate the k-path for.
+        density: Points per inverse angstrom to sample the path at. Defaults
+            to ``kpoints.path_density``.
+
+    Returns:
+        AiiDA KpointsData node with the k-point path, or ``None``.
+    """
+    if kpoints.gamma_only or kpoints.path is None:
+        return None
+    return kpoints_input_to_kpoints_path(kpoints, structure, density)
+
+
+def _resolve_pw_cutoffs(system: dict[str, Any]) -> None:
+    """Set ``ecutrho`` in place, at :data:`NORM_CONSERVING_DUAL` times ``ecutwfc``.
+
+    With no ``ecutwfc`` stated the pair is left empty, for the
+    pseudopotential family to recommend.
     """
     ecutwfc = system.get("ecutwfc")
-    ecutrho = system.get("ecutrho")
-    source = "calculator_parameters.pw.system.ecutrho"
-
-    if ecutwfc is None:
-        if ecutrho is not None:
-            raise ValueError(
-                "`calculator_parameters.pw.system.ecutrho` is set without a wavefunction "
-                "cutoff, which would pair it with whatever the pseudopotential family "
-                "recommends. Set `calculator_parameters.ecutwfc`; `ecutrho` follows at "
-                f"{NORM_CONSERVING_DUAL:g} times it on its own."
-            )
-        return
-
-    if ecutrho is None:
-        if kcp_ecutrho:
-            # An explicit ``kcp.system.ecutrho`` keeps the pw.x runs on the grid
-            # of the CP supercell run the dft_init consistency checks compare
-            # against.
-            ecutrho = kcp_ecutrho
-            source = "calculator_parameters.kcp.system.ecutrho"
-        else:
-            ecutrho = NORM_CONSERVING_DUAL * ecutwfc
-        system["ecutrho"] = ecutrho
-
-    if not math.isclose(ecutrho, NORM_CONSERVING_DUAL * ecutwfc):
-        warnings.warn(
-            f"`{source}` = {ecutrho:g} Ry: ecutrho should be {NORM_CONSERVING_DUAL:g} x "
-            f"ecutwfc = {NORM_CONSERVING_DUAL * ecutwfc:g} Ry for norm-conserving "
-            f"pseudopotentials. Drop `{source}` to take that.",
-            UserWarning,
-            stacklevel=3,
-        )
+    if ecutwfc is not None:
+        system["ecutrho"] = NORM_CONSERVING_DUAL * ecutwfc
 
 
 def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
@@ -658,24 +677,52 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     # Merge with explicit PW parameters from input
     if pw_params.control:
         parameters["CONTROL"].update(
-            pw_params.control.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.control.model_dump(exclude_none=True, exclude_unset=True)
         )
     if pw_params.system:
         parameters["SYSTEM"].update(
-            pw_params.system.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.system.model_dump(exclude_none=True, exclude_unset=True)
         )
     if pw_params.electrons:
         parameters["ELECTRONS"].update(
-            pw_params.electrons.model_dump(exclude_none=True, exclude_defaults=True)
+            pw_params.electrons.model_dump(exclude_none=True, exclude_unset=True)
         )
 
-    # After the merge, so the pair is resolved from the cutoffs pw.x will run
-    # rather than from the top-level shorthand a ``pw.system`` block may replace.
-    _resolve_pw_cutoffs(parameters["SYSTEM"], calc_params.kcp.system.ecutrho)
+    if (
+        parameters["SYSTEM"].get("occupations") == "smearing"
+        and "degauss" not in parameters["SYSTEM"]
+    ):
+        raise ValueError(
+            "`calculator_parameters.pw.system.occupations = 'smearing'` needs "
+            "`calculator_parameters.pw.system.degauss` set explicitly too. Every "
+            "koopmans route runs pw.x with fixed occupations by default, which "
+            "clears the protocol's own smearing keywords before this override "
+            "lands, so pw.x would abort asking for a broadening value. Set "
+            "`calculator_parameters.pw.system.degauss` (Ry)."
+        )
+
+    _resolve_pw_cutoffs(parameters["SYSTEM"])
 
     # Ensure all Path objects are converted to strings for JSON serialization
     parameters = _convert_paths_to_strings(parameters)
 
+    return parameters
+
+
+def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
+    """Convert ``calculator_parameters.ph`` into a ph.x ``INPUTPH`` namelist dict.
+
+    The dielectric-constant (dft_eps) route merges this underneath its own
+    ``epsil``/``trans``/q-mesh keys, so every key present here is a plain
+    user override (route-owned keys are rejected at parse time; see
+    ``koopmans.input_file.ph``).
+    """
+    parameters: dict[str, dict[str, Any]] = {
+        "INPUTPH": koopmans_input.calculator_parameters.ph.model_dump(
+            exclude_none=True, exclude_defaults=True
+        ),
+    }
+    parameters = _convert_paths_to_strings(parameters)
     return parameters
 
 

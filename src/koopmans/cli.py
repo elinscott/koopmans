@@ -14,12 +14,16 @@ executed twice:
     https://click.palletsprojects.com/en/8.1.x/setuptools/#setuptools-integration
 """
 
+from __future__ import annotations
+
 import logging
+from datetime import UTC
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
-from koopmans.aiida.dumping import dump_workgraph, trained_model_output
+from koopmans.aiida.dumping import MODEL_FILENAME, dump_workgraph, trained_model_output
 from koopmans.aiida.progress import run_with_progress
 from koopmans.aiida.setup.codes import list_codes
 from koopmans.aiida.setup.daemon import is_daemon_running, start_daemon, stop_daemon
@@ -42,6 +46,9 @@ from koopmans.aiida.setup.profile import load_koopmans_profile, setup_profile
 from koopmans.aiida.utils import suppress_aiida_logging
 from koopmans.input_file import read_input_file
 from koopmans.plotting.series import EnergyZero
+
+if TYPE_CHECKING:
+    from aiida import orm
 
 __all__ = [
     "cli",
@@ -87,7 +94,7 @@ def run(input_file: str) -> None:
 
     INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
     """
-    from koopmans.aiida.workflows import build_workgraph
+    from koopmans.aiida.workflows import advice_for, build_workgraph
 
     input_path = Path(input_file)
 
@@ -103,17 +110,198 @@ def run(input_file: str) -> None:
     # Build the appropriate workgraph based on task
     wg = build_workgraph(koopmans_input)
 
-    with suppress_aiida_logging():
-        run_with_progress(wg)
+    # Graph validation runs when the engine takes the graph, past the build
+    # boundary where `build_workgraph` attaches advice — a missing
+    # route-conditional code surfaces here, so translate at this boundary too.
+    try:
+        with suppress_aiida_logging():
+            run_with_progress(wg)
+    except Exception as exc:
+        advice = advice_for(exc)
+        if advice is not None:
+            exc.add_note(advice)
+        raise
 
     if wg.process is not None:
-        dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
-        model_node = trained_model_output(wg.process)
-        if model_node is not None:
+        dump_path = input_path.parent / input_path.stem
+        dump_workgraph(wg.process, output_path=dump_path, overwrite=True)
+        if trained_model_output(wg.process) is not None:
+            # `ml: model_file` reads a relative path against the input file's
+            # own directory, so the snippet drops the leading directories the
+            # written path carries when the run was started from elsewhere.
             click.echo(
-                f"Trained model stored as node {model_node.pk} ({model_node.uuid}) — "
-                f"reference it via `ml: {{model: {model_node.pk}}}`."
+                f"Trained model written to {dump_path / MODEL_FILENAME} — reuse it from "
+                f"an input file beside {input_path.name} with "
+                f"`ml: {{model_file: {Path(input_path.stem) / MODEL_FILENAME}}}`."
             )
+
+
+@cli.command()
+@click.argument("input_file", type=click.Path(exists=True))
+def submit(input_file: str) -> None:
+    """Submit a koopmans calculation to the daemon without waiting for it.
+
+    INPUT_FILE is the path to a YAML or JSON input file describing the
+    calculation. Records the submission in `<stem>.run.yaml`, next to the
+    input file, appending rather than overwriting if it already exists;
+    `koopmans status` and `koopmans attach` read that file to find the
+    calculation again.
+    """
+    from datetime import datetime
+
+    from koopmans.aiida.anchor import AnchorEntry, anchor_path_for_input, append_anchor_entry
+    from koopmans.aiida.setup.profile import PROFILE_NAME
+    from koopmans.aiida.workflows import advice_for, build_workgraph
+    from koopmans.api import launch
+
+    input_path = Path(input_file)
+    koopmans_input = read_input_file(input_path)
+
+    load_koopmans_profile()
+    wg = build_workgraph(koopmans_input)
+
+    # Graph validation runs when the engine takes the graph, past the build
+    # boundary where `build_workgraph` attaches advice — translate here too.
+    try:
+        with suppress_aiida_logging():
+            node = launch(wg, blocking=False, wait=False)
+    except Exception as exc:
+        advice = advice_for(exc)
+        if advice is not None:
+            exc.add_note(advice)
+        raise
+
+    if node.pk is None:
+        raise click.ClickException("The submitted process was never stored, so it has no id.")
+
+    anchor_path = anchor_path_for_input(input_path)
+    entry = AnchorEntry(
+        uuid=node.uuid,
+        pk=node.pk,
+        input=input_path.name,
+        profile=PROFILE_NAME,
+        submitted=datetime.now(UTC).isoformat(),
+    )
+    try:
+        append_anchor_entry(anchor_path, entry)
+    except OSError as exc:
+        # The daemon already has the job; losing the run file only loses
+        # the *shortcut* back to it, not the submission itself.
+        raise click.ClickException(
+            f"The workflow was submitted, but {anchor_path} could not be written "
+            f"({exc}), so `koopmans status` will not find it on its own. Follow it "
+            f"with `koopmans status --uuid {node.uuid}`."
+        ) from exc
+
+    click.echo("🚀 Workflow submitted")
+
+
+def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None) -> orm.ProcessNode:
+    """Resolve and load the process a status/attach target refers to.
+
+    Loads the koopmans AiiDA profile as a side effect, since resolution
+    only touches the filesystem but loading the node needs the profile.
+    """
+    from aiida import orm
+    from aiida.common.exceptions import NotExistent
+
+    from koopmans.aiida.anchor import resolve_target
+
+    try:
+        resolved = resolve_target(target, uuid=uuid_, pk=pk_)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    load_koopmans_profile()
+    # Both errors below name the identifier the user gave or the run file
+    # recorded, not one read off the node they landed on.
+    identifier = resolved.uuid if resolved.uuid is not None else resolved.pk
+    try:
+        node = (
+            orm.load_node(uuid=resolved.uuid)
+            if resolved.uuid is not None
+            else orm.load_node(pk=resolved.pk)
+        )
+    except NotExistent as exc:
+        raise click.ClickException(
+            f"No AiiDA node found for {identifier!r}. It may have been deleted; check "
+            "`verdi process list -a` for what is still in the database."
+        ) from exc
+    if not isinstance(node, orm.ProcessNode):
+        raise click.ClickException(
+            f"{identifier!r} is not a calculation; it holds a {type(node).__name__}."
+        )
+    return node
+
+
+# Shared options for `status`/`attach`
+target_argument = click.argument("target", required=False)
+uuid_option = click.option(
+    "--uuid",
+    "uuid_",
+    default=None,
+    metavar="UUID",
+    help="Load the process by its AiiDA node UUID directly, bypassing any run file.",
+)
+pk_option = click.option(
+    "--pk",
+    "pk_",
+    type=int,
+    default=None,
+    metavar="PK",
+    help="Load the process by its AiiDA node pk directly, bypassing any run file.",
+)
+
+
+@cli.command(name="status")
+@target_argument
+@uuid_option
+@pk_option
+def show_status(target: str | None, uuid_: str | None, pk_: int | None) -> None:
+    """Show the current state of a submitted calculation, once.
+
+    TARGET is a `<stem>.run.yaml` file, the input file next to one, or
+    omitted to use the single such file in the current directory. Prints
+    the workflow tree with each step's state, and the exit status and
+    message of any step that failed. Exits nonzero if the calculation's
+    root process failed.
+    """
+    from koopmans.aiida.progress import render_process_once
+
+    node = _load_target_process(target, uuid_, pk_)
+
+    with suppress_aiida_logging():
+        render_process_once(node)
+
+    if node.is_terminated and not node.is_finished_ok:
+        raise SystemExit(1)
+
+
+@cli.command()
+@target_argument
+@uuid_option
+@pk_option
+def attach(target: str | None, uuid_: str | None, pk_: int | None) -> None:
+    """Attach the live progress display to an already-submitted calculation.
+
+    TARGET is resolved exactly as for `koopmans status`. Displays the
+    same live-updating table `koopmans run` shows, until the calculation
+    terminates; a calculation that has already terminated is shown once,
+    as `koopmans status` would. Exits nonzero if the calculation's root
+    process failed.
+    """
+    from koopmans.aiida.progress import render_process_once, watch_process
+
+    node = _load_target_process(target, uuid_, pk_)
+
+    with suppress_aiida_logging():
+        if node.is_terminated:
+            render_process_once(node)
+        else:
+            node = watch_process(node)
+
+    if node.is_terminated and not node.is_finished_ok:
+        raise SystemExit(1)
 
 
 # Shared option for caching
@@ -292,6 +480,18 @@ def install(
     _start_daemon_with_caching(cache)
 
     click.echo("\nInstallation complete!")
+
+
+@cli.command()
+def pseudos() -> None:
+    """List the pseudopotential families `workflow.pseudo_library` accepts.
+
+    Families koopmans has installed are marked. The listing itself needs no
+    AiiDA profile, so it works before `koopmans install`.
+    """
+    from koopmans.aiida.setup.pseudos import list_pseudo_families
+
+    list_pseudo_families()
 
 
 @cli.group()
@@ -546,6 +746,29 @@ data_option = click.option(
 )
 
 
+def _check_ylim(
+    ctx: click.Context, param: click.Parameter, value: tuple[float, float] | None
+) -> tuple[float, float] | None:
+    """Reject a range that frames nothing."""
+    if value is not None and value[0] >= value[1]:
+        raise click.BadParameter(
+            f"MIN must be below MAX; got {value[0]} and {value[1]}.", ctx=ctx, param=param
+        )
+    return value
+
+
+ylim_option = click.option(
+    "--ylim",
+    nargs=2,
+    type=float,
+    default=None,
+    callback=_check_ylim,
+    metavar="MIN MAX",
+    help="Show only this range of the energy axis, in the units it is drawn in "
+    "and measured from the zero --zero sets. Defaults to every band in full.",
+)
+
+
 @plot.command()
 @click.argument(
     "folders",
@@ -557,11 +780,15 @@ data_option = click.option(
 @show_option
 @zero_option
 @data_option
+@ylim_option
 @click.option(
     "--label",
     "labels",
     multiple=True,
-    help="Rename a series; repeat to rename several, in order.",
+    metavar="TEXT",
+    help="Name a folder on the legend; repeat once per folder, in the order the "
+    "folders are listed. A folder drawn as several curves keeps what tells them "
+    "apart, such as the spin channel.",
 )
 def bandstructure(
     folders: tuple[Path, ...],
@@ -569,13 +796,17 @@ def bandstructure(
     show: bool,
     zero: str,
     data_path: Path | None,
+    ylim: tuple[float, float] | None,
     labels: tuple[str, ...],
 ) -> None:
     """Draw the band structures of finished runs on one set of axes.
 
     FOLDERS are directories `koopmans run` wrote. Every band structure across
     all of them is drawn, so a DFT run and a Koopmans run given together
-    overlay, referenced to a single energy zero.
+    overlay, referenced to a single energy zero. Each is named after the step
+    that produced it unless --label names it:
+
+        koopmans plot bandstructure dft ki --label DFT --label "KI@LDA"
 
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
@@ -586,7 +817,6 @@ def bandstructure(
         PathMismatchError,
         PlottingError,
         apply_energy_zero,
-        apply_labels,
         check_paths_agree,
         describe_energy_zero,
         render_band_structures,
@@ -598,8 +828,7 @@ def bandstructure(
 
     kind = EnergyZero(zero)
     try:
-        series, warnings = resolve_band_series(folders)
-        apply_labels(series, labels)
+        series, warnings = resolve_band_series(folders, labels)
         check_paths_agree(series)
         value, reference = apply_energy_zero(series, kind)
     except (PlottingError, PathMismatchError, NoEnergyZeroError, ValueError) as exc:
@@ -615,7 +844,16 @@ def bandstructure(
         click.echo(f"Wrote {data_path} ({len(series)} series)")
 
     target = output_path if output_path is not None or show else Path("bandstructure.png")
-    render_band_structures(series, output_path=target, show=show, zero=kind)
+    # Naming a series is asking for it to be named on the figure, so an
+    # explicit label brings the legend back for a single curve.
+    render_band_structures(
+        series,
+        output_path=target,
+        show=show,
+        zero=kind,
+        ylim=ylim,
+        legend=True if labels else None,
+    )
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series, {caption})")
 

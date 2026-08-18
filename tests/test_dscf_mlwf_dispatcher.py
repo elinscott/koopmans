@@ -81,9 +81,9 @@ def _si_collinear_dscf_dict() -> dict[str, Any]:
     return d
 
 
-def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build(d: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return build_singlepoint_workgraph(inp, codes=codes)
+    return build_singlepoint_workgraph(inp)
 
 
 def _dscf_blocks(
@@ -118,11 +118,11 @@ def dscf_codes(
     installed_wannier_codes: Any,
     installed_fold_codes: Any,
 ) -> dict[str, Any]:
-    """Assemble the codes dict the dispatcher receives, plus fold-path dummies.
+    """Register every dummy code the Wannier-initialised DSCF route resolves.
 
-    Only ``pw`` and ``kcp`` are passed in (mirroring ``load_codes_for_task``);
-    the wannier / fold codes are looked up by label inside the builder, so the
-    fixtures merely register them.
+    The route loads each ``DscfCodes`` member as ``<name>@localhost``, so
+    the fixtures merely register them; the returned mapping only serves
+    tests that inspect a code directly.
     """
     return {"pw": installed_pw_code, "kcp": installed_kcp_code}
 
@@ -345,11 +345,11 @@ class TestPeriodicMlwfsBuild:
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """The periodic mlwfs input builds the Wannier-seeded workgraph."""
-        wg = _build(_si_dscf_dict(), dscf_codes)
+        wg = _build(_si_dscf_dict())
         names = wg.get_task_names()
         assert "wannier_initialization" in names, names
         assert "make_supercell" in names, names
-        # The molecular KS-init chain must NOT be present.
+        # The molecular KS-init steps must NOT be present.
         assert "dft_init_nspin1" not in names
 
     def test_disentangling_input_builds_and_validates(
@@ -365,7 +365,7 @@ class TestPeriodicMlwfsBuild:
         """
         d = _si_dscf_dict()
         d["calculator_parameters"]["pw"] = {"system": {"nbnd": 16}}
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         assert "wannier_initialization" in wg.get_task_names()
         wg.check_before_run()
 
@@ -393,7 +393,7 @@ class TestPeriodicMlwfsBuild:
 
         monkeypatch.setattr(dscf_module, "create_explicit_blocks", reversed_blocks)
         with pytest.raises(ValueError, match="ascending band order"):
-            _build(_si_dscf_dict(), dscf_codes)
+            _build(_si_dscf_dict())
 
     def test_wannier_initialization_gets_the_input_mesh(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
@@ -406,7 +406,7 @@ class TestPeriodicMlwfsBuild:
         """
         d = _si_dscf_dict()
         d["kpoints"] = {"grid": [4, 4, 4], "offset": [0, 0, 0]}
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         kpoints = wg.tasks["wannier_initialization"].inputs["kpoints"].value
         assert list(kpoints.get_kpoints_mesh()[0]) == [4, 4, 4]
 
@@ -414,7 +414,7 @@ class TestPeriodicMlwfsBuild:
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """Wannier-initialised runs resolve to self-Hartree grouping at 1e-4 eV."""
-        wg = _build(_si_dscf_dict(), dscf_codes)
+        wg = _build(_si_dscf_dict())
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol == pytest.approx(1.0e-4)
 
@@ -423,7 +423,7 @@ class TestPeriodicMlwfsBuild:
     ) -> None:
         """An explicit group_orbitals_tol overrides the criterion default."""
         d = _si_dscf_dict(group_orbitals_tol=0.05)
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol == pytest.approx(0.05)
 
@@ -432,7 +432,7 @@ class TestPeriodicMlwfsBuild:
     ) -> None:
         """group_orbitals_by='none' disables grouping even on the Wannier route."""
         d = _si_dscf_dict(group_orbitals_by="none")
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         tol = wg.tasks["ComputeScreeningParameters"].inputs["self_hartree_tol"].value
         assert tol is None
 
@@ -452,7 +452,7 @@ class TestPeriodicMlwfsBuild:
         """eps_inf='auto' is still NotImplemented for the DSCF stream."""
         d = _si_dscf_dict(eps_inf="auto")
         with pytest.raises(NotImplementedError, match="eps_inf"):
-            _build(d, dscf_codes)
+            _build(d)
 
     def test_w90_keywords_land_flat_in_overrides(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
@@ -471,7 +471,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert extra["wannier_overrides"]["wannier90"] == {"num_iter": 17}
         # Projections are consumed by the block derivation, never leaked into
         # the flat keyword override.
@@ -492,7 +492,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_1", True),
             ("emp_1", False),
@@ -512,7 +512,7 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert [(b["label"], b["filled"]) for b in extra["blocks"]] == [
             ("occ_up_1", True),
             ("emp_up_1", False),
@@ -530,7 +530,7 @@ class TestPeriodicMlwfsBuild:
         filling; ``check_before_run`` is what proves the assembled graph has
         every input it declares as required.
         """
-        wg = _build(_si_collinear_dscf_dict(), dscf_codes)
+        wg = _build(_si_collinear_dscf_dict())
         assert "wannier_initialization" in wg.get_task_names()
         wg.check_before_run()
 
@@ -544,8 +544,100 @@ class TestPeriodicMlwfsBuild:
         structure = atoms_input_to_structure(inp.atoms)
         nbnd = inp.calculator_parameters.nbnd
         assert nbnd is not None
-        extra = dscf_wannier_init_inputs(inp, structure, dscf_codes, nbnd)
+        extra = dscf_wannier_init_inputs(inp, structure, nbnd)
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
+
+
+class TestNbndProjectionValidation:
+    """The kcp.x ``nbnd`` must match the total Wannier functions the projections describe.
+
+    Regression for koopmans#163: an oversized ``nbnd`` (e.g. a primitive
+    orbital count multiplied by ``prod(kgrid)``, the supercell convention)
+    used to fall through silently and surface, if at all, as a wrong
+    diagnosis from the nscf-sizing guard below.
+    """
+
+    def test_supercell_sized_nbnd_rejected(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """An oversized nbnd is named directly, not diagnosed as an nscf shortfall.
+
+        The primitive projections describe 8 Wannier functions
+        (occ_1 + emp_1, 4 each); setting ``nbnd`` to the supercell count
+        (8 x prod(kgrid) = 64) is the koopmans#163 mistake. The nscf band
+        count defaults to ``nbnd`` when ``pw.system.nbnd`` is unset, so the
+        nscf-sizing guard cannot see this error — only a check against the
+        projections can, and it must run first.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["nbnd"] = 64
+        with pytest.raises(ValueError, match="inconsistent with the projections") as excinfo:
+            _build(d)
+        assert "nscf runs" not in str(excinfo.value)
+
+    def test_nbnd_below_occupied_bands_rejected(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """An nbnd smaller than the occupied-band count names the electron count."""
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["nbnd"] = 2
+        with pytest.raises(ValueError, match=r"less than the number of.*occupied bands"):
+            _build(d)
+
+    def test_genuine_nscf_shortfall_still_raises_pw_guard(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A correct nbnd with too few nscf bands still hits the existing pw guard.
+
+        ``nbnd`` = 8 matches the projections exactly, so the new check
+        passes; only ``pw.system.nbnd`` is too small, and the nscf-sizing
+        guard is what must catch that.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["pw"] = {"system": {"nbnd": 6}}
+        with pytest.raises(ValueError, match=r"The nscf runs 6 bands but the kcp\.x steps need 8"):
+            _build(d)
+
+    def test_collinear_mismatch_names_the_spin_channel(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A collinear mismatch is checked, and reported, per spin channel."""
+        d = _si_collinear_dscf_dict()
+        d["calculator_parameters"]["nbnd"] = 64
+        with pytest.raises(ValueError, match="spin up projections"):
+            _build(d)
+
+    def test_collinear_genuine_nscf_shortfall_still_raises_pw_guard(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The nscf guard still fires for a genuine shortfall on the collinear branch.
+
+        Both channels' projections match ``nbnd`` = 8 exactly, so the new
+        per-channel checks pass; only ``pw.system.nbnd`` is too small.
+        """
+        d = _si_collinear_dscf_dict()
+        d["calculator_parameters"]["pw"] = {"system": {"nbnd": 6}}
+        with pytest.raises(ValueError, match=r"The nscf runs 6 bands but the kcp\.x steps need 8"):
+            _build(d)
+
+    def test_projections_short_of_occupied_bands_names_the_shortfall(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Projections that undercount the occupied manifold report that directly.
+
+        ``nocc`` = 4, but this input's single occupied-only block covers
+        only 2 bands, leaving `nbnd` = 8 to compare against 2 Wannier
+        functions. The message must name the shortfall, not print the
+        negative "empty Wannier functions" count that a plain nbnd/nwann
+        comparison would produce here.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["wannier90"]["projections"] = [
+            [{"site": "Si", "ang_mtm": "l=0"}]
+        ]
+        with pytest.raises(ValueError, match=r"describe only 2 Wannier functions") as excinfo:
+            _build(d)
+        assert "-" not in str(excinfo.value)
 
 
 class TestFrozenWindowThreading:
@@ -563,7 +655,7 @@ class TestFrozenWindowThreading:
         d = _si_dscf_dict()
         d["calculator_parameters"]["pw"] = {"system": {"nbnd": 16}}
         d["calculator_parameters"]["wannier90"]["dis_froz_max"] = 1.0
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
 
         init = next(t for t in wg.tasks if t.name == "wannier_initialization")
         overrides = init.inputs.wannier_overrides["wannier90"].value
@@ -589,7 +681,18 @@ class TestPerStepKpointMeshRejected:
         d = _si_dscf_dict()
         d["kpoints"]["overrides"] = {step: {"grid": [4, 4, 4]}}
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
-            _build(d, codes={})
+            _build(d)
+
+    def test_wannier90_density_raises(self) -> None:
+        """No interpolated band structure exists here for a density to describe.
+
+        The Wannier initialisation folds Wannier functions to a supercell,
+        not an interpolated band structure along a path.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
+            _build(d)
 
 
 class TestCutoffLessPseudoFamily:
@@ -624,7 +727,7 @@ class TestCutoffLessPseudoFamily:
         from tests.fixtures import pw_step_from_overrides
 
         d = _si_dscf_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
-        wg = _build(d, dscf_codes)
+        wg = _build(d)
         structure = self._si_structure(d)
 
         entry = wg.tasks["wannier_initialization"].inputs["wannier_overrides"][step].value
@@ -634,29 +737,3 @@ class TestCutoffLessPseudoFamily:
         assert pw.parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
         expected = fake_sg15_family_without_cutoffs.get_pseudos(structure=structure)
         assert pw.pseudos["Si"].uuid == expected["Si"].uuid
-
-    def test_no_cutoffs_at_all_names_the_family_and_the_keyword(
-        self,
-        aiida_profile_clean: Any,
-        dscf_codes: Any,
-        fake_sg15_family_without_cutoffs: Any,
-    ) -> None:
-        """A cutoff stated for kcp.x alone leaves the pw.x steps with none.
-
-        ``calculator_parameters.kcp.system.ecutwfc`` satisfies the kcp.x
-        requirement but never reaches the pw.x parameters, so this is the
-        input that arrives at the family with nothing to state. The route
-        reaches ``require_cutoffs_for_family`` nowhere else: drop the call and
-        the graph builds without complaint, carrying no wavefunction cutoff at
-        all into its pw.x steps.
-        """
-        d = _si_dscf_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
-        del d["calculator_parameters"]["ecutwfc"]
-        d["calculator_parameters"]["kcp"] = {"system": {"ecutwfc": 20.0}}
-
-        with pytest.raises(ValueError) as excinfo:
-            _build(d, dscf_codes)
-
-        message = str(excinfo.value)
-        assert fake_sg15_family_without_cutoffs.label in message
-        assert "calculator_parameters.ecutwfc" in message

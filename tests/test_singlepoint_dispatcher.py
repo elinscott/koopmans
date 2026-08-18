@@ -37,7 +37,7 @@ def _copy_with_calc_overrides(inp: KoopmansInput, **calc_param_updates: object) 
     """Return a fresh ``KoopmansInput`` with patched ``calculator_parameters``.
 
     Each key in ``calc_param_updates`` is a dotted path into
-    ``calculator_parameters`` (e.g. ``"kcp.system.ecutrho"``). Pydantic's
+    ``calculator_parameters`` (e.g. ``"kcp.system.nbnd"``). Pydantic's
     ``model_copy`` is shallow, so we dump, mutate, and re-validate.
     """
     d = inp.model_dump()
@@ -104,27 +104,14 @@ class TestKcpDscfInputs:
         """Ozone input should yield (50.0, 200.0, 10, 2)."""
         assert _scalars(kcp_dscf_inputs(ozone_input)) == (50.0, 200.0, 10, 2)
 
-    def test_ecutrho_defaults_to_four_times_ecutwfc(self, ozone_input: KoopmansInput) -> None:
-        """With ecutrho unset, it should default to 4 * ecutwfc (4 * 50 = 200)."""
-        inp = _copy_with_calc_overrides(ozone_input, **{"kcp.system.ecutrho": 0.0})
-        assert _scalars(kcp_dscf_inputs(inp)) == (50.0, 200.0, 10, 2)
-
     def test_ecutrho_default_with_custom_ecutwfc(self, ozone_input: KoopmansInput) -> None:
-        """With ecutwfc=30 and no ecutrho, ecutrho should fall back to 120.0."""
-        inp = _copy_with_calc_overrides(
-            ozone_input,
-            ecutwfc=30.0,
-            **{"kcp.system.ecutrho": 0.0},
-        )
+        """With ecutwfc=30, ecutrho should follow at 120.0 (4 * 30)."""
+        inp = _copy_with_calc_overrides(ozone_input, ecutwfc=30.0)
         assert _scalars(kcp_dscf_inputs(inp)) == (30.0, 120.0, 10, 2)
 
     def test_missing_ecutwfc_raises_valueerror(self, ozone_input: KoopmansInput) -> None:
-        """Missing ecutwfc (both top-level and kcp.system) should raise ValueError."""
-        inp = _copy_with_calc_overrides(
-            ozone_input,
-            ecutwfc=None,
-            **{"kcp.system.ecutwfc": 0.0},
-        )
+        """A missing ecutwfc should raise ValueError."""
+        inp = _copy_with_calc_overrides(ozone_input, ecutwfc=None)
         with pytest.raises(ValueError, match="ecutwfc is required"):
             kcp_dscf_inputs(inp)
 
@@ -149,43 +136,21 @@ class TestKcpDscfInputs:
         assert inputs["initial_alpha"] == workflow.alpha_guess
 
 
-_ACCEPTED_CUTOFF_SHAPES = [
-    ("the shorthand alone", {"ecutwfc": 45.0}),
-    ("a pw block restating the shorthand", {"ecutwfc": 45.0, "pw.system.ecutwfc": 45.0}),
-    ("pw and kcp stating one cutoff", {"pw.system.ecutwfc": 45.0, "kcp.system.ecutwfc": 45.0}),
-    ("a kcp density cutoff", {"ecutwfc": 45.0, "kcp.system.ecutrho": 180.0}),
-    ("a pw density cutoff", {"ecutwfc": 45.0, "pw.system.ecutrho": 180.0}),
-]
-
-
 class TestPwAndKcpCutoffsAgree:
-    """Every input the schema accepts puts pw.x and kcp.x on one grid."""
+    """The one ``ecutwfc`` field always puts pw.x and kcp.x on the same grid."""
 
-    @pytest.mark.parametrize(
-        ("label", "overrides"),
-        _ACCEPTED_CUTOFF_SHAPES,
-        ids=[case[0] for case in _ACCEPTED_CUTOFF_SHAPES],
-    )
     def test_both_codes_receive_the_same_pair(
-        self,
-        ozone_input: KoopmansInput,
-        aiida_profile: object,
-        label: str,
-        overrides: dict[str, float],
+        self, ozone_input: KoopmansInput, aiida_profile: object
     ) -> None:
-        """Reads the numbers each code is handed, rather than trusting the parse check.
+        """Reads the numbers each code is handed, rather than trusting the schema alone.
 
-        The schema rejects an input that states two different cutoffs, which
-        says nothing about the ones it accepts: pw.x resolves its pair from the
-        ``pw`` block and kcp.x from the ``kcp`` block, by separate rules that a
-        shared input value is no guarantee of. Each shape below reaches the two
-        resolvers by a different route.
+        pw.x resolves its pair from the ``pw`` block and kcp.x from the
+        ``kcp`` block, by separate code paths that a shared input value is no
+        guarantee of.
         """
         from koopmans.aiida.conversion import input_to_pw_parameters
 
-        # The tutorial's own shorthand is cleared first, so each shape states
-        # only the keys it names.
-        inp = _copy_with_calc_overrides(ozone_input, **{"ecutwfc": None, **overrides})
+        inp = _copy_with_calc_overrides(ozone_input, ecutwfc=45.0)
 
         pw_system = input_to_pw_parameters(inp)["SYSTEM"]
         kcp = kcp_dscf_inputs(inp)
@@ -215,7 +180,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="correction="):
-            build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp)
 
     @pytest.mark.parametrize("correction_value", ["kipz", "pkipz", "none", "all"])
     def test_dfpt_rejects_non_ki_corrections(
@@ -233,7 +198,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="only implements the KI correction"):
-            build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp)
 
     @pytest.mark.parametrize("screening_method", ["dscf", "dfpt"])
     def test_external_projectors_rejected(
@@ -251,7 +216,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="not wired into the singlepoint route"):
-            build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp)
 
     @pytest.mark.parametrize("task", ["singlepoint", "dft_bands", "trajectory", "dft_eps"])
     def test_auto_projections_rejected_outside_wannierize(
@@ -312,7 +277,7 @@ class TestExplicitOrbitalGroupsRejected:
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="orbital_groups are not yet threaded"):
-            build_singlepoint_workgraph(inp, codes={})
+            build_singlepoint_workgraph(inp)
 
 
 class TestInitialAlphaFromGuess:

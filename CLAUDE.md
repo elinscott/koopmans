@@ -37,6 +37,7 @@ When in doubt, run `/map-legacy <file>` to get a current mapping report.
 5. **`koopmans2/aiida/workflows/` stays thin.** The package `__init__` dispatches on `Task` enum (translating plugin errors into input-file advice via `advice_for`); each route builder lives in its own module (`dft`, `eps`, `wannierize`, `dscf`, `dfpt`, `trajectory`), with `blocks`, `grouping` and `projectors` as shared helpers. All real logic belongs in `aiida-koopmans2/workgraphs/`.
 6. **Input translation is centralized in `koopmans2/aiida/conversion.py`.** Functions like `atoms_input_to_structure`, `input_to_pw_parameters` are the only place Pydantic models touch AiiDA ORM.
 7. **No dill, no pickle checkpoints.** Provenance comes from AiiDA's database.
+8. **Codes are passed as configured, not as required.** `load_codes` loads every codes-TypedDict member — required and `NotRequired` alike — that has a `<member>@localhost` code, and leaves the rest out; it never decides from the input file which codes a route needs. Requiredness lives on the plugin graphs' own TypedDict specs. A route missing a code its input actually turns on surfaces at submission as `MissingRequiredInputsError`, translated to install advice at the CLI boundary (`advice_for`). Every route also calls `require_configured_codes` right after `load_codes`, as a build-time pre-flight: it checks the spec's `__required_keys__` alone — never `NotRequired`, which stays the structural check's job — and raises the same install advice immediately, since some plugin entry graphs still bind a required code by eager dict subscript rather than through `ref()` — which would otherwise die as a bare `KeyError`, or, where the subscript sits inside an upstream builder (whole-manifold `Wannierize`), as that library's own `ValueError: codes does not contain the required key`. Redundant by design against the structural check, and on a route whose binds already defer (`dfpt`) redundant outright: drop each route's call as its entry graphs migrate, and the function when none are left.
 
 ## Canonical patterns
 
@@ -44,7 +45,7 @@ When in doubt, run `/map-legacy <file>` to get a current mapping report.
 
 1. Add the `@task.graph` builder in `aiida-koopmans2/src/aiida_koopmans/workgraphs/<step>.py`.
 2. Add a `TypedDict` for its outputs at the top of that module.
-3. Expose any new codes through `load_codes_for_task` in [aiida/workflows/](src/koopmans/aiida/workflows/__init__.py).
+3. Declare the workflow's codes as a TypedDict beside its entry point (e.g. `aiida-koopmans2/workgraphs/kcp.py`); the route loads it via `load_codes` in [aiida/workflows/](src/koopmans/aiida/workflows/__init__.py).
 4. Add a `build_<task>_workgraph` module under `aiida/workflows/` and wire it into `build_workgraph`.
 5. Add a regression test driven by a tutorial JSON (see `/regression-test`).
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import pytest
 from aiida_koopmans.projections import get_wannier_indices
 
@@ -20,6 +21,7 @@ from koopmans.aiida.workflows.wannierize import (
     build_wannierize_workgraph,
 )
 from koopmans.input_file import KoopmansInput
+from tests.fixtures import count_pw_bands_runs, path_labels
 
 
 def _si_split_dict(**workflow_updates: Any) -> dict[str, Any]:
@@ -34,8 +36,8 @@ def _si_split_dict(**workflow_updates: Any) -> dict[str, Any]:
         "workflow": {
             "task": "wannierize",
             # The cutoffs family fixture: the split builder calls
-            # get_builder_from_protocol eagerly at build time, which only
-            # accepts SSSP / PseudoDojo / cutoffs families.
+            # get_builder_from_protocol eagerly at build time, and this input
+            # states no cutoffs of its own for the family to go without.
             "pseudo_library": "SG15/1.0/PBE/SR",
             "block_wannierization_threshold": 1.5,
         },
@@ -70,7 +72,7 @@ def _si_split_dict(**workflow_updates: Any) -> dict[str, Any]:
 def split_codes(
     installed_pw_code: Any, installed_wannier_codes: Any, localhost_code: Any
 ) -> dict[str, Any]:
-    """Assemble the code dict for the split flow (incl. the julia code)."""
+    """Register the dummy split-flow codes (incl. the julia one) on ``localhost``."""
     return {
         "pw": installed_pw_code,
         "wannierjl": localhost_code("wannierjl", "wannierjl.check_neighbors"),
@@ -78,15 +80,15 @@ def split_codes(
     }
 
 
-def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build(d: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return _build_wannierize_blocks_workgraph(inp, codes)
+    return _build_wannierize_blocks_workgraph(inp)
 
 
-def _build_via_route(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build_via_route(d: dict[str, Any]) -> Any:
     """Build through the route selection, which is where the guards live."""
     inp = KoopmansInput.model_validate(d)
-    return build_wannierize_workgraph(inp, codes)
+    return build_wannierize_workgraph(inp)
 
 
 @pytest.fixture
@@ -209,7 +211,7 @@ class TestGuards:
     ) -> None:
         """Collinear spin is not wired into any Wannierization route yet."""
         with pytest.raises(NotImplementedError, match="spin='none'"):
-            _build_via_route(_si_split_dict(spin="collinear"), split_codes)
+            _build_via_route(_si_split_dict(spin="collinear"))
 
     def test_collinear_not_implemented_without_the_threshold(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -222,7 +224,7 @@ class TestGuards:
         d = _si_split_dict(spin="collinear")
         del d["workflow"]["block_wannierization_threshold"]
         with pytest.raises(NotImplementedError, match="spin='none'"):
-            _build_via_route(d, split_codes)
+            _build_via_route(d)
 
     def test_missing_kpath_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -231,7 +233,7 @@ class TestGuards:
         d = _si_split_dict()
         d["kpoints"].pop("path")
         with pytest.raises(ValueError, match="k-point path"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_missing_kpath_is_fine_without_the_threshold(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -240,8 +242,26 @@ class TestGuards:
         d = _si_split_dict()
         del d["workflow"]["block_wannierization_threshold"]
         d["kpoints"].pop("path")
-        wg = _build(d, split_codes)
+        wg = _build(d)
         assert "bands" not in [t.name for t in wg.tasks]
+
+    def test_profile_projwfc_does_not_enter_the_blocks_route(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        localhost_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """A configured projwfc code must not reach the blocks workflow.
+
+        ``WannierizeBlocksCodes`` does not declare ``projwfc``, and its
+        typed namespace rejects undeclared keys — a dispatcher that passes
+        along every code the profile holds would fail this build with
+        "Field 'projwfc' is not defined".
+        """
+        localhost_code("projwfc", "quantumespresso.projwfc")
+        wg = _build(_si_split_dict())
+        assert "detect_band_groups" in [t.name for t in wg.tasks]
 
     @pytest.mark.parametrize("keep_top_level", [False, True])
     def test_spin_channel_projections_not_wired(
@@ -264,7 +284,7 @@ class TestGuards:
         d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
         d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
         with pytest.raises(NotImplementedError, match=r"w90.up.projections.*block-by-block"):
-            _build(d, split_codes)
+            _build(d)
 
 
 def _si_auto_dict(**workflow_updates: Any) -> dict[str, Any]:
@@ -290,7 +310,7 @@ class TestAutomaticProjections:
         """The flag and explicit projections each define the full projection set."""
         d = _si_split_dict(auto_projections=True)
         with pytest.raises(ValueError, match=r"auto_projections.*were both given"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_no_projection_source_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -298,7 +318,7 @@ class TestAutomaticProjections:
         """Dropping the projections without opting into the flag is an error."""
         d = _si_auto_dict(auto_projections=False)
         with pytest.raises(ValueError, match="Nothing defines the Wannier projections"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_automatic_route_builds(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -311,10 +331,10 @@ class TestAutomaticProjections:
         d = _si_auto_dict()
         assert "nbnd" not in d["calculator_parameters"]
         assert "pw" not in d["calculator_parameters"]
-        wg = _build(d, split_codes)
+        wg = _build(d)
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
-        assert names.count("bands") == 1
+        assert count_pw_bands_runs(wg) == 1
         assert names.count("detect_band_groups") == 1
         assert "wannierize_split_block_1" in names
 
@@ -375,7 +395,7 @@ class TestAutomaticProjections:
         d = _si_auto_dict()
         d["calculator_parameters"]["nbnd"] = 12
         with pytest.raises(NotImplementedError, match="disentangle"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_nbnd_below_projector_count_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -384,7 +404,7 @@ class TestAutomaticProjections:
         d = _si_auto_dict()
         d["calculator_parameters"]["nbnd"] = 6
         with pytest.raises(ValueError, match="smaller than the 8 atomic projectors"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_fully_relativistic_family_not_implemented(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_fr_cutoffs_family: Any
@@ -393,7 +413,7 @@ class TestAutomaticProjections:
         d = _si_auto_dict()
         d["workflow"]["pseudo_library"] = fake_sg15_fr_cutoffs_family.label
         with pytest.raises(NotImplementedError, match="fully relativistic"):
-            _build(d, split_codes)
+            _build(d)
 
 
 def _si_external_dict(projector_dir: Any, **workflow_updates: Any) -> dict[str, Any]:
@@ -514,7 +534,7 @@ class TestExternalProjectors:
         """
         from tests.fixtures import si_external_projector_tables
 
-        wg = _build(_si_external_dict(si_external_projector_dir), split_codes)
+        wg = _build(_si_external_dict(si_external_projector_dir))
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
         assert names.count("detect_band_groups") == 1
@@ -586,7 +606,7 @@ class TestExternalProjectors:
         }
         expected = "w90.up.projections" if channels else "w90.projections"
         with pytest.raises(ValueError, match=rf"{expected}.*Drop one of the two"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_external_projectors_require_the_flag(
         self,
@@ -603,7 +623,7 @@ class TestExternalProjectors:
         """
         d = _si_external_dict(si_external_projector_dir, auto_projections=False)
         with pytest.raises(ValueError, match=r"atom_proj_ext.*without `workflow.auto_projections`"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_missing_dat_file_raises(
         self,
@@ -615,7 +635,7 @@ class TestExternalProjectors:
         """A directory without the element's `.dat` file is rejected naming it."""
         (si_external_projector_dir / "Si.dat").unlink()
         with pytest.raises(ValueError, match=r"missing the projector files \['Si.dat'\]"):
-            _build(_si_external_dict(si_external_projector_dir), split_codes)
+            _build(_si_external_dict(si_external_projector_dir))
 
     def test_missing_atom_proj_dir_raises(
         self,
@@ -627,7 +647,7 @@ class TestExternalProjectors:
         d = _si_auto_dict()
         d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
         with pytest.raises(ValueError, match="atom_proj_dir"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_nbnd_above_external_projector_count_not_implemented(
         self,
@@ -640,7 +660,7 @@ class TestExternalProjectors:
         d = _si_external_dict(si_external_projector_dir)
         d["calculator_parameters"]["nbnd"] = 12
         with pytest.raises(NotImplementedError, match="external projector files"):
-            _build(d, split_codes)
+            _build(d)
 
     def test_plain_route_stages_the_projector_inputs(
         self,
@@ -663,7 +683,7 @@ class TestExternalProjectors:
         d = _si_external_dict(si_external_projector_dir)
         del d["workflow"]["block_wannierization_threshold"]
         inp = KoopmansInput.model_validate(d)
-        wg = build_wannierize_workgraph(inp, split_codes)
+        wg = build_wannierize_workgraph(inp)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         p2w = w90_task.inputs["pw2wannier90"]["pw2wannier90"]
         inputpp = p2w["parameters"].value.get_dict()["INPUTPP"]
@@ -677,11 +697,11 @@ class TestExternalProjectors:
         assert p2w["external_projectors_list"].value.get_dict() == {"Si": "Si"}
 
 
-def _build_plain(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build_plain(d: dict[str, Any]) -> Any:
     """Build through the route selection with the threshold dropped."""
     del d["workflow"]["block_wannierization_threshold"]
     inp = KoopmansInput.model_validate(d)
-    return build_wannierize_workgraph(inp, codes)
+    return build_wannierize_workgraph(inp)
 
 
 #: The mesh every input in this module asks for, and the k-point count a
@@ -714,7 +734,7 @@ class TestKpointMesh:
         derives all three from its protocol unless the mesh is supplied;
         a 2x2x2 input then silently ran on the protocol's much denser mesh.
         """
-        wg = _build_plain(_si_auto_dict(), split_codes)
+        wg = _build_plain(_si_auto_dict())
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
 
         _assert_scf_mesh(w90_task.inputs["scf"]["kpoints"].value)
@@ -734,7 +754,7 @@ class TestKpointMesh:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """The block route takes the same grid for its shared scf and nscf."""
-        wg = _build_plain(_si_split_dict(), split_codes)
+        wg = _build_plain(_si_split_dict())
         scf_nscf = wg.tasks["scf_nscf"]
         _assert_scf_mesh(scf_nscf.inputs["scf_kpoints"].value)
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
@@ -744,7 +764,7 @@ class TestKpointMesh:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """Setting the threshold does not change which mesh the run samples."""
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         scf_nscf = wg.tasks["scf_nscf"]
         _assert_scf_mesh(scf_nscf.inputs["scf_kpoints"].value)
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == _NUM_KPOINTS
@@ -765,7 +785,7 @@ class TestPerStepKpointMesh:
         """The scf entry reaches the scf; nscf and ``mp_grid`` keep the top-level grid."""
         d = _si_split_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid": [4, 4, 4]}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         scf_nscf = wg.tasks["scf_nscf"]
         assert [int(x) for x in scf_nscf.inputs["scf_kpoints"].value.get_kpoints_mesh()[0]] == [
             4,
@@ -786,7 +806,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_split_dict()
         d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         scf_nscf = wg.tasks["scf_nscf"]
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == 27
         assert wg.tasks["wannierize_block_1"].inputs["mp_grid"].value == [3, 3, 3]
@@ -804,7 +824,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_auto_dict()
         d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
 
         assert len(w90_task.inputs["nscf"]["kpoints"].value.get_kpoints()) == 27
@@ -818,7 +838,7 @@ class TestPerStepKpointMesh:
         """The block route carries the spacing in the scf overrides, with no mesh."""
         d = _si_split_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         scf_nscf = wg.tasks["scf_nscf"]
         assert scf_nscf.inputs["scf_kpoints"].value is None
         assert scf_nscf.inputs["overrides"].value["scf"]["kpoints_distance"] == pytest.approx(0.11)
@@ -834,7 +854,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_auto_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         assert w90_task.inputs["scf"]["kpoints"].value is None
         assert float(w90_task.inputs["scf"]["kpoints_distance"].value) == pytest.approx(0.11)
@@ -852,13 +872,17 @@ class TestPlainRoute:
     ) -> None:
         """Nothing splits, so the julia code the splitting needs is not required.
 
-        ``load_codes_for_task`` only loads it behind the threshold, so a
-        build that demanded it here would fail for every user with
-        explicit projections.
+        The route only turns WannierizeBlocksCodes's ``wannierjl`` member on behind the
+        threshold — no ``wannierjl@localhost`` is registered here, so a
+        build that demanded it would fail for every user with explicit
+        projections.
         """
-        codes = {"pw": installed_pw_code, **installed_wannier_codes}
-        assert "wannierjl" not in codes
-        wg = _build_plain(_si_split_dict(), codes)
+        from aiida.common.exceptions import NotExistent
+        from aiida.orm import load_code
+
+        with pytest.raises(NotExistent):
+            load_code("wannierjl@localhost")
+        wg = _build_plain(_si_split_dict())
         assert "wannierize_block_1" in [t.name for t in wg.tasks]
 
     def test_flag_builds_the_qe_projector_route(
@@ -870,7 +894,7 @@ class TestPlainRoute:
         ``auto_projections`` in the wannier90 parameters and ``atom_proj``
         in pw2wannier90 are upstream's own automatic-projection switches.
         """
-        wg = _build_plain(_si_auto_dict(), split_codes)
+        wg = _build_plain(_si_auto_dict())
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
         w90_params = w90_task.inputs["wannier90"]["wannier90"]["parameters"].value.get_dict()
         assert w90_params["auto_projections"] is True
@@ -884,7 +908,7 @@ class TestPlainRoute:
     ) -> None:
         """The flag-vs-explicit conflict applies on this route too."""
         with pytest.raises(ValueError, match=r"auto_projections.*were both given"):
-            _build_plain(_si_split_dict(auto_projections=True), split_codes)
+            _build_plain(_si_split_dict(auto_projections=True))
 
     def test_explicit_projections_wannierize_block_by_block(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
@@ -892,24 +916,25 @@ class TestPlainRoute:
         """Explicit projections route to one Wannierization per block, splitting nothing.
 
         Two blocks in, two Wannierizations out, off a single shared scf +
-        nscf. None of the split machinery is built: no bands step, no group
-        detection. Each task is named after its block: the two s-type
-        Wannier functions sit wholly in the occupied manifold, while the
-        six p-type ones straddle the boundary and stay provisional.
+        nscf. None of the split machinery is built: no group detection. (A
+        bands run along the input's k-path is the quality check, not split
+        machinery; ``TestQualityCheckContract`` pins it.) Each task is
+        named after its block: the two s-type Wannier functions sit wholly
+        in the occupied manifold, while the six p-type ones straddle the
+        boundary and stay provisional.
         """
         d = _si_split_dict()
         d["calculator_parameters"]["wannier90"]["projections"] = [
             [{"site": "Si", "ang_mtm": "s"}],
             [{"site": "Si", "ang_mtm": "p"}],
         ]
-        wg = _build_plain(d, split_codes)
+        wg = _build_plain(d)
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
         assert sorted(n for n in names if n.startswith("wannierize_")) == [
             "wannierize_block_2",
             "wannierize_occ_1",
         ]
-        assert "bands" not in names
         assert "detect_band_groups" not in names
 
         # Blocks cover consecutive bands in input order: 2 s-type Wannier
@@ -931,7 +956,7 @@ class TestPlainRoute:
         d["calculator_parameters"]["wannier90"]["up"] = {"projections": projections}
         d["calculator_parameters"]["wannier90"]["down"] = {"projections": projections}
         with pytest.raises(NotImplementedError, match=r"w90.up.projections.*block-by-block"):
-            _build_plain(d, split_codes)
+            _build_plain(d)
 
     def test_external_projectors_require_the_flag(
         self,
@@ -943,14 +968,363 @@ class TestPlainRoute:
         """The flag requirement holds on this route too, before the route's own gates."""
         d = _si_external_dict(si_external_projector_dir, auto_projections=False)
         with pytest.raises(ValueError, match=r"atom_proj_ext.*without `workflow.auto_projections`"):
-            _build_plain(d, split_codes)
+            _build_plain(d)
 
     def test_no_projection_source_raises(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """Without any projection source the route fails naming the options."""
         with pytest.raises(ValueError, match="Nothing defines the Wannier projections"):
-            _build_plain(_si_auto_dict(auto_projections=False), split_codes)
+            _build_plain(_si_auto_dict(auto_projections=False))
+
+
+class TestUserWannier90Overrides:
+    """``calculator_parameters.w90`` keywords must reach whichever route runs.
+
+    Regression test for koopmans2#166: the whole-manifold route built its
+    overrides from ``prepare_common_inputs``, which only ever emits
+    ``pseudo_family``/``pw`` entries, so every wannier90 keyword the user
+    wrote (window, iteration counts, convergence tolerances, ...) was
+    silently dropped.
+    """
+
+    def test_whole_manifold_route_forwards_dis_froz_max(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The reported case: the frozen window reaches the built wannier90 parameters."""
+        d = _si_auto_dict()
+        d["calculator_parameters"]["wannier90"]["dis_froz_max"] = 10.6
+        wg = _build_plain(d)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        params = w90_task.inputs["wannier90"]["wannier90"]["parameters"].value.get_dict()
+        assert params["dis_froz_max"] == pytest.approx(10.6)
+
+    def test_block_route_control_also_forwards_it(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Control: the block route already forwards the same keyword.
+
+        The two routes assemble their overrides independently (one nests
+        into ``wannier90.wannier90.parameters``, the other stays flat), so
+        a future refactor that breaks the whole-manifold route again is not
+        free to leave this test green too.
+        """
+        d = _si_split_dict()
+        d["calculator_parameters"]["wannier90"]["dis_froz_max"] = 10.6
+        wg = _build_plain(d)
+        overrides = wg.tasks["wannierize_block_1"].inputs["overrides"]["wannier90"].value
+        assert overrides["dis_froz_max"] == pytest.approx(10.6)
+
+    def test_every_declared_keyword_is_forwarded(self, aiida_profile: Any) -> None:
+        """No wannier90 schema field is silently excluded from the override dict.
+
+        Marks every field of the schema as user-set (value left at its
+        default -- only field-name completeness is at stake here) and checks
+        the flat override dict :func:`_get_user_w90_overrides` builds
+        carries exactly that key set, minus ``projections``/``up``/``down``
+        (handled separately). A keyword the schema grows that this dump
+        silently excludes -- the way ``dis_froz_max`` did before this fix --
+        fails here without needing one parametrized case per field.
+        """
+        from koopmans.aiida.workflows.wannierize import _get_user_w90_overrides
+        from koopmans.input_file import KoopmansInput, Wannier90InputParametersWithUpDown
+
+        excluded = {"projections", "up", "down"}
+        declared = set(Wannier90InputParametersWithUpDown.model_fields) - excluded
+
+        inp = KoopmansInput.model_validate(_si_auto_dict())
+        w90 = inp.calculator_parameters.wannier90
+        object.__setattr__(w90, "__pydantic_fields_set__", set(type(w90).model_fields))
+
+        assert set(_get_user_w90_overrides(inp)) == declared
+
+
+class TestInterpolatedBands:
+    """A ``kpoints.path`` in the input reaches wannier90 as its bands path.
+
+    wannier90 interpolates its band structure (the ``interpolated_bands``
+    output) only under ``bands_plot`` with a path to follow. Every input in
+    this module states ``path: "GX"``, so each route's build must carry it
+    to its wannier90 steps — and dropping the path must leave the graphs
+    path-free rather than interpolate along one nobody asked for.
+    """
+
+    def test_the_whole_manifold_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The path arrives as the wannier90 step's ``bands_kpoints``, with ``bands_plot``.
+
+        The explicit labelled k-list is the form conversion produces; the
+        eager build reaches the staged wannier90 inputs, so both the node
+        and the keyword it switches on are checked where the run reads them.
+        """
+        wg = _build_plain(_si_auto_dict())
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90 = w90_task.inputs["wannier90"]["wannier90"]
+        assert path_labels(w90["bands_kpoints"].value) == ["GAMMA", "X"]
+        assert w90["parameters"].value.get_dict()["bands_plot"] is True
+
+    def test_the_whole_manifold_route_without_a_path_interpolates_nothing(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """No path in the input leaves the wannier90 step exactly as before."""
+        d = _si_auto_dict()
+        d["kpoints"].pop("path")
+        wg = _build_plain(d)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90 = w90_task.inputs["wannier90"]["wannier90"]
+        assert w90["bands_kpoints"].value is None
+        assert "bands_plot" not in w90["parameters"].value.get_dict()
+
+    def test_the_block_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Every per-block wannierization takes the path as ``interpolation_kpoints``."""
+        d = _si_split_dict()
+        d["calculator_parameters"]["wannier90"]["projections"] = [
+            [{"site": "Si", "ang_mtm": "s"}],
+            [{"site": "Si", "ang_mtm": "p"}],
+        ]
+        wg = _build_plain(d)
+        paths = [
+            wg.tasks[name].inputs["interpolation_kpoints"].value
+            for name in ("wannierize_occ_1", "wannierize_block_2")
+        ]
+        for path in paths:
+            assert path_labels(path) == ["GAMMA", "X"]
+        # One node serves every block, so the interpolations cannot drift apart.
+        assert paths[0].uuid == paths[1].uuid
+
+    def test_the_block_route_without_a_path_interpolates_nothing(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """No path in the input leaves the per-block wannierizations path-free."""
+        d = _si_split_dict()
+        d["kpoints"].pop("path")
+        wg = _build_plain(d)
+        assert wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value is None
+
+    def test_the_split_route_carries_the_path(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The split flow takes the path for interpolation, not just for detection.
+
+        Both the pw.x band-group detection (``bands_kpoints``) and the
+        per-block interpolation (``interpolation_kpoints``) sample the input
+        file's one ``kpoints.path`` — same special points, same labels — but
+        as two separate nodes: the detection run keeps the top-level
+        ``kpoints.path_density`` (10/Å⁻¹ here), while the interpolation
+        defaults to ``overrides.wannier90.path_density`` (50/Å⁻¹), five
+        times denser since it costs wannier90 nothing extra to interpolate.
+        """
+        wg = _build(_si_split_dict())
+        split_task = wg.tasks["wannierize_split_block_1"]
+        interpolation_path = split_task.inputs["interpolation_kpoints"].value
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        assert path_labels(interpolation_path) == ["GAMMA", "X"]
+        assert path_labels(detection_path) == ["GAMMA", "X"]
+        assert interpolation_path.uuid != detection_path.uuid
+        assert len(interpolation_path.get_kpoints()) > len(detection_path.get_kpoints())
+
+
+class TestWannier90PathDensity:
+    """``kpoints.overrides.wannier90.path_density`` sets wannier90's own interpolation.
+
+    Threaded on every wannierize route and mode: the pw.x quality-check /
+    split-detection run always keeps the top-level ``kpoints.path_density``;
+    wannier90's own interpolation always takes
+    ``overrides.wannier90.path_density`` (default 50/Å⁻¹) instead. The two
+    are built as separate ``KpointsData`` nodes throughout.
+    """
+
+    def test_explicit_density_is_respected(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """A stated density changes the interpolation node's point count alone."""
+        d = _si_split_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        wg = _build(d)
+        split_task = wg.tasks["wannierize_split_block_1"]
+        interpolation_path = split_task.inputs["interpolation_kpoints"].value
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        # 25/Å⁻¹ sits strictly between the 10/Å⁻¹ detection run and the
+        # 50/Å⁻¹ default checked in test_the_split_route_carries_the_path.
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+        default_wg = _build(_si_split_dict())
+        default_interpolation_path = (
+            default_wg.tasks["wannierize_split_block_1"].inputs["interpolation_kpoints"].value
+        )
+        assert len(interpolation_path.get_kpoints()) < len(default_interpolation_path.get_kpoints())
+
+    def test_equal_densities_give_identical_lists(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Matching the top-level density on `overrides.wannier90` reunifies the two lists.
+
+        The two nodes are still built separately (different node UUIDs),
+        but a user who wants the old single-density behaviour back gets it
+        exactly, point for point.
+        """
+        d = _si_split_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 10.0}}
+        wg = _build(d)
+        split_task = wg.tasks["wannierize_split_block_1"]
+        interpolation_path = split_task.inputs["interpolation_kpoints"].value
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        assert np.allclose(interpolation_path.get_kpoints(), detection_path.get_kpoints())
+
+    def test_no_split_route_decouples_the_two_densities(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Explicit projections with no threshold — the si tutorial's own shape.
+
+        No longer a single-socket route: an explicit
+        ``overrides.wannier90.path_density`` reaches wannier90's
+        interpolation alone, while the pw.x quality-check ``bands`` run
+        stays on the coarser top-level density.
+        """
+        d = _si_split_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        wg = _build(d)
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        interpolation_path = wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value
+        assert path_labels(detection_path) == ["GAMMA", "X"]
+        assert path_labels(interpolation_path) == ["GAMMA", "X"]
+        assert detection_path.uuid != interpolation_path.uuid
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+
+    def test_no_split_route_defaults_wannier90_density(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Leaving `overrides.wannier90` out still densifies the interpolation.
+
+        The pw.x quality-check run stays cheap at the top-level density
+        (10/Å⁻¹ here); wannier90's interpolation, free once the Wannier
+        functions are built, defaults to 50/Å⁻¹ regardless.
+        """
+        d = _si_split_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        wg = _build(d)
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        interpolation_path = wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value
+        assert path_labels(interpolation_path) == ["GAMMA", "X"]
+        assert detection_path.uuid != interpolation_path.uuid
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+
+    def test_whole_manifold_route_decouples_the_two_densities(
+        self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The auto-projections, no-threshold route also gets the two-density split."""
+        d = _si_auto_dict()
+        del d["workflow"]["block_wannierization_threshold"]
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        inp = KoopmansInput.model_validate(d)
+        wg = build_wannierize_workgraph(inp)
+        [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]
+        w90 = w90_task.inputs["wannier90"]["wannier90"]
+        interpolation_path = w90["bands_kpoints"].value
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        assert path_labels(interpolation_path) == ["GAMMA", "X"]
+        assert path_labels(detection_path) == ["GAMMA", "X"]
+        assert detection_path.uuid != interpolation_path.uuid
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+
+    def test_si_tutorial_input_gets_the_densified_interpolation(
+        self,
+        aiida_profile_clean: Any,
+        split_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        tutorials_dir: Any,
+    ) -> None:
+        """The shipped ``si.json`` tutorial (explicit sp3 projections, no threshold).
+
+        States neither ``block_wannierization_threshold`` nor
+        ``kpoints.overrides``, so it rides the block route's plain (no-split)
+        path — the exact case this feature exists for: wannier90's
+        interpolated bands are visibly jagged at the same coarse density as
+        the pw.x quality-check run. This is the worked example the PR body
+        quotes: densities differ by construction, not by tutorial-specific
+        configuration.
+        """
+        import json
+
+        si_json = tutorials_dir / "band_structures/silicon_finite_differences/si.json"
+        d = json.loads(si_json.read_text())
+        assert d["workflow"].get("block_wannierization_threshold") is None
+        assert d["calculator_parameters"]["wannier90"]["projections"]
+        # Substitute a fast offline cutoffs family for the shipped
+        # PseudoDojo one; everything else is the tutorial's own input.
+        d["workflow"]["pseudo_library"] = fake_sg15_cutoffs_family.label
+        inp = KoopmansInput.model_validate(d)
+
+        wg = build_wannierize_workgraph(inp)
+
+        detection_path = wg.tasks["bands"].inputs["kpoints"].value
+        interpolation_path = wg.tasks["wannierize_occ_1"].inputs["interpolation_kpoints"].value
+        assert detection_path.uuid != interpolation_path.uuid
+        assert len(detection_path.get_kpoints()) < len(interpolation_path.get_kpoints())
+
+
+@pytest.fixture
+def pdos_codes(split_codes: Any, localhost_code: Any) -> dict[str, Any]:
+    """Register the split-flow codes plus a projwfc code on ``localhost``."""
+    return {**split_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
+
+
+class TestQualityCheckContract:
+    """The bands-run / projwfc steps the ak2 wannierize graphs must grow.
+
+    These pin the k2-side contract for the wannierization quality check: a
+    pw.x ``bands`` run along ``kpoints.path`` off the scf density (the
+    explicit eigenvalues the interpolation is judged against) and, when the
+    passed-along projwfc code and the pseudopotentials' ``PP_PSWFC``
+    wavefunctions allow it, a ``projwfc`` step off that run's scratch —
+    with the graphs owning that decision and its skip warning. The steps
+    live inside the aiida-koopmans graphs.
+    """
+
+    def test_plain_block_route_runs_bands_and_projwfc(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The path adds one bands run and one projwfc step to the plain flow."""
+        wg = _build_plain(_si_split_dict())
+        assert count_pw_bands_runs(wg) == 1
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
+
+    def test_split_route_reuses_the_detection_bands_run(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Split mode's detection run along the same path is the quality check.
+
+        One pw.x bands run serves both the band-group detection and the
+        comparison eigenvalues; a second run along the same path would be
+        pure waste.
+        """
+        wg = _build(_si_split_dict())
+        assert count_pw_bands_runs(wg) == 1
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
+
+    def test_whole_manifold_route_runs_bands_and_projwfc(
+        self, aiida_profile_clean: Any, pdos_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """The upstream-workchain route grows the same two steps."""
+        wg = _build_plain(_si_auto_dict())
+        assert count_pw_bands_runs(wg) == 1
+        assert [t.name for t in wg.tasks].count("projwfc") == 1
+
+    def test_incapable_pseudos_skip_only_the_projected_dos(
+        self,
+        aiida_profile_clean: Any,
+        pdos_codes: Any,
+        fake_family_without_pswfc: Any,
+    ) -> None:
+        """The bands run does not depend on the pseudos' wavefunctions."""
+        d = _si_split_dict(pseudo_library=fake_family_without_pswfc.label)
+        with pytest.warns(UserWarning, match="PP_PSWFC"):
+            wg = _build_plain(d)
+        assert count_pw_bands_runs(wg) == 1
+        assert "projwfc" not in [t.name for t in wg.tasks]
 
 
 class TestPseudoSocSniffing:
@@ -989,10 +1363,10 @@ class TestGraphBuild:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """scf+nscf, bands, detection and one nested per-block graph."""
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         names = [t.name for t in wg.tasks]
         assert names.count("scf_nscf") == 1
-        assert names.count("bands") == 1
+        assert count_pw_bands_runs(wg) == 1
         assert names.count("detect_band_groups") == 1
         assert "wannierize_split_block_1" in names
 
@@ -1013,7 +1387,7 @@ class TestGraphBuild:
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
         """The scf override drops nbnd; only the nscf override carries it."""
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
         assert "nbnd" not in overrides["scf"]["pw"]["parameters"].get("SYSTEM", {})
         assert overrides["nscf"]["pw"]["parameters"]["SYSTEM"]["nbnd"] == 8
@@ -1024,7 +1398,7 @@ class TestGraphBuild:
         """The pw parallelization block threads into the split graph's pw steps."""
         d = _si_split_dict()
         d["parallelization"] = {"pw": {"ntasks": 3, "npool": 2}}
-        wg = _build(d, split_codes)
+        wg = _build(d)
 
         bands_pw = wg.tasks["bands"].inputs["pw"]
         assert bands_pw["metadata"]["options"]["resources"].value["num_mpiprocs_per_machine"] == 3
@@ -1042,7 +1416,7 @@ class TestGraphBuild:
         k-point distance, so the calculation would not be the one the
         input file describes.
         """
-        wg = _build(_si_split_dict(), split_codes)
+        wg = _build(_si_split_dict())
         scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
         assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
         # The nscf keeps the unreduced expansion of the same grid.
@@ -1081,7 +1455,7 @@ class TestCutoffLessPseudoFamily:
         from tests.fixtures import pw_step_from_overrides
 
         d = _si_split_dict(pseudo_library=fake_sg15_family_without_cutoffs.label)
-        wg = _build(d, split_codes)
+        wg = _build(d)
         structure = self._si_structure(d)
 
         overrides = wg.tasks["scf_nscf"].inputs["overrides"].value
@@ -1110,7 +1484,7 @@ class TestCutoffLessPseudoFamily:
         del d["calculator_parameters"]["ecutwfc"]
 
         with pytest.raises(ValueError) as excinfo:
-            _build(d, split_codes)
+            _build(d)
 
         message = str(excinfo.value)
         assert fake_sg15_family_without_cutoffs.label in message
