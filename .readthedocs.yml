@@ -20,6 +20,13 @@ build:
   # adapted from uv recipe at https://docs.readthedocs.io/en/stable/build-customization.html#install-dependencies-with-uv
   # and comment at https://github.com/readthedocs/readthedocs.org/issues/11289#issuecomment-2103832834
   commands:
+    # Read the Docs shallow-clones this repo by default; hatch-vcs needs the
+    # full history (including tags) to compute the git-derived package
+    # version installed below. `build.jobs.post_checkout` would be the usual
+    # place for this, but Read the Docs rejects combining `build.jobs` with
+    # `build.commands` ("config:build:jobs-and-commands"), so it runs here
+    # instead, as the first command.
+    - git fetch --unshallow || true
     - asdf plugin add uv
     - asdf install uv latest
     - asdf global uv latest
@@ -35,8 +42,9 @@ build:
     - rm -rf ../plumpy && git clone --depth 1 --branch patched https://github.com/elinscott/plumpy ../plumpy
     - rm -rf ../aiida-wannier90-workflows && git clone --depth 1 --branch patched https://github.com/elinscott/aiida-wannier90-workflows ../aiida-wannier90-workflows
     - rm -rf ../aiida-wannierjl && git clone --depth 1 https://github.com/elinscott/aiida-wannierjl ../aiida-wannierjl
-    - git init -q ../aiida-quantumespresso && git -C ../aiida-quantumespresso fetch --depth 1 https://github.com/aiidateam/aiida-quantumespresso 0a15b8ac63d35f1422ba0b2184f420c177bd2d70 && git -C ../aiida-quantumespresso checkout -q FETCH_HEAD
+    - rm -rf ../aiida-quantumespresso && git clone --depth 1 --branch patched https://github.com/elinscott/aiida-quantumespresso ../aiida-quantumespresso
     - rm -rf ../pydantic_espresso && git clone --depth 1 https://github.com/elinscott/pydantic-espresso ../pydantic_espresso
+    - rm -rf ../upf-tools && git clone --depth 1 https://github.com/pseudopotential-tools/upf-tools ../upf-tools
     - git init -q ../aiida-core && git -C ../aiida-core fetch --depth 1 https://github.com/aiidateam/aiida-core 4c81e9d64ac561325b91c7e6a18ea2cf792e0609 && git -C ../aiida-core checkout -q FETCH_HEAD
     - uv venv $READTHEDOCS_VIRTUALENV_PATH
     - VIRTUAL_ENV=$READTHEDOCS_VIRTUALENV_PATH uv pip install --group docs .

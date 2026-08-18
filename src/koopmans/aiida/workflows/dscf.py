@@ -8,8 +8,17 @@ from aiida_koopmans.projections import validate_projection_block_sequence
 from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.conversion import atoms_input_to_structure, input_to_pw_parameters
-from koopmans.aiida.workflows import load_code, reject_kpoint_overrides
+from koopmans.aiida.conversion import (
+    NORM_CONSERVING_DUAL,
+    atoms_input_to_structure,
+    input_to_pw_parameters,
+)
+from koopmans.aiida.workflows import (
+    load_codes,
+    reject_kpoint_overrides,
+    require_configured_codes,
+    require_cutoffs_for_family,
+)
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
     validate_blocks_cover_all_occ_bands,
@@ -26,9 +35,9 @@ from koopmans.input_file.workflow import (
 
 if TYPE_CHECKING:
     from aiida import orm
-    from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
+    from wannier90_input.models.parameters import Projection
 
     from koopmans.input_file import KoopmansInput
 
@@ -43,6 +52,15 @@ _KCP_TAKES_ONE_MESH = (
     "`kpoints.grid`.{alternative}"
 )
 
+#: The Wannier-seeded route folds Wannier functions to a supercell for
+#: kcp.x initialisation, not an interpolated band structure along a path,
+#: so a wannier90 interpolation density has nothing to describe.
+_KCP_HAS_NO_INTERPOLATION = (
+    "`kpoints.overrides.wannier90.path_density` cannot take effect on the kcp.x route: "
+    "its Wannier initialisation folds Wannier functions to a supercell off the one mesh "
+    "`kpoints.grid` describes, not an interpolated band structure along a path."
+)
+
 KPOINT_OVERRIDES_ON_DSCF = {
     step: _KCP_TAKES_ONE_MESH.format(
         step=step,
@@ -50,18 +68,17 @@ KPOINT_OVERRIDES_ON_DSCF = {
     )
     for step in ("scf", "nscf")
 }
+KPOINT_OVERRIDES_ON_DSCF["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 
 #: The same rejection without the DFPT alternative, which the trajectory task
 #: does not offer.
 KPOINT_OVERRIDES_ON_TRAJECTORY = {
     step: _KCP_TAKES_ONE_MESH.format(step=step, alternative="") for step in ("scf", "nscf")
 }
+KPOINT_OVERRIDES_ON_TRAJECTORY["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 
 
-def build_singlepoint_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
 
     Dispatches on ``workflow.screening_method`` first (DSCF vs DFPT), then on
@@ -71,7 +88,7 @@ def build_singlepoint_workgraph(
     - DFPT + ``KI`` → ``build_singlepoint_dfpt_workgraph`` (kcw.x; KI only)
     - anything else → ``NotImplementedError``
     """
-    from aiida_koopmans.workgraphs.kcp import KoopmansDSCFWorkflow
+    from aiida_koopmans.workgraphs.kcp import DscfCodes, KoopmansDSCFWorkflow
 
     from koopmans.aiida.setup.pseudos import ensure_pseudo_family_installed
 
@@ -83,7 +100,7 @@ def build_singlepoint_workgraph(
     # the alpha_guess path inside the DFPT builder (screen step skipped),
     # not a reason to fall through to the kcp.x/DSCF branch.
     if workflow.screening_method == CalculateScreeningMethod.DFPT:
-        return build_singlepoint_dfpt_workgraph(koopmans_input, codes)
+        return build_singlepoint_dfpt_workgraph(koopmans_input)
 
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
     require_supported_correction(workflow.correction)
@@ -99,15 +116,26 @@ def build_singlepoint_workgraph(
 
     inputs = kcp_dscf_inputs(koopmans_input)
 
-    extra_kwargs: dict[str, Any] = {}
-    if workflow.init_orbitals in (
+    wannier_init = workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
-    ):
-        extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, codes, inputs["nbnd"])
+    )
+    extra_kwargs: dict[str, Any] = {}
+    if wannier_init:
+        extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
+
+    # load_codes loads every configured member of DscfCodes. Every
+    # NotRequired member exists for the Wannier-seeded initialisation;
+    # whether the route needs them, and whether a missing one is fatal, is
+    # the graph's own structural requirement. KoopmansDSCFWorkflow binds
+    # kcp eagerly (aiida-koopmans#90: a deliberate, permanent choice, not
+    # a follow-up); the pre-flight catches a missing kcp before that bare
+    # subscript can raise a bare KeyError.
+    codes = load_codes(DscfCodes)
+    require_configured_codes(DscfCodes, codes)
 
     return KoopmansDSCFWorkflow.build(
-        code=codes["kcp"],
+        codes=codes,
         structure=structure,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
         **inputs,
@@ -115,18 +143,72 @@ def build_singlepoint_workgraph(
     )
 
 
+def _require_nbnd_matches_projections(
+    nbnd: int,
+    structure: orm.StructureData,
+    projection_blocks: list[list[Projection]],
+    num_occ_bands: int,
+    spin_label: str = "",
+) -> None:
+    """Reject an ``nbnd`` or a projection set inconsistent with each other.
+
+    The merged evc_occupied/evc_empty files that seed the supercell kcp.x
+    run carry one orbital per projected Wannier function, so the
+    projections must cover the whole occupied manifold and kcp.x's
+    ``nbnd`` must equal their total, no more and no fewer.
+    """
+    from aiida_koopmans.projections import projection_num_wann
+
+    nwann = sum(projection_num_wann(structure, p) for block in projection_blocks for p in block)
+    if nwann < num_occ_bands:
+        raise ValueError(
+            f"The {spin_label}projections in `calculator_parameters.w90.projections` "
+            f"describe only {nwann} Wannier functions, fewer than the {num_occ_bands} "
+            f"{spin_label}occupied bands. Every occupied band needs a Wannier function to "
+            "seed the supercell kcp.x initialisation; add projections covering the whole "
+            "occupied manifold."
+        )
+    if nbnd < num_occ_bands:
+        raise ValueError(
+            f"nbnd = {nbnd} is less than the number of {spin_label}occupied bands "
+            f"({num_occ_bands}). Increase `calculator_parameters.nbnd` (or "
+            f"`calculator_parameters.kcp.system.nbnd`) to at least {num_occ_bands}."
+        )
+    if nbnd != nwann:
+        raise ValueError(
+            f"nbnd = {nbnd} is inconsistent with the {spin_label}projections in "
+            "`calculator_parameters.w90.projections`:\n"
+            f"  empty bands implied by nbnd = {nbnd - num_occ_bands}\n"
+            f"  empty Wannier functions in the projections = {nwann - num_occ_bands}\n"
+            "Set `calculator_parameters.nbnd` (or `calculator_parameters.kcp.system.nbnd`) "
+            f"to {nwann}, the total number of Wannier functions the projections describe, "
+            "or add or remove projections to match."
+        )
+
+
+def _require_nscf_covers_nbnd(nscf_nbnd: int, nbnd: int) -> None:
+    """Reject an nscf band count too small to feed kcp.x's ``nbnd`` orbitals."""
+    if nscf_nbnd < nbnd:
+        raise ValueError(
+            f"The nscf runs {nscf_nbnd} bands but the kcp.x steps need {nbnd} "
+            "variational orbitals, which the Wannier functions cannot span. Raise "
+            "``calculator_parameters.pw.system.nbnd`` to at least "
+            f"{nbnd}."
+        )
+
+
 def dscf_wannier_init_inputs(
     koopmans_input: KoopmansInput,
     structure: orm.StructureData,
-    codes: dict[str, orm.AbstractCode],
     nbnd: int,
 ) -> dict[str, Any]:
     """Assemble the extra ``KoopmansDSCFWorkflow`` inputs for the Wannier route.
 
-    Covers the periodic mlwfs/projwfs initialisation: the wannierize +
-    fold-to-supercell codes, the projection blocks (primitive band indices;
-    per spin channel when ``spin='collinear'``), the k-mesh, and the
-    Makov-Payne knobs. The molecular/kohn-sham route needs none of this.
+    Covers the periodic mlwfs/projwfs initialisation: the projection blocks
+    (primitive band indices; per spin channel when ``spin='collinear'``),
+    the k-mesh, and the Makov-Payne knobs. The molecular/kohn-sham route
+    needs none of this; the wannierize + fold-to-supercell codes ride the
+    caller's ``DscfCodes`` namespace.
     """
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -154,13 +236,6 @@ def dscf_wannier_init_inputs(
     # instead leaves the bands above it neither included nor excluded, and
     # wannier90 rejects the mmn it is then handed.
     nscf_nbnd = int(parameters.get("SYSTEM", {}).get("nbnd") or nbnd)
-    if nscf_nbnd < nbnd:
-        raise ValueError(
-            f"The nscf runs {nscf_nbnd} bands but the kcp.x steps need {nbnd} "
-            "variational orbitals, which the Wannier functions cannot span. Raise "
-            "``calculator_parameters.pw.system.nbnd`` to at least "
-            f"{nbnd}."
-        )
 
     if workflow.spin == SpinType.COLLINEAR:
         w90 = calc_params.wannier90
@@ -183,6 +258,18 @@ def dscf_wannier_init_inputs(
             )
         nocc_up = (nelec + magnetization) // 2
         nocc_down = (nelec - magnetization) // 2
+        # nbnd must equal the number of Wannier functions the projections
+        # describe: the merged evc_occupied/evc_empty files carry one
+        # kcp.x orbital per projected Wannier function, so a mismatch here
+        # is wrong regardless of how many bands the nscf computes. Checked
+        # against the raw projections, ahead of the nscf guard below, so
+        # an oversized nbnd is diagnosed by name instead of surfacing as
+        # an nscf shortfall.
+        _require_nbnd_matches_projections(nbnd, structure, w90.up.projections, nocc_up, "spin up ")
+        _require_nbnd_matches_projections(
+            nbnd, structure, w90.down.projections, nocc_down, "spin down "
+        )
+        _require_nscf_covers_nbnd(nscf_nbnd, nbnd)
         up_blocks = create_explicit_blocks(
             structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
         )
@@ -203,6 +290,8 @@ def dscf_wannier_init_inputs(
                 "Wannier-initialised DSCF route."
             )
         nocc = nelec // 2
+        _require_nbnd_matches_projections(nbnd, structure, calc_params.wannier90.projections, nocc)
+        _require_nscf_covers_nbnd(nscf_nbnd, nbnd)
         blocks = create_explicit_blocks(
             structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
         )
@@ -210,6 +299,12 @@ def dscf_wannier_init_inputs(
         validate_blocks_separate_occ_and_emp(blocks, nocc)
         validate_blocks_cover_all_occ_bands(blocks, nocc)
 
+    # The DSCF route never calls ``prepare_common_inputs``, so the family
+    # checks reach its pw steps only from here.
+    from koopmans.aiida.setup.pseudos import require_norm_conserving_family
+
+    require_norm_conserving_family(pseudo_family, structure)
+    require_cutoffs_for_family(pseudo_family, parameters)
     wannier_overrides: WannierizeOverrides = {
         "scf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
         "nscf": {"pseudo_family": pseudo_family, "pw": {"parameters": parameters}},
@@ -225,14 +320,7 @@ def dscf_wannier_init_inputs(
     if w90_user:
         wannier_overrides["wannier90"] = w90_user
 
-    wannier_codes = dict(codes)
-    wannier_codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
-    wannier_codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
-    wannier_codes.setdefault("wann2kcp", load_code("wann2kcp", "wann2kcp.x"))
-    wannier_codes.setdefault("merge_evc", load_code("merge_evc", "merge_evc.x"))
-
     return {
-        "codes": wannier_codes,
         "blocks": blocks,
         "kgrid": list(kpoints_input.grid),
         "kpoints": kpoints_input_to_kpoints_mesh(kpoints_input),
@@ -295,23 +383,23 @@ def _initial_alpha_from_guess(alpha_guess: float | list[float]) -> float:
 def kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
     """Assemble the scalar kwargs shared by the kcp.x DSCF builders.
 
-    ``ecutwfc``/``nbnd`` prefer the top-level ``calculator_parameters``
-    convenience fields and fall back to the ``kcp.system`` Pydantic block;
-    ``ecutrho`` has no top-level field — read from ``kcp.system`` and default
-    to ``4 * ecutwfc`` when unset.
+    ``ecutwfc`` comes from ``calculator_parameters.ecutwfc``, with ``ecutrho``
+    derived at :data:`NORM_CONSERVING_DUAL` times it; ``nbnd`` prefers the
+    top-level ``calculator_parameters`` convenience field and falls back to
+    the ``kcp.system`` Pydantic block.
     """
     workflow = koopmans_input.workflow
     calc_params = koopmans_input.calculator_parameters
     kcp_system = calc_params.kcp.system
 
-    ecutwfc = calc_params.ecutwfc if calc_params.ecutwfc is not None else kcp_system.ecutwfc
+    ecutwfc = calc_params.ecutwfc
     if not ecutwfc:
         raise ValueError(
-            "ecutwfc is required for a Koopmans singlepoint calculation. Set it in "
-            "``calculator_parameters.ecutwfc`` or ``calculator_parameters.kcp.system.ecutwfc``."
+            "ecutwfc is required for a Koopmans singlepoint calculation. Set "
+            "``calculator_parameters.ecutwfc``."
         )
 
-    ecutrho = kcp_system.ecutrho if kcp_system.ecutrho else 4.0 * ecutwfc
+    ecutrho = NORM_CONSERVING_DUAL * ecutwfc
 
     nbnd_raw = calc_params.nbnd if calc_params.nbnd is not None else kcp_system.nbnd
     if nbnd_raw is None:

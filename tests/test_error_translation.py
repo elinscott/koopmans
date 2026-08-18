@@ -16,7 +16,7 @@ import pytest
 
 from koopmans.aiida.workflows import advice_for, build_workgraph
 from koopmans.input_file import KoopmansInput
-from tests.test_conversion import _pw_input
+from tests.fixtures import silicon_pw_input as _pw_input
 from tests.test_dfpt_dispatcher import _si_dfpt_dict
 from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
 from tests.test_trajectory_dispatcher import _trajectory_input_dict
@@ -81,6 +81,124 @@ class TestAdviceFor:
         with pytest.raises(ValueError, match="not the plugin") as excinfo:
             raise ValueError("raised by the dispatcher, not the plugin")
         assert advice_for(excinfo.value) is None
+
+    def test_missing_code_socket_earns_install_advice(self) -> None:
+        """A missing ``workgraph.code`` socket is translated with its help text."""
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [
+                MissingInput(
+                    "wannierize_and_split_block_1.codes.wannierjl",
+                    "workgraph.code",
+                    "Needed for threshold-based splitting of bands into blocks.",
+                )
+            ]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert "`wannierjl@localhost`" in advice
+        assert "Needed for threshold-based splitting of bands into blocks." in advice
+        assert "koopmans install" in advice
+
+    def test_bare_code_entry_stays_generic(self) -> None:
+        """A help-less code entry is named with the install pointer and no purpose.
+
+        Every codes-TypedDict member is annotated, so a real entry carries its
+        purpose in ``help``; the advice must still not die on a bare one.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [MissingInput("some_future_step.codes.epw", "workgraph.code", None)]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert "`epw@localhost`" in advice
+        assert "(" not in advice.splitlines()[1]
+        assert "koopmans install" in advice
+
+    def test_missing_non_code_sockets_earn_no_advice(self) -> None:
+        """An error naming only non-code sockets is not an installation problem."""
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError([MissingInput("add1.x", "workgraph.int", None)])
+        assert advice_for(exc) is None
+
+    def test_fanned_out_code_collapses_to_one_line(self) -> None:
+        """A code missing at several sockets is named once, not once per socket.
+
+        A route's own top-level ``codes.pw`` reaches several nested
+        tasks; each socket the missing code leaves unlinked is reported
+        separately by the framework — one of them under a consumer's own
+        ``pw_code`` kwarg name rather than ``pw``. Modelled on a live
+        DFPT build missing pw (``graph_inputs.codes.pw`` +
+        ``scf_nscf.pw_code`` + ``wannierize.codes.pw``): the advice must
+        normalize the ``_code``-suffixed name back to the member name and
+        collapse the three entries into one line, preferring the
+        caller's own top-level help text over a downstream task's.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [
+                MissingInput(
+                    "graph_inputs.codes.pw",
+                    "workgraph.code",
+                    "Needed to compute DFT ground state properties.",
+                ),
+                MissingInput("scf_nscf.pw_code", "workgraph.code", None),
+                MissingInput(
+                    "wannierize.codes.pw",
+                    "workgraph.code",
+                    "Needed to compute DFT ground state properties.",
+                ),
+            ]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert advice.count("pw@localhost") == 1
+        assert "Needed to compute DFT ground state properties." in advice
+
+    def test_a_plainly_named_code_socket_earns_no_advice(self) -> None:
+        """A socket named just ``code`` names nothing to install, so it is skipped.
+
+        A wrapped WorkChain's own input is often called ``code`` rather than
+        after the member it takes, and the last path segment is all the
+        advice has to go on. Naming it would render ``code@localhost``,
+        which the reader cannot act on; declining leaves the framework's own
+        error, which at least names the socket.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError([MissingInput("scf.pw.code", "workgraph.code", None)])
+        assert advice_for(exc) is None
+
+    def test_a_later_entry_supplies_the_purpose_a_bare_one_lacks(self) -> None:
+        """A code's purpose is taken from whichever entry carries one.
+
+        Discriminates first-seen-wins from any-help-wins: the framework
+        reports sockets in graph order, so a nested consumer that declares
+        no ``help`` can be seen before the one that does, and no route-level
+        entry need exist to break the tie. Taking the first entry's ``None``
+        would drop a purpose that was there to be shown.
+        """
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        exc = MissingRequiredInputsError(
+            [
+                MissingInput("scf_nscf.pw_code", "workgraph.code", None),
+                MissingInput(
+                    "wannierize.codes.pw",
+                    "workgraph.code",
+                    "Needed to compute DFT ground state properties.",
+                ),
+            ]
+        )
+        advice = advice_for(exc)
+        assert advice is not None
+        assert advice.count("pw@localhost") == 1
+        assert "Needed to compute DFT ground state properties." in advice
 
 
 class TestDispatchTranslation:
@@ -231,6 +349,44 @@ class TestDispatchTranslation:
             "`dis_froz_max`" in note and "block 'occ_1'" in note for note in excinfo.value.__notes__
         )
 
+    def test_missing_required_inputs_error(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_kcp_code: Any,
+        fake_sg15_pseudo_family: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A graph-level missing-code socket crosses with install advice.
+
+        The route's pre-check demands what the input turns on, so a real
+        instance can only arise past it (a workflow body wiring a member the
+        route did not know it needed); the error is raised at the route's
+        plugin entry to pin the translation.
+        """
+        import aiida_koopmans.workgraphs.kcp as kcp_module
+        from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
+
+        def build_missing_a_code(**kwargs: Any) -> Any:
+            """Raise the structured error a failed socket validation produces."""
+            raise MissingRequiredInputsError(
+                [
+                    MissingInput(
+                        "wannier_initialization.codes.wann2kcp",
+                        "workgraph.code",
+                        "Needed to initialize the variational orbitals as Wannier functions.",
+                    )
+                ]
+            )
+
+        monkeypatch.setattr(kcp_module.KoopmansDSCFWorkflow, "build", build_missing_a_code)
+        d = _si_dscf_dict(init_orbitals="kohn-sham")
+        excinfo = _build_expecting(d, MissingRequiredInputsError, "wann2kcp")
+        assert any(
+            "`wann2kcp@localhost`" in note and "koopmans install" in note
+            for note in excinfo.value.__notes__
+        )
+
     def test_parallelization_error(
         self,
         aiida_profile: Any,
@@ -284,10 +440,11 @@ class TestDispatchTranslation:
             """Run the real stamp check on a model it must reject."""
             predict_alpha_screening._callable(
                 model={"descriptor": "power_spectrum"},
-                descriptors=[],
+                descriptor_rows={},
                 orbitals=[],
                 correction="ki",
                 init_orbitals="mlwfs",
+                descriptor="self_hartree",
             )
 
         monkeypatch.setattr(ml_module.TrajectoryWorkflow, "build", build_with_bad_model)

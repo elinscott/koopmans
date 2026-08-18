@@ -53,16 +53,16 @@ def _si_dfpt_dict(**workflow_updates: Any) -> dict[str, Any]:
     return d
 
 
-def _build(d: dict[str, Any], codes: dict[str, Any]) -> Any:
+def _build(d: dict[str, Any]) -> Any:
     inp = KoopmansInput.model_validate(d)
-    return build_singlepoint_dfpt_workgraph(inp, codes=codes)
+    return build_singlepoint_dfpt_workgraph(inp)
 
 
 @pytest.fixture
 def dfpt_codes(
     installed_pw_code: Any, installed_kcw_code: Any, installed_wannier_codes: Any
 ) -> dict[str, Any]:
-    """Assemble the full DFPT code dict from the dummy-code fixtures."""
+    """Register the dummy DFPT codes the route resolves as ``<name>@localhost``."""
     return {
         "pw": installed_pw_code,
         "kcw": installed_kcw_code,
@@ -77,7 +77,7 @@ class TestUnpolarized:
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """One kcw chain, no per-channel task suffixes."""
-        wg = _build(_si_dfpt_dict(), dfpt_codes)
+        wg = _build(_si_dfpt_dict())
         names = wg.get_task_names()
         assert "wannierize" in names
         assert "dfpt" in names
@@ -93,7 +93,7 @@ class TestUnpolarized:
         k-point distance, so the calculation would not be the one the
         input file describes.
         """
-        wg = _build(_si_dfpt_dict(), dfpt_codes)
+        wg = _build(_si_dfpt_dict())
         scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
         assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
         # The nscf keeps the unreduced expansion of the same grid.
@@ -114,7 +114,7 @@ class TestPerStepKpointMesh:
         """The scf entry reaches the scf and nothing downstream of it."""
         d = _si_dfpt_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid": [4, 4, 4]}}
-        wg = _build(d, dfpt_codes)
+        wg = _build(d)
         scf_nscf = wg.tasks["scf_nscf"]
         assert list(scf_nscf.inputs["scf_kpoints"].value.get_kpoints_mesh()[0]) == [4, 4, 4]
         assert len(scf_nscf.inputs["nscf_kpoints"].value.get_kpoints()) == 8
@@ -129,7 +129,7 @@ class TestPerStepKpointMesh:
         """
         d = _si_dfpt_dict()
         d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.11}}
-        wg = _build(d, dfpt_codes)
+        wg = _build(d)
         scf_nscf = wg.tasks["scf_nscf"]
         assert scf_nscf.inputs["scf_kpoints"].value is None
         overrides = scf_nscf.inputs["overrides"].value
@@ -147,9 +147,53 @@ class TestPerStepKpointMesh:
         """
         d = _si_dfpt_dict()
         d["kpoints"]["overrides"] = {"nscf": {"grid": [3, 3, 3]}}
-        wg = _build(d, dfpt_codes)
+        wg = _build(d)
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 27
         assert wg.tasks["dfpt"].inputs["kgrid"].value == [3, 3, 3]
+
+    def test_wannier90_density_raises(self) -> None:
+        """Not yet wired into this route's own wannierization step.
+
+        The guard runs before any code or pseudopotential is loaded, so it
+        needs no profile.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*DFPT"):
+            _build(d)
+
+
+class TestScopeGuardOrdering:
+    """A scope blocker (correction, init_orbitals, ...) is reported before the override.
+
+    Both guards are pure Python and need no profile; a caller fixing
+    whichever error surfaces first should never resubmit into a second one
+    the first response never mentioned.
+    """
+
+    def test_an_unsupported_correction_masks_no_override_message(self) -> None:
+        """`correction='kipz'` plus an explicit override: the correction blocker wins.
+
+        The message must name the actual blocker (`kipz`) and say nothing
+        about `overrides.wannier90` — a reader who fixes the override would
+        resubmit only to learn kipz was never supported here.
+        """
+        d = _si_dfpt_dict(correction="kipz")
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(NotImplementedError, match="kipz") as excinfo:
+            _build(d)
+        assert "wannier90" not in str(excinfo.value)
+
+    def test_a_valid_input_still_gets_the_override_refused(self) -> None:
+        """Discriminates the above from a guard that fires too early or not at all.
+
+        A KI DFPT input that clears every scope check still refuses an
+        explicit override — the guard exists, just later in the sequence.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density"):
+            _build(d)
 
 
 class TestCollinear:
@@ -167,7 +211,7 @@ class TestCollinear:
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """One shared scf+nscf; wannierize + kcw chain per channel."""
-        wg = _build(self._collinear_dict(), dfpt_codes)
+        wg = _build(self._collinear_dict())
         names = wg.get_task_names()
         assert names.count("scf_nscf") == 1
         for expected in ("wannierize_up", "dfpt_up", "wannierize_down", "dfpt_down"):
@@ -185,7 +229,7 @@ class TestCollinear:
         d = _si_dfpt_dict(spin="collinear")
         d["calculator_parameters"]["tot_magnetization"] = 0
         with pytest.raises(ValueError, match="per-spin projections"):
-            _build(d, dfpt_codes)
+            _build(d)
 
     def test_missing_magnetization_raises(self, dfpt_codes: Any) -> None:
         """Collinear DFPT requires tot_magnetization."""
@@ -194,7 +238,7 @@ class TestCollinear:
         d["calculator_parameters"]["wannier90"]["up"] = per_spin
         d["calculator_parameters"]["wannier90"]["down"] = per_spin
         with pytest.raises(ValueError, match="tot_magnetization"):
-            _build(d, dfpt_codes)
+            _build(d)
 
     def test_non_integer_channel_occupations_raise(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
@@ -203,7 +247,7 @@ class TestCollinear:
         d = self._collinear_dict()
         d["calculator_parameters"]["tot_magnetization"] = 1  # nelec=8 -> 4.5/3.5
         with pytest.raises(ValueError, match="integer per-channel occupations"):
-            _build(d, dfpt_codes)
+            _build(d)
 
 
 class TestMultiBlockZnO:
@@ -268,7 +312,7 @@ class TestMultiBlockZnO:
         self, aiida_profile: Any, dfpt_codes: Any, fake_pseudodojo_lda_family: Any
     ) -> None:
         """Every occupied block wannierizes separately; the kcw chain sees totals."""
-        wg = _build(self._zno_dict(), dfpt_codes)
+        wg = _build(self._zno_dict())
         names = wg.get_task_names()
         for expected in (
             "wannierize",
@@ -297,7 +341,7 @@ class TestSpinor:
         """Single chain with noncolin (+ lspinorb for SOC) forced on the PW runs."""
         # Spinor manifold: the sp block doubles to 8 spinor Wannier
         # functions, matching nocc = nelec = 8.
-        wg = _build(_si_dfpt_dict(spin=spin_value), dfpt_codes)
+        wg = _build(_si_dfpt_dict(spin=spin_value))
         names = wg.get_task_names()
         assert "wannierize" in names
         assert "dfpt" in names
@@ -326,7 +370,7 @@ class TestOrbitalGrouping:
         inp = KoopmansInput.model_validate(d)
         assert inp.workflow.group_orbitals_by is not None
         assert inp.workflow.group_orbitals_by.value == "none"
-        wg = _build(d, dfpt_codes)
+        wg = _build(d)
         assert "dfpt" in wg.get_task_names()
         assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value is None
 
@@ -335,7 +379,7 @@ class TestOrbitalGrouping:
     ) -> None:
         """The DFPT route has no self-Hartree metric; the criterion must not be ignored."""
         with pytest.raises(NotImplementedError, match="spread"):
-            _build(_si_dfpt_dict(group_orbitals_by="self_hartree"), dfpt_codes)
+            _build(_si_dfpt_dict(group_orbitals_by="self_hartree"))
 
     def test_spread_defaults_the_tolerance_and_threads_it(
         self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
@@ -344,7 +388,7 @@ class TestOrbitalGrouping:
         d = _si_dfpt_dict(group_orbitals_by="spread")
         inp = KoopmansInput.model_validate(d)
         assert inp.workflow.group_orbitals_tol == 0.05
-        wg = _build(d, dfpt_codes)
+        wg = _build(d)
         assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.05
 
     def test_spread_honours_an_explicit_tolerance(
@@ -352,7 +396,7 @@ class TestOrbitalGrouping:
     ) -> None:
         """A user tolerance overrides the schema default."""
         d = _si_dfpt_dict(group_orbitals_by="spread", group_orbitals_tol=0.2)
-        wg = _build(d, dfpt_codes)
+        wg = _build(d)
         assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.2
 
 
@@ -371,7 +415,7 @@ class TestWannier90Overrides:
         """
         d = _si_dfpt_dict()
         d["calculator_parameters"]["wannier90"]["num_iter"] = 17
-        wg = _build(d, dfpt_codes)
+        wg = _build(d)
         w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides["num_iter"] == 17
 
@@ -383,6 +427,72 @@ class TestWannier90Overrides:
         Discriminates the override path: absent a user keyword the wannierize
         task never sees ``num_iter = 17``.
         """
-        wg = _build(_si_dfpt_dict(), dfpt_codes)
+        wg = _build(_si_dfpt_dict())
         w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides.get("num_iter") != 17
+
+
+@pytest.fixture
+def dfpt_pdos_codes(dfpt_codes: Any, localhost_code: Any) -> dict[str, Any]:
+    """Register ``dfpt_codes`` plus a projwfc code on ``localhost``."""
+    return {**dfpt_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
+
+
+class TestProjwfcQualityCheck:
+    """A ``kpoints.path`` and a configured projwfc code reach the wannierize step.
+
+    ``SinglepointDFPTWorkflow`` wraps ``WannierizeBlocks`` as a single nested
+    task (``wannierize``), so the pw.x quality-check bands / projwfc steps
+    it grows do not surface in the outer graph's own task list — only the
+    wiring into and out of that task does. The graphs' own contract for
+    what the path/code combination grows is pinned on the ak2 side.
+    """
+
+    def test_configured_projwfc_reaches_wannierize_and_dfpt(
+        self, aiida_profile_clean: Any, dfpt_pdos_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A configured projwfc code is passed into the wannierize step's codes.
+
+        Its projected-DOS output then reaches ``dfpt``, which forwards it
+        (as ``ChannelResults.projwfc``) into the run's provenance for the
+        plotter to pick up.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+        codes_socket = wg.tasks["wannierize"].inputs["codes"]["projwfc"]
+        assert codes_socket._links
+        assert wg.tasks["dfpt"].inputs["projwfc"]._links
+
+    def test_unconfigured_projwfc_still_wires_dfpt_from_the_pseudos_alone(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A missing projwfc code no longer gates the projwfc data wiring.
+
+        WannierizeBlocks' projwfc entry is decided by
+        projected_dos_supported(...) alone — fake_sg15_pseudo_family
+        supports it — so the projwfc data link into dfpt exists regardless
+        of whether dfpt_codes carries a projwfc code. A code that's
+        actually missing surfaces as the framework's structural
+        missing-input error at submission (aiida-koopmans' own contract,
+        pinned in its test_codes_by_need.py and test_wannierize_workgraph.py),
+        not a build-time absence of this link.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+        assert wg.tasks["dfpt"].inputs["wannierize_bands"]._links
+        assert wg.tasks["dfpt"].inputs["projwfc"]._links
+
+    def test_no_path_skips_the_wannierize_quality_check(
+        self, aiida_profile_clean: Any, dfpt_pdos_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: without ``kpoints.path``, no quality-check wiring exists.
+
+        A configured projwfc code alone does not run the quality check —
+        the bands path does (``WannierizeBlocks``' own gate).
+        """
+        wg = _build(_si_dfpt_dict())
+        assert not wg.tasks["wannierize"].inputs["interpolation_kpoints"]._links
+        assert not wg.tasks["dfpt"].inputs["wannierize_bands"]._links
+        assert not wg.tasks["dfpt"].inputs["projwfc"]._links

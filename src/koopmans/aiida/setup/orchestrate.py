@@ -26,8 +26,10 @@ from .computer import (
 )
 from .daemon import is_daemon_running, stop_daemon
 from .hq import (
+    hq_binary,
     is_hq_server_running,
     is_hq_worker_running,
+    running_hq_workers,
     stop_hq,
 )
 from .profile import PROFILE_NAME, load_koopmans_profile, profile_exists
@@ -100,6 +102,7 @@ def verify_installation() -> dict[str, bool]:
         "computer.thread_pin": False,
         "pw.x": False,
         "daemon": False,
+        "hq.binary": False,
         "hq.server": False,
         "hq.worker": False,
     }
@@ -112,8 +115,12 @@ def verify_installation() -> dict[str, bool]:
         load_koopmans_profile()
         status["computer"] = computer_exists()
         status["daemon"] = is_daemon_running()
-        status["hq.server"] = is_hq_server_running()
-        status["hq.worker"] = is_hq_worker_running()
+        # Both HQ rows are answered by running ``hq``, so without the binary
+        # they report absence when the truth is that nothing was asked.
+        status["hq.binary"] = hq_binary() is not None
+        if status["hq.binary"]:
+            status["hq.server"] = is_hq_server_running()
+            status["hq.worker"] = is_hq_worker_running()
 
         if status["computer"]:
             status["pw.x"] = code_exists(f"pw@{COMPUTER_LABEL}")
@@ -139,6 +146,44 @@ def print_status() -> None:
         click.echo("\nAll components configured correctly!")
     else:
         click.echo("\nSome components are missing. Run 'koopmans install' to set up.")
+
+
+def print_hq_status() -> None:
+    """Print the state of the HyperQueue server and worker.
+
+    Reports the worker's CPU pool next to the ranks a calculation is given by
+    default, since a pool below that default leaves every default-sized
+    calculation queued.
+    """
+    if not is_hq_server_running():
+        click.echo("HyperQueue server is not running.")
+        click.echo("Run 'koopmans backend hq start' to start it.")
+        return
+    click.echo("HyperQueue server is running.")
+
+    workers = running_hq_workers()
+    if not workers:
+        click.echo("No HyperQueue worker is running.")
+        click.echo("Run 'koopmans backend hq start' to start one.")
+        return
+    for worker in workers:
+        click.echo(f"  worker {worker.id}: pool of {worker.cpus} CPU(s)")
+
+    default_procs = _default_procs_per_calc()
+    if default_procs is not None:
+        click.echo(f"  each calculation is given {default_procs} MPI rank(s) by default")
+
+
+def _default_procs_per_calc() -> int | None:
+    """Return the localhost Computer's default MPI ranks per calculation."""
+    if not profile_exists():
+        return None
+    from aiida import orm
+
+    load_koopmans_profile()
+    if not computer_exists():
+        return None
+    return orm.load_computer(COMPUTER_LABEL).get_default_mpiprocs_per_machine()
 
 
 def uninstall_backend() -> None:
