@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import itertools
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -1300,6 +1300,20 @@ ROUTES: dict[str, FakeNode] = {
 }
 
 
+def _unnamed(node: FakeNode) -> FakeNode:
+    """Return a copy of ``node``'s tree with every process's label removed.
+
+    Fresh pks throughout, so the copy and the original can be resolved
+    side by side.
+    """
+    return replace(
+        node,
+        label="",
+        pk=next(_pk_counter),
+        children=[_unnamed(child) for child in node.children],
+    )
+
+
 def render_route_tables() -> str:
     """Return every route's progress table as the text of ``TABLES_FILE``."""
     registry: dict[int, FakeNode] = {}
@@ -1325,6 +1339,25 @@ class TestEveryRouteTable:
         read without running anything.
         """
         assert render_route_tables() == TABLES_FILE.read_text(encoding="utf-8")
+
+    def test_a_run_whose_steps_are_unnamed_renders_the_same(self) -> None:
+        """The fallback and the plugin agree, route for route.
+
+        Strip every process's label and the whole display falls back to
+        the lookup. The two must render identically: a name the plugin
+        sets that the lookup spells differently would show up here as a
+        run that reads one way live and another way when replayed from a
+        database made before the labels existed.
+        """
+        registry: dict[int, FakeNode] = {}
+        with stubbed_lookups(registry):
+            for name, root in ROUTES.items():
+                unnamed = _unnamed(root)
+                _register(root, registry)
+                _register(unnamed, registry)
+                assert progress.build_progress_rows(
+                    cast("ProcessNode", unnamed)
+                ) == progress.build_progress_rows(cast("ProcessNode", root)), name
 
     def test_no_route_shows_a_python_class_name(self) -> None:
         """``Pw Bands Work Chain`` and friends never reach a user.
