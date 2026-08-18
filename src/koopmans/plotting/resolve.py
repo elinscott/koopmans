@@ -24,6 +24,7 @@ __all__ = [
     "BAND_PRODUCERS",
     "BandProducer",
     "PlottingError",
+    "RunNotInProfileError",
     "resolve_band_series",
     "run_node",
 ]
@@ -31,6 +32,10 @@ __all__ = [
 
 class PlottingError(Exception):
     """A folder cannot be turned into a figure."""
+
+
+class RunNotInProfileError(PlottingError):
+    """A folder names a run this AiiDA profile does not hold."""
 
 
 References = Callable[["orm.ProcessNode", "orm.BandsData"], "tuple[float | None, float | None]"]
@@ -103,17 +108,31 @@ def _no_references(
     return None, None
 
 
+def _declared_pw_parameters(node: orm.ProcessNode) -> dict[str, Any]:
+    """Return the pw.x namelists ``node`` declared, if any.
+
+    A base workchain carries them under its ``pw`` namespace and a bare
+    calculation directly, so a dumped step reads the same as the run it
+    belongs to.
+    """
+    for holder in (getattr(node.inputs, "pw", None), node.inputs):
+        parameters = getattr(holder, "parameters", None)
+        if parameters is not None:
+            try:
+                return dict(parameters.get_dict())
+            except (AttributeError, TypeError):
+                return {}
+    return {}
+
+
 def _is_path_bands_run(node: orm.ProcessNode) -> bool:
-    """Whether a pw.x base run declared ``calculation = 'bands'`` in its inputs.
+    """Whether a pw.x run declared ``calculation = 'bands'`` in its inputs.
 
     An scf or nscf run publishes the same ``output_band`` socket for its
     mesh eigenvalues; only the declared calculation type says a run sampled
     a path.
     """
-    try:
-        parameters = node.inputs.pw.parameters.get_dict()
-    except AttributeError:
-        return False
+    parameters = _declared_pw_parameters(node)
     return bool(parameters.get("CONTROL", {}).get("calculation") == "bands")
 
 
@@ -165,6 +184,16 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
     # interpolation is judged against.
     BandProducer(
         process_type="aiida.workflows:quantumespresso.pw.base",
+        socket="output_band",
+        series="DFT",
+        references=_pw_base_bands_references,
+        applies=_is_path_bands_run,
+    ),
+    # The pw.x calculation itself, so that a dumped bands step plots on its
+    # own: a dump keeps a metadata file beside each calculation, and the
+    # workchains above it leave none behind.
+    BandProducer(
+        process_type="aiida.calculations:quantumespresso.pw",
         socket="output_band",
         series="DFT",
         references=_pw_base_bands_references,
@@ -256,41 +285,118 @@ _EMPTY_REASONS = {
 }
 
 
-def _read_uuid(folder: Path) -> str:
-    """Return the uuid of the process the run in ``folder`` was dumped from."""
+#: How many plottable directories a rejected folder's error names. Long enough
+#: for a per-block fan-out, short enough to read.
+SUGGESTION_LIMIT = 10
+
+
+def _read_uuid(folder: Path) -> str | None:
+    """Return the uuid ``folder``'s metadata records, or ``None`` if it holds none.
+
+    :raises PlottingError: if the file is there and records no uuid.
+    """
     import yaml
 
     metadata_path = folder / NODE_METADATA_FILE
     if not metadata_path.is_file():
-        raise PlottingError(
-            f"{folder} is not a koopmans run directory: it holds no "
-            f"{NODE_METADATA_FILE}. Pass the folder `koopmans run` wrote, which "
-            "is named after the input file it was given."
-        )
+        return None
     try:
         parsed = yaml.safe_load(metadata_path.read_text())
         uuid = parsed["Node data"]["uuid"]
     except (OSError, UnicodeDecodeError, yaml.YAMLError, TypeError, KeyError):
         raise PlottingError(
-            f"{metadata_path} does not record which run it came from. Rerun "
-            "`koopmans run` to write the folder again."
+            f"{folder} does not record which run it came from. Rerun `koopmans run` "
+            "to write the folder again."
         ) from None
     return str(uuid)
+
+
+def _has_band_structure(node: orm.ProcessNode) -> bool:
+    """Whether the run under ``node`` published any band structure to plot."""
+    return any(
+        _output_at(step, producer.socket) is not None
+        for step in _producing_steps(node)
+        for producer in _producers_for(step)
+    )
+
+
+def _plottable_below(folder: Path) -> tuple[list[Path], int]:
+    """Return what under ``folder`` can be plotted, and how much is elsewhere.
+
+    The second value counts the directories skipped because this profile does
+    not hold the runs they name.
+
+    A dump keeps a metadata file beside each calculation and none beside the
+    step folders grouping them, so a rejected folder can still say which of
+    the directories under it can be given to the command. Shallowest first, so
+    that a whole run outranks its own steps when the list is cut short.
+
+    Expects an AiiDA profile to be loaded.
+    """
+    found: list[Path] = []
+    absent = 0
+    candidates = sorted(folder.rglob(NODE_METADATA_FILE), key=lambda path: (len(path.parts), path))
+    for metadata_path in candidates:
+        directory = metadata_path.parent
+        if directory == folder:
+            continue
+        try:
+            node = run_node(directory)
+        except RunNotInProfileError:
+            absent += 1
+            continue
+        except PlottingError:
+            continue
+        if _has_band_structure(node):
+            found.append(directory)
+    return found, absent
+
+
+def _not_a_run_directory(folder: Path) -> PlottingError:
+    """Return the error for a directory holding no metadata of its own.
+
+    Names the directories beneath it that can be plotted, since a step folder
+    grouping calculations is the one thing a reader is likely to have typed.
+    """
+    opening = f"{folder} is not a koopmans run directory"
+    plottable, absent = _plottable_below(folder)
+    if not plottable and absent:
+        return PlottingError(
+            f"{opening}, and the {absent} run(s) beneath it are not in this AiiDA "
+            "profile: they were made under a different profile, or on a different "
+            "machine. A dumped folder does not yet carry its own results, so it can "
+            "only be plotted where it was run."
+        )
+    if not plottable:
+        return PlottingError(
+            f"{opening}, and nothing beneath it has a band structure to plot. Pass a "
+            "directory `koopmans run` wrote, or a calculation directory inside one."
+        )
+    lines = [f"{opening}. These directories beneath it have band structures to plot:"]
+    lines += [f"  {path}" for path in plottable[:SUGGESTION_LIMIT]]
+    if len(plottable) > SUGGESTION_LIMIT:
+        lines.append(f"  ... and {len(plottable) - SUGGESTION_LIMIT} more.")
+    return PlottingError("\n".join(lines))
 
 
 def run_node(folder: Path) -> orm.ProcessNode:
     """Return the process node the run in ``folder`` was dumped from.
 
     Expects an AiiDA profile to be loaded.
+
+    :raises PlottingError: if ``folder`` records no run of its own, or the run
+        it records is not in this profile.
     """
     from aiida import orm
     from aiida.common.exceptions import NotExistent
 
     uuid = _read_uuid(folder)
+    if uuid is None:
+        raise _not_a_run_directory(folder)
     try:
         node = orm.load_node(uuid)
     except NotExistent:
-        raise PlottingError(
+        raise RunNotInProfileError(
             f"The run in {folder} (uuid {uuid}) is not in this AiiDA profile: it was "
             "made under a different profile, or on a different machine. A dumped "
             "folder does not yet carry its own results, so it can only be plotted "
@@ -518,10 +624,8 @@ def _cell_of(bands: orm.BandsData) -> list[list[float]] | None:
 
 def _declared_pw_system(node: orm.ProcessNode) -> dict[str, Any]:
     """Return the pw.x ``&SYSTEM`` namelist ``node`` declared, if any."""
-    try:
-        return dict(node.inputs.pw.parameters.get_dict().get("SYSTEM", {}))
-    except (AttributeError, TypeError):
-        return {}
+    system = _declared_pw_parameters(node).get("SYSTEM", {})
+    return dict(system) if isinstance(system, dict) else {}
 
 
 def _spin_channels_are_degenerate(node: orm.ProcessNode) -> bool:
@@ -693,8 +797,23 @@ def _name_after_folder(found: Sequence[tuple[BandSeries, str]], label: str) -> N
         item.label = f"{label}{qualifier}"
 
 
+def _check_one_per_folder(values: Sequence[str | None], folders: int, option: str) -> None:
+    """Reject a per-folder option given for some but not all of the folders.
+
+    :raises ValueError: if any values were given and they do not number ``folders``.
+    """
+    if values and len(values) != folders:
+        raise ValueError(
+            f"{len(values)} {option} value(s) were given for {folders} folder(s). "
+            f"Give one {option} per folder, in the order the folders are listed, or "
+            "none at all."
+        )
+
+
 def resolve_band_series(
-    folders: Sequence[Path], labels: Sequence[str] = ()
+    folders: Sequence[Path],
+    labels: Sequence[str | None] = (),
+    styles: Sequence[str | None] = (),
 ) -> tuple[list[BandSeries], list[str]]:
     """Return the band structures of the given runs, and any warnings.
 
@@ -703,19 +822,23 @@ def resolve_band_series(
     instead, one per folder in the order they were given; a folder that yields
     several series keeps whatever tells them apart, so one name covers a
     per-spin or per-block fan-out and no two curves end up sharing a name.
-    Every folder must carry a band structure: drawing fewer curves than folders
+    ``None`` leaves that folder's own series named or styled as if
+    ``labels``/``styles`` had not been given for it at all, which is how a
+    caller pairing values with only some of the folders spells "no value
+    here" — an empty string is a value of its own (a no-op matplotlib format
+    string counts as a style given), not a stand-in for "none". ``styles``
+    are matplotlib format strings, given the same way and covering a fan-out
+    the same way: every curve one folder contributes is drawn alike. Every
+    folder must carry a band structure: drawing fewer curves than folders
     asked for reads as a figure of them all.
 
-    :raises ValueError: if some but not all of the folders are named.
+    :raises ValueError: if given, ``labels``/``styles`` do not number the
+        folders.
     :raises PlottingError: if a folder is not a run directory, its run is not
         in this profile, or any of them holds nothing plottable.
     """
-    if labels and len(labels) != len(folders):
-        raise ValueError(
-            f"{len(labels)} --label value(s) were given for {len(folders)} folder(s). "
-            "Give one --label per folder, in the order the folders are listed, or "
-            "none at all."
-        )
+    _check_one_per_folder(labels, len(folders), "--label")
+    _check_one_per_folder(styles, len(folders), "--style")
 
     nodes = [run_node(folder) for folder in folders]
 
@@ -729,8 +852,14 @@ def resolve_band_series(
         found = _series_from_node(node)
         if not found:
             empty.append((folder, node))
-        if labels:
-            _name_after_folder(found, labels[index])
+        style_value = styles[index] if styles else None
+        if style_value is not None:
+            for item, _ in found:
+                item.style = style_value
+
+        label_value = labels[index] if labels else None
+        if label_value is not None:
+            _name_after_folder(found, label_value)
         elif len(folders) > 1:
             prefix = folder.name or folder.resolve().name
             for item, _ in found:
