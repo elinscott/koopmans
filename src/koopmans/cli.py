@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 import click
 
-from koopmans.aiida.dumping import dump_workgraph, trained_model_output
+from koopmans.aiida.dumping import MODEL_FILENAME, dump_workgraph, trained_model_output
 from koopmans.aiida.progress import run_with_progress
 from koopmans.aiida.setup.codes import list_codes
 from koopmans.aiida.setup.daemon import is_daemon_running, start_daemon, stop_daemon
@@ -123,12 +123,16 @@ def run(input_file: str) -> None:
         raise
 
     if wg.process is not None:
-        dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
-        model_node = trained_model_output(wg.process)
-        if model_node is not None:
+        dump_path = input_path.parent / input_path.stem
+        dump_workgraph(wg.process, output_path=dump_path, overwrite=True)
+        if trained_model_output(wg.process) is not None:
+            # `ml: model_file` reads a relative path against the input file's
+            # own directory, so the snippet drops the leading directories the
+            # written path carries when the run was started from elsewhere.
             click.echo(
-                f"Trained model stored as node {model_node.pk} ({model_node.uuid}) — "
-                f"reference it via `ml: {{model: {model_node.pk}}}`."
+                f"Trained model written to {dump_path / MODEL_FILENAME} — reuse it from "
+                f"an input file beside {input_path.name} with "
+                f"`ml: {{model_file: {Path(input_path.stem) / MODEL_FILENAME}}}`."
             )
 
 
@@ -184,8 +188,9 @@ def submit(input_file: str) -> None:
         # The daemon already has the job; losing the run file only loses
         # the *shortcut* back to it, not the submission itself.
         raise click.ClickException(
-            f"Workflow submitted as pk {node.pk} ({node.uuid}), but {anchor_path} could "
-            f"not be written ({exc}). Recover with `koopmans status --uuid {node.uuid}`."
+            f"The workflow was submitted, but {anchor_path} could not be written "
+            f"({exc}), so `koopmans status` will not find it on its own. Follow it "
+            f"with `koopmans status --uuid {node.uuid}`."
         ) from exc
 
     click.echo("🚀 Workflow submitted")
@@ -208,6 +213,9 @@ def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None)
         raise click.ClickException(str(exc)) from exc
 
     load_koopmans_profile()
+    # Both errors below name the identifier the user gave or the run file
+    # recorded, not one read off the node they landed on.
+    identifier = resolved.uuid if resolved.uuid is not None else resolved.pk
     try:
         node = (
             orm.load_node(uuid=resolved.uuid)
@@ -215,14 +223,13 @@ def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None)
             else orm.load_node(pk=resolved.pk)
         )
     except NotExistent as exc:
-        identifier = resolved.uuid if resolved.uuid is not None else resolved.pk
         raise click.ClickException(
             f"No AiiDA node found for {identifier!r}. It may have been deleted; check "
             "`verdi process list -a` for what is still in the database."
         ) from exc
     if not isinstance(node, orm.ProcessNode):
         raise click.ClickException(
-            f"Node {node.pk} is not a calculation; it holds a {type(node).__name__}."
+            f"{identifier!r} is not a calculation; it holds a {type(node).__name__}."
         )
     return node
 
