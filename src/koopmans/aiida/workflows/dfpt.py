@@ -6,44 +6,46 @@ from typing import TYPE_CHECKING, Any, cast
 
 from aiida_quantumespresso.common.types import SpinType
 
-from koopmans.aiida.workflows import load_code, pin_step_kpoints, prepare_common_inputs
+from koopmans.aiida.workflows import (
+    load_codes,
+    pin_step_kpoints,
+    prepare_common_inputs,
+    reject_kpoint_overrides,
+    require_configured_codes,
+)
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
 
 if TYPE_CHECKING:
     from aiida import orm
-    from aiida_koopmans.workgraphs import Codes
     from aiida_koopmans.workgraphs.block_wannierize import WannierizeOverrides
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
 
 
-def build_singlepoint_dfpt_workgraph(
-    koopmans_input: KoopmansInput,
-    codes: Codes,
-) -> WorkGraph:
+def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
 
-    Assembles the full chain (scf + nscf → per-manifold wannierization →
+    Assembles the full sequence (scf + nscf → per-manifold wannierization →
     wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPTWorkflow``.
 
-    Spin regimes (``workflow.spin``): ``none`` runs the closed-shell chain;
-    ``collinear`` fans the wannierization and the kcw.x chain out per spin
-    channel (needs per-spin projections in ``w90.up`` / ``w90.down`` and a
-    ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the spinor
-    chain (all bands singly occupied, ``num_wann`` doubled).
+    Spin regimes (``workflow.spin``): ``none`` runs the closed-shell
+    sequence; ``collinear`` fans the wannierization and the kcw.x steps out
+    per spin channel (needs per-spin projections in ``w90.up`` / ``w90.down``
+    and a ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the
+    spinor variant (all bands singly occupied, ``num_wann`` doubled).
 
     Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
     periodic, MLWF/projwf variational orbitals, and explicit projections.
     A manifold may span several projection blocks; their Wannier products
     are merged back into one file set before kcw.x consumes them.
     """
-    from aiida_koopmans.workgraphs.dfpt import SinglepointDFPTWorkflow
+    from aiida_koopmans.workgraphs.dfpt import DfptCodes, SinglepointDFPTWorkflow
 
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
-        kpoints_input_to_kpoints_path,
+        kpoints_input_to_interpolation_path,
         step_kpoints_mesh,
     )
 
@@ -88,6 +90,21 @@ def build_singlepoint_dfpt_workgraph(
                 "occupations."
             )
 
+    # Checked last among the pure-Python guards, after every workflow-scope
+    # rejection above (correction, init_orbitals, gamma_only, spin): an
+    # explicit override paired with one of those should surface the scope
+    # blocker first, not send the reader to fix the override and only then
+    # learn the run is unsupported regardless.
+    reject_kpoint_overrides(
+        koopmans_input,
+        {
+            "wannier90": "`kpoints.overrides.wannier90.path_density` is not yet wired "
+            "into the DFPT route: its own wannierization step interpolates along "
+            "`kpoints.path` at the top-level `kpoints.path_density`, with no socket "
+            "of its own yet for a denser interpolation."
+        },
+    )
+
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
@@ -115,19 +132,18 @@ def build_singlepoint_dfpt_workgraph(
     else:
         manifolds = _single_channel_dfpt_manifolds(koopmans_input, structure, nelec, nbnd, spin)
 
-    bands_kpoints = (
-        kpoints_input_to_kpoints_path(koopmans_input.kpoints, structure)
-        if koopmans_input.kpoints.path is not None
-        else None
-    )
+    bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
-    # The wannierization steps need codes that load_codes_for_task only wires
-    # for the WANNIERIZE task; load them here until it grows a DFPT branch.
-    codes = dict(codes)
-    codes.setdefault("wannier90", load_code("wannier90", "wannier90.x"))
-    codes.setdefault("pw2wannier90", load_code("pw2wannier90", "pw2wannier90.x"))
-    if eps_inf == "auto":
-        codes.setdefault("ph", load_code("ph", "ph.x"))
+    # load_codes loads every configured member of DfptCodes. ph.x is only
+    # actually needed for the `eps_inf: auto` dielectric pre-computation,
+    # and projwfc only for the quality-check projected DOS; whether either
+    # runs, and whether a missing code the run does need is fatal, is now
+    # the graph's own structural requirement — checked at graph validation,
+    # not here. require_configured_codes only ever looks at pw/kcw (the
+    # required members): it has no notion of eps_inf, so ph never gets
+    # demanded here.
+    codes = load_codes(DfptCodes)
+    require_configured_codes(DfptCodes, codes)
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
@@ -141,7 +157,7 @@ def build_singlepoint_dfpt_workgraph(
         bands_kpoints=bands_kpoints,
         pseudo_family=pseudo_family,
         overrides=overrides,
-        # 'auto' prepends the scf + ph.x dielectric chain inside
+        # 'auto' prepends the scf + ph.x dielectric steps inside
         # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
         # periodic default, on).
         eps_inf=eps_inf,
@@ -172,7 +188,7 @@ def _single_channel_dfpt_manifolds(
 ) -> dict[str, Any]:
     """Derive the single-channel ``manifolds`` input for an unpolarized or spinor DFPT run.
 
-    Both regimes run one kcw.x chain keyed ``"none"``; the spinor case
+    Both regimes run one kcw.x sequence keyed ``"none"``; the spinor case
     differs only in the manifold derivation (all bands singly occupied,
     ``num_wann`` doubled).
     """

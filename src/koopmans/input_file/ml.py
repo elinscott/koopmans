@@ -22,14 +22,15 @@ class MLConfig(BaseModel):
     )
     model: int | str | None = Field(
         default=None,
-        description="reuse a model trained in this database: the identifier a "
-        "mode='train' run prints on completion ('Trained model stored as node "
-        "<pk> ...'). If you have a model.json file instead, use `model_file`",
+        description="reuse a model already stored in this AiiDA database, by the PK "
+        "or UUID of its node. To name the model.json a mode='train' run writes "
+        "instead, use `model_file`",
     )
     model_file: str | None = Field(
         default=None,
-        description="path to a trained model's JSON file (a mode='train' run writes "
-        "model.json next to its other outputs)",
+        description="path to a trained model's JSON file, resolved against this input "
+        "file's directory (a mode='train' run writes model.json into its output "
+        "directory, named after the input file it ran)",
     )
     n_max: int = Field(
         default=4,
@@ -52,7 +53,10 @@ class MLConfig(BaseModel):
     )
     descriptor: MLDescriptor = Field(
         default=MLDescriptor.POWER_SPECTRUM,
-        description="What to use as the descriptor for the ML model",
+        description="What the ML model reads for each orbital. 'power_spectrum' expands the "
+        "orbital density in a radial and spherical basis. 'self_hartree' is a single number "
+        "per orbital: simplistic and unexpressive, and unlikely to carry enough to predict a "
+        "screening parameter",
     )
 
     @field_validator("model", mode="before")

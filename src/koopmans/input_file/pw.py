@@ -35,16 +35,17 @@ class SystemNamelist(_SystemNamelist):
     """``SYSTEM`` namelist for ``pw.x`` calculations.
 
     ``ibrav``, ``nat`` and ``ntyp`` are derived from the input structure, not provided
-    by the user. ``ecutwfc`` is optional at parse time; the dispatcher raises if it is
-    still unset when the workgraph is built.
+    by the user. ``ecutwfc`` and ``ecutrho`` are not provided here either:
+    ``calculator_parameters.ecutwfc`` is the one place a cutoff is stated, and pw.x
+    and kcp.x always share the grid it derives.
     """
 
     # Excluded fields (see ``ControlNamelist`` above for the ClassVar rationale).
     ibrav: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
     nat: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
     ntyp: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    # Optional at parse time; the dispatcher raises if still unset at build time.
-    ecutwfc: float | None = None  # type: ignore[assignment]
+    ecutwfc: ClassVar[float | None] = None  # type: ignore[misc, assignment, unused-ignore]
+    ecutrho: ClassVar[float | None] = None  # type: ignore[misc, assignment, unused-ignore]
 
 
 class PWInputParameters(BaseModel):

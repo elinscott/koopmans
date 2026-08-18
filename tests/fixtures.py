@@ -479,7 +479,162 @@ def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     }
 
 
-def fake_upf_content(element: str, z_valence: float, has_so: bool | None = False) -> str:
+# Header excerpts transcribed from real pseudopotentials, which the synthetic
+# streams below cannot stand in for: generators disagree on how to spell a UPF
+# boolean, PAW files set the ultrasoft flag as well as their own, and the v1
+# layout is not XML at all.
+
+# PSlibrary's ultrasoft silicon (Si.pbe-n-rrkjus_psl.1.0.0.UPF): "true", not
+# "T", and ``pseudo_type`` reads USPP rather than US.
+UPF_V2_ULTRASOFT_HEADER = """\
+<UPF version="2.0.1">
+  <PP_INFO>
+Pseudopotential type: USPP
+  </PP_INFO>
+  <PP_HEADER
+     element="Si"
+     pseudo_type="USPP"
+     relativistic="scalar"
+     is_ultrasoft="true"
+     is_paw="false"
+     z_valence="4.000000000000E+000"/>
+</UPF>
+"""
+
+# PSlibrary's PAW silicon (Si.pbe-n-kjpaw_psl.1.0.0.UPF), which sets both
+# flags: reading ``is_ultrasoft`` alone would call this one ultrasoft.
+UPF_V2_PAW_HEADER = """\
+<UPF version="2.0.1">
+  <PP_HEADER
+     element="Si"
+     pseudo_type="PAW"
+     is_ultrasoft="true"
+     is_paw="true"
+     z_valence="4.000000000000E+000"/>
+</UPF>
+"""
+
+# A UPF v1 ultrasoft carbon (aiida-core's C_pbe_v1.2.uspp.F.UPF): no
+# ``<UPF version=...>`` wrapper and a fixed-format header whose third line
+# carries the type. Every field of the block is transcribed, because a v1
+# header is read as a whole: the fields are positional, so a reader that
+# stopped early would be reading them off a file it could not otherwise use.
+UPF_V1_ULTRASOFT_HEADER = """\
+<PP_INFO>
+Generated using Vanderbilt code, version   7  3  6
+</PP_INFO>
+<PP_HEADER>
+   0                   Version Number
+  C                    Element
+   US                  Ultrasoft pseudopotential
+    T                  Nonlinear Core Correction
+SLA  PW   PBE  PBE     PBE  Exchange-Correlation functional
+    4.00000000000      Z valence
+  -10.81268860050      Total energy
+    0.00000    0.00000 Suggested cutoff for wfc and rho
+    1                  Max angular momentum component
+  721                  Number of points in mesh
+    2    4             Number of Wavefunctions, Number of Projectors
+ Wavefunctions         nl  l   occ
+                       2S  0  2.00
+                       2P  1  2.00
+</PP_HEADER>
+"""
+
+# The same block with the other type Quantum ESPRESSO accepts on that line.
+# Its reader takes US, PAW, NC or 1/r there (upflib/read_upf_v1.f90), so a v1
+# PAW file is a file koopmans must refuse; this one is built rather than
+# transcribed, no v1 PAW pseudopotential being at hand.
+UPF_V1_PAW_HEADER = """\
+<PP_HEADER>
+   0                   Version Number
+  C                    Element
+   PAW                 Projector augmented-wave
+    T                  Nonlinear Core Correction
+SLA  PW   PBE  PBE     PBE  Exchange-Correlation functional
+    4.00000000000      Z valence
+  -10.81268860050      Total energy
+    0.00000    0.00000 Suggested cutoff for wfc and rho
+    1                  Max angular momentum component
+  721                  Number of points in mesh
+    2    4             Number of Wavefunctions, Number of Projectors
+ Wavefunctions         nl  l   occ
+                       2S  0  2.00
+                       2P  1  2.00
+</PP_HEADER>
+"""
+
+# Every PSlibrary pseudopotential that embeds its generation input carries a
+# Fortran namelist inside PP_INFO, whose bare ``&`` makes the file invalid
+# XML. An XML parser rejects the whole file; the header still reads.
+UPF_V2_ULTRASOFT_WITH_NAMELIST = """\
+<UPF version="2.0.1">
+  <PP_INFO>
+<PP_INPUTFILE>
+ &input
+   title='O',
+   config='[He] 2s2 2p4 3d-2',
+ /
+</PP_INPUTFILE>
+  </PP_INFO>
+  <PP_HEADER
+     element="O"
+     pseudo_type="USPP"
+     is_ultrasoft="true"
+     is_paw="false"
+     z_valence="6.000000000000E+000"/>
+</UPF>
+"""
+
+# A header that flags itself ultrasoft without naming a ``pseudo_type``, which
+# is the only thing the boolean flags decide: every other file states both.
+UPF_V2_FLAGGED_BUT_UNNAMED = """\
+<UPF version="2.0.1">
+  <PP_HEADER
+     element="Si"
+     is_ultrasoft="true"
+     is_paw="false"
+     z_valence="4.000000000000E+000"/>
+</UPF>
+"""
+
+# An ultrasoft header on a file that stops partway through its first data
+# block, as an interrupted copy does. Reading the whole file raises; the header
+# is intact and says what the pseudopotential is.
+UPF_V2_ULTRASOFT_WITH_UNREADABLE_BODY = """\
+<UPF version="2.0.1">
+  <PP_HEADER
+     element="Si"
+     pseudo_type="USPP"
+     is_ultrasoft="true"
+     is_paw="false"
+     z_valence="4.000000000000E+000"/>
+  <PP_LOCAL type="real" size="4" columns="4">
+ -1.0000000000E+00 -2.0000000000E+00
+"""
+
+# SG15's ONCV silicon (Si_ONCV_PBE-1.2.upf), the norm-conserving control.
+UPF_V2_NORM_CONSERVING_HEADER = """\
+<UPF version="2.0.1">
+  <PP_HEADER
+     element="Si"
+     pseudo_type="NC"
+     relativistic="scalar"
+     is_ultrasoft="F"
+     is_paw="F"
+     z_valence="4.000000000000E+000"/>
+</UPF>
+"""
+
+
+def fake_upf_content(
+    element: str,
+    z_valence: float,
+    has_so: bool | None = False,
+    info: str | None = None,
+    pseudo_type: str | None = None,
+    number_of_wfc: int | None = 2,
+) -> str:
     """Return a synthetic UPF v2 stream for the fake test pseudos.
 
     Shaped for the line-based block extractors in aiida-wannier90-workflows'
@@ -489,18 +644,101 @@ def fake_upf_content(element: str, z_valence: float, has_so: bool | None = False
     generators always write it, and an attribute-bearing header without it
     makes the upstream sniffing crash, which the dispatcher converts into an
     error naming the pseudo. ``has_so=None`` omits the flag to exercise
-    exactly that guard.
+    exactly that guard. ``info`` fills the ``PP_INFO`` block real generators
+    write, which gives two otherwise identical streams content of their own.
+    ``pseudo_type`` writes the header attribute real generators use to say
+    what kind of pseudopotential this is ("NC", "US", "PAW"), along with the
+    ``is_ultrasoft``/``is_paw`` flags that agree with it; omitted by default,
+    which is the header that says nothing.
+    ``number_of_wfc`` is the header's count of ``PP_PSWFC`` wavefunctions
+    (2, matching the s+p block); ``0`` writes an empty-valence pseudo with
+    the block dropped, ``None`` omits the attribute while keeping the block.
     """
     has_so_line = "" if has_so is None else f'has_so="{"T" if has_so else "F"}"\n'
+    info_block = "" if info is None else f"<PP_INFO>\n{info}\n</PP_INFO>\n"
+    if pseudo_type is None:
+        type_lines = ""
+    else:
+        ultrasoft = "T" if pseudo_type.upper() in {"US", "USPP"} else "F"
+        paw = "T" if pseudo_type.upper() == "PAW" else "F"
+        type_lines = f'pseudo_type="{pseudo_type}"\nis_ultrasoft="{ultrasoft}"\nis_paw="{paw}"\n'
+    wfc_line = "" if number_of_wfc is None else f'number_of_wfc="{number_of_wfc}"\n'
+    pswfc_block = (
+        ""
+        if number_of_wfc == 0
+        else '<PP_PSWFC>\n<PP_CHI.1 l="0"/>\n<PP_CHI.2 l="1"/>\n</PP_PSWFC>\n'
+    )
     return (
         f'<UPF version="2.0.1">\n'
+        f"{info_block}"
         f'<PP_HEADER\nelement="{element}"\n'
-        f'z_valence="{z_valence}"\n{has_so_line}/>\n'
-        f"<PP_PSWFC>\n"
-        f'<PP_CHI.1 l="0"/>\n<PP_CHI.2 l="1"/>\n'
-        f"</PP_PSWFC>\n"
+        f'z_valence="{z_valence}"\n{type_lines}{wfc_line}{has_so_line}/>\n'
+        f"{pswfc_block}"
         f"</UPF>\n"
     )
+
+
+# One member per (element, revision, relativistic variant), laid out flat under
+# a single directory as the published SG15 tarball is. The coverage mirrors the
+# real archive's: silicon is fully relativistic only at 1.1 and oxygen only at
+# 1.0, so a family holding both is one that composed 1.1 over 1.0. Every file
+# names its own revision in ``PP_INFO``, which is what lets a test say which of
+# them an installed pseudopotential is.
+SG15_ARCHIVE_MEMBERS: dict[str, tuple[str, float, bool, str]] = {
+    # 1.1 before 1.0 deliberately: overlay precedence must come from the
+    # revision, not from the order the tarball happens to list its members.
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.1.upf": ("Si", 4.0, False, "1.1"),
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.0.upf": ("Si", 4.0, False, "1.0"),
+    "sg15_oncv_upf_2020-02-06/O_ONCV_PBE-1.0.upf": ("O", 6.0, False, "1.0"),
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE-1.2.upf": ("Si", 4.0, False, "1.2"),
+    "sg15_oncv_upf_2020-02-06/O_ONCV_PBE-1.2.upf": ("O", 6.0, False, "1.2"),
+    "sg15_oncv_upf_2020-02-06/O_ONCV_PBE_FR-1.0.upf": ("O", 6.0, True, "1.0"),
+    "sg15_oncv_upf_2020-02-06/Si_ONCV_PBE_FR-1.1.upf": ("Si", 4.0, True, "1.1"),
+}
+
+
+@pytest.fixture
+def offline_sg15_archive(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Serve a synthetic SG15 tarball from ``urlopen``, pinned to its own checksum.
+
+    Returns each member's UPF stream keyed by filename, so a test can assert
+    which revision an installed pseudopotential came from. The published
+    archive is never downloaded.
+    """
+    import hashlib
+    import tarfile
+    import urllib.request
+
+    from koopmans.aiida.setup.pseudos import _sg15
+
+    contents = {
+        Path(name).name: fake_upf_content(
+            element, z_valence, has_so=has_so, info=f"SG15 ONCV revision {revision}"
+        )
+        for name, (element, z_valence, has_so, revision) in SG15_ARCHIVE_MEMBERS.items()
+    }
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        # The real tarball carries a directory entry and a README the
+        # installer's member walk must step over, so the fixture does too.
+        directory = tarfile.TarInfo("sg15/")
+        directory.type = tarfile.DIRTYPE
+        tar.addfile(directory)
+        readme = b"SG15 ONCV potentials"
+        info = tarfile.TarInfo("sg15/README")
+        info.size = len(readme)
+        tar.addfile(info, io.BytesIO(readme))
+        for name in SG15_ARCHIVE_MEMBERS:
+            payload = contents[Path(name).name].encode("utf-8")
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+    archive = buffer.getvalue()
+
+    monkeypatch.setattr(_sg15, "ARCHIVE_SHA256", hashlib.sha256(archive).hexdigest())
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url: io.BytesIO(archive))
+    return contents
 
 
 @pytest.fixture
@@ -514,16 +752,24 @@ def _install_fake_family(
     elements: dict[str, float],
     cutoffs: bool = False,
     has_so: bool = False,
+    recommended_cutoffs: bool = True,
+    pseudo_type: str | None = None,
+    number_of_wfc: int | None = 2,
 ) -> Any:
     """Install (or fetch) a fake pseudopotential family with synthetic UPF streams.
 
     The streams are enough for ``UpfData`` validation, not physically
     meaningful pseudos. ``cutoffs=True`` builds a
     ``CutoffsPseudoPotentialFamily`` with recommended cutoffs — needed by
-    builders that call ``get_builder_from_protocol`` eagerly at build time
-    (the aiida-qe protocol machinery only accepts SSSP, PseudoDojo, or a
-    cutoffs family); plain families cover ``ensure_pseudo_family_installed``.
+    a build that states none of its own; ``cutoffs=False`` builds a plain
+    ``PseudoPotentialFamily``, the shape both ``aiida-pseudo install family``
+    and ``_sg15.install`` produce.
+    ``recommended_cutoffs=False`` leaves the cutoffs family with no stringency
+    defined, the shape ``-F pseudo.family.cutoffs`` produces on its own.
     ``has_so=True`` marks every pseudo fully relativistic.
+    ``pseudo_type`` writes that kind into every pseudo's header.
+    ``number_of_wfc=0`` gives every pseudo a header reporting no ``PP_PSWFC``
+    atomic wavefunctions.
     """
     from aiida.common.exceptions import NotExistent
     from aiida_pseudo.data.pseudo.upf import UpfData
@@ -542,11 +788,13 @@ def _install_fake_family(
     family.store()
     pseudos = []
     for element, z_valence in elements.items():
-        content = fake_upf_content(element, z_valence, has_so=has_so)
+        content = fake_upf_content(
+            element, z_valence, has_so=has_so, pseudo_type=pseudo_type, number_of_wfc=number_of_wfc
+        )
         upf = UpfData(io.BytesIO(content.encode("utf-8")), filename=f"{element}.upf")
         pseudos.append(upf.store())
     family.add_nodes(pseudos)
-    if cutoffs:
+    if cutoffs and recommended_cutoffs:
         family.set_cutoffs(
             {element: {"cutoff_wfc": 30.0, "cutoff_rho": 240.0} for element in elements},
             stringency="normal",
@@ -571,6 +819,96 @@ def fake_sg15_cutoffs_family(aiida_profile: Any) -> Any:
 
 
 @pytest.fixture
+def fake_sg15_family_without_cutoffs(aiida_profile: Any) -> Any:
+    """Install ``SG15/1.1/PBE/FR`` as a cutoffs family with no stringency defined.
+
+    The half-configured shape a user reaches by passing
+    ``-F pseudo.family.cutoffs`` and never running ``aiida-pseudo family
+    cutoffs set``: it can recommend no cutoffs. A label of its own so it
+    coexists with the other SG15 fixtures in one session profile.
+    """
+    return _install_fake_family(
+        "SG15/1.1/PBE/FR", {"Si": 4.0}, cutoffs=True, recommended_cutoffs=False
+    )
+
+
+def count_pw_bands_runs(wg: Any) -> int:
+    """Count the graph's pw steps that declare ``calculation = 'bands'``.
+
+    Counting tasks *named* ``bands`` is vacuous: aiida-workgraph uniquifies
+    colliding task names, so a duplicated run shows up as ``bands1`` and
+    the name count stays at 1. The declared ``CONTROL.calculation`` on the
+    step's own ``pw`` namespace cannot be disguised that way.
+    """
+    count = 0
+    for graph_task in wg.tasks:
+        try:
+            parameters = graph_task.inputs["pw"]["parameters"].value
+        except (AttributeError, KeyError, TypeError):
+            continue
+        if parameters is None:
+            continue
+        parameters = parameters.get_dict() if hasattr(parameters, "get_dict") else dict(parameters)
+        if parameters.get("CONTROL", {}).get("calculation") == "bands":
+            count += 1
+    return count
+
+
+def path_labels(kpoints: Any) -> list[str]:
+    """Return the labels of an explicit k-path node, in path order."""
+    assert kpoints is not None, "no k-path node reached the calculation"
+    return [label for _, label in kpoints.labels]
+
+
+@pytest.fixture
+def fake_family_without_pswfc(aiida_profile: Any) -> Any:
+    """Install a cutoffs family whose Si pseudo carries no ``PP_PSWFC`` block.
+
+    The shape projwfc.x cannot project onto: the header reports
+    ``number_of_wfc="0"`` and the block is absent, so the projected DOS
+    must be skipped with a warning rather than attempted.
+    """
+    return _install_fake_family("MyPseudos/no-pswfc", {"Si": 4.0}, cutoffs=True, number_of_wfc=0)
+
+
+@pytest.fixture
+def fake_ultrasoft_family(aiida_profile: Any) -> Any:
+    """Install a self-built family whose Si pseudopotential is ultrasoft.
+
+    The label says nothing about the kind of pseudopotential inside, which is
+    the whole point: only the header does.
+    """
+    return _install_fake_family("MyPseudos/ultrasoft", {"Si": 4.0}, cutoffs=True, pseudo_type="US")
+
+
+@pytest.fixture
+def fake_coulomb_family(aiida_profile: Any) -> Any:
+    """Install a self-built family whose Si pseudopotential is a bare Coulomb potential."""
+    return _install_fake_family("MyPseudos/coulomb", {"Si": 4.0}, cutoffs=True, pseudo_type="1/r")
+
+
+@pytest.fixture
+def fake_paw_family(aiida_profile: Any) -> Any:
+    """Install a self-built family whose Si pseudopotential is PAW."""
+    return _install_fake_family("MyPseudos/paw", {"Si": 4.0}, cutoffs=True, pseudo_type="PAW")
+
+
+@pytest.fixture
+def fake_declared_nc_family(aiida_profile: Any) -> Any:
+    """Install a self-built family whose Si pseudopotential declares itself NC."""
+    return _install_fake_family("MyPseudos/nc", {"Si": 4.0}, cutoffs=True, pseudo_type="NC")
+
+
+@pytest.fixture
+def fake_user_built_family(aiida_profile: Any) -> Any:
+    """Install a plain family, the shape ``aiida-pseudo install family`` produces.
+
+    No cutoff stringencies are even representable on this family class.
+    """
+    return _install_fake_family("MyPseudos/local", {"Si": 4.0})
+
+
+@pytest.fixture
 def fake_sg15_fr_cutoffs_family(aiida_profile: Any) -> Any:
     """Install a fake fully-relativistic ``SG15/1.0/PBE/FR`` cutoffs family (O and Si)."""
     return _install_fake_family("SG15/1.0/PBE/FR", {"O": 6.0, "Si": 4.0}, cutoffs=True, has_so=True)
@@ -584,6 +922,125 @@ def fake_pseudodojo_lda_family(aiida_profile: Any) -> Any:
     (ZnO: nelec 52, nocc 26).
     """
     return _install_fake_family("PseudoDojo/0.4/LDA/SR/standard/upf", {"Zn": 20.0, "O": 6.0})
+
+
+def silicon_pw_input(
+    *,
+    pseudo_library: str = "SG15/1.2/PBE/SR",
+    parallelization: dict[str, Any] | None = None,
+    calculator_parameters: dict[str, Any] | None = None,
+    kpoints: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a minimal silicon ``dft_bands`` input dict for the wiring tests.
+
+    ``calculator_parameters`` replaces the default ``{"ecutwfc": 20.0}`` block
+    outright, so a caller can leave the cutoffs out entirely.
+    """
+    d: dict[str, Any] = {
+        "workflow": {"task": "dft_bands", "pseudo_library": pseudo_library},
+        "atoms": {
+            "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
+            "atomic_positions": {
+                "units": "crystal",
+                "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
+            },
+        },
+        "kpoints": kpoints or {"grid": [2, 2, 2], "offset": [0, 0, 0]},
+        "calculator_parameters": (
+            {"ecutwfc": 20.0} if calculator_parameters is None else calculator_parameters
+        ),
+    }
+    if parallelization is not None:
+        d["parallelization"] = parallelization
+    return d
+
+
+def write_koopmans_input(directory: Path, name: str = "si.yaml") -> Path:
+    """Write :func:`silicon_pw_input` into ``directory`` and return its path."""
+    import yaml
+
+    path = directory / name
+    path.write_text(yaml.safe_dump(silicon_pw_input()))
+    return path
+
+
+def skip_profile_loading(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand in for ``load_koopmans_profile``: the test profile is already loaded.
+
+    ``koopmans.cli`` always loads the profile named "koopmans" by name,
+    which does not exist under the throwaway test profile the AiiDA
+    pytest fixtures set up.
+    """
+    import koopmans.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "load_koopmans_profile", lambda: None)
+
+
+def pw_step_from_overrides(code: Any, structure: Any, overrides: dict[str, Any]) -> Any:
+    """Return the ``pw`` sub-builder one scf or nscf step assembles from ``overrides``.
+
+    Mirrors ``aiida_koopmans.workgraphs.pw.assemble_pw_base_step``, which hands
+    a route's per-step override entry to this builder when the step runs. Use
+    it on an entry taken off a built graph to see what the pw.x calculation
+    receives.
+    """
+    from aiida_quantumespresso.workflows.pw.base import PwBaseWorkChain
+
+    return PwBaseWorkChain.get_builder_from_protocol(
+        code=code, structure=structure, overrides=overrides
+    ).pw
+
+
+def make_process(
+    process_type: str = "",
+    caller: Any = None,
+    link_label: str = "step",
+    label: str = "",
+    exit_status: int = 0,
+    exit_message: str | None = None,
+    calcjob: bool = False,
+    computer: Any = None,
+    process_label: str | None = None,
+    inputs: dict[str, Any] | None = None,
+) -> Any:
+    """Return a stored, finished process node of the given ``process_type``.
+
+    ``process_type`` is the formal AiiDA process type string (what
+    resolvers like ``koopmans.plotting`` key off); ``process_label`` is
+    the display name the live progress table and ``koopmans status``
+    read instead (``node.process_label``, left unset by default). Link
+    ``caller`` in as this node's parent via a real ``CALL_WORK``/
+    ``CALL_CALC`` link, under ``link_label``, so callers that walk the
+    process tree by its call links see this node as a child. ``inputs``
+    links data nodes as the process's own inputs, keyed by link label
+    (``__`` separating namespace levels, e.g. ``pw__parameters``), so
+    resolvers that key off a run's declared inputs (rather than its
+    process type) have something to read.
+    """
+    from aiida import orm
+    from aiida.common.links import LinkType
+    from plumpy.process_states import ProcessState
+
+    node: Any = orm.CalcJobNode() if calcjob else orm.WorkflowNode()
+    node.process_type = process_type
+    node.label = label
+    if calcjob:
+        node.computer = computer
+        node.set_option("resources", {"num_machines": 1})
+    if caller is not None:
+        link_type = LinkType.CALL_CALC if calcjob else LinkType.CALL_WORK
+        node.base.links.add_incoming(caller, link_type=link_type, link_label=link_label)
+    for name, data in (inputs or {}).items():
+        input_type = LinkType.INPUT_CALC if calcjob else LinkType.INPUT_WORK
+        node.base.links.add_incoming(data.store(), link_type=input_type, link_label=name)
+    node.store()
+    if process_label is not None:
+        node.set_process_label(process_label)
+    node.set_process_state(ProcessState.FINISHED)
+    node.set_exit_status(exit_status)
+    if exit_message is not None:
+        node.set_exit_message(exit_message)
+    return node
 
 
 def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:
