@@ -501,11 +501,71 @@ class TestPerStepKpoints:
         assert inp.kpoints.overrides.scf is not None
         assert inp.kpoints.overrides.scf.offset == (0.5, 0.5, 0.5)
 
+    def test_wannier90_density_is_unset_without_being_stated(self) -> None:
+        """Left out, the entry is unset, like ``scf``/``nscf``: no override to apply."""
+        from koopmans.aiida.conversion import wannier90_path_density
+
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(grid=[2, 2, 2]))
+        assert inp.kpoints.overrides.wannier90 is None
+        assert wannier90_path_density(inp.kpoints) == 50.0
+
+    def test_wannier90_density_can_be_set_explicitly(self) -> None:
+        """A stated ``overrides.wannier90.path_density`` overrides the default."""
+        from koopmans.aiida.conversion import wannier90_path_density
+
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(grid=[2, 2, 2], overrides={"wannier90": {"path_density": 80.0}})
+        )
+        assert inp.kpoints.overrides.wannier90 is not None
+        assert inp.kpoints.overrides.wannier90.path_density == 80.0
+        assert wannier90_path_density(inp.kpoints) == 80.0
+
+    def test_wannier90_override_survives_a_dump_and_revalidate_round_trip(self) -> None:
+        """An unset entry must not look "stated" after ``model_dump`` re-validates.
+
+        ``model_dump`` serializes every field, default or not; if the unset
+        sentinel were anything other than ``None`` the round trip used to
+        build input variants throughout the test suite would make every
+        input look like it explicitly gave ``overrides.wannier90``.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(gamma_only=True))
+        round_tripped = KoopmansInput.model_validate(inp.model_dump())
+        assert round_tripped.kpoints.overrides.wannier90 is None
+
+    def test_wannier90_entry_has_no_mesh_fields(self, tmp_path: Path) -> None:
+        """The wannier90 entry states a density, not a mesh: it has no `grid` to give."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(
+                _si_input_with_kpoints(grid=[2, 2, 2], overrides={"wannier90": {"grid": [4, 4, 4]}})
+            )
+        )
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.grid.*is not a valid keyword"):
+            read_input_file(input_file)
+
     def test_gamma_only_has_no_steps_to_override(self) -> None:
         """Every step of a gamma-only calculation samples the same one point."""
         with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
             KoopmansInput.model_validate(
                 _si_input_with_kpoints(gamma_only=True, overrides={"scf": {"grid": [4, 4, 4]}})
+            )
+
+    def test_gamma_only_accepts_an_unstated_wannier90_default(self) -> None:
+        """A gamma-only input never mentioning `overrides.wannier90` still validates.
+
+        `wannier90` is unset by default, like `scf`/`nscf`; only an input
+        that states it itself has anything to reject.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(gamma_only=True))
+        assert inp.kpoints.overrides.wannier90 is None
+
+    def test_gamma_only_rejects_a_stated_wannier90_density(self) -> None:
+        """Gamma-only samples one point, so there is no band structure to interpolate."""
+        with pytest.raises(ValueError, match=r"overrides\.wannier90.*gamma_only"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(
+                    gamma_only=True, overrides={"wannier90": {"path_density": 80.0}}
+                )
             )
 
     def test_gamma_only_rejects_a_mesh_built_as_a_model(self) -> None:
@@ -518,12 +578,12 @@ class TestPerStepKpoints:
         from koopmans.input_file import (
             GammaOnlyKpointsInput,
             KpointsOverridesInput,
-            StepKpointsInput,
+            StepKpointsOverridesInput,
         )
 
         with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
             GammaOnlyKpointsInput(
-                overrides=KpointsOverridesInput(scf=StepKpointsInput(grid=(4, 4, 4)))
+                overrides=KpointsOverridesInput(scf=StepKpointsOverridesInput(grid=(4, 4, 4)))
             )
 
     @pytest.mark.parametrize("overrides", ["scf", [{"grid": [4, 4, 4]}], 4])

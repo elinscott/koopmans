@@ -57,7 +57,7 @@ class TestWalkFailedDescendants:
         failures = progress._walk_failed_descendants(root)
 
         assert len(failures) == 1
-        _pk, label, exit_status, message, state = failures[0]
+        label, exit_status, message, state = failures[0]
         assert label == "PwBaseWorkChain"
         assert exit_status == 402
         assert message == "pw.x did not converge"
@@ -71,8 +71,8 @@ class TestWalkFailedDescendants:
 
         failures = progress._walk_failed_descendants(root)
 
-        assert [f[1:3] for f in failures] == [("WorkGraph<Tiny>", 1)]
-        assert failures[0][4] == "failed"
+        assert [f[:2] for f in failures] == [("WorkGraph<Tiny>", 1)]
+        assert failures[0][3] == "failed"
 
     def test_a_cascading_failure_reports_both_wrapper_and_cause(
         self, aiida_profile_clean: Any
@@ -94,7 +94,20 @@ class TestWalkFailedDescendants:
 
         failures = progress._walk_failed_descendants(root)
 
-        assert [label for _, label, _, _, _ in failures] == ["WorkGraph<Tiny>", "PwBaseWorkChain"]
+        assert [label for label, _, _, _ in failures] == ["WorkGraph<Tiny>", "PwBaseWorkChain"]
+
+    def test_a_failure_carries_no_node_identifier(self, aiida_profile_clean: Any) -> None:
+        """The walk reports what failed and how, and nothing that names a node.
+
+        The summary this feeds has no use for a pk, so the pk does not
+        travel: putting one back on a line means re-plumbing it here,
+        where this test fails.
+        """
+        root = make_process(process_label="WorkGraph<Tiny>", exit_status=1)
+
+        failures = progress._walk_failed_descendants(root)
+
+        assert failures == [("WorkGraph<Tiny>", 1, None, "failed")]
 
 
 class TestRenderProcessOnce:
@@ -135,6 +148,31 @@ class TestRenderProcessOnce:
         assert "402" in output
         assert "pw.x did not converge" in output
         assert "finished with status: 1" in output
+
+    def test_a_failed_step_is_named_without_a_node_identifier(
+        self, aiida_profile_clean: Any
+    ) -> None:
+        """The step's name and its exit status are the whole line.
+
+        A pk names the process for anyone reading AiiDA's own database
+        and nothing for anyone else, so the failed step is identified by
+        the name it carries in the table above it.
+        """
+        root = make_process(process_label="WorkGraph<Tiny>", exit_status=1)
+        make_process(
+            caller=root,
+            link_label="scf",
+            process_label="PwBaseWorkChain",
+            exit_status=402,
+            exit_message="pw.x did not converge",
+        )
+        console, buffer = _capturing_console()
+
+        progress.render_process_once(root, console=console)
+
+        # Pinned whole: any identifier added back lands on this line.
+        line = next(text for text in buffer.getvalue().splitlines() if "Pw Base Work Chain" in text)
+        assert line.strip() == "Pw Base Work Chain — exit status 402: pw.x did not converge"
 
     def test_a_killed_step_says_killed_not_excepted(self, aiida_profile_clean: Any) -> None:
         """A killed descendant has no exit status, but it was not excepted either.

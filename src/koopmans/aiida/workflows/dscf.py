@@ -53,6 +53,15 @@ _KCP_TAKES_ONE_MESH = (
     "`kpoints.grid`.{alternative}"
 )
 
+#: The Wannier-seeded route folds Wannier functions to a supercell for
+#: kcp.x initialisation, not an interpolated band structure along a path,
+#: so a wannier90 interpolation density has nothing to describe.
+_KCP_HAS_NO_INTERPOLATION = (
+    "`kpoints.overrides.wannier90.path_density` cannot take effect on the kcp.x route: "
+    "its Wannier initialisation folds Wannier functions to a supercell off the one mesh "
+    "`kpoints.grid` describes, not an interpolated band structure along a path."
+)
+
 KPOINT_OVERRIDES_ON_DSCF = {
     step: _KCP_TAKES_ONE_MESH.format(
         step=step,
@@ -60,12 +69,14 @@ KPOINT_OVERRIDES_ON_DSCF = {
     )
     for step in ("scf", "nscf")
 }
+KPOINT_OVERRIDES_ON_DSCF["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 
 #: The same rejection without the DFPT alternative, which the trajectory task
 #: does not offer.
 KPOINT_OVERRIDES_ON_TRAJECTORY = {
     step: _KCP_TAKES_ONE_MESH.format(step=step, alternative="") for step in ("scf", "nscf")
 }
+KPOINT_OVERRIDES_ON_TRAJECTORY["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 
 
 def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:

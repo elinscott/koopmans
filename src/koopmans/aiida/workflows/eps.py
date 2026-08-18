@@ -46,7 +46,10 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         {
             "nscf": "`kpoints.overrides.nscf` cannot take effect in a `dft_eps` "
             "calculation: it runs one scf and then ph.x, with no nscf step. Set "
-            "`kpoints.overrides.scf` or `kpoints.grid`."
+            "`kpoints.overrides.scf` or `kpoints.grid`.",
+            "wannier90": "`kpoints.overrides.wannier90.path_density` cannot take effect in "
+            "a `dft_eps` calculation: it runs no Wannierization, so there is no "
+            "wannier90 interpolation to densify.",
         },
     )
 
