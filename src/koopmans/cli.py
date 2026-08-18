@@ -824,6 +824,7 @@ class _PositionalAwareOption(click.Option):
         return f"_folder_pairing_positions:{self.name}"
 
     def add_to_parser(self, parser: click.parser.OptionParser, ctx: click.Context) -> None:
+        """Register the option, wrapping its parser hook to record positions."""
         super().add_to_parser(parser, ctx)
         positions: list[int] = []
         ctx.meta[self.positions_key()] = positions
@@ -852,6 +853,7 @@ def _recording_process(
     """Wrap a parser option's ``process`` to record its folder count first."""
 
     def wrapped(value: Any, state: click.parser.ParsingState) -> None:
+        """Record the folders seen so far, then hand the value to click."""
         try:
             largs = state.largs
         except AttributeError as exc:
