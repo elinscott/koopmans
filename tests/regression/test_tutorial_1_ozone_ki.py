@@ -136,6 +136,8 @@ def test_build_workgraph_spin_polarized(
 
     d = tutorial_1_ozone_input.model_dump()
     d["workflow"]["spin"] = "collinear"
+    # Ozone is closed-shell, but a collinear run states its moment either way.
+    d["calculator_parameters"]["tot_magnetization"] = 0
     inp = KoopmansInput.model_validate(d)
 
     workgraph = build_workgraph(inp)
