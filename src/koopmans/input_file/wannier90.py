@@ -1,39 +1,17 @@
 """Input parameters for ``wannier90.x`` calculations."""
 
-from typing import Any, ClassVar, Self
+from typing import Any, Self
 
 from pydantic import Field, model_validator
-from wannier90_input.models.latest import Wannier90Input
-from wannier90_input.models.parameters import (
-    AtomCart,
-    AtomFrac,
-    Coordinate,
-    FractionalCoordinate,
-    Projection,
-)
+from wannier90_input.models.parameters import Projection
+
+from koopmans.input_file._generated.wannier90 import _Wannier90Input
 
 __all__ = ["RestrictedWannier90InputParameters"]
 
 
-class RestrictedWannier90InputParameters(Wannier90Input):
-    """Wannier90 input parameters, excluding those that ``koopmans`` manages itself.
-
-    The structure and k-points are stored centrally in the input file, the
-    band/projection bookkeeping is derived by the workflow, and automatic
-    projections are requested via ``workflow.auto_projections``, so those
-    keywords are demoted to class variables to drop them from the pydantic
-    schema (see ``pw.py`` for the ClassVar rationale and the mypy ignores).
-    """
-
-    num_wann: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    num_bands: ClassVar[int | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    exclude_bands: ClassVar[list[int] | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    unit_cell_cart: ClassVar[list[Coordinate] | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    atoms_cart: ClassVar[list[AtomCart] | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    atoms_frac: ClassVar[list[AtomFrac] | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    mp_grid: ClassVar[tuple[int, int, int] | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    kpoints: ClassVar[list[FractionalCoordinate] | None] = None  # type: ignore[misc, assignment, unused-ignore]
-    auto_projections: ClassVar[bool | None] = None  # type: ignore[misc, assignment, unused-ignore]
+class RestrictedWannier90InputParameters(_Wannier90Input):
+    """Wannier90 input parameters, excluding those that ``koopmans`` manages itself."""
 
     # Redefined (not excluded): in the input file, projections are specified as a
     # list of lists to separate each block

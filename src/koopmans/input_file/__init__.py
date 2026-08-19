@@ -408,42 +408,13 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: PW2Wannier90InputParameters()
     )
     wannier90: Wannier90InputParametersWithUpDown = Field(
-        default_factory=lambda: Wannier90InputParametersWithUpDown()  # type: ignore[call-arg]
+        default_factory=lambda: Wannier90InputParametersWithUpDown()
     )
     unfold_and_interpolate: UnfoldAndInterpolateConfig = Field(
         default_factory=lambda: UnfoldAndInterpolateConfig()
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
     kcw: KCWInputParameters = Field(default_factory=lambda: KCWInputParameters())
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_removed_per_calculator_cutoffs(cls, data: Any) -> Any:
-        """Point a per-calculator cutoff at the single ``ecutwfc`` field.
-
-        ``pw.system``/``kcp.system`` no longer carry their own
-        ``ecutwfc``/``ecutrho``: pw.x and kcp.x always share one grid, derived
-        from ``calculator_parameters.ecutwfc``. Runs before field validation,
-        so it reports the removed spelling instead of the generic
-        "extra_forbidden" error the nested model would otherwise raise.
-
-        Raises:
-            ValueError: If any of the four removed keys is present.
-        """
-        if not isinstance(data, dict):
-            return data
-        for calc in ("pw", "kcp"):
-            system = data.get(calc)
-            if not isinstance(system, dict) or not isinstance(system.get("system"), dict):
-                continue
-            for key in ("ecutwfc", "ecutrho"):
-                if key in system["system"]:
-                    raise ValueError(
-                        f"`calculator_parameters.{calc}.system.{key}` no longer exists. "
-                        "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four "
-                        "times it."
-                    )
-        return data
 
 
 class KoopmansInput(BaseModel):
