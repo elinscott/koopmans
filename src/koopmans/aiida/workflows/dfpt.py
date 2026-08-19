@@ -50,6 +50,7 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
 
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
+        input_to_kcw_overrides,
         kpoints_input_to_interpolation_path,
         step_kpoints_mesh,
     )
@@ -148,6 +149,8 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
     nscf_mesh = step_kpoints_mesh(koopmans_input.kpoints, "nscf")
 
+    kcw_overrides = input_to_kcw_overrides(koopmans_input)
+
     return SinglepointDFPTWorkflow.build(
         codes=codes,
         structure=structure,
@@ -164,6 +167,7 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
         spin=spin,
         manifolds=manifolds,
         group_orbitals_tol=group_orbitals_tol,
+        kcw_overrides=kcw_overrides or None,
         parallelization=koopmans_input.parallelization.as_mapping() or None,
     )
 

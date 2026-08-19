@@ -29,6 +29,7 @@ from koopmans.input_file.cell_parameters import (
     CellParametersViaVectors,
 )
 from koopmans.input_file.kcp import KCPInputParameters
+from koopmans.input_file.kcw import KCWInputParameters
 from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.parallelization import ParallelizationInput
 from koopmans.input_file.ph import PHInputParameters
@@ -53,6 +54,7 @@ __all__ = [
     "GridKpointsInput",
     "IntegerMagnetization",
     "KCPInputParameters",
+    "KCWInputParameters",
     "KoopmansInput",
     "KpointOffset",
     "KpointsOverridesInput",
@@ -412,6 +414,7 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: UnfoldAndInterpolateConfig()
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
+    kcw: KCWInputParameters = Field(default_factory=lambda: KCWInputParameters())
 
 
 class KoopmansInput(BaseModel):
