@@ -394,19 +394,6 @@ class Wannier90InputParametersWithUpDown(RestrictedWannier90InputParameters):
         return self
 
 
-#: Keywords retired from ``calculator_parameters.kcp.system``, each with the
-#: field that replaced it. Every one duplicated a field of
-#: ``calculator_parameters`` itself, which is where koopmans reads it from.
-_REMOVED_KCP_SYSTEM_KEYWORDS: dict[str, str] = {
-    "ecutwfc": "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four times it.",
-    "ecutrho": "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four times it.",
-    "tot_magnetization": (
-        "Set `calculator_parameters.tot_magnetization`; it is the magnetization "
-        "koopmans hands kcp.x."
-    ),
-}
-
-
 class CalculatorParametersInput(BaseModel):
     """Calculator-specific input parameters."""
 
@@ -425,31 +412,6 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: UnfoldAndInterpolateConfig()
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_removed_kcp_keywords(cls, data: Any) -> Any:
-        """Point a retired ``kcp.system`` keyword at the field that replaced it.
-
-        Runs before field validation, so it reports the removed spelling
-        instead of the generic "extra_forbidden" error the nested model
-        would otherwise raise. The ``pw`` spellings are reported by the
-        generated model itself (see ``koopmans.input_file._codegen``).
-
-        Raises:
-            ValueError: If a removed key is present.
-        """
-        if not isinstance(data, dict):
-            return data
-        kcp = data.get("kcp")
-        if not isinstance(kcp, dict) or not isinstance(kcp.get("system"), dict):
-            return data
-        for key, replacement in _REMOVED_KCP_SYSTEM_KEYWORDS.items():
-            if key in kcp["system"]:
-                raise ValueError(
-                    f"`calculator_parameters.kcp.system.{key}` no longer exists. {replacement}"
-                )
-        return data
 
 
 class KoopmansInput(BaseModel):
