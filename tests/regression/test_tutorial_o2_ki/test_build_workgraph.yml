@@ -1486,7 +1486,6 @@ raw:
         is_first_iteration: false
         metadata:
           label: Final KI
-        write_hr: false
       log: ''
       metadata:
         pk: <scrubbed:pk>
