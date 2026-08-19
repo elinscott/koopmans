@@ -5,11 +5,12 @@ The majority are untested and commented out for safety.
 """
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from koopmans.base import BaseModel
+from koopmans.input_file._utils import raise_for_owned_keywords
 
 # ruff: noqa: ERA001
 
@@ -70,8 +71,27 @@ class ControlNamelist(BaseModel):
     print_real_space_density: bool = False
 
 
+#: Keywords retired from this namelist, each with the field that replaced it.
+#: Every one duplicated a field of ``calculator_parameters`` itself, which is
+#: where koopmans reads it from.
+_KCP_SYSTEM_OWNED: dict[str, str] = {
+    "ecutwfc": "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four times it.",
+    "ecutrho": "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four times it.",
+    "tot_magnetization": (
+        "Set `calculator_parameters.tot_magnetization`; it is the magnetization "
+        "koopmans hands kcp.x."
+    ),
+}
+
+
 class SystemNamelist(BaseModel):
     """Valid keywords for the &SYSTEM namelist in kcp.x."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_owned_keywords(cls, data: Any) -> Any:
+        """Refuse a keyword koopmans determines, naming what to set instead."""
+        return raise_for_owned_keywords(data, "calculator_parameters.kcp.system", _KCP_SYSTEM_OWNED)
 
     ibrav: int = -1
     celldm: dict[int, float] = Field(default_factory=dict)

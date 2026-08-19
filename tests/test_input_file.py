@@ -1067,12 +1067,13 @@ class TestTheMomentIsWholeElectrons:
         with pytest.raises(ValueError, match="whole"):
             KoopmansInput.model_validate(d)
 
-    def test_the_pw_namelist_spelling_is_untouched(self) -> None:
-        """``pw.system.tot_magnetization`` reaches pw.x alone, under the user's occupations.
+    def test_the_pw_namelist_spelling_is_refused(self) -> None:
+        """``pw.system.tot_magnetization`` has no input-file spelling.
 
-        A fractional moment is legal there — with smearing, QE takes one —
-        so the rule belongs to the shared field the fixed-occupation routes
-        read, not to the namelist keyword.
+        The moment has exactly one spelling, ``calculator_parameters.
+        tot_magnetization``; every route that runs pw.x under ``nspin = 2``
+        writes the namelist keyword from there, so stating it directly
+        would risk a second, disagreeing value.
         """
         d = _si_input_with(
             {
@@ -1086,5 +1087,9 @@ class TestTheMomentIsWholeElectrons:
                 },
             }
         )
-        inp = KoopmansInput.model_validate(d)
-        assert inp.calculator_parameters.pw.system.tot_magnetization == pytest.approx(0.5)
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.pw.system.tot_magnetization`" in message
+        assert "`calculator_parameters.tot_magnetization`" in message
