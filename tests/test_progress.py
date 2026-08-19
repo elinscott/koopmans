@@ -1340,14 +1340,14 @@ def _unnamed(node: FakeNode) -> FakeNode:
     )
 
 
-def _as_the_engine_names_them(node: FakeNode, is_root: bool = False) -> FakeNode:
-    """Return a copy of ``node``'s tree labelled the way a live run is.
+def _as_a_pre_fix_run(node: FakeNode, is_root: bool = False) -> FakeNode:
+    """Return a copy of ``node``'s tree labelled the way a pre-fix run is.
 
-    ``aiida-workgraph`` overwrites the label of every process it launches
-    for a ``@task.graph`` with that graph's task name — the call link
-    label, or the graph function's name for the run as a whole — so the
-    names the plugin gives those never reach the database. Everything
-    else keeps its label.
+    Before aiida-workgraph ``5b140d4``, ``WorkGraphEngine.on_create``
+    replaced the label of every process launched for a ``@task.graph``
+    with that graph's task name — the call link label, or the graph
+    function's name for the run as a whole — so the names the plugin gave
+    those never reached the database. Everything else keeps its label.
     """
     label = node.label
     if node.kind == "workgraph":
@@ -1357,7 +1357,7 @@ def _as_the_engine_names_them(node: FakeNode, is_root: bool = False) -> FakeNode
         node,
         label=label,
         pk=next(_pk_counter),
-        children=[_as_the_engine_names_them(child) for child in node.children],
+        children=[_as_a_pre_fix_run(child) for child in node.children],
     )
 
 
@@ -1406,20 +1406,20 @@ class TestEveryRouteTable:
                     cast("ProcessNode", unnamed)
                 ) == progress.build_progress_rows(cast("ProcessNode", root)), name
 
-    def test_a_run_named_as_the_engine_names_it_renders_the_same(self) -> None:
-        """A ``@task.graph``'s name is discarded before it reaches the database.
+    def test_a_run_recorded_before_the_label_fix_renders_the_same(self) -> None:
+        """A database written before aiida-workgraph ``5b140d4`` still reads right.
 
-        ``aiida-workgraph`` overwrites it with the graph's task name, so
-        what a live run carries on those processes is the call link label
-        the lookup is keyed on rather than a name. The rows must read the
-        same either way, or the table would show internal identifiers on
-        every route as long as that holds — and would change again, of
-        its own accord, once it stops.
+        That engine replaced a ``@task.graph``'s label with the graph's
+        task name, so every sub-graph of such a run carries the call link
+        label the lookup is keyed on rather than a name. The rows must
+        read the same either way, or those runs would show internal
+        identifiers on every route while a run made today reads
+        correctly.
         """
         registry: dict[int, FakeNode] = {}
         with stubbed_lookups(registry):
             for name, root in ROUTES.items():
-                as_run = _as_the_engine_names_them(root, is_root=True)
+                as_run = _as_a_pre_fix_run(root, is_root=True)
                 _register(root, registry)
                 _register(as_run, registry)
                 assert progress.build_progress_rows(

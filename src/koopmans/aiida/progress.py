@@ -157,16 +157,19 @@ def _promoted_state(state: str) -> str:
 def _is_a_name(label: str, process_node: ProcessNode) -> bool:
     """Return whether ``label`` names the process rather than identifying it.
 
-    ``aiida-workgraph`` overwrites the label of every process it launches
-    for a ``@task.graph`` with that graph's own task name, discarding the
-    one the plugin gave it (``WorkGraphEngine.on_create``, aiida-workgraph
-    0.8). What is left is the call link label, or the graph function's
-    name for the run as a whole — the same identifiers the lookup is
-    keyed on, so a label equal to either carries no name and the lookup
-    answers instead.
+    Three kinds of process arrive carrying an identifier where a name
+    would be, and the lookup answers for all three:
 
-    Drop this once a graph task's label survives; the plugin already sets
-    the names, and they will start arriving here on their own.
+    * the run as a whole, launched with no label of its own, which the
+      engine names after the graph function it runs;
+    * a sub-graph the plugin leaves unnamed — a wrapper the table sees
+      through — which the engine names after its call link label;
+    * every sub-graph of a run recorded before aiida-workgraph
+      ``5b140d4``, whose ``WorkGraphEngine.on_create`` replaced the label
+      it had been given with the graph's own name.
+
+    Both of those identifiers are what the lookup is keyed on, so a label
+    equal to either carries no name.
     """
     process_label = getattr(process_node, "process_label", None) or ""
     envelope = re.fullmatch(r"WorkGraph<(.+)>", process_label)
