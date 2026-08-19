@@ -16,13 +16,13 @@ Wannierization
   Band structure                                        pw.x
   Atomic projections                                    projwfc.x
   Wannierization (occupied block 1)
-    Preprocessing                                       wannier90.x
+    wannier90_pp                                        wannier90.x
     Overlaps                                            pw2wannier90.x
-    Minimization                                        wannier90.x
+    wannier90                                           wannier90.x
   Wannierization (empty block 1)
-    Preprocessing                                       wannier90.x
+    wannier90_pp                                        wannier90.x
     Overlaps                                            pw2wannier90.x
-    Minimization                                        wannier90.x
+    wannier90                                           wannier90.x
 
 ########## wannierize (split)
 Wannierization
@@ -33,9 +33,9 @@ Wannierization
   Atomic projections                                    projwfc.x
   Split Wannierization (block 1)
     Whole-block Wannierization
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
     Parallel-transport split                            julia
     Per-group Wannierization
       Minimization (group 1)                            wannier90.x
@@ -46,9 +46,9 @@ Wannierization
   SCF                                                   pw.x
   NSCF                                                  pw.x
   Atomic projections                                    projwfc.x
-  Preprocessing                                         wannier90.x
+  wannier90_pp                                          wannier90.x
   Overlaps                                              pw2wannier90.x
-  Minimization                                          wannier90.x
+  wannier90                                             wannier90.x
   Band structure                                        pw.x
   Atomic projections                                    projwfc.x
 
@@ -97,13 +97,13 @@ Koopmans ΔSCF
       Band structure                                    pw.x
       Atomic projections                                projwfc.x
       Wannierization (occupied block 1)
-        Preprocessing                                   wannier90.x
+        wannier90_pp                                    wannier90.x
         Overlaps                                        pw2wannier90.x
-        Minimization                                    wannier90.x
+        wannier90                                       wannier90.x
       Wannierization (empty block 1)
-        Preprocessing                                   wannier90.x
+        wannier90_pp                                    wannier90.x
         Overlaps                                        pw2wannier90.x
-        Minimization                                    wannier90.x
+        wannier90                                       wannier90.x
     Supercell folding
       Supercell Wannier functions (occupied block 1)    wann2kcp.x
       Supercell Wannier functions (empty block 1)       wann2kcp.x
@@ -153,13 +153,13 @@ Koopmans DFPT
     Band structure                                      pw.x
     Atomic projections                                  projwfc.x
     Wannierization (occupied block 1)
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
     Wannierization (empty block 1)
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
   DFPT screening
     Wannier gauge                                       kcw.x
     Orbital screening
@@ -176,13 +176,13 @@ Koopmans DFPT
     Band structure                                      pw.x
     Atomic projections                                  projwfc.x
     Wannierization (occupied block)
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
     Wannierization (empty block)
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
   DFPT screening
     Wannier gauge                                       kcw.x
     Orbital screening
@@ -199,13 +199,13 @@ Koopmans DFPT
     Band structure                                      pw.x
     Atomic projections                                  projwfc.x
     Wannierization (occupied block 1, spin up)
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
     Wannierization (empty block 1, spin up)
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
   DFPT screening (spin up)
     Wannier gauge                                       kcw.x
     Orbital screening
@@ -216,13 +216,13 @@ Koopmans DFPT
     Band structure                                      pw.x
     Atomic projections                                  projwfc.x
     Wannierization (occupied block 1, spin down)
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
     Wannierization (empty block 1, spin down)
-      Preprocessing                                     wannier90.x
+      wannier90_pp                                      wannier90.x
       Overlaps                                          pw2wannier90.x
-      Minimization                                      wannier90.x
+      wannier90                                         wannier90.x
   DFPT screening (spin down)
     Wannier gauge                                       kcw.x
     Orbital screening

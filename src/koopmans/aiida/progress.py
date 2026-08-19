@@ -154,44 +154,21 @@ def _promoted_state(state: str) -> str:
     return "running" if state in _TERMINAL_STATES else state
 
 
-def _is_a_name(label: str, process_node: ProcessNode) -> bool:
-    """Return whether ``label`` names the process rather than identifying it.
-
-    Three kinds of process arrive carrying an identifier where a name
-    would be, and the lookup answers for all three:
-
-    * the run as a whole, launched with no label of its own, which the
-      engine names after the graph function it runs;
-    * a sub-graph the plugin leaves unnamed — a wrapper the table sees
-      through — which the engine names after its call link label;
-    * every sub-graph of a run recorded before aiida-workgraph
-      ``5b140d4``, whose ``WorkGraphEngine.on_create`` replaced the label
-      it had been given with the graph's own name.
-
-    Both of those identifiers are what the lookup is keyed on, so a label
-    equal to either carries no name.
-    """
-    process_label = getattr(process_node, "process_label", None) or ""
-    envelope = re.fullmatch(r"WorkGraph<(.+)>", process_label)
-    return label not in {
-        get_node_label(process_node, include_code=False),
-        envelope.group(1) if envelope else process_label,
-    }
-
-
 def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelDisplay:
     """Return how one process is shown: its name, its executable, its role.
 
-    The name is the process's own ``label``, which ``aiida-koopmans`` sets
-    from the step the process stands for. A process that carries none —
-    one from a run made before the plugin labelled its steps, or one an
-    upstream workchain submits with its own metadata — falls back to the
-    lookup in :mod:`koopmans.aiida.labels`, as does one whose label is an
-    identifier rather than a name (:func:`_is_a_name`).
+    The name is the process's own ``label``, which ``aiida-koopmans``
+    sets from the step the process stands for and each route sets on the
+    run as a whole. A process that carries none — one from a run made
+    before the plugin named its steps, or one an upstream workchain
+    submits with metadata of its own — is shown by the identifier
+    provenance recorded for it, which is the internal name it really has
+    rather than a guess at the one it was meant to have.
 
     Whether a process gets a row of its own, and whether its row is
-    numbered among its siblings, stay questions about the step rather
-    than about its name, so both are answered from the labels either way.
+    counted among its siblings, are questions about the shape of the run
+    rather than about its name, and are answered from that identifier
+    either way.
 
     Args:
         process_node: The process to describe.
@@ -205,8 +182,6 @@ def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelD
         raw = get_node_label(process_node, include_code=False)
         role = describe_label(raw, getattr(process_node, "process_label", None) or "")
     name = (getattr(process_node, "label", "") or "").strip()
-    if name and not _is_a_name(name, process_node):
-        name = ""
     return role._replace(text=name or role.text, code=executable_of(process_node))
 
 

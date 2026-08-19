@@ -170,9 +170,20 @@ def step_paths() -> Iterator[Callable[[FakeNode], dict[int, tuple[str, ...]]]]:
 
 def _wrapped_calcjob(state: str = "waiting", **kwargs: Any) -> FakeNode:
     """Build root → ``DFT initialization (nspin=1)`` → the one kcp.x call it wraps."""
-    calcjob = FakeNode(link="dft_init", kind="calcjob", executable="kcp.x", state=state, **kwargs)
-    wrapper = FakeNode(link="dft_init_nspin1", children=[calcjob])
-    return FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[wrapper])
+    calcjob = FakeNode(
+        link="dft_init",
+        label="DFT initialization",
+        kind="calcjob",
+        executable="kcp.x",
+        state=state,
+        **kwargs,
+    )
+    wrapper = FakeNode(
+        link="dft_init_nspin1", label="DFT initialization (nspin=1)", children=[calcjob]
+    )
+    return FakeNode(
+        process_label="WorkGraph<KoopmansDSCFWorkflow>", label="Koopmans ΔSCF", children=[wrapper]
+    )
 
 
 class TestStableRows:
@@ -246,8 +257,17 @@ class TestStableRows:
     ) -> None:
         """Across a run's snapshots, every label present stays present."""
         calcjob = FakeNode(link="kcp-dft_init", kind="calcjob", state="created")
-        wrapper = FakeNode(link="dft_init_nspin1", state="created", children=[calcjob])
-        root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[wrapper])
+        wrapper = FakeNode(
+            link="dft_init_nspin1",
+            label="DFT initialization (nspin=1)",
+            state="created",
+            children=[calcjob],
+        )
+        root = FakeNode(
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+            label="Koopmans ΔSCF",
+            children=[wrapper],
+        )
 
         seen: set[str] = set()
         for wrapper_state, calcjob_state in (
@@ -275,9 +295,13 @@ class TestStableRows:
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
     ) -> None:
         """Plumbing tasks add no rows, nor do the processes they call."""
-        buried = FakeNode(link="scf", kind="calcjob", executable="pw.x")
+        buried = FakeNode(link="scf", label="SCF", kind="calcjob", executable="pw.x")
         helper = FakeNode(link="build_iter_source", is_pyfunction=True, children=[buried])
-        root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[helper])
+        root = FakeNode(
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+            label="Koopmans ΔSCF",
+            children=[helper],
+        )
 
         assert [row.label for row in render(root)] == ["Koopmans ΔSCF"]
 
@@ -289,18 +313,24 @@ class TestCollapsingAndTransparency:
         """Build the ``scf_nscf`` sub-graph, with a restartable SCF beneath it."""
         scf = FakeNode(
             link="scf",
+            label="SCF",
             children=[
-                FakeNode(link="scf", kind="calcjob", executable="pw.x", seconds=index)
+                FakeNode(link="scf", label="SCF", kind="calcjob", executable="pw.x", seconds=index)
                 for index in range(scf_attempts)
             ],
         )
         nscf = FakeNode(
             link="nscf",
+            label="NSCF",
             seconds=10.0,
-            children=[FakeNode(link="nscf", kind="calcjob", executable="pw.x")],
+            children=[FakeNode(link="nscf", label="NSCF", kind="calcjob", executable="pw.x")],
         )
-        ground_state = FakeNode(link="scf_nscf", children=[scf, nscf])
-        return FakeNode(process_label="WorkGraph<SinglepointDFPTWorkflow>", children=[ground_state])
+        ground_state = FakeNode(link="scf_nscf", label="Ground state", children=[scf, nscf])
+        return FakeNode(
+            process_label="WorkGraph<SinglepointDFPTWorkflow>",
+            label="Koopmans DFPT",
+            children=[ground_state],
+        )
 
     def test_a_step_is_not_deleted_by_what_its_parent_is_called(
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
@@ -346,19 +376,28 @@ class TestCollapsingAndTransparency:
         """``PwBandsWorkChain`` adds nothing the root does not already say."""
         wrapper = FakeNode(
             link="PwBandsWorkChain",
+            label="DFT band structure",
             children=[
                 FakeNode(
                     link="scf",
-                    children=[FakeNode(link="scf", kind="calcjob", executable="pw.x")],
+                    label="SCF",
+                    children=[FakeNode(link="scf", label="SCF", kind="calcjob", executable="pw.x")],
                 ),
                 FakeNode(
                     link="bands",
+                    label="Band structure",
                     seconds=1.0,
-                    children=[FakeNode(link="bands", kind="calcjob", executable="pw.x")],
+                    children=[
+                        FakeNode(
+                            link="bands", label="Band structure", kind="calcjob", executable="pw.x"
+                        )
+                    ],
                 ),
             ],
         )
-        root = FakeNode(process_label="WorkGraph<RunPwBands>", children=[wrapper])
+        root = FakeNode(
+            process_label="WorkGraph<RunPwBands>", label="DFT band structure", children=[wrapper]
+        )
 
         rows = render(root)
 
@@ -374,17 +413,25 @@ class TestCollapsingAndTransparency:
         """A paused wrapper with no row of its own still reaches the display."""
         wrapper = FakeNode(
             link="PwBandsWorkChain",
+            label="DFT band structure",
             paused=True,
-            children=[FakeNode(link="scf", state="running")],
+            children=[FakeNode(link="scf", label="SCF", state="running")],
         )
-        root = FakeNode(process_label="WorkGraph<RunPwBands>", children=[wrapper])
+        root = FakeNode(
+            process_label="WorkGraph<RunPwBands>", label="DFT band structure", children=[wrapper]
+        )
 
         assert render(root)[0].state == "paused"
 
     def test_the_wannier90_workchain_is_transparent_but_its_minimization_is_not(
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
     ) -> None:
-        """One link label, two meanings, told apart by the process behind it."""
+        """One link label, two meanings, told apart by the process behind it.
+
+        Both rows read as their link labels: ``Wannier90WorkChain``
+        submits its -pp and minimization runs with a metadata dict of its
+        own, so no label given from outside reaches either.
+        """
         workchain = FakeNode(
             link="wannier90",
             process_label="Wannier90WorkChain",
@@ -404,14 +451,16 @@ class TestCollapsingAndTransparency:
                 ),
             ],
         )
-        root = FakeNode(process_label="WorkGraph<Wannierize>", children=[workchain])
+        root = FakeNode(
+            process_label="WorkGraph<Wannierize>", label="Wannierization", children=[workchain]
+        )
 
         rows = render(root)
 
         assert [(row.label, row.depth, row.code) for row in rows] == [
             ("Wannierization", 0, None),
-            ("Preprocessing", 1, "wannier90.x"),
-            ("Minimization", 1, "wannier90.x"),
+            ("wannier90_pp", 1, "wannier90.x"),
+            ("wannier90", 1, "wannier90.x"),
         ]
 
 
@@ -422,10 +471,15 @@ class TestScreeningIterationNumbering:
         """Build one screening iteration, with a trial KI inside it."""
         return FakeNode(
             link=label,
+            label="Iteration",
             seconds=seconds,
             children=[
-                FakeNode(link="ki_trial", kind="calcjob", executable="kcp.x"),
-                FakeNode(link="compute_orbital_screening_parameters", seconds=seconds + 0.1),
+                FakeNode(link="ki_trial", label="Trial KI", kind="calcjob", executable="kcp.x"),
+                FakeNode(
+                    link="compute_orbital_screening_parameters",
+                    label="Orbital screening",
+                    seconds=seconds + 0.1,
+                ),
             ],
         )
 
@@ -451,9 +505,14 @@ class TestScreeningIterationNumbering:
         )
         compute = FakeNode(
             link="ComputeScreeningParameters",
+            label="Screening parameters",
             children=[self._iteration("ScreeningIteration", 1.0), refine],
         )
-        root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[compute])
+        root = FakeNode(
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+            label="Koopmans ΔSCF",
+            children=[compute],
+        )
 
         rows = render(root)
 
@@ -469,9 +528,14 @@ class TestScreeningIterationNumbering:
         """A converged-first-time run reads ``Iteration 1``, not a bare ``Iteration``."""
         compute = FakeNode(
             link="ComputeScreeningParameters",
+            label="Screening parameters",
             children=[self._iteration("ScreeningIteration", 1.0)],
         )
-        root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[compute])
+        root = FakeNode(
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+            label="Koopmans ΔSCF",
+            children=[compute],
+        )
 
         assert [row.label for row in render(root)][1:3] == ["Screening parameters", "Iteration 1"]
 
@@ -482,10 +546,16 @@ class TestScreeningIterationNumbering:
         leaf, which is the shape that used to put it within reach of its
         own parent's collapse.
         """
-        calcjob = FakeNode(link="ki_trial", kind="calcjob", executable="kcp.x")
-        iteration = FakeNode(link="ScreeningIteration", children=[calcjob])
-        compute = FakeNode(link="ComputeScreeningParameters", children=[iteration])
-        root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[compute])
+        calcjob = FakeNode(link="ki_trial", label="Trial KI", kind="calcjob", executable="kcp.x")
+        iteration = FakeNode(link="ScreeningIteration", label="Iteration", children=[calcjob])
+        compute = FakeNode(
+            link="ComputeScreeningParameters", label="Screening parameters", children=[iteration]
+        )
+        root = FakeNode(
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+            label="Koopmans ΔSCF",
+            children=[compute],
+        )
         return root, compute, iteration, calcjob
 
     def test_a_numbered_row_is_not_collapsed_away(
@@ -526,10 +596,14 @@ class TestSiblingOrder:
     def _fan_out(self, indices: list[int], seconds: list[float]) -> FakeNode:
         """Build a per-orbital fan-out whose creation order is not its index order."""
         children = [
-            FakeNode(link=f"compute_alpha_orb_{index}", seconds=second)
+            FakeNode(link=f"compute_alpha_orb_{index}", label=f"Orbital {index}", seconds=second)
             for index, second in zip(indices, seconds, strict=True)
         ]
-        return FakeNode(process_label="ComputeScreeningParameters", children=children)
+        return FakeNode(
+            process_label="ComputeScreeningParameters",
+            label="Screening parameters",
+            children=children,
+        )
 
     def test_indices_sort_numerically(
         self, render: Callable[[FakeNode], list[progress.ProcessRow]]
@@ -548,8 +622,8 @@ class TestSiblingOrder:
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(link="wannierize", seconds=1.0),
-                FakeNode(link="bands", seconds=2.0),
+                FakeNode(link="wannierize", label="Wannierization", seconds=1.0),
+                FakeNode(link="bands", label="Band structure", seconds=2.0),
             ],
         )
 
@@ -570,9 +644,13 @@ class TestSiblingOrder:
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(link="dft_init_nspin1", seconds=1.0),
-                FakeNode(link="dft_init_nspin2_dummy", seconds=2.0),
-                FakeNode(link="dft_init_nspin2", seconds=3.0),
+                FakeNode(link="dft_init_nspin1", label="DFT initialization (nspin=1)", seconds=1.0),
+                FakeNode(
+                    link="dft_init_nspin2_dummy",
+                    label="DFT initialization (nspin=2, staging)",
+                    seconds=2.0,
+                ),
+                FakeNode(link="dft_init_nspin2", label="DFT initialization (nspin=2)", seconds=3.0),
             ],
         )
 
@@ -596,9 +674,9 @@ class TestSiblingOrder:
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(link="compute_alpha_orb_2", seconds=1.0),
-                FakeNode(link="ki_final", seconds=2.0),
-                FakeNode(link="compute_alpha_orb_1", seconds=3.0),
+                FakeNode(link="compute_alpha_orb_2", label="Orbital 2", seconds=1.0),
+                FakeNode(link="ki_final", label="Final KI", seconds=2.0),
+                FakeNode(link="compute_alpha_orb_1", label="Orbital 1", seconds=3.0),
             ],
         )
 
@@ -613,11 +691,11 @@ class TestSiblingOrder:
         root = FakeNode(
             process_label="WorkGraph<KoopmansDSCFWorkflow>",
             children=[
-                FakeNode(link="ki_trial", seconds=1.0),
-                FakeNode(link="compute_alpha_orb_1", seconds=2.0),
-                FakeNode(link="compute_alpha_orb_10", seconds=3.0),
-                FakeNode(link="compute_alpha_orb_2", seconds=4.0),
-                FakeNode(link="ki_final", seconds=5.0),
+                FakeNode(link="ki_trial", label="Trial KI", seconds=1.0),
+                FakeNode(link="compute_alpha_orb_1", label="Orbital 1", seconds=2.0),
+                FakeNode(link="compute_alpha_orb_10", label="Orbital 10", seconds=3.0),
+                FakeNode(link="compute_alpha_orb_2", label="Orbital 2", seconds=4.0),
+                FakeNode(link="ki_final", label="Final KI", seconds=5.0),
             ],
         )
 
@@ -637,7 +715,9 @@ class TestSiblingOrder:
         """Two identical labels created in the same instant still get a fixed order."""
         later = FakeNode(link="pw-scf", kind="calcjob", pk=99, seconds=1.0)
         earlier = FakeNode(link="pw-scf", kind="calcjob", pk=7, seconds=1.0)
-        root = FakeNode(process_label="WorkGraph<Wannierize>", children=[later, earlier])
+        root = FakeNode(
+            process_label="WorkGraph<Wannierize>", label="Wannierization", children=[later, earlier]
+        )
 
         rows = render(root)
 
@@ -650,7 +730,12 @@ class TestSiblingOrder:
         """A fan-out nested under a step is ordered like a top-level one."""
         fan_out = self._fan_out([2, 10, 1], [0.0, 0.1, 0.2])
         fan_out.link = "compute_orbital_screening_parameters"
-        root = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", children=[fan_out])
+        fan_out.label = "Orbital screening"
+        root = FakeNode(
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+            label="Koopmans ΔSCF",
+            children=[fan_out],
+        )
 
         rows = render(root)
 
@@ -664,7 +749,7 @@ class TestSiblingOrder:
 
 
 class TestDescribeProcess:
-    """A step is named by its own process, and the lookup names the rest."""
+    """A step is named by its own process; the rest is shown as recorded."""
 
     def test_the_name_comes_from_the_process(self, describe: _Describe) -> None:
         """``aiida-koopmans`` sets it; the display shows what it says."""
@@ -672,15 +757,26 @@ class TestDescribeProcess:
 
         assert describe(node).text == "DFPT screening (spin down)"
 
-    def test_the_lookup_names_a_process_that_carries_none(self, describe: _Describe) -> None:
-        """Every run made before the plugin named its steps reads this way."""
-        assert describe(FakeNode(link="dfpt")).text == "DFPT screening"
+    def test_a_process_carrying_no_name_shows_its_identifier(self, describe: _Describe) -> None:
+        """Every run made before the plugin named its steps reads this way.
+
+        The identifier is what the database holds for that step, so it is
+        what the reader is shown; nothing guesses at the name it was
+        meant to have.
+        """
+        assert describe(FakeNode(link="dft_init_nspin1")).text == "dft_init_nspin1"
 
     def test_the_root_is_named_by_the_run_it_is(self, describe: _Describe) -> None:
         """The root has no call link to read, so its name comes from the run."""
-        node = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>")
+        node = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>", label="Koopmans ΔSCF")
 
         assert describe(node, is_root=True).text == "Koopmans ΔSCF"
+
+    def test_an_unnamed_root_shows_the_graph_that_ran(self, describe: _Describe) -> None:
+        """A run from before the routes named themselves keeps the graph's own name."""
+        node = FakeNode(process_label="WorkGraph<KoopmansDSCFWorkflow>")
+
+        assert describe(node, is_root=True).text == "KoopmansDSCFWorkflow"
 
     def test_the_binary_is_read_off_the_code_that_ran(self, describe: _Describe) -> None:
         """A code registered under a name of its own still answers with its binary.
@@ -688,13 +784,18 @@ class TestDescribeProcess:
         ``decompose`` is a second pw2wannier90.x, registered separately so
         a build with the decompose mode can be pointed at explicitly.
         """
-        node = FakeNode(link="decompose_occ_1", kind="calcjob", executable="pw2wannier90.x")
+        node = FakeNode(
+            link="decompose_occ_1",
+            label="Decomposition (occupied block 1)",
+            kind="calcjob",
+            executable="pw2wannier90.x",
+        )
 
         assert describe(node).code == "pw2wannier90.x"
 
     def test_a_workflow_reports_no_binary(self, describe: _Describe) -> None:
         """A calculation runs one program; a workflow runs whatever its steps run."""
-        assert describe(FakeNode(link="dfpt")).code is None
+        assert describe(FakeNode(link="dfpt", label="DFPT screening")).code is None
 
     def test_a_role_is_read_from_the_step_and_not_from_its_name(self, describe: _Describe) -> None:
         """Which processes get rows is the display's own question, not the plugin's."""
@@ -704,45 +805,23 @@ class TestDescribeProcess:
         assert describe(FakeNode(link="ScreeningIteration", label="Iteration")).numbered
 
 
-class TestDescribeLabel:
-    """The fallback lookup: every name is looked up, nothing is guessed at."""
+class TestIdentifiersShownAsRecorded:
+    """Nothing is invented for a process that arrives carrying no name."""
 
     @pytest.mark.parametrize(
-        ("raw", "expected"),
+        "raw",
         [
-            ("scf_nscf", "Ground state"),
-            ("nscf", "NSCF"),
-            ("wann2kc", "Wannier gauge"),
-            ("merge_evc0_empty1", "Merged Wannier manifold (empty, spin 1)"),
-            ("fold_occ_1", "Supercell Wannier functions (occupied block 1)"),
-            ("wannierize_occ_up_1", "Wannierization (occupied block 1, spin up)"),
-            ("wannierize_occ", "Wannierization (occupied block)"),
-            ("wannierize_emp", "Wannierization (empty block)"),
-            ("wannierize_occ_up", "Wannierization (occupied block, spin up)"),
-            ("decompose_emp_down", "Decomposition (empty block, spin down)"),
-            ("wannier90_split_block_0", "Minimization (group 1)"),
-            ("screen_up_orb_2", "Orbital 2 (spin up)"),
-            ("dfpt_down", "DFPT screening (spin down)"),
-            ("dscf_snapshot_3", "Snapshot 3"),
+            "scf_nscf",
+            "nscf",
+            "wann2kc",
+            "fold_occ_1",
+            "emit_wannier90_parameters",
+            "SomeNewWorkChain",
         ],
     )
-    def test_labels_read_as_the_step_they_stand_for(self, raw: str, expected: str) -> None:
-        """A step is named after what it is, not after the program that runs it."""
-        assert progress.prettify_label(raw) == expected
-
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
-            ("dft_n_plus_1_dummy", "DFT (N+1, staging)"),
-            ("pz_print", "PZ staging"),
-            ("dft_init_nspin2_dummy", "DFT initialization (nspin=2, staging)"),
-        ],
-    )
-    def test_a_run_that_only_writes_files_for_the_next_one_says_staging(
-        self, raw: str, expected: str
-    ) -> None:
-        """``dummy`` and ``print`` are our words for the same thing."""
-        assert progress.prettify_label(raw) == expected
+    def test_an_identifier_is_shown_exactly_as_written(self, raw: str) -> None:
+        """A guess looks like a shipped typo; an internal name looks internal."""
+        assert progress.prettify_label(raw) == raw
 
     @pytest.mark.parametrize(
         ("raw", "no_longer"),
@@ -751,7 +830,6 @@ class TestDescribeLabel:
             ("pw2wannier90", "Pw 2 Wannier 90"),
             ("nscf", "Nscf"),
             ("dfpt", "Dfpt"),
-            ("projwfc", "Projwfc"),
             ("wann2kc", "Wann 2 KC"),
         ],
     )
@@ -759,81 +837,29 @@ class TestDescribeLabel:
         """Splitting a code name into words produced spellings nobody types.
 
         ``Wannier 90 Pp`` and ``Dfpt`` read as typos the project shipped.
-        A name is now either in the display table or shown as written.
         """
         assert progress.prettify_label(raw) != no_longer
 
-    @pytest.mark.parametrize(
-        ("raw", "expected"),
-        [
-            ("wannier90_pp", "Preprocessing"),
-            ("pw2wannier90", "Overlaps"),
-            ("wannier90", "Minimization"),
-        ],
-    )
-    def test_the_wannier90_protocol_reads_as_the_mechanism_it_is(
-        self, raw: str, expected: str
-    ) -> None:
-        """Three calls, one Wannierization: the rows name the steps of the protocol.
+    def test_the_graph_envelope_is_peeled(self) -> None:
+        """``WorkGraph<...>`` repeats what the row's position already says."""
+        assert progress.prettify_label("WorkGraph<KoopmansDSCFWorkflow>") == "KoopmansDSCFWorkflow"
 
-        These are not names of last resort: the upstream workchain
-        replaces the metadata of its two wannier90.x steps before
-        submitting them, so a label given from outside never reaches
-        either, and the lookup names both on every run.
+    def test_the_two_unnameable_wannier90_steps_show_their_identifiers(self) -> None:
+        """``Wannier90WorkChain`` submits both with metadata of its own.
+
+        It assigns ``inputs["metadata"] = {"call_link_label": ...}`` for
+        the -pp and the minimization runs, discarding any label given
+        from outside, where the four steps around them mutate
+        ``metadata.call_link_label`` alone and keep theirs. Until that is
+        levelled upstream, these two rows read as their link labels.
         """
-        assert progress.prettify_label(raw) == expected
+        assert progress.prettify_label("wannier90_pp") == "wannier90_pp"
+        assert progress.prettify_label("wannier90") == "wannier90"
 
-    def test_an_unmapped_label_is_shown_exactly_as_written(self) -> None:
-        """A guess looks like a shipped typo; an internal name looks internal."""
-        assert progress.prettify_label("emit_wannier90_parameters") == "emit_wannier90_parameters"
-        assert progress.prettify_label("SomeNewWorkChain") == "SomeNewWorkChain"
-
-    def test_a_label_is_read_together_with_the_process_behind_it(self) -> None:
+    def test_a_role_is_read_together_with_the_process_behind_it(self) -> None:
         """``wannier90`` names the whole workchain in one place and one run in another."""
         assert progress.describe_label("wannier90", "Wannier90WorkChain").transparent
         assert not progress.describe_label("wannier90", "Wannier90BaseWorkChain").transparent
-        assert progress.describe_label("wannier90", "Wannier90BaseWorkChain").text == "Minimization"
-
-    def test_the_failure_summary_names_the_binary_that_failed(self) -> None:
-        """A class name is not something a user has ever typed."""
-        assert progress.prettify_label("PwCalculation") == "pw.x"
-        assert progress.prettify_label("Wann2kcCalculation") == "kcw.x"
-        assert progress.prettify_label("Pw2wannier90Calculation") == "pw2wannier90.x"
-
-    def test_the_failure_summary_names_a_pyfunction_by_its_function_name(self) -> None:
-        """It is keyed on ``process_label``, which for a PyFunction is the function's name."""
-        assert progress.prettify_label("train_screening_model") == "Screening model training"
-        assert progress.prettify_label("evaluate_screening_model") == "Screening model evaluation"
-
-    @pytest.mark.parametrize("raw", ["injected_alphas", "predict_alphas"])
-    def test_a_link_label_no_surface_reads_carries_no_name(self, raw: str) -> None:
-        """A name nothing can reach is the defect a lookup table is meant to avoid.
-
-        These two label PyFunctions, which the table drops; the failure
-        summary reads ``echo_alpha_screening`` and
-        ``predict_alpha_screening`` instead, so a name filed under the
-        link label would print nowhere.
-        """
-        assert progress.prettify_label(raw) == raw
-
-    def test_a_transparent_link_label_carries_no_name(self) -> None:
-        """A lower-case key names a call link, and only the table reads those.
-
-        The table gives a transparent label no row, so a name filed under
-        one prints nowhere. A class-name key may carry both: the failure
-        summary reads process labels, transparent or not.
-        """
-        from koopmans.aiida.labels import _DISPLAY, _TRANSPARENT
-
-        link_labels = {key for key in _TRANSPARENT if isinstance(key, str) and key.islower()}
-        assert not link_labels & set(_DISPLAY)
-
-    @pytest.mark.parametrize(
-        "raw", ["orb_1_filled_orbital_screening", "orb_10_empty_orbital_screening"]
-    )
-    def test_the_map_zone_rewrites_are_gone(self, raw: str) -> None:
-        """Nothing has emitted these since the Map zones became for-loops."""
-        assert progress.prettify_label(raw) == raw
 
 
 # --- the whole table, route by route ----------------------------------
@@ -1387,14 +1413,14 @@ class TestEveryRouteTable:
         """
         assert render_route_tables() == TABLES_FILE.read_text(encoding="utf-8")
 
-    def test_a_run_whose_steps_are_unnamed_renders_the_same(self) -> None:
-        """The fallback and the plugin agree, route for route.
+    def test_a_run_whose_steps_are_unnamed_shows_their_identifiers(self) -> None:
+        """A database made before the plugin named its steps still reads.
 
-        Strip every process's label and the whole display falls back to
-        the lookup. The two must render identically: a name the plugin
-        sets that the lookup spells differently would show up here as a
-        run that reads one way live and another way when replayed from a
-        database made before the labels existed.
+        Strip every label and each row falls back to the identifier
+        provenance recorded for that step. The shape is untouched — same
+        rows, same depths, same executables — because which steps get a
+        row is read from the run rather than from what it is called; only
+        the names degrade, and they degrade to what the database holds.
         """
         registry: dict[int, FakeNode] = {}
         with stubbed_lookups(registry):
@@ -1402,19 +1428,20 @@ class TestEveryRouteTable:
                 unnamed = _unnamed(root)
                 _register(root, registry)
                 _register(unnamed, registry)
-                assert progress.build_progress_rows(
-                    cast("ProcessNode", unnamed)
-                ) == progress.build_progress_rows(cast("ProcessNode", root)), name
+                named = progress.build_progress_rows(cast("ProcessNode", root))
+                bare = progress.build_progress_rows(cast("ProcessNode", unnamed))
 
-    def test_a_run_recorded_before_the_label_fix_renders_the_same(self) -> None:
-        """A database written before aiida-workgraph ``5b140d4`` still reads right.
+                assert [(r.depth, r.code) for r in bare] == [(r.depth, r.code) for r in named], name
+                assert all(row.label for row in bare), name
+
+    def test_a_run_recorded_before_the_label_fix_shows_its_identifiers(self) -> None:
+        """A database written before aiida-workgraph ``5b140d4`` still reads.
 
         That engine replaced a ``@task.graph``'s label with the graph's
-        task name, so every sub-graph of such a run carries the call link
-        label the lookup is keyed on rather than a name. The rows must
-        read the same either way, or those runs would show internal
-        identifiers on every route while a run made today reads
-        correctly.
+        task name, so every sub-graph of such a run carries an identifier
+        where a name should be, while the calculations under them kept
+        theirs. The mixture renders with the same shape as a run made
+        today.
         """
         registry: dict[int, FakeNode] = {}
         with stubbed_lookups(registry):
@@ -1422,9 +1449,31 @@ class TestEveryRouteTable:
                 as_run = _as_a_pre_fix_run(root, is_root=True)
                 _register(root, registry)
                 _register(as_run, registry)
-                assert progress.build_progress_rows(
-                    cast("ProcessNode", as_run)
-                ) == progress.build_progress_rows(cast("ProcessNode", root)), name
+                named = progress.build_progress_rows(cast("ProcessNode", root))
+                old = progress.build_progress_rows(cast("ProcessNode", as_run))
+
+                assert [(r.depth, r.code) for r in old] == [(r.depth, r.code) for r in named], name
+                assert all(row.label for row in old), name
+
+    def test_an_unnamed_dfpt_run_reads_as_its_link_labels(self) -> None:
+        """What that degradation actually looks like, on one route.
+
+        Worth stating outright rather than only as a shape: a reader
+        replaying an old database sees the step names the database has,
+        which are the internal ones.
+        """
+        registry: dict[int, FakeNode] = {}
+        with stubbed_lookups(registry):
+            root = _unnamed(ROUTES["singlepoint / DFPT (one block per manifold)"])
+            _register(root, registry)
+            rows = progress.build_progress_rows(cast("ProcessNode", root))
+
+        assert [row.label for row in rows][:4] == [
+            "SinglepointDFPTWorkflow",
+            "scf_nscf",
+            "scf",
+            "nscf",
+        ]
 
     def test_no_route_shows_a_python_class_name(self) -> None:
         """``Pw Bands Work Chain`` and friends never reach a user.

@@ -81,13 +81,17 @@ def launch(workgraph: WorkGraph, *, blocking: bool, wait: bool = False) -> orm.P
     aiida-workgraph#768: ``engine.run(workgraph)`` replacing
     ``workgraph.run()``), this helper is the only place to migrate.
     """
+    from koopmans.aiida.workflows import run_label
+
+    # The route's own name for the run, applied where AiiDA takes one.
+    metadata = {"label": label} if (label := run_label(workgraph)) else None
     if blocking:
-        workgraph.run()
+        workgraph.run(metadata=metadata)
     else:
         from koopmans.aiida.setup.daemon import ensure_daemon_running
 
         ensure_daemon_running()
-        workgraph.submit(wait=wait)
+        workgraph.submit(wait=wait, metadata=metadata)
     node: orm.ProcessNode = workgraph.process
     return node
 

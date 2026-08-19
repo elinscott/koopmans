@@ -1,43 +1,24 @@
-"""Fallback display names for the steps the progress table lists.
+"""Display rules for the steps the progress table lists.
 
 A step is named by the process that runs it: ``aiida-koopmans`` sets
 ``metadata.label`` on every workchain, calculation and sub-graph it
-creates, and the table shows that. This module names the rest:
+creates, each route names its own run, and the table shows what the node
+says. Nothing here invents a name.
 
-* a process from a run made before the plugin labelled its steps, which
-  is every run already in the user's database;
-* the two wannier90.x steps of an upstream ``Wannier90WorkChain``, whose
-  ``metadata`` that workchain replaces wholesale before submitting each.
-
-Every name here is looked up, never derived. A label the table does not
-name is shown exactly as it is written, so a missing entry reads as an
-internal name rather than as a guess at one.
-
-The lookup is keyed on the pair ``(link label, process label)``, falling
-back to the link label alone: one string can name a container in one place
-and the calculation inside it in another.
-
-Two conventions the entries follow:
-
-* a row that stands for a physical step is a noun phrase (``Koopmans
-  DFPT``), because the table lists things rather than instructions;
-* a row that is pure mechanism gets a short mechanical name
-  (``Preprocessing``, ``Overlaps``, ``Minimization``), and a step whose
-  product the next step reads is named after that product (``Wannier
-  gauge``, ``Merged Wannier manifold``).
-
-Executables are read off the code each calculation ran and shown in a
-column of their own, so no display name repeats one.
+What is left here are the rules that do not belong to any one step:
+which containers get a row at all, which rows are counted against their
+siblings, and which binary a row ran. A process that carries no label —
+one from a run made before the plugin named its steps, or one an
+upstream workchain submits with metadata of its own — is shown by the
+identifier provenance recorded for it, so what a reader sees is what the
+database holds rather than a guess at what it meant.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any, NamedTuple
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from typing import Any, NamedTuple
 
 __all__ = ["LabelDisplay", "describe_label", "executable_of", "prettify_label"]
 
@@ -46,7 +27,7 @@ class LabelDisplay(NamedTuple):
     """How one process is shown: its name, its executable, and its role.
 
     ``code`` is filled from the process itself (:func:`executable_of`),
-    not from its label, so a lookup leaves it unset.
+    not from its label.
     """
 
     text: str
@@ -56,9 +37,12 @@ class LabelDisplay(NamedTuple):
 
 
 # Containers that add no idea the row above does not already state. They
-# get no row; their children rise to the parent's depth. A container that
-# groups two genuinely different steps (``scf_nscf`` → "Ground state")
-# keeps its row, because that grouping is information.
+# get no row; their children rise to the parent's depth. Membership is by
+# the identifier provenance records — a call link label, or the class of
+# the process — because whether a container is worth a row is a fact
+# about the shape of the run, not about what it is called. A container
+# that groups two genuinely different steps (``scf_nscf``, "Ground
+# state") keeps its row, because that grouping is information.
 _TRANSPARENT: frozenset[str | tuple[str, str]] = frozenset(
     {
         "PwBandsWorkChain",
@@ -68,230 +52,41 @@ _TRANSPARENT: frozenset[str | tuple[str, str]] = frozenset(
     }
 )
 
-# Steps numbered by their position among their siblings rather than by
-# anything in their label: the screening recursion names every iteration
-# the same, and only the order distinguishes them.
+# Steps counted by their position among their siblings rather than by
+# anything they are called: the screening recursion runs every iteration
+# the same way, and only the order distinguishes them.
 _NUMBERED = frozenset({"ScreeningIteration", "screening_iteration"})
-
-_DISPLAY: dict[str | tuple[str, str], str] = {
-    # --- workflow roots ---
-    "RunPwBands": "DFT band structure",
-    "DielectricTask": "Dielectric constant",
-    "WannierizeBlocks": "Wannierization",
-    "Wannierize": "Wannierization",
-    "KoopmansDSCFWorkflow": "Koopmans ΔSCF",
-    "SinglepointDFPTWorkflow": "Koopmans DFPT",
-    "TrajectoryWorkflow": "Trajectory",
-    # --- pw.x ---
-    "scf_nscf": "Ground state",
-    "scf": "SCF",
-    "nscf": "NSCF",
-    "bands": "Band structure",
-    # --- ph.x, projwfc.x ---
-    "dielectric": "Dielectric constant",
-    "ph": "Dielectric response",
-    "projwfc": "Atomic projections",
-    # --- wannier90 ---
-    # The three calls of the wannier90 protocol are mechanism, not
-    # physics: -pp writes the .nnkp that pw2wannier90.x needs, pw2wannier
-    # writes the overlaps wannier90.x minimizes over.
-    "wannier90_pp": "Preprocessing",
-    "pw2wannier90": "Overlaps",
-    "wannier90": "Minimization",
-    "wannierize": "Wannierization",
-    "wannierize_whole_block": "Whole-block Wannierization",
-    "split_wannierization": "Parallel-transport split",
-    "rewannierize_split_blocks": "Per-group Wannierization",
-    "wannier_initialization": "Wannier initialization",
-    # --- fold to supercell ---
-    # wann2kcp.x writes each block's Wannier functions on the supercell
-    # grid; merge_evc.x concatenates them into the single evc file the
-    # supercell kcp.x run starts from.
-    "fold_to_supercell": "Supercell folding",
-    # --- kcp.x ---
-    "dft_init": "DFT initialization",
-    "dft_dummy": "DFT staging",
-    "dft_init_nspin1": "DFT initialization (nspin=1)",
-    "dft_init_nspin2_dummy": "DFT initialization (nspin=2, staging)",
-    "dft_init_nspin2": "DFT initialization (nspin=2)",
-    "ki_trial": "Trial KI",
-    "kipz_trial": "Trial KIPZ",
-    "dft_n_minus_1": "DFT (N-1)",
-    "dft_n_plus_1": "DFT (N+1)",
-    "dft_n_plus_1_dummy": "DFT (N+1, staging)",
-    "kipz_n_minus_1": "KIPZ (N-1)",
-    "kipz_n_plus_1": "KIPZ (N+1)",
-    "pz_print": "PZ staging",
-    "kipz_print": "KIPZ staging",
-    "ki_final": "Final KI",
-    "kipz_final": "Final KIPZ",
-    "RunFinalKI": "Final KI",
-    "run_final_ki_predicted": "Final KI (predicted alphas)",
-    "ComputeScreeningParameters": "Screening parameters",
-    "PredictScreeningParameters": "Predicted screening parameters",
-    "compute_orbital_screening_parameters": "Orbital screening",
-    "ScreeningIteration": "Iteration",
-    "screening_iteration": "Iteration",
-    # --- kcw.x ---
-    "dfpt": "DFPT screening",
-    "wann2kc": "Wannier gauge",
-    "grouped_screen": "Orbital screening",
-    "screen": "Screening parameters",
-    "ham": "Koopmans Hamiltonian",
-    # --- machine learning ---
-    "descriptors": "Descriptors",
-    "predicted_descriptors": "Descriptors",
-    # --- names seen only in the failure summary ---
-    # That summary is keyed on ``process_label``, not on the call link
-    # label: a class name for a CalcJob or WorkChain, the function's own
-    # name for a PyFunction. The two model steps here are PyFunctions,
-    # which the table drops; the refinement is a graph the table sees
-    # through, and a cascading failure names it all the same.
-    "train_screening_model": "Screening model training",
-    "evaluate_screening_model": "Screening model evaluation",
-    "RefineScreeningParameters": "Screening refinement",
-    "PwCalculation": "pw.x",
-    "PwBaseWorkChain": "pw.x",
-    "PwBandsWorkChain": "DFT band structure",
-    "PhCalculation": "ph.x",
-    "PhBaseWorkChain": "ph.x",
-    "ProjwfcCalculation": "projwfc.x",
-    "ProjwfcBaseWorkChain": "projwfc.x",
-    "Wannier90Calculation": "wannier90.x",
-    "Wannier90BaseWorkChain": "wannier90.x",
-    "Wannier90WorkChain": "Wannierization",
-    "Wannier90OptimizeWorkChain": "Wannierization",
-    "Pw2wannier90Calculation": "pw2wannier90.x",
-    "Pw2wannier90BaseWorkChain": "pw2wannier90.x",
-    "Pw2wannierDecomposeCalculation": "pw2wannier90.x",
-    "KcpCalculation": "kcp.x",
-    "KcwCalculation": "kcw.x",
-    "Wann2kcCalculation": "kcw.x",
-    "KcwScreenCalculation": "kcw.x",
-    "KcwHamCalculation": "kcw.x",
-    "Wann2kcpCalculation": "wann2kcp.x",
-    "MergeEvcCalculation": "merge_evc.x",
-}
-
-_SPIN = {"up": "spin up", "down": "spin down"}
-_MANIFOLD = {"occ": "occupied block", "emp": "empty block", "block": "block"}
-
-# Stems whose remainder identifies a block: ``occ``, ``occ_1``,
-# ``emp_up_2``, ``block_1``. Longest stem first, so the split variant wins.
-_BLOCK_STEMS = (
-    ("wannierize_split_", "Split Wannierization"),
-    ("wannierize_", "Wannierization"),
-    ("fold_", "Supercell Wannier functions"),
-    ("decompose_", "Decomposition"),
-)
-
-# Stems whose remainder identifies one orbital. The parent row already
-# says the step is a screening, so these keep only the identity.
-_ORBITAL_STEMS = ("compute_alpha_", "screen_")
-
-
-def _block_qualifier(rest: str) -> str | None:
-    """Render an ``occ`` / ``occ_1`` / ``emp_up_2`` / ``block_1`` remainder, or ``None``.
-
-    The index is optional: a manifold Wannierized as one block is labelled
-    without one, and then the qualifier names the manifold alone.
-    """
-    match = re.fullmatch(r"(occ|emp|block)(?:_(up|down))?(?:_(\d+))?", rest)
-    if not match:
-        return None
-    manifold, spin, index = match.groups()
-    text = _MANIFOLD[manifold] if index is None else f"{_MANIFOLD[manifold]} {index}"
-    return f"{text}, {_SPIN[spin]}" if spin else text
-
-
-def _orbital_qualifier(rest: str) -> str | None:
-    """Render an ``orb_3`` / ``up_orb_10`` remainder, or ``None``."""
-    match = re.fullmatch(r"(?:(up|down)_)?orb_(\d+)", rest)
-    if not match:
-        return None
-    spin, index = match.groups()
-    return f"Orbital {index} ({_SPIN[spin]})" if spin else f"Orbital {index}"
-
-
-# Labels a run-time index writes whole. Indices read as the user counts
-# them, from 1, even where the label counts from 0.
-_ASSEMBLED_PATTERNS: tuple[tuple[re.Pattern[str], Callable[[re.Match[str]], str]], ...] = (
-    (
-        re.compile(r"(wannierize|dfpt)_(up|down)"),
-        lambda m: f"{_DISPLAY[m.group(1)]} ({_SPIN[m.group(2)]})",
-    ),
-    (
-        re.compile(r"wannier90_split_block_(\d+)"),
-        lambda m: f"Minimization (group {int(m.group(1)) + 1})",
-    ),
-    (
-        re.compile(r"merge_evc0?_(occupied|empty)(\d+)"),
-        lambda m: f"Merged Wannier manifold ({m.group(1)}, spin {m.group(2)})",
-    ),
-    (re.compile(r"dscf_snapshot_(\d+)"), lambda m: f"Snapshot {m.group(1)}"),
-    (
-        re.compile(r"descriptors_snapshot_(\d+)"),
-        lambda m: f"Descriptors (snapshot {m.group(1)})",
-    ),
-    (
-        re.compile(r"alpha_and_eigenvalue_deltas_snapshot_(\d+)"),
-        lambda m: f"Alpha and eigenvalue deltas (snapshot {m.group(1)})",
-    ),
-)
-
-
-def _assembled(raw: str) -> str | None:
-    """Render a label built at run time from a step plus an identity.
-
-    Returns ``None`` for anything that is not one of these forms, which
-    leaves it to be shown verbatim.
-    """
-    for stem, base in _BLOCK_STEMS:
-        if raw.startswith(stem):
-            qualifier = _block_qualifier(raw[len(stem) :])
-            if qualifier:
-                return f"{base} ({qualifier})"
-    for stem in _ORBITAL_STEMS:
-        if raw.startswith(stem):
-            qualifier = _orbital_qualifier(raw[len(stem) :])
-            if qualifier:
-                return qualifier
-    for pattern, render in _ASSEMBLED_PATTERNS:
-        match = pattern.fullmatch(raw)
-        if match:
-            return render(match)
-    return None
 
 
 def describe_label(raw: str, process_label: str = "") -> LabelDisplay:
-    """Return how one process is displayed, given its label.
+    """Return the role one process plays, given the identifier behind it.
 
     ``raw`` is the call link label :func:`~koopmans.aiida.utils.get_node_label`
     builds, or a ``process_label`` for the root row and the failure
-    summary. ``process_label`` disambiguates a link label that names
-    different things in different places.
+    summary. ``process_label`` disambiguates an identifier that stands
+    for different things in different places.
+
+    The text is the identifier itself, which is what a process carrying
+    no label of its own is shown as.
 
     Examples:
     >>> describe_label("scf").text
-    'SCF'
-    >>> describe_label("wannier90_pp")
-    LabelDisplay(text='Preprocessing', code=None, transparent=False, numbered=False)
+    'scf'
     >>> describe_label("wannier90", "Wannier90WorkChain").transparent
     True
-    >>> describe_label("beam_me_up").text
-    'beam_me_up'
+    >>> describe_label("ScreeningIteration").numbered
+    True
     """
     if not raw:
         return LabelDisplay(raw)
-    # ``aiida-workgraph`` wraps the top-level process_label as
-    # ``WorkGraph<KoopmansDSCFWorkflow>``; the root row is the only place
-    # it appears, and there the envelope says nothing the context does not.
+    # ``aiida-workgraph`` wraps a graph's process_label as
+    # ``WorkGraph<name>``; the envelope repeats what the context already
+    # says, and the name inside it is the identifier.
     match = re.fullmatch(r"WorkGraph<(.+)>", raw)
     if match:
         raw = match.group(1)
-    text = _DISPLAY.get((raw, process_label)) or _DISPLAY.get(raw) or _assembled(raw) or raw
     transparent = (raw, process_label) in _TRANSPARENT or raw in _TRANSPARENT
-    return LabelDisplay(text, None, transparent, raw in _NUMBERED)
+    return LabelDisplay(raw, None, transparent, raw in _NUMBERED)
 
 
 def executable_of(process_node: Any) -> str | None:
@@ -315,16 +110,12 @@ def executable_of(process_node: Any) -> str | None:
 
 
 def prettify_label(raw: str, process_label: str = "") -> str:
-    """Return the display text for one process's label.
+    """Return the display text for one process's identifier.
 
     Examples:
     >>> prettify_label("ki_trial")
-    'Trial KI'
-    >>> prettify_label("dft_n_plus_1_dummy")
-    'DFT (N+1, staging)'
+    'ki_trial'
     >>> prettify_label("WorkGraph<KoopmansDSCFWorkflow>")
-    'Koopmans ΔSCF'
-    >>> prettify_label("PwCalculation")
-    'pw.x'
+    'KoopmansDSCFWorkflow'
     """
     return describe_label(raw, process_label).text

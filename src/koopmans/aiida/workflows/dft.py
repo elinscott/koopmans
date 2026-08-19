@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from koopmans.aiida.workflows import (
     load_codes,
+    name_run,
     pin_spin_regime,
     pin_step_kpoints,
     prepare_common_inputs,
@@ -61,12 +62,15 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
-    return RunPwBands.build(
-        codes=codes,
-        structure=structure,
-        overrides=overrides,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
-        bands_kpoints=bands_kpoints,
-        spin_type=spin,
+    return name_run(
+        RunPwBands.build(
+            codes=codes,
+            structure=structure,
+            overrides=overrides,
+            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
+            bands_kpoints=bands_kpoints,
+            spin_type=spin,
+        ),
+        "DFT band structure",
     )

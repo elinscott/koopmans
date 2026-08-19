@@ -50,6 +50,7 @@ class TestWalkFailedDescendants:
             caller=root,
             link_label="scf",
             process_label="PwBaseWorkChain",
+            label="SCF",
             exit_status=402,
             exit_message="pw.x did not converge",
         )
@@ -91,6 +92,7 @@ class TestWalkFailedDescendants:
             caller=root,
             link_label="scf",
             process_label="PwBaseWorkChain",
+            label="SCF",
             exit_status=402,
             exit_message="pw.x did not converge",
         )
@@ -112,12 +114,14 @@ def _two_failed_iterations() -> Any:
         caller=root,
         link_label="ComputeScreeningParameters",
         process_label="WorkGraph<ComputeScreeningParameters>",
+        label="Screening parameters",
         exit_status=500,
     )
     make_process(
         caller=screening,
         link_label="ScreeningIteration",
         process_label="WorkGraph<ScreeningIteration>",
+        label="Iteration",
         exit_status=305,
         exit_message="alpha did not converge",
     )
@@ -131,6 +135,7 @@ def _two_failed_iterations() -> Any:
         caller=refine,
         link_label="screening_iteration",
         process_label="WorkGraph<ScreeningIteration>",
+        label="Iteration",
         exit_status=305,
         exit_message="alpha did not converge",
     )
@@ -240,6 +245,7 @@ class TestRenderProcessOnce:
             caller=root,
             link_label="scf",
             process_label="PwBaseWorkChain",
+            label="SCF",
             exit_status=402,
             exit_message="pw.x did not converge",
         )
@@ -280,6 +286,7 @@ class TestRenderProcessOnce:
             caller=root,
             link_label="scf",
             process_label="PwBaseWorkChain",
+            label="SCF",
             exit_status=402,
             exit_message="pw.x did not converge",
         )
@@ -308,6 +315,7 @@ class TestRenderProcessOnce:
 
         child = orm.WorkflowNode()
         child.base.links.add_incoming(root, link_type=LinkType.CALL_WORK, link_label="scf")
+        child.label = "SCF"
         child.store()
         child.set_process_label("PwBaseWorkChain")
         child.set_process_state(ProcessState.KILLED)
