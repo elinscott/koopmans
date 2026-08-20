@@ -1,0 +1,38 @@
+# The KI spectrum of bulk silicon, with screening parameters computed from
+# total-energy differences in a supercell.
+
+workflow:
+  task: wannierize                # change to `singlepoint` for the KI calculation
+  correction: ki
+  screening_method: dscf          # screening from total-energy differences
+  init_orbitals: mlwfs            # maximally localized Wannier functions
+  alpha_guess: 0.077              # a solid screens far more than a molecule
+  alpha_numsteps: 1               # one pass of the screening-parameter loop
+  mp_correction: false            # no image-charge correction on the charged supercells
+  pseudo_library: PseudoDojo/0.4/LDA/SR/standard/upf
+
+atoms:
+  cell_parameters:
+    periodic: true                # a crystal, not an isolated molecule
+    ibrav: 2                      # face-centered cubic
+    celldms:
+      1: 10.2622                  # the lattice parameter, in bohr
+  atomic_positions:
+    units: crystal
+    positions:                    # the two-atom diamond basis
+      - [Si, 0.00, 0.00, 0.00]
+      - [Si, 0.25, 0.25, 0.25]
+
+kpoints:
+  grid: [2, 2, 2]                 # the Brillouin-zone sampling
+  path: LGXKG                     # the path a band structure is plotted along
+
+calculator_parameters:
+  ecutwfc: 60.0                   # wavefunction cutoff (Ry)
+  nbnd: 20                        # 4 filled bands, and empties to disentangle among
+  wannier90:
+    projections:                  # one block per manifold: bonding, then antibonding
+      - [{fractional_site: [0.25, 0.25, 0.25], ang_mtm: sp3}]
+      - [{fractional_site: [0.25, 0.25, 0.25], ang_mtm: sp3}]
+    dis_win_max: 16.9             # the states the empty block may mix
+    dis_froz_max: 10.6            # the states it must keep whole
