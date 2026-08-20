@@ -113,6 +113,25 @@ class TestDftEps:
         assert "ph" in names
         assert "extract_dielectric_constant" in names
 
+    def test_the_route_names_the_run_it_builds(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """The name a reader sees for the whole run, set where the route is built.
+
+        ``launch`` passes it as the run's ``metadata.label``; the graph's
+        own name stays the identity the snapshots record.
+        """
+        from koopmans.aiida.workflows import run_label
+
+        wg = build_workgraph(KoopmansInput.model_validate(_si_eps_dict()))
+
+        assert run_label(wg) == "Dielectric constant"
+        assert wg.name == "DielectricTask"
+
         # ph.x runs the electric-field perturbation only (legacy
         # DFTPhWorkflow: epsil=.true., trans=.false.) at q = Gamma.
         inputph = wg.tasks["ph"].inputs["ph"]["parameters"].value.get_dict()["INPUTPH"]

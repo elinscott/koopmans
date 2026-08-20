@@ -101,41 +101,45 @@ Run the calculation with
 
     $ koopmans run ozone.yaml
 
-The terminal shows a live progress table that grows as the workflow proceeds. At the end
-it reads
+The terminal shows a live progress table that grows as the workflow proceeds: one row per
+step, with the executable it runs and its status. At the end it reads
 
 .. code-block:: text
 
-     Step                                                                      Status
-     Koopmans DSCF Workflow                                                  finished
-       DFT Init (nspin=1)                                                    finished
-       DFT Init (nspin=2; dummy)                                             finished
-       DFT Init (nspin=2)                                                    finished
-       Compute Screening Parameters                                          finished
-         Iteration 1                                                         finished
-           KI Trial                                                          finished
-           Compute Orbital Screening Parameters                              finished
-             Compute Alpha Orb 1                                             finished
-               DFT N-1                                                       finished
-             Compute Alpha Orb 2                                             finished
-               DFT N-1                                                       finished
-             ...
-             Compute Alpha Orb 9                                             finished
-               DFT N-1                                                       finished
-             Compute Alpha Orb 10                                            finished
-               DFT N+1 Dummy                                                 finished
-               PZ Print                                                      finished
-               DFT N+1                                                       finished
-       Run Final KI                                                          finished
-         KI Final                                                            finished
+     Step                                                      Code              Status
+     Koopmans ΔSCF                                                             finished
+       DFT initialization (nspin=1)                            kcp.x           finished
+       DFT initialization (nspin=2, staging)                   kcp.x           finished
+       DFT initialization (nspin=2)                            kcp.x           finished
+       Screening parameters                                                    finished
+         Iteration 1                                                           finished
+           Trial KI                                            kcp.x           finished
+           Orbital screening                                                   finished
+             Orbital 1                                         kcp.x           finished
+             Orbital 2                                         kcp.x           finished
+             Orbital 3                                         kcp.x           finished
+             Orbital 4                                         kcp.x           finished
+             Orbital 5                                         kcp.x           finished
+             Orbital 6                                         kcp.x           finished
+             Orbital 7                                         kcp.x           finished
+             Orbital 8                                         kcp.x           finished
+             Orbital 9                                         kcp.x           finished
+             Orbital 10                                                        finished
+               DFT (N+1, staging)                              kcp.x           finished
+               PZ staging                                      kcp.x           finished
+               DFT (N+1)                                       kcp.x           finished
+       Final KI                                                kcp.x           finished
 
     Workflow completed successfully!
 
+A step that is a single calculation shows that calculation's executable on its own row,
+which is why nine of the ten orbitals have no rows beneath them.
+
 Reading it top to bottom, we can identify three stages of the workflow:
 
--------------------------------
- Initialization (``DFT Init``)
--------------------------------
+-----------------------------------------
+ Initialization (``DFT initialization``)
+-----------------------------------------
 
 This is the PBE calculation you ran first by hand, with one wrinkle: it takes three steps
 rather than one. Adding and removing single electrons later on requires a spin-resolved
@@ -158,28 +162,29 @@ restarts from the spin-unpolarized density duplicated into both spin channels.
 From this point on the density never changes: KI, by construction, returns the same
 density as its base functional. (This is not true of KIPZ.)
 
----------------------------------------------------------
- Screening parameters (``Compute Screening Parameters``)
----------------------------------------------------------
+----------------------
+ Screening parameters
+----------------------
 
 This is the bulk of the calculation, and it is the trial-KI-and-constrained-DFT pair from
 the previous part, repeated for every orbital instead of just the HOMO:
 
-- the ``KI trial`` step plays the role of your trial run, with the guess
+- the ``Trial KI`` step plays the role of your trial run, with the guess
   :math:`\alpha_i = 0.6` in place of 0.7 and every orbital's energy recorded rather than
   the HOMO's alone;
 - then, for each of the nine filled orbitals in turn, a constrained :math:`N-1`
-  calculation like the one you ran, with ``fixed_band`` pointing at that orbital;
-- the one empty orbital runs the procedure in reverse — two preparatory calculations
-  followed by an :math:`N+1`-electron constrained calculation in which the orbital is
-  filled, giving :math:`E_i(N+1)`.
+  calculation like the one you ran, with ``fixed_band`` pointing at that orbital — the
+  rows ``Orbital 1`` to ``Orbital 9``;
+- the one empty orbital, ``Orbital 10``, runs the procedure in reverse — two preparatory
+  calculations followed by an :math:`N+1`-electron constrained calculation in which the
+  orbital is filled, giving :math:`E_i(N+1)`.
 
 Each orbital's screening parameter then comes from the formula you derived, applied to
 that orbital's own energies. With ``alpha_numsteps: 1``, the loop stops there.
 
-------------------------------------------
- The final calculation (``Run Final KI``)
-------------------------------------------
+--------------------------------------
+ The final calculation (``Final KI``)
+--------------------------------------
 
 Your ``ozone_ki_opt.in`` run, with ten different screening parameters in place of one
 applied universally. The orbital energies it prints are the spectral properties we are
