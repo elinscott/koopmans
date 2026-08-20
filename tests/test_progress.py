@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from aiida.orm import ProcessNode
+    from aiida.schedulers.datastructures import JobState
 
 _EPOCH = datetime(2026, 1, 1, 12, 0, 0)
 _pk_counter = itertools.count(1)
@@ -64,6 +65,7 @@ class FakeNode:
     finished_ok: bool = True
     process_label: str | None = None
     pk: int = field(default_factory=lambda: next(_pk_counter))
+    scheduler_state: JobState | None = None
 
     @property
     def inputs(self) -> SimpleNamespace:
@@ -93,6 +95,10 @@ class FakeNode:
     def is_finished_ok(self) -> bool:
         """Whether a finished process finished without an error exit status."""
         return self.finished_ok
+
+    def get_scheduler_state(self) -> JobState | None:
+        """Return the scheduler's last-polled state for this job, unset before the first poll."""
+        return self.scheduler_state
 
 
 def _fake_node_label(node: FakeNode, include_code: bool = True) -> str:
@@ -304,6 +310,62 @@ class TestStableRows:
         )
 
         assert [row.label for row in render(root)] == ["Koopmans ΔSCF"]
+
+
+class TestQueuedState:
+    """A submitted CalcJob distinguishes sitting in the scheduler queue from executing."""
+
+    def test_a_calcjob_the_scheduler_reports_queued_shows_as_queued(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A ``waiting`` CalcJob whose last scheduler poll found it QUEUED reads ``queued``."""
+        from aiida.schedulers.datastructures import JobState
+
+        rows = render(_wrapped_calcjob(state="waiting", scheduler_state=JobState.QUEUED))
+
+        assert rows[1].state == "queued"
+
+    def test_a_calcjob_the_scheduler_reports_running_shows_as_running(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A ``waiting`` CalcJob whose last scheduler poll found it RUNNING keeps ``running``."""
+        from aiida.schedulers.datastructures import JobState
+
+        rows = render(_wrapped_calcjob(state="waiting", scheduler_state=JobState.RUNNING))
+
+        assert rows[1].state == "running"
+
+    def test_a_calcjob_with_no_scheduler_poll_yet_keeps_the_current_wording(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """Before the first scheduler poll lands, a submitted CalcJob still reads ``running``."""
+        rows = render(_wrapped_calcjob(state="waiting"))
+
+        assert rows[1].state == "running"
+
+    def test_only_calcjobs_are_checked_against_the_scheduler(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A calcfunc's ``waiting`` state is not second-guessed against a scheduler it lacks."""
+        from aiida.schedulers.datastructures import JobState
+
+        root = FakeNode(
+            process_label="WorkGraph<Tiny>",
+            label="Tiny",
+            children=[
+                FakeNode(
+                    link="build_alphas",
+                    label="Build alphas",
+                    kind="calcfunc",
+                    state="waiting",
+                    scheduler_state=JobState.QUEUED,
+                )
+            ],
+        )
+
+        rows = render(root)
+
+        assert rows[1].state == "running"
 
 
 class TestCollapsingAndTransparency:
