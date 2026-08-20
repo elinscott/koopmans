@@ -252,9 +252,9 @@ class TestStatus:
         result = CliRunner().invoke(cli, ["status", "--pk", str(node.pk)])
 
         assert result.exit_code == 0, result.output
-        # "ByPk" is CamelCase and gets word-split for display, like every
-        # other process label the progress table renders.
-        assert "By Pk" in result.output
+        # "ByPk" is not a name the display table knows, so it is shown
+        # exactly as written rather than guessed at.
+        assert "ByPk" in result.output
 
     def test_a_target_that_is_not_a_process_is_named_as_the_user_named_it(
         self, monkeypatch: pytest.MonkeyPatch, aiida_profile_clean: Any
