@@ -358,7 +358,10 @@ def _collect_rows(
       its attempts stay visible, which is when a watcher needs them. The
       root never collapses — it names the workflow, not a step of it —
       and neither does a row that has been given a number, which states
-      a position among siblings that no surviving row would state.
+      a position among siblings that no surviving row would state, nor
+      does a row that is itself about to be numbered: ``Iteration 1``
+      names a pass of the loop, and its one calculation is a separate
+      fact about that pass, not a restatement of it.
 
     A process without a row lends its state to the row that stands for
     it: while that row is non-terminal it displays whichever state is
@@ -404,6 +407,7 @@ def _collect_rows(
     # row would not carry it.
     if (
         not is_root
+        and not row.numbered
         and len(child_rows) == 1
         and not child_rows[0].children
         and child_rows[0].number is None

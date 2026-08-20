@@ -542,9 +542,9 @@ class TestScreeningIterationNumbering:
     def _lone_iteration(self) -> tuple[FakeNode, FakeNode, FakeNode, FakeNode]:
         """Build a screening whose one iteration holds a single calculation.
 
-        The iteration collapses that calculation into itself and is then a
-        leaf, which is the shape that used to put it within reach of its
-        own parent's collapse.
+        The iteration keeps a row of its own and so does the calculation
+        beneath it: an iteration is a pass of the loop, and collapsing its
+        one calculation into it would erase that distinction.
         """
         calcjob = FakeNode(link="ki_trial", label="Trial KI", kind="calcjob", executable="kcp.x")
         iteration = FakeNode(link="ScreeningIteration", label="Iteration", children=[calcjob])
@@ -564,7 +564,9 @@ class TestScreeningIterationNumbering:
         """A number is a position among siblings, and no other row records it.
 
         Collapsing the row that carries one deletes the only statement of
-        which pass of the loop this was.
+        which pass of the loop this was — and neither does the calculation
+        it ran collapse into it: the reader wants to see ``Trial KI``
+        running beneath ``Iteration 1``, not folded into it.
         """
         root, _, _, _ = self._lone_iteration()
 
@@ -573,7 +575,8 @@ class TestScreeningIterationNumbering:
         assert [(row.label, row.depth, row.code) for row in rows] == [
             ("Koopmans ΔSCF", 0, None),
             ("Screening parameters", 1, None),
-            ("Iteration 1", 2, "kcp.x"),
+            ("Iteration 1", 2, None),
+            ("Trial KI", 3, "kcp.x"),
         ]
 
     def test_the_numbered_row_places_its_failures_under_itself(
@@ -586,8 +589,7 @@ class TestScreeningIterationNumbering:
 
         assert paths[compute.pk] == ("Screening parameters",)
         assert paths[iteration.pk] == ("Screening parameters", "Iteration 1")
-        # The calculation the iteration collapsed shares its row, and so its path.
-        assert paths[calcjob.pk] == paths[iteration.pk]
+        assert paths[calcjob.pk] == ("Screening parameters", "Iteration 1", "Trial KI")
 
 
 class TestSiblingOrder:
