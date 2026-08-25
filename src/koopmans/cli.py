@@ -21,6 +21,7 @@ executed twice:
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -148,7 +149,7 @@ def run(input_file: str) -> None:
     try:
         with suppress_aiida_logging():
             run_with_progress(
-                wg, on_submitted=lambda node: _anchor_run_submission(input_path, node)
+                wg, on_submitted=functools.partial(_anchor_run_submission, input_path)
             )
     except Exception as exc:
         advice = advice_for(exc)
