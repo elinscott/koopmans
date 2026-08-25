@@ -7,11 +7,10 @@ already served such a process, a plain value under that name was then
 rejected as not being a ``Mapping``, and the workgraph task that emitted
 it failed on links that work in a fresh interpreter.
 
-The fix is aiidateam/plumpy#351, carried on the ``patched`` branch of the
-fork that ``[tool.uv.sources]`` points at. Patched and unpatched both
-report version ``0.26.0``, so only behavior can tell them apart: this
-guard fails if the source entry is dropped or plumpy is resolved from
-PyPI before #351 is released.
+Fixed upstream by aiidateam/plumpy#351, released in plumpy 0.26.1. This
+guard now pins that invariant against whatever plumpy release is resolved
+from PyPI (see ``[tool.uv.sources]`` history for the fork override this
+replaced).
 """
 
 from __future__ import annotations
