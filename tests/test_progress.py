@@ -174,9 +174,11 @@ def step_paths() -> Iterator[Callable[[FakeNode], dict[int, tuple[str, ...]]]]:
         yield _paths
 
 
-def _wrapped_calcjob(state: str = "waiting", **kwargs: Any) -> FakeNode:
+def _wrapped_calcjob(
+    state: str = "waiting", node_cls: type[FakeNode] = FakeNode, **kwargs: Any
+) -> FakeNode:
     """Build root → ``DFT initialization (nspin=1)`` → the one kcp.x call it wraps."""
-    calcjob = FakeNode(
+    calcjob = node_cls(
         link="dft_init",
         label="DFT initialization",
         kind="calcjob",
@@ -312,6 +314,17 @@ class TestStableRows:
         assert [row.label for row in render(root)] == ["Koopmans ΔSCF"]
 
 
+class _NodeWithoutSchedulerAccessor(FakeNode):
+    """A process node whose class predates ``get_scheduler_state`` entirely.
+
+    ``FakeNode`` always defines the accessor; this subclass shadows it with
+    a plain ``None`` so ``getattr(node, "get_scheduler_state", None)`` sees
+    the same absence as a node type with no scheduler to poll.
+    """
+
+    get_scheduler_state = None  # type: ignore[assignment]
+
+
 class TestQueuedState:
     """A submitted CalcJob distinguishes sitting in the scheduler queue from executing."""
 
@@ -340,6 +353,14 @@ class TestQueuedState:
     ) -> None:
         """Before the first scheduler poll lands, a submitted CalcJob still reads ``running``."""
         rows = render(_wrapped_calcjob(state="waiting"))
+
+        assert rows[1].state == "running"
+
+    def test_a_calcjob_whose_node_type_lacks_a_scheduler_accessor_keeps_the_current_wording(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A ``waiting`` CalcJob with no ``get_scheduler_state`` at all still reads ``running``."""
+        rows = render(_wrapped_calcjob(state="waiting", node_cls=_NodeWithoutSchedulerAccessor))
 
         assert rows[1].state == "running"
 
