@@ -121,7 +121,9 @@ class WorkflowConfig(BaseModel):
         default=None,
         description='dielectric constant of the system used by the Gygi-Baldereschi and Makov-Payne corrections; either provide an explicit value or set to "auto" to calculate it ab initio',
     )
-    alpha_numsteps: int = Field(default=10, description="Number of steps for alpha calculation")
+    alpha_numsteps: int = Field(
+        default=1, description="maximum number of self-consistency steps for calculating alpha"
+    )
     alpha_conv_thr: float = Field(
         default=1e-3,
         description="convergence threshold for $|Delta E_i - epsilon_i|$; if below this threshold, the corresponding alpha value is not updated",
