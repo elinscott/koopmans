@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from aiida.orm import ProcessNode
+    from aiida.schedulers.datastructures import JobState
 
 _EPOCH = datetime(2026, 1, 1, 12, 0, 0)
 _pk_counter = itertools.count(1)
@@ -64,6 +65,7 @@ class FakeNode:
     finished_ok: bool = True
     process_label: str | None = None
     pk: int = field(default_factory=lambda: next(_pk_counter))
+    scheduler_state: JobState | None = None
 
     @property
     def inputs(self) -> SimpleNamespace:
@@ -93,6 +95,10 @@ class FakeNode:
     def is_finished_ok(self) -> bool:
         """Whether a finished process finished without an error exit status."""
         return self.finished_ok
+
+    def get_scheduler_state(self) -> JobState | None:
+        """Return the scheduler's last-polled state for this job, unset before the first poll."""
+        return self.scheduler_state
 
 
 def _fake_node_label(node: FakeNode, include_code: bool = True) -> str:
@@ -168,9 +174,11 @@ def step_paths() -> Iterator[Callable[[FakeNode], dict[int, tuple[str, ...]]]]:
         yield _paths
 
 
-def _wrapped_calcjob(state: str = "waiting", **kwargs: Any) -> FakeNode:
+def _wrapped_calcjob(
+    state: str = "waiting", node_cls: type[FakeNode] = FakeNode, **kwargs: Any
+) -> FakeNode:
     """Build root → ``DFT initialization (nspin=1)`` → the one kcp.x call it wraps."""
-    calcjob = FakeNode(
+    calcjob = node_cls(
         link="dft_init",
         label="DFT initialization",
         kind="calcjob",
@@ -304,6 +312,81 @@ class TestStableRows:
         )
 
         assert [row.label for row in render(root)] == ["Koopmans ΔSCF"]
+
+
+class _NodeWithoutSchedulerAccessor(FakeNode):
+    """A process node whose class predates ``get_scheduler_state`` entirely.
+
+    ``FakeNode`` always defines the accessor; this subclass shadows it with
+    a plain ``None`` so ``getattr(node, "get_scheduler_state", None)`` sees
+    the same absence as a node type with no scheduler to poll.
+    """
+
+    get_scheduler_state = None  # type: ignore[assignment]
+
+
+class TestQueuedState:
+    """A submitted CalcJob distinguishes sitting in the scheduler queue from executing."""
+
+    def test_a_calcjob_the_scheduler_reports_queued_shows_as_queued(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A ``waiting`` CalcJob whose last scheduler poll found it QUEUED reads ``queued``."""
+        from aiida.schedulers.datastructures import JobState
+
+        rows = render(_wrapped_calcjob(state="waiting", scheduler_state=JobState.QUEUED))
+
+        assert rows[1].state == "queued"
+
+    def test_a_calcjob_the_scheduler_reports_running_shows_as_running(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A ``waiting`` CalcJob whose last scheduler poll found it RUNNING keeps ``running``."""
+        from aiida.schedulers.datastructures import JobState
+
+        rows = render(_wrapped_calcjob(state="waiting", scheduler_state=JobState.RUNNING))
+
+        assert rows[1].state == "running"
+
+    def test_a_calcjob_with_no_scheduler_poll_yet_keeps_the_current_wording(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """Before the first scheduler poll lands, a submitted CalcJob still reads ``running``."""
+        rows = render(_wrapped_calcjob(state="waiting"))
+
+        assert rows[1].state == "running"
+
+    def test_a_calcjob_whose_node_type_lacks_a_scheduler_accessor_keeps_the_current_wording(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A ``waiting`` CalcJob with no ``get_scheduler_state`` at all still reads ``running``."""
+        rows = render(_wrapped_calcjob(state="waiting", node_cls=_NodeWithoutSchedulerAccessor))
+
+        assert rows[1].state == "running"
+
+    def test_only_calcjobs_are_checked_against_the_scheduler(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A calcfunc's ``waiting`` state is not second-guessed against a scheduler it lacks."""
+        from aiida.schedulers.datastructures import JobState
+
+        root = FakeNode(
+            process_label="WorkGraph<Tiny>",
+            label="Tiny",
+            children=[
+                FakeNode(
+                    link="build_alphas",
+                    label="Build alphas",
+                    kind="calcfunc",
+                    state="waiting",
+                    scheduler_state=JobState.QUEUED,
+                )
+            ],
+        )
+
+        rows = render(root)
+
+        assert rows[1].state == "running"
 
 
 class TestCollapsingAndTransparency:

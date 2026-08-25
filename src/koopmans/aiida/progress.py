@@ -30,6 +30,7 @@ __all__ = ["LabelDisplay", "describe_label", "describe_process", "executable_of"
 STATUS_STYLES = {
     "created": "dim",
     "waiting": "yellow",
+    "queued": "yellow",
     "running": "blue italic",
     "finished": "green",
     "failed": "red",
@@ -37,6 +38,22 @@ STATUS_STYLES = {
     "killed": "red",
     "paused": "magenta bold",
 }
+
+
+def _is_queued_on_scheduler(process_node: ProcessNode) -> bool:
+    """Return whether a CalcJob's last scheduler poll found it still queued.
+
+    ``CalcJobNode.get_scheduler_state`` reflects the engine's most recent
+    poll of the scheduler (hq, slurm, ...) and is ``None`` before the
+    first poll lands; a node with no such accessor at all has no
+    scheduler to be queued on. Both read as not-queued.
+    """
+    get_scheduler_state = getattr(process_node, "get_scheduler_state", None)
+    if get_scheduler_state is None:
+        return False
+    from aiida.schedulers.datastructures import JobState
+
+    return bool(get_scheduler_state() == JobState.QUEUED)
 
 
 def get_process_state(process_node: ProcessNode, node_type: str = "") -> str:
@@ -62,8 +79,12 @@ def get_process_state(process_node: ProcessNode, node_type: str = "") -> str:
         if state is not None:
             state_str = state.value.lower()
             # CalcJobs/CalcFunctions in "waiting" state have been submitted
-            # and are effectively "running" from the user's perspective
+            # and are effectively "running" from the user's perspective —
+            # unless the scheduler's own last poll says the job is still
+            # sitting in the queue rather than executing.
             if state_str == "waiting" and node_type in ("calcjob", "calcfunc"):
+                if node_type == "calcjob" and _is_queued_on_scheduler(process_node):
+                    return "queued"
                 return "running"
             return state_str
         return "unknown"
@@ -109,12 +130,14 @@ class ProcessRow(NamedTuple):
 
 
 # States a process passes through before it terminates, ordered by how
-# far along they are. ``paused`` ranks top because it is the one
-# non-terminal state the user must act on. Terminal states are absent:
-# they never travel from a hidden row to a visible one (see
-# :func:`_promoted_state`), and an unrecognised state ranks below all of
-# these.
-_STATE_RANK = {"created": 0, "waiting": 1, "running": 2, "paused": 3}
+# far along they are. ``queued`` outranks a bare ``waiting`` — a CalcJob
+# confirmed queued by the scheduler has gotten further than a process
+# still waiting on something else (upload, a sibling) — but stays behind
+# ``running``. ``paused`` ranks top because it is the one non-terminal
+# state the user must act on. Terminal states are absent: they never
+# travel from a hidden row to a visible one (see :func:`_promoted_state`),
+# and an unrecognised state ranks below all of these.
+_STATE_RANK = {"created": 0, "waiting": 1, "queued": 2, "running": 3, "paused": 4}
 _TERMINAL_STATES = frozenset({"finished", "failed", "excepted", "killed"})
 
 # Splits a label into its alternating text and digit runs. The capture
