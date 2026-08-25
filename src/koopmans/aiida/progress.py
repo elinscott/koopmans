@@ -16,7 +16,7 @@ from koopmans.aiida.labels import LabelDisplay, describe_label, executable_of, p
 from koopmans.aiida.utils import get_node_label, suppress_stdout
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from aiida.orm import ProcessNode
     from aiida_workgraph import WorkGraph
@@ -647,7 +647,11 @@ def watch_process(
     return process_node
 
 
-def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
+def run_with_progress(
+    wg: WorkGraph,
+    refresh_interval: float = 2.0,
+    on_submitted: Callable[[ProcessNode], None] | None = None,
+) -> None:
     """Submit and run a workgraph with a live progress display.
 
     This function submits the workgraph and displays a live-updating
@@ -656,6 +660,10 @@ def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     Args:
         wg: The WorkGraph instance to run.
         refresh_interval: How often to refresh the display (in seconds).
+        on_submitted: Called with the loaded process node once the
+            submission is durably in the daemon, before the live display
+            starts watching it. A caller that kills the process at this
+            point (Ctrl-C) still leaves whatever this callback did behind.
     """
     from aiida.orm import load_node
 
@@ -676,6 +684,8 @@ def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     # Display live progress by querying actual process nodes
     pk = wg.process.pk
     process_node = cast("ProcessNode", load_node(pk))
+    if on_submitted is not None:
+        on_submitted(process_node)
     process_node = watch_process(process_node, refresh_interval=refresh_interval, console=console)
 
     # Update the original wg object so callers can access the results

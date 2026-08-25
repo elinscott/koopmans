@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -94,12 +93,38 @@ def cli(pdb: bool, enable_logging: bool) -> None:
         )
 
 
+def _anchor_run_submission(input_path: Path, node: orm.ProcessNode) -> None:
+    """Record ``node`` in ``input_path``'s anchor file, warning rather than aborting on failure.
+
+    Called once ``koopmans run``'s submission is durably in the daemon, so a
+    write failure here must not kill a calculation that is already under
+    way — it only costs the shortcut `koopmans status` would otherwise find
+    on its own.
+    """
+    from koopmans.aiida.anchor import anchor_path_for_input, record_submission
+
+    anchor_path = anchor_path_for_input(input_path)
+    try:
+        record_submission(anchor_path, input_path, node)
+    except (ValueError, OSError) as exc:
+        click.echo(
+            f"Warning: the workflow was submitted, but {anchor_path} could not be "
+            f"written ({exc}), so `koopmans status` will not find it on its own. "
+            f"Follow it with `koopmans status --uuid {node.uuid}`.",
+            err=True,
+        )
+
+
 @cli.command()
 @click.argument("input_file", type=click.Path(exists=True))
 def run(input_file: str) -> None:
     """Run a koopmans calculation from an input file.
 
-    INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
+    INPUT_FILE is the path to a YAML or JSON input file describing the
+    calculation. Records the submission in `<stem>.run.yaml`, next to the
+    input file, the same way `koopmans submit` does, so a run interrupted
+    (e.g. Ctrl-C) after submission can still be found with `koopmans
+    status` or `koopmans attach`.
     """
     from koopmans.aiida.workflows import advice_for, build_workgraph
 
@@ -122,7 +147,9 @@ def run(input_file: str) -> None:
     # route-conditional code surfaces here, so translate at this boundary too.
     try:
         with suppress_aiida_logging():
-            run_with_progress(wg)
+            run_with_progress(
+                wg, on_submitted=lambda node: _anchor_run_submission(input_path, node)
+            )
     except Exception as exc:
         advice = advice_for(exc)
         if advice is not None:
@@ -154,10 +181,7 @@ def submit(input_file: str) -> None:
     `koopmans status` and `koopmans attach` read that file to find the
     calculation again.
     """
-    from datetime import datetime
-
-    from koopmans.aiida.anchor import AnchorEntry, anchor_path_for_input, append_anchor_entry
-    from koopmans.aiida.setup.profile import PROFILE_NAME
+    from koopmans.aiida.anchor import anchor_path_for_input, record_submission
     from koopmans.aiida.workflows import advice_for, build_workgraph
     from koopmans.api import launch
 
@@ -178,19 +202,11 @@ def submit(input_file: str) -> None:
             exc.add_note(advice)
         raise
 
-    if node.pk is None:
-        raise click.ClickException("The submitted process was never stored, so it has no id.")
-
     anchor_path = anchor_path_for_input(input_path)
-    entry = AnchorEntry(
-        uuid=node.uuid,
-        pk=node.pk,
-        input=input_path.name,
-        profile=PROFILE_NAME,
-        submitted=datetime.now(UTC).isoformat(),
-    )
     try:
-        append_anchor_entry(anchor_path, entry)
+        record_submission(anchor_path, input_path, node)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     except OSError as exc:
         # The daemon already has the job; losing the run file only loses
         # the *shortcut* back to it, not the submission itself.
