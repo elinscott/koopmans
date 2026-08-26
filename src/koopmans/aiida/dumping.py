@@ -508,21 +508,63 @@ def _nest_by_link_label(flat: dict[str, Any]) -> dict[str, Any]:
     return nested
 
 
-def _direct_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
-    """Return the pks a direct ``CALL_CALC`` child of ``node`` created.
+def _is_calcjob_step(node: orm.ProcessNode) -> bool:
+    """Return whether ``node`` is a genuine external-code calculation.
 
-    Only a one-hop calculation child counts: :func:`_hoist_lone_calculations`
-    only ever merges a wrapping step's *own* calculation folder up into it,
-    never a grandchild's, so a value that only becomes redundant two or
-    more layers down (the root re-exporting ``RunFinalKI``'s own re-export
-    of ``ki_final``'s output) is not caught here — dropping it there would
-    delete the only copy visible at that level.
+    A step folder is kept for a CalcJob or a workflow node only; a plain
+    calcfunction/pyfunction helper is bookkeeping and is pruned as it was
+    before this module wrote any JSON, whatever it returns. A domain
+    CalcJob (``KcpCalculation``, ``PwCalculation``, …) resolves to its own
+    dedicated ``CalcJob`` subclass; a ``PythonJob``-wrapped helper always
+    resolves to ``aiida_pythonjob``'s own generic runner class regardless
+    of the python function it ran, so comparing the process class — not
+    just ``isinstance(node, orm.CalcJobNode)`` — tells the two apart. A
+    plain pyfunction (in-process, no code) is a ``CalcFunctionNode``,
+    never a ``CalcJobNode`` at all, so the ``isinstance`` check alone
+    already excludes it.
+
+    A ``CalcJobNode`` with no resolvable ``process_type`` (none set at
+    all, or one naming an entry point no longer installed) cannot answer
+    the ``PythonJob`` comparison, so this counts it as a CalcJob anyway:
+    the node class itself is already the stronger signal, and only a
+    genuine ``PythonJob`` node — resolvable by definition, since it just
+    ran — would ever need the narrower exclusion.
     """
+    from aiida import orm
+    from aiida_pythonjob import PythonJob
+
+    if not isinstance(node, orm.CalcJobNode):
+        return False
+    try:
+        process_class = node.process_class
+    except ValueError:
+        return True
+    return process_class is not PythonJob
+
+
+def _direct_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
+    """Return the pks a direct CalcJob ``CALL_CALC`` child of ``node`` created.
+
+    Only a one-hop CalcJob child counts. A CalcJob is the only kind of
+    calculation child whose own folder ever survives to hold the value
+    under its own label (:func:`_is_calcjob_step`), and
+    :func:`_hoist_lone_calculations` only ever merges a wrapping step's
+    *own* calculation folder up into it, never a grandchild's — so a value
+    that only becomes redundant two or more layers down (the root
+    re-exporting ``RunFinalKI``'s own re-export of ``ki_final``'s output)
+    is not caught here, and neither is one a pruned pyfunction child
+    created (``ComputeScreeningParameters``'s ``alphas``): dropping either
+    would delete the only copy the dump ever shows.
+    """
+    from aiida import orm
     from aiida.common import LinkType
 
     created: set[int] = set()
     for call_link in node.base.links.get_outgoing(link_type=LinkType.CALL_CALC).all():
-        for create_link in call_link.node.base.links.get_outgoing(link_type=LinkType.CREATE).all():
+        child = call_link.node
+        if not isinstance(child, orm.ProcessNode) or not _is_calcjob_step(child):
+            continue
+        for create_link in child.base.links.get_outgoing(link_type=LinkType.CREATE).all():
             if create_link.node.pk is not None:
                 created.add(create_link.node.pk)
     return frozenset(created)
@@ -560,25 +602,35 @@ def _json_representable_links(
 def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
     """Write ``folder``'s :data:`INPUTS_JSON_FILE`/:data:`OUTPUTS_JSON_FILE`.
 
-    A calculation's own ``INPUT_CALC``/``CREATE`` links give its inputs and
+    Only a genuine CalcJob or a workflow node gets either file
+    (:func:`_is_calcjob_step`) — a plain calcfunction/pyfunction/PythonJob
+    helper is bookkeeping and gets neither, whatever it returns, so it is
+    pruned exactly as it was before this module existed
+    (:func:`_prune_source_only_step_folders`, via :data:`_NON_CONTENT_FILES`
+    for a bare :data:`INPUTS_JSON_FILE` and simply never having
+    :data:`OUTPUTS_JSON_FILE` to begin with). Its own values reach the
+    dump only where an enclosing workflow re-exports them through a
+    ``RETURN`` link.
+
+    A CalcJob's own ``INPUT_CALC``/``CREATE`` links give its inputs and
     outputs. A workflow does not create data itself, so its ``RETURN``
     links — the same ones a reader would follow from ``process.outputs`` —
     stand in for :data:`OUTPUTS_JSON_FILE`. No :data:`INPUTS_JSON_FILE` is
     written for a workflow, since its ``INPUT_WORK`` links point at the
     same Data its own calculations already read.
 
-    A workflow wrapping exactly one calculation is later hoisted into that
-    calculation's own folder (:func:`_hoist_lone_calculations`), so a
+    A workflow wrapping exactly one CalcJob is later hoisted into that
+    CalcJob's own folder (:func:`_hoist_lone_calculations`), so a
     workflow's ``outputs.json`` never blocks that hoist: any RETURN value
-    the workflow's own direct calculation child already created is dropped
+    the workflow's own direct CalcJob child already created is dropped
     here (:func:`_direct_calculation_created_pks`) — the same node under a
     second name — leaving a value genuinely produced elsewhere in the
-    workflow's own outputs.json (e.g. ``ComputeScreeningParameters``'s
-    ``alphas``, assembled several layers inside a sub-workgraph child, not
-    by a direct calculation child) untouched. A wrapper that drops down to
-    nothing writes no file at all, so the pre-existing single-calculation
-    check in :func:`_hoist_lone_calculations` runs exactly as it did before
-    this file existed. Neither file is written when nothing linked has a
+    workflow's own subtree (e.g. ``ComputeScreeningParameters``'s
+    ``alphas``, assembled by a pyfunction, whose own folder is pruned)
+    untouched. A wrapper that drops down to nothing writes no file at
+    all, so the pre-existing single-calculation check in
+    :func:`_hoist_lone_calculations` runs exactly as it did before this
+    file existed. Neither file is written when nothing linked has a
     JSON-representable value.
 
     :param node: The process the folder was dumped from.
@@ -588,7 +640,7 @@ def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
     from aiida.common import LinkType
 
     links_to_write: tuple[tuple[str, LinkType, bool, frozenset[int]], ...]
-    if isinstance(node, orm.CalculationNode):
+    if _is_calcjob_step(node):
         links_to_write = (
             (INPUTS_JSON_FILE, LinkType.INPUT_CALC, True, frozenset()),
             (OUTPUTS_JSON_FILE, LinkType.CREATE, False, frozenset()),

@@ -1235,205 +1235,300 @@ class TestDumpedNodeMetadata:
 
 
 class TestDumpDataJson:
-    """A step's JSON-representable ``Data`` inputs/outputs land beside its files."""
+    """A step's JSON-representable ``Data`` inputs/outputs land beside its files.
 
-    @staticmethod
-    def _dump_a_run(output_path: Path) -> Path:
-        """Dump a workgraph whose graph and calculation steps each expose Data.
+    Built on :func:`tests.fixtures.make_process`/:func:`tests.fixtures.attach`
+    rather than a live ``WorkGraph`` run, so a ``CalcJobNode`` and a
+    ``CalcFunctionNode`` (a plain pyfunction/PythonJob helper) can be told
+    apart directly — the distinction :func:`koopmans.aiida.dumping._is_calcjob_step`
+    keys off. Every scenario wraps its calculation under a trivial
+    workflow ``root``, matching how a real dump is never a bare CalcJob at
+    its top level (see ``ARITHMETIC_ADD``'s own probe: dumping a CalcJob
+    with no wrapper skips aiida-core's ``node_outputs`` → ``outputs``
+    merge, which only ever walks a root's *descendants*).
+    """
 
-        ``screen`` is a ``@task.graph`` re-exporting ``compute_alphas``'s
-        ``alphas`` as its own — the workflow-level RETURN case #205
-        reports missing. ``compute_alphas`` wraps ``build_alphas`` in a
-        further sub-workgraph layer, so the ``Dict`` node reaching
-        ``screen`` is created two hops down rather than by a direct
-        calculation child — matching how the real ``ComputeScreeningParameters``
-        assembles its own ``alphas`` several layers inside a nested
-        ``ScreeningIteration``, and keeping this case distinct from
-        ``TestHoistDropsRedundantWorkflowReturn``'s single-hop one.
-        ``make_report`` is a calculation with one JSON output (``params``)
-        beside a real file (``file``) — the CREATE case. ``write_plain_file``
-        is a calculation with no JSON-representable output at all, to
-        check nothing is written for it.
+    #: A real, always-registered CalcJob — enough to resolve ``process_class``.
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+    #: A real, always-registered plain pyfunction — never a CalcJobNode.
+    PYFUNCTION = "aiida_pythonjob.calculations:pyfunction.pyfunction"
+
+    def test_a_calcjobs_dict_output_lands_beside_its_own_files(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A CalcJob's Dict CREATE output sits next to a real file it also created."""
+        import io
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "output_parameters", orm.Dict({"homo_energy": -12.353, "lumo_energy": -4.02}))  # type: ignore[no-untyped-call]
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        calc_dir = dumped / "01-calc"
+        written = json.loads((calc_dir / "outputs.json").read_text())
+        assert written == {"output_parameters": {"homo_energy": -12.353, "lumo_energy": -4.02}}
+        assert (calc_dir / "outputs" / "report" / "report.txt").read_text() == "hello"
+
+    def test_a_calcjob_with_no_json_representable_output_writes_no_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A CalcJob that creates only a file gets no ``outputs.json``."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        calc_dir = dumped / "01-calc"
+        assert not (calc_dir / "outputs.json").exists()
+        assert (calc_dir / "outputs" / "report" / "report.txt").read_text() == "hello"
+
+    def test_a_plain_pyfunctions_dict_input_alone_leaves_no_folder(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A bare ``inputs.json`` does not rescue a folder from the prune.
+
+        ``INPUTS_JSON_FILE`` is non-content for the same reason a
+        scalar-argument helper task always was: without this, every
+        pyfunction taking a Data argument would gain a folder of its own
+        just to echo it back.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        make_process(
+            self.PYFUNCTION,
+            caller=root,
+            link_label="helper",
+            calcfunction=True,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("helper") for p in dumped.rglob("*"))
+
+    def test_a_calcjobs_data_inputs_land_in_inputs_json(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A CalcJob's own Dict input is directly link-labelled, unlike a pyfunction's.
+
+        Also gives the calculation a real file output, so its folder has
+        content to survive the prune besides the ``inputs.json`` under
+        test — a bare ``inputs.json`` does not by itself (see
+        ``test_a_plain_pyfunctions_dict_input_alone_leaves_no_folder``).
+        """
+        import io
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        calc_dir = dumped / "01-calc"
+        written = json.loads((calc_dir / "inputs.json").read_text())
+        assert written == {"parameters": {"x": 1}}
+
+    def test_a_plain_pyfunction_never_gets_outputs_or_inputs_json(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A pyfunction is bookkeeping and gets neither file, whatever it returns.
+
+        A real file output still lands under ``outputs/`` as aiida-core's
+        own dumper always wrote it — only the two files this module adds
+        are withheld.
         """
         import io
 
         from aiida import orm
-        from aiida_workgraph import WorkGraph, task
 
         from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
 
-        @task(outputs=["file", "params"])  # type: ignore[untyped-decorator]
-        def make_report(text: str) -> dict[str, Any]:
-            """Return a file and a Dict of energies, as a real calculation would."""
-            return {
-                "file": orm.SinglefileData(io.BytesIO(text.encode()), filename="report.txt"),
-                "params": {"homo_energy": -12.353, "lumo_energy": -4.02},
-            }
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        helper = make_process(
+            self.PYFUNCTION,
+            caller=root,
+            link_label="helper",
+            calcfunction=True,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+        attach(helper, "output_parameters", orm.Dict({"homo_energy": -12.353}))  # type: ignore[no-untyped-call]
+        attach(helper, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
 
-        @task  # type: ignore[untyped-decorator]
-        def build_alphas(up: list[float], down: list[float]) -> orm.Dict:
-            """Return the per-spin screening parameters, with no file at all."""
-            return orm.Dict({"up": up, "down": down})  # type: ignore[no-untyped-call]
+        dumped = dump_workgraph(root, tmp_path / "dump")
 
-        @task.graph(outputs=["alphas"])  # type: ignore[untyped-decorator]
-        def compute_alphas(up: list[float], down: list[float]) -> dict[str, orm.Dict]:
-            """Wrap ``build_alphas`` in one more sub-workgraph layer."""
-            alphas: orm.Dict = build_alphas(up=up, down=down).result
-            return {"alphas": alphas}
-
-        @task  # type: ignore[untyped-decorator]
-        def write_plain_file(text: str) -> orm.SinglefileData:
-            """Return a file and nothing else."""
-            return orm.SinglefileData(io.BytesIO(text.encode()), filename="plain.txt")
-
-        @task.graph(outputs=["alphas"])  # type: ignore[untyped-decorator]
-        def screen(text: str, up: list[float], down: list[float]) -> dict[str, orm.Dict]:
-            """Run all tasks; re-export ``compute_alphas``'s Dict as ``alphas``."""
-            make_report(text=text)
-            write_plain_file(text=text)
-            sub = compute_alphas(up=up, down=down)
-            return {"alphas": sub.alphas}
-
-        wg = WorkGraph("dump_data_json")
-        wg.add_task(screen, name="screen", text="hello", up=[0.7019, 0.78], down=[0.6896])
-        wg.run()
-
-        return dump_workgraph(wg.process, output_path)
+        helper_dir = dumped / "01-helper"
+        assert not (helper_dir / "outputs.json").exists()
+        assert not (helper_dir / "inputs.json").exists()
+        assert (helper_dir / "outputs" / "report" / "report.txt").read_text() == "hello"
 
     def test_a_workflow_steps_return_lands_in_its_own_outputs_json(
-        self, aiida_profile_clean: object, tmp_path: Path
+        self, aiida_profile: Any, tmp_path: Path
     ) -> None:
-        """``screen`` never runs a calculation itself; its RETURN link still surfaces.
+        """A workflow's RETURN surfaces a pyfunction's value its own folder never shows.
 
-        Nothing here duplicates a direct calculation child's own output —
-        ``build_alphas`` is a grandchild via ``compute_alphas`` — so
-        nothing is dropped by the redundant-echo rule under test in
-        ``TestHoistDropsRedundantWorkflowReturn``.
+        The pyfunction ``compute_alphas`` creates no file, so its own
+        folder is pruned entirely — matching ``no per-iteration helper
+        folders`` — and ``alphas`` reaches the reader only via ``root``'s
+        own RETURN, exactly the real ``ComputeScreeningParameters`` case.
         """
         import json
 
-        dumped = self._dump_a_run(tmp_path / "dump")
+        from aiida import orm
 
-        screen_dir = next(p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("screen"))
-        written = json.loads((screen_dir / "outputs.json").read_text())
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        compute_alphas = make_process(
+            self.PYFUNCTION, caller=root, link_label="compute_alphas", calcfunction=True
+        )
+        from aiida.common.links import LinkType
+
+        alphas_dict = orm.Dict({"up": [0.7019, 0.78], "down": [0.6896]})  # type: ignore[no-untyped-call]
+        alphas = attach(compute_alphas, "result", alphas_dict)
+        alphas.base.links.add_incoming(root, link_type=LinkType.RETURN, link_label="alphas")
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("compute_alphas") for p in dumped.rglob("*"))
+        written = json.loads((dumped / "outputs.json").read_text())
         assert written == {"alphas": {"up": [0.7019, 0.78], "down": [0.6896]}}
 
-    def test_a_calculations_dict_output_lands_beside_its_own_files(
-        self, aiida_profile_clean: object, tmp_path: Path
-    ) -> None:
-        """``make_report``'s ``params`` sits next to the ``file`` it also created."""
-        import json
-
-        dumped = self._dump_a_run(tmp_path / "dump")
-
-        report_dir = next(
-            p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("make_report")
-        )
-        written = json.loads((report_dir / "outputs.json").read_text())
-        assert written == {"params": {"homo_energy": -12.353, "lumo_energy": -4.02}}
-        assert (report_dir / "outputs" / "file" / "report.txt").read_text() == "hello"
-
-    def test_a_step_with_no_json_representable_output_writes_no_file(
-        self, aiida_profile_clean: object, tmp_path: Path
-    ) -> None:
-        """``write_plain_file`` creates only a file, so nothing is added."""
-        dumped = self._dump_a_run(tmp_path / "dump")
-
-        plain_dir = next(
-            p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("write_plain_file")
-        )
-        assert not (plain_dir / "outputs.json").exists()
-        # A single-return pyfunction's one output socket is named "result".
-        assert (plain_dir / "outputs" / "result" / "plain.txt").read_text() == "hello"
-
-    def test_a_calculations_data_inputs_land_in_inputs_json(
-        self, aiida_profile_clean: object, tmp_path: Path
-    ) -> None:
-        """``make_report``'s ``text`` input is a ``Str``, so it gets an ``inputs.json``."""
-        import json
-
-        dumped = self._dump_a_run(tmp_path / "dump")
-
-        report_dir = next(
-            p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("make_report")
-        )
-        written = json.loads((report_dir / "inputs.json").read_text())
-        # A pyfunction's own kwargs nest under "function_inputs", the same
-        # namespace aiida-core's own dump uses for their repository-backed
-        # siblings (see the module's ``_lambdas`` fixture).
-        assert written == {"function_inputs": {"text": "hello"}}
-
     def test_a_workflow_step_never_gets_its_own_inputs_json(
-        self, aiida_profile_clean: object, tmp_path: Path
+        self, aiida_profile: Any, tmp_path: Path
     ) -> None:
-        """``screen``'s inputs echo what its own calculations already show.
+        """``root``'s own INPUT_WORK Data never gets an ``inputs.json``.
 
-        Writing them again at the workflow layer would only risk
-        colliding with a hoisted calculation's own ``inputs.json``
-        (see :func:`koopmans.aiida.dumping._write_data_json`).
+        Writing one would only risk colliding with a hoisted calculation's
+        own ``inputs.json`` (see
+        :func:`koopmans.aiida.dumping._write_data_json`).
         """
-        dumped = self._dump_a_run(tmp_path / "dump")
+        from aiida import orm
 
-        screen_dir = next(p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("screen"))
-        assert not (screen_dir / "inputs.json").exists()
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            label="root",
+            inputs={"text": orm.Str("hello")},  # type: ignore[no-untyped-call]
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not (dumped / "inputs.json").exists()
 
 
 class TestHoistDropsRedundantWorkflowReturn:
-    """A wrapper's RETURN echo of its own direct calculation's output is dropped.
+    """A wrapper's RETURN echo of its own direct CalcJob's output is dropped.
 
-    Mirrors the real ``RunFinalKI`` / ``ki_final`` shape: a ``@task.graph``
-    wraps exactly one calculation and re-exports one of its Dict outputs
-    under a different link label. Before this class's fix, the wrapper's
-    own ``outputs.json`` (holding that one redundant entry) counted as a
+    Mirrors the real ``RunFinalKI`` / ``ki_final`` shape: a workflow wraps
+    exactly one CalcJob and re-exports one of its Dict outputs under a
+    different link label. Before this class's fix, the wrapper's own
+    ``outputs.json`` (holding that one redundant entry) counted as a
     second child alongside the calculation's folder, so
     ``_hoist_lone_calculations`` no longer saw a lone calculation to merge
     up — leaving two ``outputs.json`` files, one per label, for the same
     underlying node.
     """
 
-    @staticmethod
-    def _dump_a_run(output_path: Path) -> Path:
-        """Dump a workgraph graph wrapping one calculation with a Dict + a file output."""
-        import io
-
-        from aiida import orm
-        from aiida_workgraph import WorkGraph, task
-
-        from koopmans.aiida.dumping import dump_workgraph
-
-        @task(outputs=["output_parameters", "eigenvalues"])  # type: ignore[untyped-decorator]
-        def ki_final_calc(homo: float, lumo: float) -> dict[str, Any]:
-            """Return a Dict and a file, as the real KcpCalculation does."""
-            return {
-                "output_parameters": {"homo_energy": homo, "lumo_energy": lumo},
-                "eigenvalues": orm.SinglefileData(io.BytesIO(b"eigenvalues"), filename="eigs.dat"),
-            }
-
-        @task.graph(outputs=["parameters"])  # type: ignore[untyped-decorator]
-        def run_final(homo: float, lumo: float) -> dict[str, orm.Dict]:
-            """Wrap the one calculation and re-export its Dict under a new name."""
-            calc = ki_final_calc(homo=homo, lumo=lumo)
-            return {"parameters": calc.output_parameters}
-
-        wg = WorkGraph("dump_hoist_dedup")
-        wg.add_task(run_final, name="run_final", homo=-12.353, lumo=-0.4034)
-        wg.run()
-
-        return dump_workgraph(wg.process, output_path)
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
 
     def test_the_wrapper_is_hoisted_with_one_outputs_json_keyed_by_the_calculation(
-        self, aiida_profile_clean: object, tmp_path: Path
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
     ) -> None:
-        """The wrapper folder collapses into the calculation's, as it did before this PR."""
+        """The wrapper folder collapses into the CalcJob's, as it did before this PR."""
+        import io
         import json
 
-        dumped = self._dump_a_run(tmp_path / "dump")
+        from aiida import orm
 
-        assert not any(p.name.endswith("ki_final_calc") for p in dumped.rglob("*"))
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
 
-        run_final_dir = next(
-            p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("run_final")
+        # The dump root's own metadata file always survives as a sibling
+        # (see TestHoistLoneCalculations.test_a_lone_top_level_calculation_keeps_its_folder),
+        # so ``wrapper`` has to sit one layer below the root to be
+        # eligible for the hoist under test, exactly as ``RunFinalKI``
+        # sits below the real top-level workgraph.
+        true_root = make_process("aiida.workflows:workgraph.engine", label="true_root")
+        wrapper = make_process(
+            "aiida.workflows:workgraph.engine", caller=true_root, link_label="run_final"
         )
+        ki_final = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="ki_final",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        from aiida.common.links import LinkType
+
+        parameters = attach(
+            ki_final,
+            "output_parameters",
+            orm.Dict({"homo_energy": -12.353, "lumo_energy": -0.4034}),  # type: ignore[no-untyped-call]
+        )
+        attach(
+            ki_final,
+            "eigenvalues",
+            orm.SinglefileData(io.BytesIO(b"eigenvalues"), filename="eigs.dat"),
+        )
+        # The wrapper re-exports the same Dict node under a different label.
+        parameters.base.links.add_incoming(
+            wrapper, link_type=LinkType.RETURN, link_label="parameters"
+        )
+
+        dumped = dump_workgraph(true_root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("ki_final") for p in dumped.rglob("*"))
+        run_final_dir = dumped / "01-run_final"
         outputs_jsons = list(dumped.rglob("outputs.json"))
         assert outputs_jsons == [run_final_dir / "outputs.json"]
 
@@ -1441,3 +1536,43 @@ class TestHoistDropsRedundantWorkflowReturn:
         assert written == {"output_parameters": {"homo_energy": -12.353, "lumo_energy": -0.4034}}
         assert "parameters" not in written
         assert (run_final_dir / "outputs" / "eigenvalues" / "eigs.dat").read_text() == "eigenvalues"
+
+
+class TestWorkflowReturnKeepsPyfunctionCreatedValue:
+    """A wrapper's RETURN echo of a pyfunction child's output is never dropped.
+
+    The redundant-echo rule in :func:`koopmans.aiida.dumping._direct_calculation_created_pks`
+    only excludes a direct *CalcJob* child's own output — a pyfunction
+    child's folder is pruned regardless of what it returns
+    (:func:`koopmans.aiida.dumping._is_calcjob_step`), so its value would
+    vanish entirely from the dump if the wrapper's RETURN were dropped too.
+    """
+
+    PYFUNCTION = "aiida_pythonjob.calculations:pyfunction.pyfunction"
+
+    def test_the_pyfunctions_folder_is_pruned_but_its_value_survives_via_the_wrapper(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The helper leaves no folder; the wrapper's own ``outputs.json`` still shows its value."""
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        wrapper = make_process("aiida.workflows:workgraph.engine", label="wrapper")
+        generate_alphas = make_process(
+            self.PYFUNCTION, caller=wrapper, link_label="generate_alphas", calcfunction=True
+        )
+        from aiida.common.links import LinkType
+
+        alphas = attach(generate_alphas, "result", orm.Dict({"up": [0.6], "down": [0.6]}))  # type: ignore[no-untyped-call]
+        # The wrapper re-exports the same Dict node under a different label.
+        alphas.base.links.add_incoming(wrapper, link_type=LinkType.RETURN, link_label="alphas")
+
+        dumped = dump_workgraph(wrapper, tmp_path / "dump")
+
+        assert not any(p.name.endswith("generate_alphas") for p in dumped.rglob("*"))
+        written = json.loads((dumped / "outputs.json").read_text())
+        assert written == {"alphas": {"up": [0.6], "down": [0.6]}}

@@ -1019,6 +1019,7 @@ def make_process(
     exit_status: int = 0,
     exit_message: str | None = None,
     calcjob: bool = False,
+    calcfunction: bool = False,
     computer: Any = None,
     process_label: str | None = None,
     inputs: dict[str, Any] | None = None,
@@ -1036,22 +1037,34 @@ def make_process(
     (``__`` separating namespace levels, e.g. ``pw__parameters``), so
     resolvers that key off a run's declared inputs (rather than its
     process type) have something to read.
+
+    ``calcjob`` and ``calcfunction`` are mutually exclusive and pick a
+    ``CalcJobNode``/``CalcFunctionNode`` instead of the default
+    ``WorkflowNode`` — the distinction a dumped tree's bookkeeping prune
+    keys off (:func:`koopmans.aiida.dumping._is_calcjob_step`): a
+    ``CalcFunctionNode`` is a plain pyfunction/PythonJob helper, never
+    treated as a genuine calculation however it is called.
     """
     from aiida import orm
     from aiida.common.links import LinkType
     from plumpy.process_states import ProcessState
 
-    node: Any = orm.CalcJobNode() if calcjob else orm.WorkflowNode()
+    if calcjob:
+        node: Any = orm.CalcJobNode()
+    elif calcfunction:
+        node = orm.CalcFunctionNode()
+    else:
+        node = orm.WorkflowNode()
     node.process_type = process_type
     node.label = label
     if calcjob:
         node.computer = computer
         node.set_option("resources", {"num_machines": 1})
     if caller is not None:
-        link_type = LinkType.CALL_CALC if calcjob else LinkType.CALL_WORK
+        link_type = LinkType.CALL_CALC if (calcjob or calcfunction) else LinkType.CALL_WORK
         node.base.links.add_incoming(caller, link_type=link_type, link_label=link_label)
     for name, data in (inputs or {}).items():
-        input_type = LinkType.INPUT_CALC if calcjob else LinkType.INPUT_WORK
+        input_type = LinkType.INPUT_CALC if (calcjob or calcfunction) else LinkType.INPUT_WORK
         node.base.links.add_incoming(data.store(), link_type=input_type, link_label=name)
     node.store()
     if process_label is not None:
@@ -1061,6 +1074,24 @@ def make_process(
     if exit_message is not None:
         node.set_exit_message(exit_message)
     return node
+
+
+def attach(node: Any, socket: str, data: Any) -> Any:
+    """Link ``data`` as an output of ``node`` under the link label ``socket``.
+
+    A calculation (``CalcJobNode``/``CalcFunctionNode``) creates its
+    outputs, so ``data`` must still be unstored; a workflow only returns
+    data that already exists, so ``data`` is stored first.
+    """
+    from aiida import orm
+    from aiida.common.links import LinkType
+
+    if isinstance(node, (orm.CalcJobNode, orm.CalcFunctionNode)):
+        data.base.links.add_incoming(node, link_type=LinkType.CREATE, link_label=socket)
+        return data.store()
+    data.store()
+    data.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=socket)
+    return data
 
 
 def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:
