@@ -16,21 +16,21 @@ the corrected functional.
 
     Total-energy differences are not the only way to get the screening parameters. The
     :doc:`next tutorial <../silicon_linear_response/index>` computes them for the same
-    system by linear response, which removes the need for a supercell throughout and is far
+    system by linear response, which removes the need for a supercell throughout and is generally
     cheaper.
 
 ***********************************
  Variational orbitals in a crystal
 ***********************************
 
-A Koopmans correction acts orbital by orbital, and the orbitals it acts on must be
+A Koopmans correction acts orbital by orbital, and for bulk systems the orbitals it acts on must be
 localized. Bloch states are not: a Bloch state is spread evenly over every unit cell of
 the crystal, so removing "one electron from a Bloch state" removes an infinitesimal
 amount of charge from each cell and the Koopmans condition becomes trivially satisfied by Janak's theorem.
-The Wannier representation fixes this :cite:`Nguyen2018`.
+Applying the Koopmans correction to localized orbitals fixes this :cite:`Nguyen2018`.
 
 Wannier functions :math:`w_{n\mathbf{R}}(\mathbf{r})` are a unitary transformation of the
-Bloch states :math:`\psi_{n\mathbf{k}}(\mathbf{r})`:
+Bloch states :math:`\psi_{n\mathbf{k}}(\mathbf{r})` into a localized basis:
 
 .. math::
 
@@ -54,10 +54,10 @@ free — and we spend that freedom on localization, minimizing the spread
     - \left| \left\langle w_{n \mathbf{0}} \right| \mathbf{r} \left| w_{n \mathbf{0}} \right\rangle \right|^{2}
     \right]
 
-The minimizers are the maximally localized Wannier functions (MLWFs)
+The Wannier functions that minimize this metric are the maximally localized Wannier functions (MLWFs)
 :cite:`Marzari2012`, and they are what ``koopmans`` uses as variational orbitals for a
 periodic system. They are constructed by `Wannier90 <http://www.wannier.org/>`_ together
-with ``pw.x`` and ``pw2wannier90.x``; ``koopmans`` drives all three for you.
+with ``pw.x`` and ``pw2wannier90.x`.
 
 .. note::
 
@@ -83,6 +83,10 @@ full:
     The cutoff and the k-point grid in this file are deliberately coarse, so that the
     workflow finishes in a reasonable time on a desktop. They are not converged.
 
+    Likewise, turning off ``mp_correction`` keeps this tutorial short and its numbers comparable
+    with published ones, but a charged periodic supercell really does need the
+    correction. For production work leave it on and give the material's ``eps_inf``.
+
 Most of the ``workflow`` block you have met before. Two entries are new:
 
 .. literalinclude:: si.yaml
@@ -90,21 +94,7 @@ Most of the ``workflow`` block you have met before. Two entries are new:
     :start-at: init_orbitals
     :end-at: init_orbitals
 
-replaces ozone's ``kohn-sham`` with maximally localized Wannier functions, which is what
-puts the whole Wannierization machinery into the workflow.
-
-.. literalinclude:: si.yaml
-    :language: yaml
-    :start-at: mp_correction
-    :end-at: mp_correction
-
-switches off the Makov-Payne correction for the charged supercell calculations.
-
-.. warning::
-
-    Turning off ``mp_correction`` keeps this tutorial short and its numbers comparable
-    with published ones, but a charged periodic supercell really does need the
-    correction. For production work leave it on and give the material's ``eps_inf``.
+replaces ozone's ``kohn-sham`` with maximally localized Wannier functions.
 
 Periodic systems also require ``kpoints``:
 
@@ -114,7 +104,7 @@ Periodic systems also require ``kpoints``:
     :end-at: grid:
 
 sets the Brillouin-zone sampling, and with it the size of the supercell the screening
-calculations will run in — a :math:`2\times2\times2` grid means an 8-cell supercell.
+calculations will run in — a :math:`2\times2\times2` grid means the :math:`N \pm 1`-electron calculations run in an 8-cell supercell.
 Refining the sampling therefore costs a great deal more here than it would in a plain
 DFT calculation.
 
@@ -225,10 +215,16 @@ directly. Draw them on one set of axes with
 
 .. code-block:: console
 
-    $ koopmans plot bandstructure si
+    $ koopmans plot bandstructure \
+        si/02-bands --style x \
+        si/03-wannierize_emp_1/01-wannier90/03-wannier90 \
+        si/04-wannierize_occ_1/01-wannier90/03-wannier90
 
-which writes ``bandstructure.png`` — the ``pw.x`` bands, and one interpolated band
-structure per block — or add ``--show`` to open a window instead.
+which writes ``bandstructure.png`` — or add ``--show`` to open a window instead. A
+``--style`` binds to the folder just before it, so this draws the ``pw.x`` bands as
+crosses (``x``) while keeping each series' own color, and leaves the two Wannier
+interpolations — one per block — as plain lines; crosses make it easy to see exactly
+where a line runs through them and where it departs.
 
 Two things are worth reading off it. *Which* bands the interpolation is obliged to
 reproduce is what ``dis_froz_max`` sets: the empty block must span the states below it
@@ -237,6 +233,25 @@ higher up is the disentanglement doing exactly what it was told. *How closely* t
 interpolation follows those bands between the k-points of the grid is set by the grid: a
 Wannier interpolation is exact on the k-points it was built from, and
 :math:`2\times2\times2` gives it eight of them to carry the whole path.
+
+.. question:: Read through ``koopmans plot bandstructure --help``, then polish the figure:
+    give each series a name in the legend, and frame the energy window on the gap
+    instead of the whole plotted range.
+
+    There is no single right way to do this. One reasonable version:
+
+    .. code-block:: console
+
+        $ koopmans plot bandstructure \
+            si/02-bands --style x --label "explicit evaluation" \
+            si/03-wannierize_emp_1/01-wannier90/03-wannier90 --label "Wannier interpolation (emp)" \
+            si/04-wannierize_occ_1/01-wannier90/03-wannier90 --label "Wannier interpolation (occ)" \
+            --ylim -13 15
+
+    ``--label`` names a folder on the legend the same way ``--style`` styles it: one per
+    folder, written right after the folder it names. ``--ylim`` is not tied to any one
+    folder — it sets the y-axis range for the whole figure, so it can sit anywhere on the
+    command line.
 
 ********************
  The KI calculation
