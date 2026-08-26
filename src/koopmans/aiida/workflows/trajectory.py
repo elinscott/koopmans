@@ -103,6 +103,9 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         extra_kwargs = dscf_wannier_init_inputs(
             koopmans_input, next(iter(snapshots.values())), inputs["nbnd"]
         )
+        # The input file's nbnd sizes the pw.x runs on this route; kcp.x
+        # takes one variational orbital per projected Wannier function.
+        inputs["nbnd"] = int(extra_kwargs.pop("nbnd"))
 
     # load_codes loads every configured member of DscfCodes. Every
     # NotRequired member exists for the Wannier-seeded initialisation;
