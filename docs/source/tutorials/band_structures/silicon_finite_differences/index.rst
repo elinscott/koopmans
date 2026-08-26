@@ -57,7 +57,7 @@ free — and we spend that freedom on localization, minimizing the spread
 The Wannier functions that minimize this metric are the maximally localized Wannier functions (MLWFs)
 :cite:`Marzari2012`, and they are what ``koopmans`` uses as variational orbitals for a
 periodic system. They are constructed by `Wannier90 <http://www.wannier.org/>`_ together
-with ``pw.x`` and ``pw2wannier90.x`.
+with ``pw.x`` and ``pw2wannier90.x``.
 
 .. note::
 
