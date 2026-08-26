@@ -116,7 +116,7 @@ Finally, the ``wannier90`` sub-block says which Wannier functions we want:
     :end-before: dis_win_max
 
 Each inner list is one block, and each block gets its own Wannierization. Both blocks
-ask for four :math:`sp^3` hybrids on the bond-centre site: the first block takes the
+ask for four :math:`sp^3` hybrids on the bond-center site: the first block takes the
 four filled bonding combinations, the second the four empty antibonding ones.
 
 .. question:: Why is ``alpha_guess`` 0.077 here, when ozone used 0.6?
