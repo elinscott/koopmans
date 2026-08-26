@@ -1107,14 +1107,16 @@ class TestDumpedNodeMetadata:
         from koopmans.aiida.dumping import dump_workgraph
 
         @task  # type: ignore[untyped-decorator]
-        def count_electrons(charge: int) -> None:
-            """Count electrons without returning them, leaving nothing but this code.
+        def count_electrons(charge: int) -> int:
+            """Return an electron count, leaving nothing on disk but this code.
 
-            A ``None`` return creates no output link at all — unlike a
-            returned ``int``, which now surfaces through ``outputs.json``
-            (see ``TestDumpDataJson``) and so would no longer leave the
-            step folder with nothing else in it.
+            A plain ``@task`` is a ``CalcFunctionNode`` — bookkeeping,
+            never a genuine calculation (see
+            ``koopmans.aiida.dumping._is_calcjob_step``) — so it gets no
+            ``outputs.json`` for this ``int`` however real it is
+            (see ``TestDumpDataJson``).
             """
+            return 8 - charge
 
         @task  # type: ignore[untyped-decorator]
         def write_note(text: str) -> orm.SinglefileData:
@@ -1238,20 +1240,29 @@ class TestDumpDataJson:
     """A step's JSON-representable ``Data`` inputs/outputs land beside its files.
 
     Built on :func:`tests.fixtures.make_process`/:func:`tests.fixtures.attach`
-    rather than a live ``WorkGraph`` run, so a ``CalcJobNode`` and a
-    ``CalcFunctionNode`` (a plain pyfunction/PythonJob helper) can be told
-    apart directly — the distinction :func:`koopmans.aiida.dumping._is_calcjob_step`
-    keys off. Every scenario wraps its calculation under a trivial
-    workflow ``root``, matching how a real dump is never a bare CalcJob at
-    its top level (see ``ARITHMETIC_ADD``'s own probe: dumping a CalcJob
-    with no wrapper skips aiida-core's ``node_outputs`` → ``outputs``
-    merge, which only ever walks a root's *descendants*).
+    rather than a live ``WorkGraph`` run, so a ``CalcJobNode``, a
+    ``CalcFunctionNode`` (a plain pyfunction) and a ``PythonJob``-typed
+    ``CalcJobNode`` can be told apart directly — the distinction
+    :func:`koopmans.aiida.dumping._is_calcjob_step` keys off. Every
+    scenario wraps its calculation under a trivial workflow ``root``,
+    matching how a real dump is never a bare CalcJob at its top level
+    (see ``ARITHMETIC_ADD``'s own probe: dumping a CalcJob with no
+    wrapper skips aiida-core's ``node_outputs`` → ``outputs`` merge,
+    which only ever walks a root's *descendants*).
     """
 
     #: A real, always-registered CalcJob — enough to resolve ``process_class``.
     ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
-    #: A real, always-registered plain pyfunction — never a CalcJobNode.
+    #: A domain CalcJob's own class each real one gets; PyFunction has no
+    #: entry point of its own to resolve (it runs in-process, no
+    #: scheduler/computer needed), so this string is never actually
+    #: loaded — only ``isinstance(node, orm.CalcFunctionNode)`` decides.
     PYFUNCTION = "aiida_pythonjob.calculations:pyfunction.pyfunction"
+    #: A real, always-registered PythonJob — a genuine CalcJobNode, but
+    #: excluded by :func:`koopmans.aiida.dumping._is_calcjob_step`'s
+    #: ``process_class`` comparison (mutant ``m4_no_pythonjob`` drops
+    #: that comparison and treats it as a real CalcJob).
+    PYTHONJOB = "aiida.calculations:pythonjob.pythonjob"
 
     def test_a_calcjobs_dict_output_lands_beside_its_own_files(
         self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
@@ -1282,6 +1293,34 @@ class TestDumpDataJson:
         written = json.loads((calc_dir / "outputs.json").read_text())
         assert written == {"output_parameters": {"homo_energy": -12.353, "lumo_energy": -4.02}}
         assert (calc_dir / "outputs" / "report" / "report.txt").read_text() == "hello"
+
+    def test_a_pythonjob_helper_never_gets_outputs_json(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A ``PythonJob`` is a real ``CalcJobNode`` but still bookkeeping.
+
+        Distinguishes it from a domain CalcJob by ``process_class``, not
+        node type — an ``isinstance(node, orm.CalcJobNode)``-only check
+        would wrongly write ``outputs.json`` here.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        helper = make_process(
+            self.PYTHONJOB, caller=root, link_label="helper", calcjob=True, computer=aiida_localhost
+        )
+        attach(helper, "result", orm.Dict({"gap": 1.5}))  # type: ignore[no-untyped-call]
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        # No outputs.json is written, and with no other content either
+        # (no repository file, no inputs.json), the folder is pruned away
+        # entirely — a domain CalcJob returning the same Dict survives
+        # with its outputs.json (test_a_calcjobs_dict_output_lands_beside_its_own_files).
+        assert not any(p.name.endswith("helper") for p in dumped.rglob("*"))
 
     def test_a_calcjob_with_no_json_representable_output_writes_no_file(
         self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
@@ -1372,6 +1411,65 @@ class TestDumpDataJson:
         calc_dir = dumped / "01-calc"
         written = json.loads((calc_dir / "inputs.json").read_text())
         assert written == {"parameters": {"x": 1}}
+
+    def test_a_calcjob_with_only_a_dict_input_and_no_output_leaves_no_folder(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A bare CalcJob ``inputs.json``, with no other content, does not survive.
+
+        Mirrors ``test_a_plain_pyfunctions_dict_input_alone_leaves_no_folder``
+        for a genuine CalcJob rather than a pyfunction, so the
+        :data:`INPUTS_JSON_FILE` membership in ``_NON_CONTENT_FILES`` is
+        pinned for both step kinds that can ever gain one.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("calc") for p in dumped.rglob("*"))
+
+    def test_the_same_calcjob_with_a_dict_output_too_survives(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Adding a real output to the same setup makes the folder survive, with both files."""
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+        attach(calc, "output_parameters", orm.Dict({"y": 2}))  # type: ignore[no-untyped-call]
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        calc_dir = dumped / "01-calc"
+        assert json.loads((calc_dir / "inputs.json").read_text()) == {"parameters": {"x": 1}}
+        assert json.loads((calc_dir / "outputs.json").read_text()) == {
+            "output_parameters": {"y": 2}
+        }
 
     def test_a_plain_pyfunction_never_gets_outputs_or_inputs_json(
         self, aiida_profile: Any, tmp_path: Path
@@ -1576,3 +1674,120 @@ class TestWorkflowReturnKeepsPyfunctionCreatedValue:
         assert not any(p.name.endswith("generate_alphas") for p in dumped.rglob("*"))
         written = json.loads((dumped / "outputs.json").read_text())
         assert written == {"alphas": {"up": [0.6], "down": [0.6]}}
+
+
+class TestWorkFunctionIsBookkeeping:
+    """A ``@workfunction`` (``WorkFunctionNode``) is bookkeeping, exactly like a pyfunction.
+
+    ``resolve_pseudo_family_task`` — the codebase's only workfunction —
+    is one solely because it hands back *existing* ``UpfData`` nodes
+    rather than creating new ones; nothing about that makes it a step a
+    reader needs its own folder for.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+    WORKFUNCTION = "aiida_koopmans.utils.pseudos.resolve_pseudo_family_task"
+
+    def test_a_workfunctions_dict_return_gets_no_folder_of_its_own(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """No folder for the workfunction; its siblings number contiguously; its RETURN survives."""
+        import io
+        import json
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        helper = make_process(
+            self.WORKFUNCTION, caller=root, link_label="resolve_family", workfunction=True
+        )
+        family = attach(helper, "family_name", orm.Str("SG15"))  # type: ignore[no-untyped-call]
+        family.base.links.add_incoming(root, link_type=LinkType.RETURN, link_label="family_name")
+
+        scf = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="scf",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(scf, "report", orm.SinglefileData(io.BytesIO(b"x"), filename="r.txt"))
+        nscf = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="nscf",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(nscf, "report", orm.SinglefileData(io.BytesIO(b"y"), filename="s.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        # No folder for the workfunction.
+        assert not any(p.name.endswith("resolve_family") for p in dumped.rglob("*"))
+        # Its two real-calculation siblings number contiguously from one,
+        # with no gap left where the pruned workfunction would have sat.
+        assert sorted(p.name for p in dumped.iterdir() if p.is_dir()) == ["01-scf", "02-nscf"]
+        # The enclosing graph's own RETURN of the workfunction's value survives.
+        written = json.loads((dumped / "outputs.json").read_text())
+        assert written == {"family_name": "SG15"}
+
+
+class TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn:
+    """A wrapper's own folder survives when it keeps a genuine RETURN value.
+
+    Repeating a value up the tree is accepted (each graph states what it
+    returns): only a *direct CalcJob child's* echo is dropped. A pyfunction
+    child's value is never dropped, so a wrapper re-exporting one keeps a
+    real ``outputs.json`` of its own — and the lone CalcJob it also wraps
+    stays nested rather than being hoisted, since the wrapper's folder no
+    longer holds *only* that one calculation.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+    PYFUNCTION = "aiida_pythonjob.calculations:pyfunction.pyfunction"
+
+    def test_the_calcjob_stays_nested_and_the_wrapper_keeps_its_outputs_json(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Mirrors a workflow wrapping both a CalcJob and a bookkeeping helper."""
+        import io
+        import json
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        wrapper = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="run_final"
+        )
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="ki_final",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "eigenvalues", orm.SinglefileData(io.BytesIO(b"eig"), filename="e.dat"))
+        helper = make_process(
+            self.PYFUNCTION, caller=wrapper, link_label="postprocess", calcfunction=True
+        )
+        gap = attach(helper, "result", orm.Dict({"value": 1.5}))  # type: ignore[no-untyped-call]
+        gap.base.links.add_incoming(wrapper, link_type=LinkType.RETURN, link_label="gap")
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        # The bookkeeping helper leaves no folder of its own.
+        assert not any(p.name.endswith("postprocess") for p in dumped.rglob("*"))
+        # The CalcJob is NOT hoisted: the wrapper's own outputs.json is
+        # real content, so the wrapper is not left holding only one child.
+        assert (dumped / "01-run_final" / "01-ki_final").is_dir()
+        written = json.loads((dumped / "01-run_final" / "outputs.json").read_text())
+        assert written == {"gap": {"value": 1.5}}

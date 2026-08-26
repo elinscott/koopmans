@@ -1020,6 +1020,7 @@ def make_process(
     exit_message: str | None = None,
     calcjob: bool = False,
     calcfunction: bool = False,
+    workfunction: bool = False,
     computer: Any = None,
     process_label: str | None = None,
     inputs: dict[str, Any] | None = None,
@@ -1038,12 +1039,22 @@ def make_process(
     resolvers that key off a run's declared inputs (rather than its
     process type) have something to read.
 
-    ``calcjob`` and ``calcfunction`` are mutually exclusive and pick a
-    ``CalcJobNode``/``CalcFunctionNode`` instead of the default
-    ``WorkflowNode`` — the distinction a dumped tree's bookkeeping prune
-    keys off (:func:`koopmans.aiida.dumping._is_calcjob_step`): a
-    ``CalcFunctionNode`` is a plain pyfunction/PythonJob helper, never
-    treated as a genuine calculation however it is called.
+    ``calcjob``, ``calcfunction`` and ``workfunction`` are mutually
+    exclusive and pick a ``CalcJobNode``/``CalcFunctionNode``/
+    ``WorkFunctionNode`` instead of the default ``WorkflowNode`` — the
+    distinction a dumped tree's bookkeeping prune keys off
+    (:func:`koopmans.aiida.dumping._write_data_json`): a
+    ``CalcFunctionNode`` is a plain pyfunction, and a ``WorkFunctionNode``
+    is a ``@workfunction`` (python code that only ever hands back
+    *existing* Data, e.g. ``resolve_pseudo_family_task``) — neither is
+    ever treated as a genuine calculation or workflow step. A
+    ``PythonJob`` helper is a different case again — it needs a code to
+    run on, so it is a real ``CalcJobNode`` like any domain CalcJob;
+    build one with ``calcjob=True`` and a process_type naming
+    ``aiida_pythonjob``'s own generic runner (see
+    ``TestDumpDataJson.PYTHONJOB`` in ``tests/test_dumping.py``), since
+    ``_is_calcjob_step`` excludes it by comparing ``process_class``, not
+    by node type.
     """
     from aiida import orm
     from aiida.common.links import LinkType
@@ -1053,6 +1064,8 @@ def make_process(
         node: Any = orm.CalcJobNode()
     elif calcfunction:
         node = orm.CalcFunctionNode()
+    elif workfunction:
+        node = orm.WorkFunctionNode()
     else:
         node = orm.WorkflowNode()
     node.process_type = process_type

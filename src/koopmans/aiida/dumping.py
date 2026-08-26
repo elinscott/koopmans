@@ -70,11 +70,13 @@ OUTPUTS_JSON_FILE = "outputs.json"
 _NOT_JSON_REPRESENTABLE = object()
 
 # What a step folder can hold and still count as having produced nothing.
-# INPUTS_JSON_FILE joins this set: a pyfunction's scalar arguments are
-# Data inputs like any other, so without this every argument-taking
-# bookkeeping task would gain a folder of its own just to echo them back.
-# OUTPUTS_JSON_FILE stays out of it — a folder holding nothing else is
-# exactly the case this dump exists to fix (issue #205).
+# INPUTS_JSON_FILE joins this set: a CalcJob (the only kind of step that
+# ever writes one — a workflow never does, and a bookkeeping calculation
+# never even gets one written) echoes its own Data arguments whether or
+# not it produced anything, so without this a no-op CalcJob would gain a
+# folder of its own just to show them back. OUTPUTS_JSON_FILE stays out
+# of it — a folder holding nothing else is exactly the case this dump
+# exists to fix (issue #205).
 _NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE, INPUTS_JSON_FILE})
 
 # The dump's own bookkeeping, which says nothing about the run.
@@ -602,15 +604,17 @@ def _json_representable_links(
 def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
     """Write ``folder``'s :data:`INPUTS_JSON_FILE`/:data:`OUTPUTS_JSON_FILE`.
 
-    Only a genuine CalcJob or a workflow node gets either file
+    Only a genuine CalcJob or a true workflow node gets either file
     (:func:`_is_calcjob_step`) — a plain calcfunction/pyfunction/PythonJob
-    helper is bookkeeping and gets neither, whatever it returns, so it is
-    pruned exactly as it was before this module existed
-    (:func:`_prune_source_only_step_folders`, via :data:`_NON_CONTENT_FILES`
-    for a bare :data:`INPUTS_JSON_FILE` and simply never having
-    :data:`OUTPUTS_JSON_FILE` to begin with). Its own values reach the
-    dump only where an enclosing workflow re-exports them through a
-    ``RETURN`` link.
+    helper, or a ``@workfunction`` (a ``WorkFunctionNode``: python code
+    that only ever hands back *existing* Data, e.g.
+    ``resolve_pseudo_family_task``), is bookkeeping and gets neither,
+    whatever it returns, so it is pruned exactly as it was before this
+    module existed (:func:`_prune_source_only_step_folders`, via
+    :data:`_NON_CONTENT_FILES` for a bare :data:`INPUTS_JSON_FILE` and
+    simply never having :data:`OUTPUTS_JSON_FILE` to begin with). Its
+    own values reach the dump only where an enclosing workflow
+    re-exports them through a ``RETURN`` link.
 
     A CalcJob's own ``INPUT_CALC``/``CREATE`` links give its inputs and
     outputs. A workflow does not create data itself, so its ``RETURN``
@@ -620,18 +624,28 @@ def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
     same Data its own calculations already read.
 
     A workflow wrapping exactly one CalcJob is later hoisted into that
-    CalcJob's own folder (:func:`_hoist_lone_calculations`), so a
-    workflow's ``outputs.json`` never blocks that hoist: any RETURN value
-    the workflow's own direct CalcJob child already created is dropped
-    here (:func:`_direct_calculation_created_pks`) — the same node under a
-    second name — leaving a value genuinely produced elsewhere in the
-    workflow's own subtree (e.g. ``ComputeScreeningParameters``'s
-    ``alphas``, assembled by a pyfunction, whose own folder is pruned)
-    untouched. A wrapper that drops down to nothing writes no file at
-    all, so the pre-existing single-calculation check in
-    :func:`_hoist_lone_calculations` runs exactly as it did before this
-    file existed. Neither file is written when nothing linked has a
-    JSON-representable value.
+    CalcJob's own folder (:func:`_hoist_lone_calculations`). Any RETURN
+    value the workflow's own direct CalcJob child already created is
+    dropped before writing (:func:`_direct_calculation_created_pks`) —
+    the same node under a second name — so a wrapper that only echoes
+    its CalcJob writes no file at all, and the pre-existing
+    single-calculation check runs exactly as it did before this file
+    existed. A value genuinely produced elsewhere is never dropped: not
+    one assembled deeper in the workflow's own subtree (e.g.
+    ``ComputeScreeningParameters``'s ``alphas``, assembled by a
+    pyfunction whose own folder is pruned — see
+    :class:`TestWorkflowReturnKeepsPyfunctionCreatedValue` in
+    ``tests/test_dumping.py``), and not a value re-exported from a
+    pyfunction child *of this same wrapper* either, by the same rule.
+    Repeating a value up several enclosing graphs this way — the same
+    node visible in more than one ``outputs.json`` under a label each
+    graph chose for itself — is accepted, not deduplicated further: only
+    a *surviving CalcJob folder* ever makes an echo redundant, so a
+    wrapper holding one such kept value keeps its own folder too, and
+    its CalcJob stays nested rather than being hoisted (see
+    :class:`TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn` in
+    ``tests/test_dumping.py``). Neither file is written when nothing
+    linked has a JSON-representable value.
 
     :param node: The process the folder was dumped from.
     :param folder: The step's own dumped folder.
@@ -645,7 +659,7 @@ def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
             (INPUTS_JSON_FILE, LinkType.INPUT_CALC, True, frozenset()),
             (OUTPUTS_JSON_FILE, LinkType.CREATE, False, frozenset()),
         )
-    elif isinstance(node, orm.WorkflowNode):
+    elif isinstance(node, orm.WorkflowNode) and not isinstance(node, orm.WorkFunctionNode):
         exclude_pks = _direct_calculation_created_pks(node)
         links_to_write = ((OUTPUTS_JSON_FILE, LinkType.RETURN, False, exclude_pks),)
     else:
