@@ -1107,9 +1107,14 @@ class TestDumpedNodeMetadata:
         from koopmans.aiida.dumping import dump_workgraph
 
         @task  # type: ignore[untyped-decorator]
-        def count_electrons(charge: int) -> int:
-            """Return an electron count, leaving nothing on disk but this code."""
-            return 8 - charge
+        def count_electrons(charge: int) -> None:
+            """Count electrons without returning them, leaving nothing but this code.
+
+            A ``None`` return creates no output link at all — unlike a
+            returned ``int``, which now surfaces through ``outputs.json``
+            (see ``TestDumpDataJson``) and so would no longer leave the
+            step folder with nothing else in it.
+            """
 
         @task  # type: ignore[untyped-decorator]
         def write_note(text: str) -> orm.SinglefileData:
@@ -1227,3 +1232,129 @@ class TestDumpedNodeMetadata:
             "01-run",
             "02-write_summary",
         ]
+
+
+class TestDumpDataJson:
+    """A step's JSON-representable ``Data`` inputs/outputs land beside its files."""
+
+    @staticmethod
+    def _dump_a_run(output_path: Path) -> Path:
+        """Dump a workgraph whose graph and calculation steps each expose Data.
+
+        ``screen`` is a ``@task.graph`` re-exporting ``build_alphas``'s
+        ``Dict`` output as its own ``alphas`` — the workflow-level RETURN
+        case #205 reports missing. ``make_report`` is a calculation with
+        one JSON output (``params``) beside a real file (``file``) — the
+        CREATE case. ``write_plain_file`` is a calculation with no
+        JSON-representable output at all, to check nothing is written for
+        it.
+        """
+        import io
+
+        from aiida import orm
+        from aiida_workgraph import WorkGraph, task
+
+        from koopmans.aiida.dumping import dump_workgraph
+
+        @task(outputs=["file", "params"])  # type: ignore[untyped-decorator]
+        def make_report(text: str) -> dict[str, Any]:
+            """Return a file and a Dict of energies, as a real calculation would."""
+            return {
+                "file": orm.SinglefileData(io.BytesIO(text.encode()), filename="report.txt"),
+                "params": {"homo_energy": -12.353, "lumo_energy": -4.02},
+            }
+
+        @task  # type: ignore[untyped-decorator]
+        def build_alphas(up: list[float], down: list[float]) -> orm.Dict:
+            """Return the per-spin screening parameters, with no file at all."""
+            return orm.Dict({"up": up, "down": down})  # type: ignore[no-untyped-call]
+
+        @task  # type: ignore[untyped-decorator]
+        def write_plain_file(text: str) -> orm.SinglefileData:
+            """Return a file and nothing else."""
+            return orm.SinglefileData(io.BytesIO(text.encode()), filename="plain.txt")
+
+        @task.graph(outputs=["alphas"])  # type: ignore[untyped-decorator]
+        def screen(text: str, up: list[float], down: list[float]) -> dict[str, orm.Dict]:
+            """Run all three tasks; re-export ``build_alphas``'s Dict as ``alphas``."""
+            make_report(text=text)
+            write_plain_file(text=text)
+            alphas: orm.Dict = build_alphas(up=up, down=down).result
+            return {"alphas": alphas}
+
+        wg = WorkGraph("dump_data_json")
+        wg.add_task(screen, name="screen", text="hello", up=[0.7019, 0.78], down=[0.6896])
+        wg.run()
+
+        return dump_workgraph(wg.process, output_path)
+
+    def test_a_workflow_steps_return_lands_in_its_own_outputs_json(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """``screen`` never runs a calculation itself; its RETURN link still surfaces."""
+        import json
+
+        dumped = self._dump_a_run(tmp_path / "dump")
+
+        screen_dir = next(p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("screen"))
+        written = json.loads((screen_dir / "outputs.json").read_text())
+        assert written == {"alphas": {"up": [0.7019, 0.78], "down": [0.6896]}}
+
+    def test_a_calculations_dict_output_lands_beside_its_own_files(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """``make_report``'s ``params`` sits next to the ``file`` it also created."""
+        import json
+
+        dumped = self._dump_a_run(tmp_path / "dump")
+
+        report_dir = next(
+            p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("make_report")
+        )
+        written = json.loads((report_dir / "outputs.json").read_text())
+        assert written == {"params": {"homo_energy": -12.353, "lumo_energy": -4.02}}
+        assert (report_dir / "outputs" / "file" / "report.txt").read_text() == "hello"
+
+    def test_a_step_with_no_json_representable_output_writes_no_file(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """``write_plain_file`` creates only a file, so nothing is added."""
+        dumped = self._dump_a_run(tmp_path / "dump")
+
+        plain_dir = next(
+            p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("write_plain_file")
+        )
+        assert not (plain_dir / "outputs.json").exists()
+        # A single-return pyfunction's one output socket is named "result".
+        assert (plain_dir / "outputs" / "result" / "plain.txt").read_text() == "hello"
+
+    def test_a_calculations_data_inputs_land_in_inputs_json(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """``make_report``'s ``text`` input is a ``Str``, so it gets an ``inputs.json``."""
+        import json
+
+        dumped = self._dump_a_run(tmp_path / "dump")
+
+        report_dir = next(
+            p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("make_report")
+        )
+        written = json.loads((report_dir / "inputs.json").read_text())
+        # A pyfunction's own kwargs nest under "function_inputs", the same
+        # namespace aiida-core's own dump uses for their repository-backed
+        # siblings (see the module's ``_lambdas`` fixture).
+        assert written == {"function_inputs": {"text": "hello"}}
+
+    def test_a_workflow_step_never_gets_its_own_inputs_json(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """``screen``'s inputs echo what its own calculations already show.
+
+        Writing them again at the workflow layer would only risk
+        colliding with a hoisted calculation's own ``inputs.json``
+        (see :func:`koopmans.aiida.dumping._write_data_json`).
+        """
+        dumped = self._dump_a_run(tmp_path / "dump")
+
+        screen_dir = next(p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("screen"))
+        assert not (screen_dir / "inputs.json").exists()

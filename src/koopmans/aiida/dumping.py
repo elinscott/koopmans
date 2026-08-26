@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from koopmans.aiida.utils import suppress_aiida_logging
 
 if TYPE_CHECKING:
     from aiida import orm
+    from aiida.common import LinkType
 
-__all__ = ["MODEL_FILENAME", "NODE_METADATA_FILE", "dump_workgraph", "trained_model_output"]
+__all__ = [
+    "INPUTS_JSON_FILE",
+    "MODEL_FILENAME",
+    "NODE_METADATA_FILE",
+    "OUTPUTS_JSON_FILE",
+    "dump_workgraph",
+    "trained_model_output",
+]
 
 
 # AiiDA's dump names each child folder "<NN>-<link_label>", appends the
@@ -52,8 +61,21 @@ NODE_METADATA_FILE = "aiida_node_metadata.yaml"
 # A trained screening model, as `ml: {model_file: ...}` reads it back.
 MODEL_FILENAME = "model.json"
 
+# A step's Data inputs/outputs that have no repository and so never reach
+# aiida-core's dump: Dict, List, Int, Float, Str, Bool.
+INPUTS_JSON_FILE = "inputs.json"
+OUTPUTS_JSON_FILE = "outputs.json"
+
+# Marks a linked Data node as holding no JSON-native value.
+_NOT_JSON_REPRESENTABLE = object()
+
 # What a step folder can hold and still count as having produced nothing.
-_NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
+# INPUTS_JSON_FILE joins this set: a pyfunction's scalar arguments are
+# Data inputs like any other, so without this every argument-taking
+# bookkeeping task would gain a folder of its own just to echo them back.
+# OUTPUTS_JSON_FILE stays out of it — a folder holding nothing else is
+# exactly the case this dump exists to fix (issue #205).
+_NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE, INPUTS_JSON_FILE})
 
 # The dump's own bookkeeping, which says nothing about the run.
 _DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safeguard")
@@ -419,25 +441,152 @@ def _simplify_calcjob_dump(output_path: Path) -> None:
             filepath.unlink()
 
 
-def _describes_a_workflow(metadata_path: Path) -> bool:
-    """Return whether a dumped metadata file records a workflow node.
+def _node_metadata(metadata_path: Path) -> dict[str, Any]:
+    """Return a dumped metadata file's ``Node data`` mapping, or ``{}``.
 
-    Reads the node's own ``node_type``, which every dumped process
-    records: ``process.workflow.…`` for a workgraph or a WorkChain,
-    ``process.calculation.…`` for a CalcJob or a python task. Nothing
-    else in the file decides, and a file that cannot be read at all —
-    unparseable, not text, unreadable — answers no, so it is kept rather
-    than deleted on a guess.
+    A file that cannot be read at all — unparseable, not text, unreadable,
+    or truncated mid-write — answers ``{}`` rather than raising, so a
+    reader keeps whatever it was deciding from the file's absence.
     """
     import yaml
 
     try:
         parsed = yaml.safe_load(metadata_path.read_text())
     except (OSError, UnicodeDecodeError, yaml.YAMLError):
-        return False
+        return {}
     node_data = parsed.get("Node data", {}) if isinstance(parsed, dict) else {}
-    node_type = node_data.get("node_type") if isinstance(node_data, dict) else None
+    return node_data if isinstance(node_data, dict) else {}
+
+
+def _describes_a_workflow(metadata_path: Path) -> bool:
+    """Return whether a dumped metadata file records a workflow node.
+
+    Reads the node's own ``node_type``, which every dumped process
+    records: ``process.workflow.…`` for a workgraph or a WorkChain,
+    ``process.calculation.…`` for a CalcJob or a python task. Nothing
+    else in the file decides, and a file that cannot be read at all
+    answers no, so it is kept rather than deleted on a guess.
+    """
+    node_type = _node_metadata(metadata_path).get("node_type")
     return isinstance(node_type, str) and node_type.startswith("process.workflow.")
+
+
+def _json_value(node: orm.Data) -> Any:
+    """Return ``node``'s value as a JSON-native object.
+
+    Answers :data:`_NOT_JSON_REPRESENTABLE` for anything else, including a
+    repository-backed ``Data`` type (``ArrayData``, ``FolderData``,
+    ``SinglefileData``, ``RemoteData``, …), which has no JSON form.
+    """
+    from aiida import orm
+
+    if isinstance(node, orm.Dict):
+        return node.get_dict()  # type: ignore[no-untyped-call]
+    if isinstance(node, orm.List):
+        return node.get_list()  # type: ignore[no-untyped-call]
+    if isinstance(node, (orm.Int, orm.Float, orm.Str, orm.Bool)):
+        return node.value
+    return _NOT_JSON_REPRESENTABLE
+
+
+def _nest_by_link_label(flat: dict[str, Any]) -> dict[str, Any]:
+    """Turn ``{link_label: value}`` into nested dicts on the ``__`` separator.
+
+    Mirrors aiida-core's own reading of a namespaced link label as a path
+    (``NodeRepoIoDumper._dump_calculation_io_files`` splits on the same
+    separator to build a directory), so a namespace socket like ``alphas``
+    with sub-outputs ``filled``/``empty`` nests the same way here as its
+    repository-backed siblings do under ``outputs/``.
+    """
+    nested: dict[str, Any] = {}
+    for label, value in flat.items():
+        cursor = nested
+        parts = label.split("__")
+        for part in parts[:-1]:
+            cursor = cursor.setdefault(part, {})
+        cursor[parts[-1]] = value
+    return nested
+
+
+def _json_representable_links(
+    node: orm.ProcessNode, link_type: LinkType, incoming: bool
+) -> dict[str, Any]:
+    """Return ``{link_label: value}`` for the JSON-representable ``Data`` at ``link_type``."""
+    from aiida import orm
+
+    links = (
+        node.base.links.get_incoming(link_type=link_type)
+        if incoming
+        else node.base.links.get_outgoing(link_type=link_type)
+    ).all()
+    flat = {}
+    for link in links:
+        if not isinstance(link.node, orm.Data):
+            continue
+        value = _json_value(link.node)
+        if value is not _NOT_JSON_REPRESENTABLE:
+            flat[link.link_label] = value
+    return flat
+
+
+def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
+    """Write ``folder``'s :data:`INPUTS_JSON_FILE`/:data:`OUTPUTS_JSON_FILE`.
+
+    A calculation's own ``INPUT_CALC``/``CREATE`` links give its inputs and
+    outputs. A workflow does not create data itself, so its ``RETURN``
+    links — the same ones a reader would follow from ``process.outputs`` —
+    stand in for :data:`OUTPUTS_JSON_FILE`; no :data:`INPUTS_JSON_FILE` is
+    written for a workflow, since its ``INPUT_WORK`` links point at the
+    same Data its own calculations already read, and a wrapping step
+    holding one calculation is later hoisted into that calculation's own
+    folder (:func:`_hoist_lone_calculations`) — a workflow-level echo would
+    only collide with the file the hoist moves up. Neither file is written
+    when nothing linked has a JSON-representable value.
+
+    :param node: The process the folder was dumped from.
+    :param folder: The step's own dumped folder.
+    """
+    from aiida import orm
+    from aiida.common import LinkType
+
+    links_to_write: tuple[tuple[str, LinkType, bool], ...]
+    if isinstance(node, orm.CalculationNode):
+        links_to_write = (
+            (INPUTS_JSON_FILE, LinkType.INPUT_CALC, True),
+            (OUTPUTS_JSON_FILE, LinkType.CREATE, False),
+        )
+    elif isinstance(node, orm.WorkflowNode):
+        links_to_write = ((OUTPUTS_JSON_FILE, LinkType.RETURN, False),)
+    else:
+        return
+
+    for filename, link_type, incoming in links_to_write:
+        flat = _json_representable_links(node, link_type, incoming)
+        if flat:
+            (folder / filename).write_text(
+                json.dumps(_nest_by_link_label(flat), indent=2, sort_keys=True) + "\n"
+            )
+
+
+def _dump_data_json(root_path: Path) -> None:
+    """Write every step's :data:`INPUTS_JSON_FILE`/:data:`OUTPUTS_JSON_FILE`.
+
+    Reads each step's pk from its own :data:`NODE_METADATA_FILE` — the file
+    that already ties a folder back to its node — so this has to run before
+    :func:`_prune_workflow_metadata` deletes the workflow ones, and before
+    :func:`_tidy_dumped_tree` moves folders around.
+
+    :param root_path: Root of the freshly dumped tree.
+    """
+    from aiida import orm
+
+    for metadata_path in root_path.rglob(NODE_METADATA_FILE):
+        pk = _node_metadata(metadata_path).get("pk")
+        if pk is None:
+            continue
+        node = orm.load_node(pk)
+        if isinstance(node, orm.ProcessNode):
+            _write_data_json(node, metadata_path.parent)
 
 
 def _prune_workflow_metadata(root_path: Path) -> None:
@@ -494,6 +643,8 @@ def dump_workgraph(
     - Strips pk numbers and WorkGraph process labels from folder names
     - Simplifies each CalcJobNode folder structure
     - Removes the dump's own bookkeeping files
+    - Writes each step's JSON-representable ``Data`` inputs/outputs (see
+      :func:`_dump_data_json`)
     - Keeps each calculation's ``aiida_node_metadata.yaml``, and the
       root's (see :func:`_prune_workflow_metadata`)
     - Tidies the step folders (see :func:`_tidy_dumped_tree`)
@@ -535,6 +686,10 @@ def dump_workgraph(
     for filename in _DUMP_BOOKKEEPING_FILES:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
+
+    # Every step's JSON-representable Data, while every folder still
+    # carries the metadata file naming its node
+    _dump_data_json(output_path)
 
     _prune_workflow_metadata(output_path)
 
