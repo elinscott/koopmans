@@ -101,10 +101,9 @@ The per-orbital screening steps now name a channel as well as an index — ``Orb
 than one per orbital, so some indices never appear.
 
 The empty orbitals (6 and 8 in the minority channel, 8 in the majority) each expand into
-three sub-steps — ``DFT (N+1, staging)``, ``PZ staging`` and ``DFT (N+1)`` — because
-screening an empty orbital means adding an electron to it, and that :math:`N+1` state
-needs staging before it can be converged. A filled orbital needs a single
-:math:`N-1` calculation.
+three sub-steps — ``DFT (N+1, staging)``, ``PZ staging`` and ``DFT (N+1)``. Screening an
+empty orbital means an :math:`N+1`-electron calculation, and mechanically ``kcp.x`` needs
+two staging runs to prepare one; a filled orbital's :math:`N-1` calculation needs none.
 
 *************
  The results
