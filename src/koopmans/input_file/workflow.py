@@ -25,6 +25,14 @@ __all__ = [
 
 FloatGE1 = Annotated[float, Field(ge=1.0)]
 
+#: Keywords retired from ``workflow``, each with what to write instead.
+_REMOVED_WORKFLOW_KEYWORDS: dict[str, str] = {
+    "calculate_bands": (
+        "A band structure is computed whenever `kpoints.path` names a path and the "
+        "task can interpolate along it; set `kpoints.path`."
+    ),
+}
+
 
 class Task(Enum):
     """Valid tasks that ``koopmans`` can perform."""
@@ -81,13 +89,11 @@ class WorkflowConfig(BaseModel):
         default=None,
         description="if True, freeze the variational orbitals for the duration of the calculation once they've been initialized",
     )
-    calculate_bands: bool = Field(
-        default=False, description="Calculate the band structure of the system (if relevant)"
-    )
     spin: SpinType = Field(
         default=SpinType.NONE,
         description="how to treat the spin degrees of freedom: 'none' (spin-unpolarized), "
-        "'collinear' (the system may break spin symmetry i.e. $n^{up}(r) != n^{down}(r)$), "
+        "'collinear' (the system may break spin symmetry i.e. $n^{up}(r) != n^{down}(r)$, and "
+        "``calculator_parameters.tot_magnetization`` states by how much), "
         "'non_collinear' (spinor wavefunctions), or 'spin_orbit' (spinor wavefunctions with "
         "spin-orbit coupling)",
     )
@@ -115,7 +121,9 @@ class WorkflowConfig(BaseModel):
         default=None,
         description='dielectric constant of the system used by the Gygi-Baldereschi and Makov-Payne corrections; either provide an explicit value or set to "auto" to calculate it ab initio',
     )
-    alpha_numsteps: int = Field(default=10, description="Number of steps for alpha calculation")
+    alpha_numsteps: int = Field(
+        default=1, description="maximum number of self-consistency steps for calculating alpha"
+    )
     alpha_conv_thr: float = Field(
         default=1e-3,
         description="convergence threshold for $|Delta E_i - epsilon_i|$; if below this threshold, the corresponding alpha value is not updated",
@@ -189,6 +197,24 @@ class WorkflowConfig(BaseModel):
             if len(v) == 0 or not isinstance(v[0], list):
                 v = [v]
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_workflow_keywords(cls, data: Any) -> Any:
+        """Point a retired ``workflow`` keyword at what replaced it.
+
+        Runs before field validation, so it reports the removed spelling
+        instead of the generic "extra_forbidden" error.
+
+        Raises:
+            ValueError: If a removed key is present.
+        """
+        if not isinstance(data, dict):
+            return data
+        for key, replacement in _REMOVED_WORKFLOW_KEYWORDS.items():
+            if key in data:
+                raise ValueError(f"`workflow.{key}` no longer exists. {replacement}")
+        return data
 
     @model_validator(mode="before")
     @classmethod

@@ -14,16 +14,23 @@ executed twice:
     https://click.palletsprojects.com/en/8.1.x/setuptools/#setuptools-integration
 """
 
+# A command's help text keeps a worked example on the lines it was written on
+# by carrying click's own "\b" marker, which a raw docstring would turn into
+# two literal characters.
+# ruff: noqa: D301
+
 from __future__ import annotations
 
+import functools
 import logging
-from datetime import UTC
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
+import click.parser
 
-from koopmans.aiida.dumping import dump_workgraph, trained_model_output
+from koopmans.aiida.dumping import MODEL_FILENAME, dump_workgraph, trained_model_output
 from koopmans.aiida.progress import run_with_progress
 from koopmans.aiida.setup.codes import list_codes
 from koopmans.aiida.setup.daemon import is_daemon_running, start_daemon, stop_daemon
@@ -87,12 +94,38 @@ def cli(pdb: bool, enable_logging: bool) -> None:
         )
 
 
+def _anchor_run_submission(input_path: Path, node: orm.ProcessNode) -> None:
+    """Record ``node`` in ``input_path``'s anchor file, warning rather than aborting on failure.
+
+    Called once ``koopmans run``'s submission is durably in the daemon, so a
+    write failure here must not kill a calculation that is already under
+    way — it only costs the shortcut `koopmans status` would otherwise find
+    on its own.
+    """
+    from koopmans.aiida.anchor import anchor_path_for_input, record_submission
+
+    anchor_path = anchor_path_for_input(input_path)
+    try:
+        record_submission(anchor_path, input_path, node)
+    except (ValueError, OSError) as exc:
+        click.echo(
+            f"Warning: the workflow was submitted, but {anchor_path} could not be "
+            f"written ({exc}), so `koopmans status` will not find it on its own. "
+            f"Follow it with `koopmans status --uuid {node.uuid}`.",
+            err=True,
+        )
+
+
 @cli.command()
 @click.argument("input_file", type=click.Path(exists=True))
 def run(input_file: str) -> None:
     """Run a koopmans calculation from an input file.
 
-    INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
+    INPUT_FILE is the path to a YAML or JSON input file describing the
+    calculation. Records the submission in `<stem>.run.yaml`, next to the
+    input file, the same way `koopmans submit` does, so a run interrupted
+    (e.g. Ctrl-C) after submission can still be found with `koopmans
+    status` or `koopmans attach`.
     """
     from koopmans.aiida.workflows import advice_for, build_workgraph
 
@@ -115,7 +148,9 @@ def run(input_file: str) -> None:
     # route-conditional code surfaces here, so translate at this boundary too.
     try:
         with suppress_aiida_logging():
-            run_with_progress(wg)
+            run_with_progress(
+                wg, on_submitted=functools.partial(_anchor_run_submission, input_path)
+            )
     except Exception as exc:
         advice = advice_for(exc)
         if advice is not None:
@@ -123,12 +158,16 @@ def run(input_file: str) -> None:
         raise
 
     if wg.process is not None:
-        dump_workgraph(wg.process, output_path=input_path.parent / input_path.stem, overwrite=True)
-        model_node = trained_model_output(wg.process)
-        if model_node is not None:
+        dump_path = input_path.parent / input_path.stem
+        dump_workgraph(wg.process, output_path=dump_path, overwrite=True)
+        if trained_model_output(wg.process) is not None:
+            # `ml: model_file` reads a relative path against the input file's
+            # own directory, so the snippet drops the leading directories the
+            # written path carries when the run was started from elsewhere.
             click.echo(
-                f"Trained model stored as node {model_node.pk} ({model_node.uuid}) — "
-                f"reference it via `ml: {{model: {model_node.pk}}}`."
+                f"Trained model written to {dump_path / MODEL_FILENAME} — reuse it from "
+                f"an input file beside {input_path.name} with "
+                f"`ml: {{model_file: {Path(input_path.stem) / MODEL_FILENAME}}}`."
             )
 
 
@@ -143,10 +182,7 @@ def submit(input_file: str) -> None:
     `koopmans status` and `koopmans attach` read that file to find the
     calculation again.
     """
-    from datetime import datetime
-
-    from koopmans.aiida.anchor import AnchorEntry, anchor_path_for_input, append_anchor_entry
-    from koopmans.aiida.setup.profile import PROFILE_NAME
+    from koopmans.aiida.anchor import anchor_path_for_input, record_submission
     from koopmans.aiida.workflows import advice_for, build_workgraph
     from koopmans.api import launch
 
@@ -167,25 +203,18 @@ def submit(input_file: str) -> None:
             exc.add_note(advice)
         raise
 
-    if node.pk is None:
-        raise click.ClickException("The submitted process was never stored, so it has no id.")
-
     anchor_path = anchor_path_for_input(input_path)
-    entry = AnchorEntry(
-        uuid=node.uuid,
-        pk=node.pk,
-        input=input_path.name,
-        profile=PROFILE_NAME,
-        submitted=datetime.now(UTC).isoformat(),
-    )
     try:
-        append_anchor_entry(anchor_path, entry)
+        record_submission(anchor_path, input_path, node)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     except OSError as exc:
         # The daemon already has the job; losing the run file only loses
         # the *shortcut* back to it, not the submission itself.
         raise click.ClickException(
-            f"Workflow submitted as pk {node.pk} ({node.uuid}), but {anchor_path} could "
-            f"not be written ({exc}). Recover with `koopmans status --uuid {node.uuid}`."
+            f"The workflow was submitted, but {anchor_path} could not be written "
+            f"({exc}), so `koopmans status` will not find it on its own. Follow it "
+            f"with `koopmans status --uuid {node.uuid}`."
         ) from exc
 
     click.echo("🚀 Workflow submitted")
@@ -208,6 +237,9 @@ def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None)
         raise click.ClickException(str(exc)) from exc
 
     load_koopmans_profile()
+    # Both errors below name the identifier the user gave or the run file
+    # recorded, not one read off the node they landed on.
+    identifier = resolved.uuid if resolved.uuid is not None else resolved.pk
     try:
         node = (
             orm.load_node(uuid=resolved.uuid)
@@ -215,14 +247,13 @@ def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None)
             else orm.load_node(pk=resolved.pk)
         )
     except NotExistent as exc:
-        identifier = resolved.uuid if resolved.uuid is not None else resolved.pk
         raise click.ClickException(
             f"No AiiDA node found for {identifier!r}. It may have been deleted; check "
             "`verdi process list -a` for what is still in the database."
         ) from exc
     if not isinstance(node, orm.ProcessNode):
         raise click.ClickException(
-            f"Node {node.pk} is not a calculation; it holds a {type(node).__name__}."
+            f"{identifier!r} is not a calculation; it holds a {type(node).__name__}."
         )
     return node
 
@@ -750,6 +781,26 @@ def _check_ylim(
     return value
 
 
+def _check_styles(
+    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Reject a style matplotlib cannot read, before any run is looked up."""
+    from koopmans.plotting import StyleError, check_style
+
+    for style in value:
+        try:
+            check_style(style)
+        except StyleError as exc:
+            raise click.BadParameter(
+                f"{exc}. A format string combines a color, a marker and a line style: "
+                "'k-' is a black line, 'rx' red crosses, 'C1--' a dashed line in the "
+                "second automatic color.",
+                ctx=ctx,
+                param=param,
+            ) from exc
+    return value
+
+
 ylim_option = click.option(
     "--ylim",
     nargs=2,
@@ -762,7 +813,175 @@ ylim_option = click.option(
 )
 
 
-@plot.command()
+class _PositionalAwareOption(click.Option):
+    """A ``multiple=True`` option that records how many folders preceded each use.
+
+    click hands a ``multiple=True`` option's callback the fully-parsed tuple
+    of values, with no memory of where among a ``nargs=-1`` argument's
+    positionals each one was written — exactly what ``_FolderPairingCommand``
+    needs to pair a ``--style``/``--label`` with the folder it followed.
+    click's own parser already knows this while it parses:
+    :class:`click.parser.ParsingState` builds ``largs`` up as a running list
+    of the positional tokens seen so far, in the same single left-to-right
+    pass that calls an option's low-level :meth:`click.parser.Option.process`
+    the moment its flag is read — so ``len(state.largs)`` at that moment is
+    the number of folders written before this occurrence. This wraps the
+    ``process`` callable that :meth:`click.Option.add_to_parser` registers
+    for this option's flags, to record that count for every occurrence in
+    encounter order — the same order click builds the ``multiple=True``
+    tuple in, so the two line up positionally once parsing finishes.
+
+    ``ParsingState.largs`` and ``click.parser.Option.process`` are
+    undocumented parser internals; ``test_positional_recording_canary``
+    fails loudly, naming what moved, if a future click stops exposing them.
+    """
+
+    def positions_key(self) -> str:
+        """Return the ``ctx.meta`` key this option's recorded positions live under."""
+        return f"_folder_pairing_positions:{self.name}"
+
+    def add_to_parser(self, parser: click.parser.OptionParser, ctx: click.Context) -> None:
+        """Register the option, wrapping its parser hook to record positions."""
+        super().add_to_parser(parser, ctx)
+        positions: list[int] = []
+        ctx.meta[self.positions_key()] = positions
+
+        seen: set[int] = set()
+        for internal in (*parser._long_opt.values(), *parser._short_opt.values()):
+            if internal.dest != self.name or id(internal) in seen:
+                continue
+            seen.add(id(internal))
+            try:
+                original_process = internal.process
+            except AttributeError as exc:
+                raise RuntimeError(
+                    "click.parser.Option no longer exposes 'process'; "
+                    "_PositionalAwareOption's position-recording recipe needs "
+                    "updating for this click version."
+                ) from exc
+            internal.process = _recording_process(  # type: ignore[assignment]
+                original_process, positions
+            )
+
+
+def _recording_process(
+    process: Callable[[Any, click.parser.ParsingState], None], positions: list[int]
+) -> Callable[[Any, click.parser.ParsingState], None]:
+    """Wrap a parser option's ``process`` to record its folder count first."""
+
+    def wrapped(value: Any, state: click.parser.ParsingState) -> None:
+        """Record the folders seen so far, then hand the value to click."""
+        try:
+            largs = state.largs
+        except AttributeError as exc:
+            raise RuntimeError(
+                "click.parser.ParsingState no longer exposes 'largs'; "
+                "_PositionalAwareOption's position-recording recipe needs "
+                "updating for this click version."
+            ) from exc
+        positions.append(len(largs))
+        process(value, state)
+
+    return wrapped
+
+
+class _FolderPairingCommand(click.Command):
+    """A command whose ``--style``/``--label`` pair with the folder argument.
+
+    click gathers a ``nargs=-1`` argument and a ``multiple=True`` option into
+    two separate lists, so by the time a callback sees them the order they
+    were interleaved in is gone — only "the nth folder" and "the nth style"
+    remain, not which folder each style was written after.
+    :class:`_PositionalAwareOption` recovers that, per paired option, from
+    click's own parser; this command turns each recovered position into a
+    binding:
+
+    - given once per folder, the values pair with the folders positionally,
+      in listing order, wherever among the folders they were written.
+    - given for fewer folders than that, each value binds to the folder it
+      immediately followed; folders it did not follow one for stay unstyled
+      or unlabelled.
+    - given for more folders than that, there is no folder left for the
+      extra values to mean, and the command refuses.
+
+    Everything else — tokenizing, ``--``, ``--help``, error formatting — is
+    left to click.
+    """
+
+    #: Parameter names paired with the folder argument, one per folder.
+    _paired_params = ("styles", "labels")
+    _folder_param = "folders"
+
+    @staticmethod
+    def _bind_values(
+        flag: str,
+        occurrences: list[tuple[int, str]],
+        folder_tokens: tuple[Path, ...],
+    ) -> tuple[str | None, ...] | None:
+        """Return one value per folder for a paired option, or ``None`` if unused.
+
+        As many values as folders pair positionally, in listing order,
+        regardless of where among the folders each was written. Fewer values
+        than folders binds each one to the folder it immediately followed;
+        ``None`` marks a folder that got none of its own, distinct from one
+        given an explicit empty string (a no-op matplotlib format string,
+        still a value the user typed). More values than folders, or a value
+        before any folder, has no folder left to mean and is refused.
+
+        :raises click.UsageError: if there were more values than folders, a
+            value came before any folder, or two values bound to one folder
+            — the last two only matter when the count fell short, since an
+            exact count pairs by position and ignores where each was written.
+        """
+        nfolders = len(folder_tokens)
+        count = len(occurrences)
+        if count == 0:
+            return None
+        if count == nfolders:
+            return tuple(value for _, value in occurrences)
+        if count > nfolders:
+            raise click.UsageError(
+                f"{count} {flag} values were given for {nfolders} folder(s). Give "
+                f"one {flag} per folder to pair them in listing order, fewer with "
+                f"each one just after the folder it names, or none at all."
+            )
+
+        bound: dict[int, str] = {}
+        for index, value in occurrences:
+            if index < 0:
+                raise click.UsageError(
+                    f"{flag} must follow the folder it applies to — give a folder "
+                    f"before the first {flag}, not a bare {flag} up front."
+                )
+            if index in bound:
+                raise click.UsageError(
+                    f"{flag} was already given for {folder_tokens[index]!r} "
+                    f"({bound[index]!r}); write only one {flag} per folder, or one "
+                    f"{flag} per folder overall to pair them by listing order instead."
+                )
+            bound[index] = value
+        return tuple(bound.get(i) for i in range(nfolders))
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        """Parse normally, then rebind each paired option to its folder(s)."""
+        rv = super().parse_args(ctx, args)
+
+        params = {p.name: p for p in self.get_params(ctx) if p.name is not None}
+        folder_tokens: tuple[Path, ...] = ctx.params[self._folder_param]
+
+        for name in self._paired_params:
+            param = params[name]
+            if not isinstance(param, _PositionalAwareOption):
+                raise TypeError(f"{name!r} must be declared with cls=_PositionalAwareOption.")
+            positions = ctx.meta.pop(param.positions_key(), [])
+            values: tuple[str, ...] = ctx.params[name]
+            occurrences = list(zip((p - 1 for p in positions), values, strict=True))
+            ctx.params[name] = self._bind_values(param.opts[0], occurrences, folder_tokens)
+
+        return rv
+
+
+@plot.command(cls=_FolderPairingCommand)
 @click.argument(
     "folders",
     nargs=-1,
@@ -777,11 +996,29 @@ ylim_option = click.option(
 @click.option(
     "--label",
     "labels",
+    cls=_PositionalAwareOption,
     multiple=True,
     metavar="TEXT",
-    help="Name a folder on the legend; repeat once per folder, in the order the "
-    "folders are listed. A folder drawn as several curves keeps what tells them "
-    "apart, such as the spin channel.",
+    help="Name a folder on the legend. One per folder pairs them in listing "
+    "order; fewer than that, each names the folder it was written just after, "
+    "and a folder with none of its own keeps its derived name. A folder drawn "
+    "as several curves keeps what tells them apart, such as the spin channel.",
+)
+@click.option(
+    "--style",
+    "styles",
+    cls=_PositionalAwareOption,
+    multiple=True,
+    metavar="FORMAT",
+    callback=_check_styles,
+    help="Draw a folder in a matplotlib format string, such as 'x' for "
+    "crosses, 'k--' for a dashed black line or '-' for a plain one. One per "
+    "folder pairs them in listing order; fewer than that, each draws the "
+    "folder it was written just after, and a folder with none of its own is "
+    "drawn as the figure would draw it on its own. A color the string names "
+    "replaces the one this command would have chosen, and every curve the "
+    "folder draws is drawn the same way — pass a calculation directory of "
+    "its own to draw one result differently from its siblings.",
 )
 def bandstructure(
     folders: tuple[Path, ...],
@@ -790,16 +1027,67 @@ def bandstructure(
     zero: str,
     data_path: Path | None,
     ylim: tuple[float, float] | None,
-    labels: tuple[str, ...],
+    labels: tuple[str | None, ...],
+    styles: tuple[str | None, ...],
 ) -> None:
     """Draw the band structures of finished runs on one set of axes.
 
-    FOLDERS are directories `koopmans run` wrote. Every band structure across
-    all of them is drawn, so a DFT run and a Koopmans run given together
+    FOLDERS are directories `koopmans run` wrote, or single calculation
+    directories inside them. Each is taken as given and nothing beneath it is
+    searched, so a step that ran wannier90 twice is never chosen between on
+    your behalf; a directory that names no run of its own lists the ones under
+    it that can be drawn. Naming a run and a step inside it draws that step
+    twice — pass either the run or its steps. Every band structure across all
+    the folders is drawn, so a DFT run and a Koopmans run given together
     overlay, referenced to a single energy zero. Each is named after the step
-    that produced it unless --label names it:
+    that produced it unless --label names it, and --style says how it is
+    drawn; the recommended way to write either is right after its own
+    folder, as in the examples below, but that is only where it counts: with
+    one --style (or --label) for every folder, they pair with the folders in
+    listing order wherever among the folders each was written, and with
+    fewer than that, each pairs with the folder it immediately followed. A
+    folder left with neither keeps the figure's own choice of name and
+    appearance — only the reference bands are styled here, the wannierized
+    ones are left as the figure would draw them:
 
-        koopmans plot bandstructure dft ki --label DFT --label "KI@LDA"
+    \b
+        koopmans plot bandstructure \\
+            si/02-bands --style rx \\
+            si/03-wannierize_emp_1/01-wannier90/03-wannier90 \\
+            si/04-wannierize_occ_1/01-wannier90/03-wannier90
+
+    --label works the same way, and can be mixed with --style on the same
+    folder, or with fewer values than --style has:
+
+    \b
+        koopmans plot bandstructure dft --label DFT ki --style k-- --label "KI@LDA"
+
+    Writing every --style (or --label) after every folder reads the same as
+    interleaving them, as long as there is one for each:
+
+    \b
+        koopmans plot bandstructure pw wannier --style x --style -
+
+    Writing more --style (or --label) values than there are folders is
+    refused, and so is writing one before any folder when there are fewer
+    values than folders — in either case there is no folder left for it to
+    mean.
+
+    Each is drawn in a color of this command's choosing unless --style says
+    how, as crosses at the k-points pw.x computed and a line through the
+    wannier90 interpolation of them:
+
+        koopmans plot bandstructure pw --style x wannier --style -
+
+    One style covers everything its folder draws, so drawing the results of a
+    single run differently from each other means naming their calculation
+    directories. A wannierize run has one wannier90 calculation per block, and
+    a block folder that carries no run of its own will name it for you:
+
+    \b
+        koopmans plot bandstructure \\
+            zno/02-wannierize/01-bands --style rx \\
+            zno/02-wannierize/02-wannierize_emp/01-wannier90/03-wannier90 --style b-
 
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
@@ -821,7 +1109,7 @@ def bandstructure(
 
     kind = EnergyZero(zero)
     try:
-        series, warnings = resolve_band_series(folders, labels)
+        series, warnings = resolve_band_series(folders, labels, styles)
         check_paths_agree(series)
         value, reference = apply_energy_zero(series, kind)
     except (PlottingError, PathMismatchError, NoEnergyZeroError, ValueError) as exc:

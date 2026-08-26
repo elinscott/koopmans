@@ -683,6 +683,101 @@ class TestPerStepKpointMeshRejected:
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             _build(d)
 
+    def test_wannier90_density_raises(self) -> None:
+        """No interpolated band structure exists here for a density to describe.
+
+        The Wannier initialisation folds Wannier functions to a supercell,
+        not an interpolated band structure along a path.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
+            _build(d)
+
+
+class TestBandPathRejected:
+    """The kcp.x route cannot yet unfold its supercell Hamiltonian onto a path."""
+
+    def test_a_band_path_is_rejected(self, read_input_dict: Any) -> None:
+        """A path the route silently dropped would look like a band structure was coming.
+
+        Refused while the input file is read, so the reader gets the error
+        report rather than a traceback out of the graph build.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"]["path"] = "GX"
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_dict(d)
+
+        message = str(excinfo.value)
+        assert "Errors found in the input file" in message
+        assert "`kpoints.path`" in message
+        assert "screening_method = 'dfpt'" in message
+
+    def test_the_dfpt_route_takes_the_same_path(
+        self,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        installed_kcw_code: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """Discriminates the guard from a blanket refusal: only kcp.x lacks the stage.
+
+        The message sends the reader to ``screening_method = 'dfpt'``, so
+        the same input under that method must build rather than raise.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        d = _si_dscf_dict(screening_method="dfpt")
+        d["kpoints"]["path"] = "GX"
+
+        wg = build_workgraph(KoopmansInput.model_validate(d))
+
+        assert wg.tasks["dfpt"].inputs["bands_kpoints"].value is not None
+
+    def test_a_molecular_kohn_sham_path_is_still_rejected(self, read_input_dict: Any) -> None:
+        """The other route kcp.x does run has no band structure either.
+
+        Pins the refusal against being dropped for ``kohn-sham`` wholesale:
+        molecular runs are the initialisation route kcp.x supports, so a
+        path there still has nowhere to go.
+        """
+        d = _si_dscf_dict(init_orbitals="kohn-sham")
+        d["atoms"]["cell_parameters"] = {
+            "periodic": False,
+            "units": "angstrom",
+            "vectors": [[8.0, 0.0, 0.0], [0.0, 8.0, 0.0], [0.0, 0.0, 8.0]],
+        }
+        d["kpoints"]["path"] = "GX"
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_dict(d)
+
+        assert "`kpoints.path`" in str(excinfo.value)
+
+    def test_a_periodic_kohn_sham_input_hears_its_own_blocker_first(
+        self, aiida_profile_clean: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Pins the refusal behind the initialisation-route check.
+
+        kcp.x runs no periodic ``kohn-sham`` route at all, and refusing the
+        band path first would send the reader to ``screening_method =
+        'dfpt'`` — which refuses the same input again, for wanting Wannier
+        orbitals. So this input must parse, and the blocker must arrive on
+        the first hop when it is built.
+        """
+        d = _si_dscf_dict(init_orbitals="kohn-sham")
+        d["kpoints"]["path"] = "GX"
+
+        with pytest.raises(NotImplementedError) as excinfo:
+            _build(d)
+
+        message = str(excinfo.value)
+        assert "init_orbitals='kohn-sham' on a periodic structure" in message
+        assert "`kpoints.path`" not in message
+
 
 class TestCutoffLessPseudoFamily:
     """A family recommending no cutoffs drives this route's pw steps from the input.

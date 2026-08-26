@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from koopmans.aiida.workflows import (
     load_codes,
+    name_run,
+    pin_spin_regime,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
@@ -20,6 +22,12 @@ if TYPE_CHECKING:
 
 def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for DFT bands calculation.
+
+    All four ``workflow.spin`` regimes run here: ``collinear`` needs a
+    ``calculator_parameters.tot_magnetization`` alongside it, and
+    ``spin_orbit`` a fully-relativistic ``pseudo_library`` (pw.x otherwise
+    averages the scalar-relativistic channels and the spin-orbit splitting
+    comes out zero).
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -36,11 +44,15 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         {
             "nscf": "`kpoints.overrides.nscf` cannot take effect in a `dft_bands` "
             "calculation: it runs an scf and then samples `kpoints.path`, with no "
-            "nscf mesh in between. Set `kpoints.overrides.scf` or `kpoints.grid`."
+            "nscf mesh in between. Set `kpoints.overrides.scf` or `kpoints.grid`.",
+            "wannier90": "`kpoints.overrides.wannier90.path_density` cannot take effect in "
+            "a `dft_bands` calculation: it runs no Wannierization, so there is no "
+            "wannier90 interpolation to densify. Set `kpoints.path_density` instead.",
         },
     )
 
     structure, _pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "bands"])
+    spin = pin_spin_regime(koopmans_input, overrides)
 
     # RunPwBands binds its code eagerly (aiida-koopmans#97: not yet
     # converted to node_graph.reference); the pre-flight catches a missing pw
@@ -50,11 +62,15 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
 
-    return RunPwBands.build(
-        codes=codes,
-        structure=structure,
-        overrides=overrides,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
-        bands_kpoints=bands_kpoints,
+    return name_run(
+        RunPwBands.build(
+            codes=codes,
+            structure=structure,
+            overrides=overrides,
+            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
+            bands_kpoints=bands_kpoints,
+            spin_type=spin,
+        ),
+        "DFT band structure",
     )

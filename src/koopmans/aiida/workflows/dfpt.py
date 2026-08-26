@@ -7,9 +7,12 @@ from typing import TYPE_CHECKING, Any, cast
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
+    collinear_magnetization,
     load_codes,
+    name_run,
     pin_step_kpoints,
     prepare_common_inputs,
+    reject_kpoint_overrides,
     require_configured_codes,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
@@ -34,6 +37,10 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     per spin channel (needs per-spin projections in ``w90.up`` / ``w90.down``
     and a ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the
     spinor variant (all bands singly occupied, ``num_wann`` doubled).
+
+    A ``kpoints.path`` in the input reaches the kcw.x ham step as its bands
+    path, so the run also emits the Koopmans band structure interpolated
+    along it.
 
     Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
     periodic, MLWF/projwf variational orbitals, and explicit projections.
@@ -82,12 +89,21 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
                 "``calculator_parameters.w90.up.projections`` and "
                 "``calculator_parameters.w90.down.projections``."
             )
-        if calc_params.tot_magnetization is None:
-            raise ValueError(
-                "spin='collinear' DFPT screening needs "
-                "``calculator_parameters.tot_magnetization`` to fix the per-channel "
-                "occupations."
-            )
+
+    # Checked last among the pure-Python guards, after every workflow-scope
+    # rejection above (correction, init_orbitals, gamma_only, spin): an
+    # explicit override paired with one of those should surface the scope
+    # blocker first, not send the reader to fix the override and only then
+    # learn the run is unsupported regardless.
+    reject_kpoint_overrides(
+        koopmans_input,
+        {
+            "wannier90": "`kpoints.overrides.wannier90.path_density` is not yet wired "
+            "into the DFPT route: its own wannierization step interpolates along "
+            "`kpoints.path` at the top-level `kpoints.path_density`, with no socket "
+            "of its own yet for a denser interpolation."
+        },
+    )
 
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
@@ -133,23 +149,26 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
     nscf_mesh = step_kpoints_mesh(koopmans_input.kpoints, "nscf")
 
-    return SinglepointDFPTWorkflow.build(
-        codes=codes,
-        structure=structure,
-        kpoints=nscf_mesh,
-        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
-        bands_kpoints=bands_kpoints,
-        pseudo_family=pseudo_family,
-        overrides=overrides,
-        # 'auto' prepends the scf + ph.x dielectric steps inside
-        # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
-        # periodic default, on).
-        eps_inf=eps_inf,
-        l_vcut=workflow.gb_correction,
-        spin=spin,
-        manifolds=manifolds,
-        group_orbitals_tol=group_orbitals_tol,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+    return name_run(
+        SinglepointDFPTWorkflow.build(
+            codes=codes,
+            structure=structure,
+            kpoints=nscf_mesh,
+            scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
+            bands_kpoints=bands_kpoints,
+            pseudo_family=pseudo_family,
+            overrides=overrides,
+            # 'auto' prepends the scf + ph.x dielectric steps inside
+            # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
+            # periodic default, on).
+            eps_inf=eps_inf,
+            l_vcut=workflow.gb_correction,
+            spin=spin,
+            manifolds=manifolds,
+            group_orbitals_tol=group_orbitals_tol,
+            parallelization=koopmans_input.parallelization.as_mapping() or None,
+        ),
+        "Koopmans DFPT",
     )
 
 
@@ -222,15 +241,14 @@ def _collinear_dfpt_manifolds(
 
     workflow = koopmans_input.workflow
     w90 = koopmans_input.calculator_parameters.wannier90
-    tot_magnetization = koopmans_input.calculator_parameters.tot_magnetization
-    if w90.up is None or w90.down is None or tot_magnetization is None:
+    if w90.up is None or w90.down is None:
         # Already validated by build_singlepoint_dfpt_workgraph; re-checked
         # here so the collinear helper narrows its own inputs.
         raise ValueError(
             "spin='collinear' DFPT screening needs per-spin projections "
-            "(``w90.up`` / ``w90.down``) and ``tot_magnetization``."
+            "(``w90.up`` / ``w90.down``)."
         )
-    magnetization = int(tot_magnetization)
+    magnetization = collinear_magnetization(koopmans_input)
     if (nelec + magnetization) % 2:
         raise ValueError(
             f"nelec = {nelec} and tot_magnetization = {magnetization} do not give "

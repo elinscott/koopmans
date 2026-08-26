@@ -81,6 +81,20 @@ def _si_dfpt_auto_dict() -> dict[str, Any]:
     }
 
 
+class TestDftEpsNoWannierStep:
+    """`dft_eps` runs no Wannierization: `overrides.wannier90` has nothing to reach."""
+
+    def test_explicit_wannier90_density_raises(
+        self, aiida_profile: Any, installed_pw_code: Any, installed_ph_code: Any
+    ) -> None:
+        """ph.x measures a dielectric constant, not a band structure to interpolate."""
+        d = _si_eps_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*dft_eps"):
+            build_workgraph(inp)
+
+
 class TestDftEps:
     """task='dft_eps' routes to the scf → ph.x → extract sequence."""
 
@@ -98,6 +112,25 @@ class TestDftEps:
         assert "scf" in names
         assert "ph" in names
         assert "extract_dielectric_constant" in names
+
+    def test_the_route_names_the_run_it_builds(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """The name a reader sees for the whole run, set where the route is built.
+
+        ``launch`` passes it as the run's ``metadata.label``; the graph's
+        own name stays the identity the snapshots record.
+        """
+        from koopmans.aiida.workflows import run_label
+
+        wg = build_workgraph(KoopmansInput.model_validate(_si_eps_dict()))
+
+        assert run_label(wg) == "Dielectric constant"
+        assert wg.name == "DielectricTask"
 
         # ph.x runs the electric-field perturbation only (legacy
         # DFTPhWorkflow: epsil=.true., trans=.false.) at q = Gamma.
@@ -175,6 +208,23 @@ class TestDftEps:
         with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_eps"):
             build_workgraph(KoopmansInput.model_validate(d))
 
+    def test_a_band_path_is_rejected(self, read_input_dict: Any) -> None:
+        """ph.x computes a dielectric constant, so a path here would never be sampled.
+
+        Refused while the input file is read, so the reader gets the error
+        report rather than a traceback out of the graph build.
+        """
+        d = _si_eps_dict()
+        d["kpoints"]["path"] = "GX"
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_dict(d)
+
+        message = str(excinfo.value)
+        assert "Errors found in the input file" in message
+        assert "`kpoints.path`" in message
+        assert "dft_bands" in message
+
     def test_missing_ph_code_earns_preflight_advice(
         self, aiida_profile_clean: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
@@ -199,6 +249,57 @@ class TestDftEps:
         with pytest.raises(ValueError, match="`ph@localhost`") as excinfo:
             build_workgraph(inp)
         assert "koopmans install" in str(excinfo.value)
+
+
+class TestDftEpsSpin:
+    """``workflow.spin`` reaches the ground state, or is refused with the reason."""
+
+    def test_collinear_polarizes_the_scf(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """ph.x computes the LSDA dielectric response, so collinear is honored here.
+
+        The unpolarized build below is the control: before this wiring both
+        produced the same namelist.
+        """
+        d = _si_eps_dict(spin="collinear")
+        d["calculator_parameters"]["tot_magnetization"] = 0
+        wg = build_workgraph(KoopmansInput.model_validate(d))
+        system = wg.tasks["scf"].inputs["pw"]["parameters"].value.get_dict()["SYSTEM"]
+        assert system["nspin"] == 2
+        assert system["tot_magnetization"] == 0
+
+        unpolarized = build_workgraph(KoopmansInput.model_validate(_si_eps_dict()))
+        control = unpolarized.tasks["scf"].inputs["pw"]["parameters"].value.get_dict()["SYSTEM"]
+        assert "nspin" not in control
+
+    @pytest.mark.parametrize("spin", ["non_collinear", "spin_orbit"])
+    def test_spinor_regimes_are_refused(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+        spin: str,
+    ) -> None:
+        """ph.x has no electric-field perturbation for noncollinear magnetism.
+
+        The refusal is ``DielectricTask``'s, reached at build because this
+        route calls it as the entry graph: the user reads it before anything
+        is submitted, rather than a ph.x abort hours into the run. It has to
+        carry the reason and the two regimes that do work, since ``spin`` is
+        the only keyword that can change here.
+        """
+        inp = KoopmansInput.model_validate(_si_eps_dict(spin=spin))
+        with pytest.raises(NotImplementedError) as excinfo:
+            build_workgraph(inp)
+        message = str(excinfo.value)
+        assert "not implemented for noncollinear magnetism" in message
+        assert "Use 'none' or 'collinear'." in message
 
 
 class TestDfptAutoEps:
@@ -282,6 +383,32 @@ class TestDfptAutoEps:
         assert "Needed to compute the dielectric constant." in advice
         assert "koopmans install" in advice
 
+    @pytest.mark.parametrize("spin", ["non_collinear", "spin_orbit"])
+    def test_auto_is_refused_for_a_spinor_chain(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+        spin: str,
+    ) -> None:
+        """The refusal names ``eps_inf``, the keyword this user can still change.
+
+        DFPT itself runs in either spinor regime, so ``spin`` is not the
+        input at fault here: only the dielectric pre-computation is out of
+        reach, and stating ``eps_inf`` as a number keeps the rest of the
+        run. A refusal naming ``spin`` instead would send the user to undo
+        the one keyword that is doing what they asked.
+        """
+        d = _si_dfpt_auto_dict()
+        d["workflow"]["spin"] = spin
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(NotImplementedError) as excinfo:
+            build_singlepoint_dfpt_workgraph(inp)
+        message = str(excinfo.value)
+        assert "eps_inf='auto'" in message
+        assert "Give eps_inf a number instead." in message
+
     def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
         """A non-'auto' string eps_inf is rejected up front."""
         d = _si_dfpt_auto_dict()
@@ -314,8 +441,9 @@ class TestPhCalculatorParameters:
         assert inputph["trans"] is False
 
     def test_epsil_is_rejected_at_parse(self) -> None:
-        """A user-set ``epsil`` disagreeing with the route fails at parse, naming the owner."""
-        d = _si_eps_dict()
-        d["calculator_parameters"]["ph"] = {"epsil": False}
-        with pytest.raises(ValueError, match=r"calculator_parameters\.ph\.epsil.*dft_eps route"):
-            KoopmansInput.model_validate(d)
+        """``epsil`` is not an input-file keyword at all, whatever value it is given."""
+        for value in (True, False):
+            d = _si_eps_dict()
+            d["calculator_parameters"]["ph"] = {"epsil": value}
+            with pytest.raises(ValueError, match=r"calculator_parameters\.ph\.epsil.*dft_eps"):
+                KoopmansInput.model_validate(d)

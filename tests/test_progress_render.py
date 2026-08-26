@@ -50,6 +50,7 @@ class TestWalkFailedDescendants:
             caller=root,
             link_label="scf",
             process_label="PwBaseWorkChain",
+            label="SCF",
             exit_status=402,
             exit_message="pw.x did not converge",
         )
@@ -57,11 +58,13 @@ class TestWalkFailedDescendants:
         failures = progress._walk_failed_descendants(root)
 
         assert len(failures) == 1
-        _pk, label, exit_status, message, state = failures[0]
-        assert label == "PwBaseWorkChain"
-        assert exit_status == 402
-        assert message == "pw.x did not converge"
-        assert state == "failed"
+        assert failures[0].name == "SCF"
+        # A workchain runs whatever its calculations run, and is named
+        # next to nothing; the calculation under it carries the binary.
+        assert failures[0].code is None
+        assert failures[0].exit_status == 402
+        assert failures[0].message == "pw.x did not converge"
+        assert failures[0].state == "failed"
 
     def test_the_root_itself_can_be_the_failure(self, aiida_profile_clean: Any) -> None:
         """A failure with no failed descendant still gets reported once."""
@@ -71,8 +74,9 @@ class TestWalkFailedDescendants:
 
         failures = progress._walk_failed_descendants(root)
 
-        assert [f[1:3] for f in failures] == [("WorkGraph<Tiny>", 1)]
-        assert failures[0][4] == "failed"
+        assert [(f.name, f.exit_status, f.state) for f in failures] == [("Tiny", 1, "failed")]
+        # The root is the run, not a step in it, so it stands under nothing.
+        assert failures[0].path == ()
 
     def test_a_cascading_failure_reports_both_wrapper_and_cause(
         self, aiida_profile_clean: Any
@@ -88,13 +92,119 @@ class TestWalkFailedDescendants:
             caller=root,
             link_label="scf",
             process_label="PwBaseWorkChain",
+            label="SCF",
             exit_status=402,
             exit_message="pw.x did not converge",
         )
 
         failures = progress._walk_failed_descendants(root)
 
-        assert [label for _, label, _, _, _ in failures] == ["WorkGraph<Tiny>", "PwBaseWorkChain"]
+        assert [f.name for f in failures] == ["Tiny", "SCF"]
+
+
+def _two_failed_iterations() -> Any:
+    """Build a screening run whose first two iterations both failed.
+
+    The second iteration is reached through ``refine_screening_parameters``,
+    the recursion that names every iteration after the first the same way,
+    and which the table sees through.
+    """
+    root = make_process(process_label="WorkGraph<KoopmansDSCFWorkflow>", exit_status=500)
+    screening = make_process(
+        caller=root,
+        link_label="ComputeScreeningParameters",
+        process_label="WorkGraph<ComputeScreeningParameters>",
+        label="Screening parameters",
+        exit_status=500,
+    )
+    make_process(
+        caller=screening,
+        link_label="ScreeningIteration",
+        process_label="WorkGraph<ScreeningIteration>",
+        label="Iteration",
+        exit_status=305,
+        exit_message="alpha did not converge",
+    )
+    refine = make_process(
+        caller=screening,
+        link_label="refine_screening_parameters",
+        process_label="WorkGraph<RefineScreeningParameters>",
+        exit_status=500,
+    )
+    make_process(
+        caller=refine,
+        link_label="screening_iteration",
+        process_label="WorkGraph<ScreeningIteration>",
+        label="Iteration",
+        exit_status=305,
+        exit_message="alpha did not converge",
+    )
+    return root
+
+
+class TestTwoRunsOfTheSameStep:
+    """A step that runs more than once is told apart by where it sits."""
+
+    def test_two_failed_iterations_are_distinguishable(self, aiida_profile_clean: Any) -> None:
+        """Same label, same exit status, same message — only position differs.
+
+        Without the index these two lines are identical, and a reader
+        cannot tell which pass of the screening loop failed.
+        """
+        failures = progress._walk_failed_descendants(_two_failed_iterations())
+
+        iterations = [f for f in failures if f.name.startswith("Iteration")]
+        assert [(f.name, f.path) for f in iterations] == [
+            ("Iteration 1", ("Screening parameters",)),
+            ("Iteration 2", ("Screening parameters",)),
+        ]
+
+    def test_the_two_lines_printed_are_not_the_same_line(self, aiida_profile_clean: Any) -> None:
+        """What the reader sees, rather than what the walk returns."""
+        console, buffer = _capturing_console()
+
+        progress.render_process_once(_two_failed_iterations(), console=console)
+
+        printed = [
+            line.strip()
+            for line in buffer.getvalue().splitlines()
+            if "Iteration" in line and "—" in line
+        ]
+        assert printed == [
+            "Iteration 1 in Screening parameters — exit status 305: alpha did not converge",
+            "Iteration 2 in Screening parameters — exit status 305: alpha did not converge",
+        ]
+
+    def test_no_pk_reaches_the_summary(self, aiida_profile_clean: Any) -> None:
+        """A pk means nothing to a reader who does not know the engine."""
+        console, buffer = _capturing_console()
+
+        progress.render_process_once(_two_failed_iterations(), console=console)
+
+        output = buffer.getvalue()
+        assert "pk" not in output
+        assert "(pk " not in output
+
+    def test_a_failure_carries_no_node_identifier(self, aiida_profile_clean: Any) -> None:
+        """The walk reports what failed, where, and how, and nothing that names a node.
+
+        Pinned whole: putting a pk back on a line means re-plumbing it
+        here, where this test fails.
+        """
+        root = make_process(process_label="WorkGraph<Tiny>", exit_status=1)
+
+        failures = progress._walk_failed_descendants(root)
+
+        assert failures == [
+            progress.ProcessFailure(
+                name="Tiny",
+                code=None,
+                path=(),
+                exit_status=1,
+                message=None,
+                state="failed",
+            )
+        ]
 
 
 class TestRenderProcessOnce:
@@ -114,14 +224,38 @@ class TestRenderProcessOnce:
         assert "Workflow completed successfully!" in output
 
     def test_a_failed_step_prints_its_exit_status_and_message(
-        self, aiida_profile_clean: Any
+        self, aiida_profile_clean: Any, localhost_computer: Any
     ) -> None:
-        """A failed step's detail is printed alongside the state table."""
+        """A failed step's detail is printed alongside the state table.
+
+        The binary comes off the code the calculation ran, so the step
+        that names one here is the pw.x call rather than the workchain
+        around it.
+        """
+        from aiida.orm import InstalledCode
+
+        code = InstalledCode(
+            label="pw",
+            computer=localhost_computer,
+            default_calc_job_plugin="quantumespresso.pw",
+            filepath_executable="/opt/qe/bin/pw.x",
+        ).store()
         root = make_process(process_label="WorkGraph<Tiny>", exit_status=1)
-        make_process(
+        scf = make_process(
             caller=root,
             link_label="scf",
             process_label="PwBaseWorkChain",
+            label="SCF",
+            exit_status=402,
+            exit_message="pw.x did not converge",
+        )
+        make_process(
+            caller=scf,
+            link_label="iteration_01",
+            process_label="PwCalculation",
+            calcjob=True,
+            computer=localhost_computer,
+            inputs={"code": code},
             exit_status=402,
             exit_message="pw.x did not converge",
         )
@@ -130,11 +264,39 @@ class TestRenderProcessOnce:
         progress.render_process_once(root, console=console)
 
         output = buffer.getvalue()
-        # The failure line prettifies the label the same way row labels are.
-        assert "Pw Base Work Chain" in output
+        # The failure line names the step and the binary that ran it,
+        # never its Python class.
+        assert "SCF (pw.x)" in output
+        assert "Pw Base Work Chain" not in output
         assert "402" in output
         assert "pw.x did not converge" in output
         assert "finished with status: 1" in output
+
+    def test_a_failed_step_is_named_without_a_node_identifier(
+        self, aiida_profile_clean: Any
+    ) -> None:
+        """The step's name and its exit status are the whole line.
+
+        A pk names the process for anyone reading AiiDA's own database
+        and nothing for anyone else, so the failed step is identified by
+        the name it carries in the table above it.
+        """
+        root = make_process(process_label="WorkGraph<Tiny>", exit_status=1)
+        make_process(
+            caller=root,
+            link_label="scf",
+            process_label="PwBaseWorkChain",
+            label="SCF",
+            exit_status=402,
+            exit_message="pw.x did not converge",
+        )
+        console, buffer = _capturing_console()
+
+        progress.render_process_once(root, console=console)
+
+        # Pinned whole: any identifier added back lands on this line.
+        line = next(text for text in buffer.getvalue().splitlines() if "SCF —" in text)
+        assert line.strip() == "SCF — exit status 402: pw.x did not converge"
 
     def test_a_killed_step_says_killed_not_excepted(self, aiida_profile_clean: Any) -> None:
         """A killed descendant has no exit status, but it was not excepted either.
@@ -153,6 +315,7 @@ class TestRenderProcessOnce:
 
         child = orm.WorkflowNode()
         child.base.links.add_incoming(root, link_type=LinkType.CALL_WORK, link_label="scf")
+        child.label = "SCF"
         child.store()
         child.set_process_label("PwBaseWorkChain")
         child.set_process_state(ProcessState.KILLED)
@@ -165,7 +328,7 @@ class TestRenderProcessOnce:
         output = buffer.getvalue()
         assert "Workflow was killed!" in output
         # The step's own detail line says killed, above the closing banner.
-        killed_line_index = output.index("Pw Base Work Chain")
+        killed_line_index = output.index("SCF —")
         banner_index = output.index("Workflow was killed!")
         assert killed_line_index < banner_index
         detail_line = output[killed_line_index:banner_index]

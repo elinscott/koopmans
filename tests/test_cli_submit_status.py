@@ -23,28 +23,10 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-import koopmans.cli as cli_mod
 from koopmans.aiida.anchor import AnchorEntry, append_anchor_entry, read_anchor_entries
 from koopmans.aiida.setup.profile import PROFILE_NAME
 from koopmans.cli import cli
-from tests.fixtures import make_process, silicon_pw_input
-
-
-def _write_input_file(tmp_path: Path, name: str = "si.yaml") -> Path:
-    path = tmp_path / name
-    path.write_text(yaml.safe_dump(silicon_pw_input()))
-    return path
-
-
-def _skip_profile_loading(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stand in for ``load_koopmans_profile``: the test profile is already loaded.
-
-    ``koopmans.cli`` always loads the profile named "koopmans" by name,
-    which does not exist under the throwaway test profile the AiiDA
-    pytest fixtures set up. Standing this call down is the only AiiDA
-    plumbing this test file replaces.
-    """
-    monkeypatch.setattr(cli_mod, "load_koopmans_profile", lambda: None)
+from tests.fixtures import make_process, skip_profile_loading, write_koopmans_input
 
 
 class FakeProcessNode:
@@ -72,7 +54,7 @@ class TestSubmit:
         fake_node: FakeProcessNode,
     ) -> tuple[Any, dict[str, Any]]:
         """Invoke ``submit``, returning the CLI result and the launch() kwargs it saw."""
-        _skip_profile_loading(monkeypatch)
+        skip_profile_loading(monkeypatch)
         captured: dict[str, Any] = {}
 
         def _fake_launch(wg: Any, *, blocking: bool, wait: bool = False) -> FakeProcessNode:
@@ -93,7 +75,7 @@ class TestSubmit:
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """The submitted process runs asynchronously: blocking=False, wait=False."""
-        input_path = _write_input_file(tmp_path)
+        input_path = write_koopmans_input(tmp_path)
         fake_node = FakeProcessNode()
 
         result, captured = self._invoke(monkeypatch, input_path, fake_node)
@@ -110,7 +92,7 @@ class TestSubmit:
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """The user sees one line; the identifiers live in the run file."""
-        input_path = _write_input_file(tmp_path)
+        input_path = write_koopmans_input(tmp_path)
         fake_node = FakeProcessNode(pk=42, uuid="abc-123", label="WorkGraph<DftBands>")
 
         result, _ = self._invoke(monkeypatch, input_path, fake_node)
@@ -128,7 +110,7 @@ class TestSubmit:
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """The written entry's fields match the (stubbed) submitted node."""
-        input_path = _write_input_file(tmp_path)
+        input_path = write_koopmans_input(tmp_path)
         fake_node = FakeProcessNode(pk=42, uuid="abc-123")
 
         self._invoke(monkeypatch, input_path, fake_node)
@@ -144,7 +126,7 @@ class TestSubmit:
         # Round-trips as a real timestamp; raises otherwise.
         datetime.fromisoformat(entry.submitted)
 
-    def test_a_failed_anchor_write_still_reports_the_recoverable_identifiers(
+    def test_a_failed_anchor_write_still_hands_back_the_recovery_command(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -155,16 +137,17 @@ class TestSubmit:
         """The daemon already has the job; a run-file write failure must not hide it.
 
         A read-only directory makes ``append_anchor_entry`` raise
-        ``OSError`` after the (stubbed) launch has already "happened";
-        the CLI must still surface the pk/uuid so the user can find the
-        process by ``koopmans status --uuid``.
+        ``OSError`` after the (stubbed) launch has already "happened".
+        The message hands back the whole ``koopmans status --uuid``
+        command, which is what finds the process again; the pk names
+        nothing the user can type and is absent.
         """
         import os
         import stat
 
-        input_path = _write_input_file(tmp_path)
-        fake_node = FakeProcessNode(pk=4242, uuid="recoverable-uuid-4242")
-        _skip_profile_loading(monkeypatch)
+        input_path = write_koopmans_input(tmp_path)
+        fake_node = FakeProcessNode(pk=4242, uuid="recoverable-uuid")
+        skip_profile_loading(monkeypatch)
         monkeypatch.setattr("koopmans.api.launch", lambda wg, *, blocking, wait=False: fake_node)
 
         os.chmod(tmp_path, stat.S_IRUSR | stat.S_IXUSR)
@@ -174,8 +157,8 @@ class TestSubmit:
             os.chmod(tmp_path, stat.S_IRWXU)
 
         assert result.exit_code != 0
-        assert "4242" in result.output
-        assert "recoverable-uuid-4242" in result.output
+        assert "koopmans status --uuid recoverable-uuid" in result.output
+        assert "4242" not in result.output
         assert not (tmp_path / "si.run.yaml").exists()
 
     def test_a_resubmission_appends_rather_than_overwrites(
@@ -187,7 +170,7 @@ class TestSubmit:
         fake_sg15_pseudo_family: Any,
     ) -> None:
         """Two submissions from the same input file leave both entries behind."""
-        input_path = _write_input_file(tmp_path)
+        input_path = write_koopmans_input(tmp_path)
 
         self._invoke(monkeypatch, input_path, FakeProcessNode(pk=1, uuid="first"))
         self._invoke(monkeypatch, input_path, FakeProcessNode(pk=2, uuid="second"))
@@ -203,7 +186,7 @@ class TestStatus:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any
     ) -> None:
         """A finished-ok run's anchor file resolves to a zero-exit, rendered status."""
-        _skip_profile_loading(monkeypatch)
+        skip_profile_loading(monkeypatch)
         node = make_process(process_label="WorkGraph<Tiny>")
         append_anchor_entry(
             tmp_path / "si.run.yaml",
@@ -226,7 +209,7 @@ class TestStatus:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any
     ) -> None:
         """The root process failing is both reported and reflected in the exit code."""
-        _skip_profile_loading(monkeypatch)
+        skip_profile_loading(monkeypatch)
         node = make_process(
             process_label="WorkGraph<Tiny>", exit_status=1, exit_message="the graph failed"
         )
@@ -251,7 +234,7 @@ class TestStatus:
         self, monkeypatch: pytest.MonkeyPatch, aiida_profile_clean: Any
     ) -> None:
         """--uuid loads the node directly; no anchor file is needed at all."""
-        _skip_profile_loading(monkeypatch)
+        skip_profile_loading(monkeypatch)
         node = make_process(process_label="WorkGraph<Direct>")
 
         result = CliRunner().invoke(cli, ["status", "--uuid", node.uuid])
@@ -263,15 +246,37 @@ class TestStatus:
         self, monkeypatch: pytest.MonkeyPatch, aiida_profile_clean: Any
     ) -> None:
         """--pk loads the node directly; no anchor file is needed at all."""
-        _skip_profile_loading(monkeypatch)
+        skip_profile_loading(monkeypatch)
         node = make_process(process_label="WorkGraph<ByPk>")
 
         result = CliRunner().invoke(cli, ["status", "--pk", str(node.pk)])
 
         assert result.exit_code == 0, result.output
-        # "ByPk" is CamelCase and gets word-split for display, like every
-        # other process label the progress table renders.
-        assert "By Pk" in result.output
+        # "ByPk" is not a name the display table knows, so it is shown
+        # exactly as written rather than guessed at.
+        assert "ByPk" in result.output
+
+    def test_a_target_that_is_not_a_process_is_named_as_the_user_named_it(
+        self, monkeypatch: pytest.MonkeyPatch, aiida_profile_clean: Any
+    ) -> None:
+        """The rejection quotes the identifier given, not the node's pk.
+
+        A run file records a uuid, and ``--uuid`` takes one, so a pk read
+        off the node names it by something the user never typed and
+        cannot type back.
+        """
+        from aiida import orm
+
+        skip_profile_loading(monkeypatch)
+        data = orm.Dict(dict={"not": "a process"})  # type: ignore[no-untyped-call]
+        data.store()
+
+        result = CliRunner().invoke(cli, ["status", "--uuid", data.uuid])
+
+        assert result.exit_code != 0
+        assert f"'{data.uuid}' is not a calculation" in result.output
+        assert "Dict" in result.output
+        assert f"Node {data.pk}" not in result.output
 
     def test_a_deleted_node_is_a_clean_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any
@@ -279,7 +284,7 @@ class TestStatus:
         """The anchor names a node that no longer exists in the profile."""
         from aiida.tools import delete_nodes
 
-        _skip_profile_loading(monkeypatch)
+        skip_profile_loading(monkeypatch)
         node = make_process(process_label="WorkGraph<Tiny>")
         node_pk, node_uuid = node.pk, node.uuid
         anchor_path = tmp_path / "si.run.yaml"
@@ -351,7 +356,7 @@ class TestAttach:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any
     ) -> None:
         """A terminated target is shown once, exactly as `status` would show it."""
-        _skip_profile_loading(monkeypatch)
+        skip_profile_loading(monkeypatch)
         node = make_process(process_label="WorkGraph<Tiny>")
         anchor_path = tmp_path / "si.run.yaml"
         append_anchor_entry(

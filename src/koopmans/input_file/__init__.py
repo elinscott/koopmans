@@ -7,12 +7,21 @@ from json import load
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, Field, ValidationError, field_validator, model_validator
+from aiida_quantumespresso.common.types import SpinType
+from pydantic import (
+    AfterValidator,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import ErrorDetails
 from wannier90_input.models.parameters import Projection
 from yaml import safe_load
 
 from koopmans.base import BaseModel
+from koopmans.input_file._band_path import band_path_refusal
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
 from koopmans.input_file.cell_parameters import (
     CellParametersViaAlat,
@@ -42,6 +51,7 @@ __all__ = [
     "CellParametersViaVectors",
     "GammaOnlyKpointsInput",
     "GridKpointsInput",
+    "IntegerMagnetization",
     "KCPInputParameters",
     "KoopmansInput",
     "KpointOffset",
@@ -55,9 +65,10 @@ __all__ = [
     "Projection",
     "RestrictedWannier90InputParameters",
     "SpinSpecificWannierInput",
-    "StepKpointsInput",
+    "StepKpointsOverridesInput",
     "UnfoldAndInterpolateConfig",
     "Wannier90InputParametersWithUpDown",
+    "WannierKpointsOverridesInput",
     "WorkflowConfig",
     "migrate_input_dict",
     "read_input_file",
@@ -158,6 +169,22 @@ def _expressible_shift(value: float) -> float:
 KpointOffset = Annotated[float, AfterValidator(_expressible_shift)]
 
 
+def _whole_electrons(value: float) -> float:
+    """Reject a moment that splits an electron between the two channels."""
+    if not float(value).is_integer():
+        raise ValueError(
+            "the magnetization is a number of unpaired electrons, so it must be whole. "
+            "Every calculation koopmans runs fixes the occupations, which leaves no "
+            "fraction of an electron to place"
+        )
+    return value
+
+
+#: A magnetization, in unpaired electrons: the difference between the two
+#: channels' occupations, which are whole numbers of states.
+IntegerMagnetization = Annotated[float, AfterValidator(_whole_electrons)]
+
+
 def _no_shift(value: float) -> float:
     """Reject any shift: a shifted mesh no longer samples Gamma."""
     if value != 0:
@@ -173,7 +200,7 @@ def _no_shift(value: float) -> float:
 NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
-class StepKpointsInput(BaseModel):
+class StepKpointsOverridesInput(BaseModel):
     """K-point sampling for one step, in place of the top-level values.
 
     Every attribute is absolute and every one left unset is taken from the
@@ -197,7 +224,7 @@ class StepKpointsInput(BaseModel):
     """
 
     @model_validator(mode="after")
-    def _one_statement_of_the_mesh(self) -> StepKpointsInput:
+    def _one_statement_of_the_mesh(self) -> StepKpointsOverridesInput:
         """Require ``grid_spacing`` to be the entry's only statement of the mesh."""
         if self.grid_spacing is None:
             return self
@@ -211,17 +238,41 @@ class StepKpointsInput(BaseModel):
         return self
 
 
+class WannierKpointsOverridesInput(BaseModel):
+    """The k-point path wannier90 interpolates its band structure along.
+
+    Carries a density alone: the path itself, and its special points, are
+    the same ones the route's own k-path uses, so the interpolated bands
+    stay lined up against the diagonalized ones the plot overlays them with.
+    """
+
+    path_density: float = 50.0
+    """Number of k-points per inverse angstrom (2π convention) wannier90
+    interpolates its band structure at.
+
+    Independent of the top-level ``path_density``: wannier90's interpolation
+    is nearly free once the Wannier functions are built, so it defaults far
+    denser than a diagonalized pw.x bands run would.
+    """
+
+
 class KpointsOverridesInput(BaseModel):
     """K-point sampling for individual steps, in place of the top-level values.
 
     Steps left out sample the top-level ``grid`` and ``offset``.
     """
 
-    scf: StepKpointsInput | None = None
+    scf: StepKpointsOverridesInput | None = None
     """The mesh the ground-state calculation converges the density on."""
 
-    nscf: StepKpointsInput | None = None
+    nscf: StepKpointsOverridesInput | None = None
     """The Gamma-centred mesh the Wannier functions are built from."""
+
+    wannier90: WannierKpointsOverridesInput | None = None
+    """The density wannier90 interpolates its band structure at.
+
+    Unset takes :attr:`WannierKpointsOverridesInput.path_density`'s default.
+    """
 
     @model_validator(mode="after")
     def _nscf_states_a_mesh_koopmans_builds(self) -> KpointsOverridesInput:
@@ -257,7 +308,11 @@ class GammaOnlyKpointsInput(BaseModel):
 
     path: Literal["G"] = "G"
     path_density: float = 10.0
-    """Number of k-points per inverse angstrom along ``path``."""
+    """Number of k-points per inverse angstrom (2π convention) along ``path``.
+
+    Measured in the same Cartesian reciprocal basis as ``grid_spacing``, so a
+    converged value carries from one structure to the next.
+    """
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, which a gamma-only calculation cannot have."""
@@ -268,12 +323,18 @@ class GammaOnlyKpointsInput(BaseModel):
         cls, overrides: KpointsOverridesInput
     ) -> KpointsOverridesInput:
         """Reject a per-step mesh: every step of a gamma-only run samples Gamma."""
-        for step in type(overrides).model_fields:
+        for step in ("scf", "nscf"):
             if getattr(overrides, step) is not None:
                 raise ValueError(
                     f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
                     "every step samples Gamma alone. Give a `grid` instead of `gamma_only`."
                 )
+        if overrides.wannier90 is not None:
+            raise ValueError(
+                "`overrides.wannier90` cannot be used together with `gamma_only`: every "
+                "step samples Gamma alone, so there is no band structure to interpolate. "
+                "Give a `grid` instead of `gamma_only`."
+            )
         return overrides
 
 
@@ -287,13 +348,26 @@ class GridKpointsInput(BaseModel):
 
     path: str | None = None
     path_density: float = 10.0
-    """Number of k-points per inverse angstrom along ``path``."""
+    """Number of k-points per inverse angstrom (2π convention) along ``path``.
+
+    Measured in the same Cartesian reciprocal basis as ``grid_spacing``, so a
+    converged value carries from one structure to the next.
+    """
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, in place of ``grid`` and ``offset``."""
 
 
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput
+
+
+def names_band_path(kpoints: KpointsInput) -> bool:
+    """Report whether ``kpoints`` names a path with a segment to interpolate along.
+
+    A gamma-only input's ``path`` is fixed to the zone centre, which is a
+    point rather than a segment.
+    """
+    return not kpoints.gamma_only and kpoints.path is not None
 
 
 class SpinSpecificWannierInput(BaseModel):
@@ -325,48 +399,19 @@ class CalculatorParametersInput(BaseModel):
 
     ecutwfc: float | None = Field(default=None, gt=0.0)
     nbnd: int | None = None
-    tot_magnetization: float | None = None
+    tot_magnetization: IntegerMagnetization | None = None
     ph: PHInputParameters = Field(default_factory=lambda: PHInputParameters())
     pw: PWInputParameters = Field(default_factory=lambda: PWInputParameters())
     pw2wannier90: PW2Wannier90InputParameters = Field(
         default_factory=lambda: PW2Wannier90InputParameters()
     )
     wannier90: Wannier90InputParametersWithUpDown = Field(
-        default_factory=lambda: Wannier90InputParametersWithUpDown()  # type: ignore[call-arg]
+        default_factory=lambda: Wannier90InputParametersWithUpDown()
     )
     unfold_and_interpolate: UnfoldAndInterpolateConfig = Field(
         default_factory=lambda: UnfoldAndInterpolateConfig()
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_removed_per_calculator_cutoffs(cls, data: Any) -> Any:
-        """Point a per-calculator cutoff at the single ``ecutwfc`` field.
-
-        ``pw.system``/``kcp.system`` no longer carry their own
-        ``ecutwfc``/``ecutrho``: pw.x and kcp.x always share one grid, derived
-        from ``calculator_parameters.ecutwfc``. Runs before field validation,
-        so it reports the removed spelling instead of the generic
-        "extra_forbidden" error the nested model would otherwise raise.
-
-        Raises:
-            ValueError: If any of the four removed keys is present.
-        """
-        if not isinstance(data, dict):
-            return data
-        for calc in ("pw", "kcp"):
-            system = data.get(calc)
-            if not isinstance(system, dict) or not isinstance(system.get("system"), dict):
-                continue
-            for key in ("ecutwfc", "ecutrho"):
-                if key in system["system"]:
-                    raise ValueError(
-                        f"`calculator_parameters.{calc}.system.{key}` no longer exists. "
-                        "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four "
-                        "times it."
-                    )
-        return data
 
 
 class KoopmansInput(BaseModel):
@@ -414,6 +459,27 @@ class KoopmansInput(BaseModel):
             )
         return kpoints
 
+    @field_validator("kpoints", mode="after")
+    @classmethod
+    def check_the_task_can_interpolate_along_the_path(
+        cls, kpoints: KpointsInput, info: ValidationInfo
+    ) -> KpointsInput:
+        """Reject a ``kpoints.path`` the task about to run cannot interpolate along.
+
+        Every task that can produce a band structure does so whenever the
+        input names a path, so a task that cannot must say so rather than
+        drop it. Reads ``workflow`` and ``atoms``, both declared ahead of
+        ``kpoints`` and so already validated.
+        """
+        workflow = info.data.get("workflow")
+        atoms = info.data.get("atoms")
+        if workflow is None or atoms is None or not names_band_path(kpoints):
+            return kpoints
+        message = band_path_refusal(workflow, any(atoms.cell_parameters.periodic))
+        if message is not None:
+            raise ValueError(message)
+        return kpoints
+
     @field_validator("version")
     @classmethod
     def check_version_is_current(cls, version: int) -> int:
@@ -429,6 +495,30 @@ class KoopmansInput(BaseModel):
                 "are upgraded automatically)"
             )
         return version
+
+    @model_validator(mode="after")
+    def check_collinear_states_a_magnetization(self) -> KoopmansInput:
+        """Require a magnetization wherever the two spin channels may differ.
+
+        ``spin = 'collinear'`` alone leaves the moment unstated, and every
+        route needs one: the pw.x steps run at fixed occupations, and the
+        kcp.x and kcw.x steps split the electrons between the channels.
+
+        Raises:
+            ValueError: If ``workflow.spin = 'collinear'`` and
+                ``calculator_parameters.tot_magnetization`` is absent.
+        """
+        if self.workflow.spin != SpinType.COLLINEAR:
+            return self
+        if self.calculator_parameters.tot_magnetization is None:
+            raise ValueError(
+                "`workflow.spin = 'collinear'` needs "
+                "`calculator_parameters.tot_magnetization`, the number of unpaired "
+                "electrons. koopmans does not guess it for you: a spin-polarized run "
+                "at the wrong moment is a different calculation from the one you "
+                "asked for. Write 0 if the system is closed-shell."
+            )
+        return self
 
     @classmethod
     def from_file(cls, filename: str | Path) -> KoopmansInput:
@@ -489,13 +579,17 @@ def convert_errors(e: ValidationError) -> list[ErrorDetails]:
 
 
 def prettify_errors(e: ValidationError) -> str:
-    """Return a prettified string of validation errors."""
+    """Return a prettified string of validation errors.
+
+    An error raised over the whole input file has no location of its own,
+    and an empty pair of backticks in front of it names nothing.
+    """
     errors = convert_errors(e)
     error_lines = []
     for error in errors:
         loc = ".".join(str(part) for part in error["loc"])
         msg = error["msg"]
-        error_lines.append(f" `{loc}` {msg}")
+        error_lines.append(f" `{loc}` {msg}" if loc else f" {msg}")
     return "\n".join(error_lines)
 
 

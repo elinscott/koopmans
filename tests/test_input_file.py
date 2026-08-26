@@ -128,7 +128,6 @@ _REMOVED_KEYWORDS = [
     ("workflow", "automated_wannierization"),
     ("ml", "train_on_the_fly"),
     ("ml", "alphas_from_file"),
-    ("calculator_parameters.wannier90", "auto_projections"),
     ("calculator_parameters.wannier90.up", "auto_projections"),
     ("calculator_parameters.wannier90.down", "auto_projections"),
 ]
@@ -202,6 +201,82 @@ class TestCutoffsMustBePositive:
         assert "must be greater than 0" in message
 
 
+class TestCalculateBandsRemoved:
+    """A band structure is asked for by ``kpoints.path``, not by a switch."""
+
+    def test_the_removed_keyword_names_the_path_instead(self, tmp_path: Path) -> None:
+        """The message points the reader at ``kpoints.path``, not at ``extra_forbidden``."""
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "calculate_bands")
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`workflow.calculate_bands` no longer exists" in message
+        assert "`kpoints.path`" in message
+        assert "is not a valid keyword" not in message
+
+    def test_the_removed_keyword_is_rejected_however_it_is_set(self) -> None:
+        """``false`` is refused too: the keyword no longer states anything."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "calculate_bands", False)
+
+        with pytest.raises(ValidationError, match="no longer exists"):
+            KoopmansInput.model_validate(d)
+
+
+class TestPeriodicIsOnePerCellVector:
+    """``periodic`` is canonical after validation, whichever way it was written."""
+
+    @pytest.mark.parametrize(
+        ("written", "expected"),
+        [
+            (True, (True, True, True)),
+            (False, (False, False, False)),
+            ([True, True, False], (True, True, False)),
+        ],
+    )
+    def test_a_bool_states_the_same_of_all_three(
+        self, written: object, expected: tuple[bool, bool, bool]
+    ) -> None:
+        """A single bool expands; an explicit triple passes through."""
+        d = _minimal_si_input()
+        _set_keyword(d, "atoms.cell_parameters", "periodic", written)
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.atoms.cell_parameters.periodic == expected
+
+    def test_a_wrong_length_is_rejected(self) -> None:
+        """Two entries name no third cell vector."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "atoms.cell_parameters", "periodic", [True, False])
+
+        with pytest.raises(ValidationError):
+            KoopmansInput.model_validate(d)
+
+    def test_the_canonical_form_round_trips(self) -> None:
+        """``model_dump`` emits the triple, and re-validating it changes nothing.
+
+        koopmans re-validates dumped inputs, so a normalization only the raw
+        file survived would drift on the second pass.
+        """
+        inp = KoopmansInput.model_validate(_minimal_si_input())
+
+        dumped = inp.model_dump()
+        periodic = dumped["atoms"]["cell_parameters"]["periodic"]
+
+        assert periodic == (True, True, True)
+        assert KoopmansInput.model_validate(dumped).atoms.cell_parameters.periodic == periodic
+
+
 def _si_input_with(calculator_parameters: dict[str, object]) -> dict[str, object]:
     """Return the minimal silicon input, its ``calculator_parameters`` replaced."""
     d = _minimal_si_input()
@@ -252,6 +327,35 @@ class TestPerCalculatorCutoffsRemoved:
         kcp = kcp_dscf_inputs(inp)
         assert (pw_system["ecutwfc"], pw_system["ecutrho"]) == pytest.approx((45.0, 180.0))
         assert (kcp["ecutwfc"], kcp["ecutrho"]) == pytest.approx((45.0, 180.0))
+
+
+class TestKcpMagnetizationRemoved:
+    """The magnetization is stated once, via ``calculator_parameters``."""
+
+    def test_the_kcp_magnetization_names_the_shared_field(self, tmp_path: Path) -> None:
+        """The retired ``kcp`` spelling points at ``calculator_parameters``' own field."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with({"kcp": {"system": {"tot_magnetization": 2.0}}}))
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcp.system.tot_magnetization`" in message
+        assert "`calculator_parameters.tot_magnetization`" in message
+
+    def test_the_shared_magnetization_still_reaches_kcp(self, tmp_path: Path) -> None:
+        """The surviving spelling is what the kcp.x builders read."""
+        from koopmans.aiida.workflows.dscf import kcp_dscf_inputs
+
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with({"ecutwfc": 45.0, "nbnd": 8, "tot_magnetization": 2.0}))
+        )
+
+        assert kcp_dscf_inputs(read_input_file(input_file))["tot_magnetization"] == 2
 
 
 def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
@@ -502,11 +606,71 @@ class TestPerStepKpoints:
         assert inp.kpoints.overrides.scf is not None
         assert inp.kpoints.overrides.scf.offset == (0.5, 0.5, 0.5)
 
+    def test_wannier90_density_is_unset_without_being_stated(self) -> None:
+        """Left out, the entry is unset, like ``scf``/``nscf``: no override to apply."""
+        from koopmans.aiida.conversion import wannier90_path_density
+
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(grid=[2, 2, 2]))
+        assert inp.kpoints.overrides.wannier90 is None
+        assert wannier90_path_density(inp.kpoints) == 50.0
+
+    def test_wannier90_density_can_be_set_explicitly(self) -> None:
+        """A stated ``overrides.wannier90.path_density`` overrides the default."""
+        from koopmans.aiida.conversion import wannier90_path_density
+
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(grid=[2, 2, 2], overrides={"wannier90": {"path_density": 80.0}})
+        )
+        assert inp.kpoints.overrides.wannier90 is not None
+        assert inp.kpoints.overrides.wannier90.path_density == 80.0
+        assert wannier90_path_density(inp.kpoints) == 80.0
+
+    def test_wannier90_override_survives_a_dump_and_revalidate_round_trip(self) -> None:
+        """An unset entry must not look "stated" after ``model_dump`` re-validates.
+
+        ``model_dump`` serializes every field, default or not; if the unset
+        sentinel were anything other than ``None`` the round trip used to
+        build input variants throughout the test suite would make every
+        input look like it explicitly gave ``overrides.wannier90``.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(gamma_only=True))
+        round_tripped = KoopmansInput.model_validate(inp.model_dump())
+        assert round_tripped.kpoints.overrides.wannier90 is None
+
+    def test_wannier90_entry_has_no_mesh_fields(self, tmp_path: Path) -> None:
+        """The wannier90 entry states a density, not a mesh: it has no `grid` to give."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(
+                _si_input_with_kpoints(grid=[2, 2, 2], overrides={"wannier90": {"grid": [4, 4, 4]}})
+            )
+        )
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.grid.*is not a valid keyword"):
+            read_input_file(input_file)
+
     def test_gamma_only_has_no_steps_to_override(self) -> None:
         """Every step of a gamma-only calculation samples the same one point."""
         with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
             KoopmansInput.model_validate(
                 _si_input_with_kpoints(gamma_only=True, overrides={"scf": {"grid": [4, 4, 4]}})
+            )
+
+    def test_gamma_only_accepts_an_unstated_wannier90_default(self) -> None:
+        """A gamma-only input never mentioning `overrides.wannier90` still validates.
+
+        `wannier90` is unset by default, like `scf`/`nscf`; only an input
+        that states it itself has anything to reject.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with_kpoints(gamma_only=True))
+        assert inp.kpoints.overrides.wannier90 is None
+
+    def test_gamma_only_rejects_a_stated_wannier90_density(self) -> None:
+        """Gamma-only samples one point, so there is no band structure to interpolate."""
+        with pytest.raises(ValueError, match=r"overrides\.wannier90.*gamma_only"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(
+                    gamma_only=True, overrides={"wannier90": {"path_density": 80.0}}
+                )
             )
 
     def test_gamma_only_rejects_a_mesh_built_as_a_model(self) -> None:
@@ -519,12 +683,12 @@ class TestPerStepKpoints:
         from koopmans.input_file import (
             GammaOnlyKpointsInput,
             KpointsOverridesInput,
-            StepKpointsInput,
+            StepKpointsOverridesInput,
         )
 
         with pytest.raises(ValueError, match=r"overrides\.scf.*gamma_only"):
             GammaOnlyKpointsInput(
-                overrides=KpointsOverridesInput(scf=StepKpointsInput(grid=(4, 4, 4)))
+                overrides=KpointsOverridesInput(scf=StepKpointsOverridesInput(grid=(4, 4, 4)))
             )
 
     @pytest.mark.parametrize("overrides", ["scf", [{"grid": [4, 4, 4]}], 4])
@@ -560,15 +724,15 @@ class TestPathDensityRename:
         assert inp.kpoints.path_density == 20.0
 
 
-# (keyword, a value the dft_eps route would never accept from the user, a
-# substring of what actually owns it).
+# (keyword, a substring of the explanation it is refused with).
 _PH_ROUTE_OWNED_KEYS = [
-    ("epsil", False, "dft_eps route"),
-    ("trans", True, "dft_eps route"),
-    ("verbosity", "low", "aiida-quantumespresso"),
+    ("epsil", "dft_eps"),
+    ("trans", "dft_eps"),
+    ("verbosity", "AiiDA"),
+    ("outdir", "AiiDA"),
 ]
 
-# (keyword, the value the route always forces — restating it is accepted).
+# (keyword, the value the dft_eps route always forces).
 _PH_ROUTE_FORCED_VALUES = [
     ("epsil", True),
     ("trans", False),
@@ -579,37 +743,30 @@ _PH_ROUTE_FORCED_VALUES = [
 class TestPhCalculatorParameters:
     """``calculator_parameters.ph`` mounts the ph.x ``INPUTPH`` namelist (koopmans2#162)."""
 
-    @pytest.mark.parametrize(("keyword", "value", "owner_snippet"), _PH_ROUTE_OWNED_KEYS)
-    def test_route_owned_key_is_rejected(
-        self, keyword: str, value: object, owner_snippet: str
-    ) -> None:
-        """A user-set route-owned key fails at parse, naming the key and its owner."""
+    @pytest.mark.parametrize(("keyword", "reason_snippet"), _PH_ROUTE_OWNED_KEYS)
+    def test_route_owned_key_is_rejected(self, keyword: str, reason_snippet: str) -> None:
+        """A user-set route-owned key fails at parse, naming the key and why it went."""
         d = _si_input_with({"ecutwfc": 20.0})
-        _set_keyword(d, "calculator_parameters.ph", keyword, value)
+        _set_keyword(d, "calculator_parameters.ph", keyword, "custom")
 
         with pytest.raises(ValueError) as excinfo:
             KoopmansInput.model_validate(d)
 
         message = str(excinfo.value)
         assert f"`calculator_parameters.ph.{keyword}`" in message
-        assert owner_snippet in message
-
-    def test_a_plugin_managed_key_is_an_unknown_field(self) -> None:
-        """``outdir`` is absent from the schema: aiida-quantumespresso forces it for every run."""
-        from pydantic import ValidationError
-
-        d = _si_input_with({"ecutwfc": 20.0})
-        _set_keyword(d, "calculator_parameters.ph", "outdir", "custom")
-
-        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-            KoopmansInput.model_validate(d)
+        assert reason_snippet in message
 
     @pytest.mark.parametrize(("keyword", "value"), _PH_ROUTE_FORCED_VALUES)
-    def test_restating_the_forced_value_is_accepted(self, keyword: str, value: object) -> None:
-        """A route-owned key stated at the value the route actually forces is not rejected."""
+    def test_restating_the_forced_value_is_rejected_too(self, keyword: str, value: object) -> None:
+        """The keyword is gone, so agreeing with the route is refused like disagreeing.
+
+        Accepting the agreeing spelling was how the old check let a stated
+        value through: it compared against the field's declared default, so
+        whichever value that was passed and then won the merge.
+        """
         d = _si_input_with({"ecutwfc": 20.0, "ph": {keyword: value}})
-        inp = KoopmansInput.model_validate(d)
-        assert getattr(inp.calculator_parameters.ph, keyword) == value
+        with pytest.raises(ValueError, match=rf"`calculator_parameters\.ph\.{keyword}`"):
+            KoopmansInput.model_validate(d)
 
     def test_dump_and_revalidate_roundtrips(self) -> None:
         """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks."""
@@ -627,3 +784,158 @@ class TestPhCalculatorParameters:
         """With no ``ph`` block, the namelist states nothing explicitly."""
         inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
         assert inp.calculator_parameters.ph.model_fields_set == set()
+
+
+def _collinear_input(**calculator_parameters: object) -> dict[str, object]:
+    """Return the minimal silicon input at ``spin = 'collinear'``."""
+    d = _si_input_with({"ecutwfc": 20.0, **calculator_parameters})
+    _set_keyword(d, "workflow", "spin", "collinear")
+    return d
+
+
+class TestCollinearNeedsAMagnetization:
+    """``spin = 'collinear'`` states its moment; koopmans does not pick one."""
+
+    def test_an_input_without_one_is_refused(self) -> None:
+        """The refusal names the field to set."""
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(_collinear_input())
+
+        assert "`calculator_parameters.tot_magnetization`" in str(excinfo.value)
+
+    def test_zero_is_a_statement(self) -> None:
+        """A closed-shell collinear run is a deliberate input, not a missing one."""
+        inp = KoopmansInput.model_validate(_collinear_input(tot_magnetization=0))
+        assert inp.calculator_parameters.tot_magnetization == 0
+
+    @pytest.mark.parametrize("task", [task.value for task in Task])
+    def test_every_task_is_held_to_it(self, task: str) -> None:
+        """The rule belongs to the input file, so no task escapes it.
+
+        The discriminator against a route-local check: the refusal used to
+        sit inside individual route builders, so which task enforced it —
+        and which path within a task — varied.
+        """
+        d = _collinear_input()
+        _set_keyword(d, "workflow", "task", task)
+
+        with pytest.raises(ValueError, match="tot_magnetization"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize("spin", ["none", "non_collinear", "spin_orbit"])
+    def test_the_other_regimes_need_no_moment(self, spin: str) -> None:
+        """Only collinear splits the electrons between two channels.
+
+        ``none`` has one channel, and the two spinor regimes pin no moment
+        along any axis, so a magnetization is neither needed nor meaningful.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, "workflow", "spin", spin)
+        inp = KoopmansInput.model_validate(d)
+        assert inp.calculator_parameters.tot_magnetization is None
+
+    def test_the_pw_namelist_spelling_does_not_satisfy_it(self) -> None:
+        """``pw.system.tot_magnetization`` reaches pw.x alone, and not on every route.
+
+        The kcp.x and kcw.x steps read the shared field, so a moment given
+        only to pw.x leaves those channels unstated.
+        """
+        d = _collinear_input(pw={"system": {"tot_magnetization": 2}})
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        assert "`calculator_parameters.tot_magnetization`" in str(excinfo.value)
+
+    def test_the_file_level_refusal_names_no_empty_location(self, tmp_path: Path) -> None:
+        """A rule over the whole file has no field to point at, and says so.
+
+        Every other refusal is reported against the field that carries it,
+        which this one has none of; the reader should not be handed an empty
+        pair of backticks.
+        """
+        input_file = tmp_path / "collinear.json"
+        input_file.write_text(json.dumps(_collinear_input()))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        assert "``" not in str(excinfo.value)
+        assert "tot_magnetization" in str(excinfo.value)
+
+    def test_a_dumped_input_is_still_refused(self) -> None:
+        """The check reads the moment's value, not whether the key is present.
+
+        ``model_dump()`` states every field, the moment nobody set included,
+        so an input that reached the check as a dumped model would satisfy a
+        key-presence test while stating nothing.
+        """
+        dumped = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0})).model_dump()
+        _set_keyword(dumped, "workflow", "spin", "collinear")
+
+        with pytest.raises(ValueError, match="tot_magnetization"):
+            KoopmansInput.model_validate(dumped)
+
+
+class TestTheMomentIsWholeElectrons:
+    """A magnetization counts unpaired electrons, so it cannot be a fraction."""
+
+    @pytest.mark.parametrize("magnetization", [0.5, 2.7, -1.5])
+    def test_a_fraction_is_refused(self, magnetization: float) -> None:
+        """Truncating would run a different calculation than the one asked for.
+
+        ``0.5`` is the discriminating value: rounded down it becomes a
+        closed-shell run, which pw.x accepts and nothing downstream records
+        as a substitution.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(_collinear_input(tot_magnetization=magnetization))
+
+        assert "whole" in str(excinfo.value)
+
+    @pytest.mark.parametrize("magnetization", [0, 2, 2.0, -1])
+    def test_a_whole_number_passes_however_it_is_written(self, magnetization: float) -> None:
+        """The rule is the value, not the JSON type: ``2.0`` states two electrons."""
+        inp = KoopmansInput.model_validate(_collinear_input(tot_magnetization=magnetization))
+        assert inp.calculator_parameters.tot_magnetization == pytest.approx(magnetization)
+
+    @pytest.mark.parametrize("task", [task.value for task in Task])
+    def test_every_task_is_held_to_it(self, task: str) -> None:
+        """Every route fixes its occupations, so none of them can place half an electron.
+
+        The discriminator against a route-local check: the coercion this
+        replaces sat in the dispatcher, so a task reaching pw.x by another
+        path silently rounded instead.
+        """
+        d = _si_input_with({"ecutwfc": 20.0, "tot_magnetization": 0.5})
+        _set_keyword(d, "workflow", "task", task)
+
+        with pytest.raises(ValueError, match="whole"):
+            KoopmansInput.model_validate(d)
+
+    def test_the_pw_namelist_spelling_is_refused(self) -> None:
+        """``pw.system.tot_magnetization`` has no input-file spelling.
+
+        The moment has exactly one spelling, ``calculator_parameters.
+        tot_magnetization``; every route that runs pw.x under ``nspin = 2``
+        writes the namelist keyword from there, so stating it directly
+        would risk a second, disagreeing value.
+        """
+        d = _si_input_with(
+            {
+                "ecutwfc": 20.0,
+                "pw": {
+                    "system": {
+                        "tot_magnetization": 0.5,
+                        "occupations": "smearing",
+                        "degauss": 0.01,
+                    }
+                },
+            }
+        )
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.pw.system.tot_magnetization`" in message
+        assert "`calculator_parameters.tot_magnetization`" in message

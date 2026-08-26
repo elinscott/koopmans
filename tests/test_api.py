@@ -98,13 +98,15 @@ class TestLaunchFunnel:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, Any]] = []
 
-            def run(self) -> None:
+            def run(self, metadata: Any = None) -> None:
                 """Record an in-interpreter run."""
                 self.calls.append(("run", None))
+                self.metadata = metadata
 
-            def submit(self, wait: bool = False) -> None:
+            def submit(self, wait: bool = False, metadata: Any = None) -> None:
                 """Record a daemon submission and its wait flag."""
                 self.calls.append(("submit", wait))
+                self.metadata = metadata
 
         blocking_wg = FakeWorkGraph()
         node = launch(blocking_wg, blocking=True)
@@ -116,6 +118,34 @@ class TestLaunchFunnel:
         launch(daemon_wg, blocking=False, wait=True)
         assert daemon_wg.calls == [("submit", True)]
         assert daemon_checks == [True]
+
+    def test_launch_passes_the_route_s_name_for_the_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A route names its run; the helper is where that name is applied.
+
+        A workgraph no route named carries no ``metadata`` at all, rather
+        than an empty label, so AiiDA keeps its own default.
+        """
+        from koopmans.aiida.workflows import name_run
+
+        class FakeWorkGraph:
+            """Record the metadata the launch helper passes."""
+
+            process = "the-node"
+            metadata: Any = "unset"
+
+            def run(self, metadata: Any = None) -> None:
+                """Record an in-interpreter run."""
+                self.metadata = metadata
+
+        named = FakeWorkGraph()
+        launch(name_run(named, "Koopmans DFPT"), blocking=True)
+        assert named.metadata == {"label": "Koopmans DFPT"}
+
+        anonymous = FakeWorkGraph()
+        launch(anonymous, blocking=True)
+        assert anonymous.metadata is None
 
 
 def _finished_dscf_node(

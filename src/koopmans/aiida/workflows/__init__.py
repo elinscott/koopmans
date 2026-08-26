@@ -19,6 +19,7 @@ from typing import (
 
 from aiida import orm
 from aiida_koopmans.ml import MLMode
+from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
@@ -57,6 +58,36 @@ def load_code(name: str, executable: str) -> orm.AbstractCode:
             f"Could not load {executable} code: {exc}\n"
             "Please run 'koopmans install' first to set up the AiiDA backend."
         ) from exc
+
+
+#: Where :func:`name_run` records a name for :func:`koopmans.api.launch`.
+_RUN_LABEL = "_koopmans_run_label"
+
+
+def name_run(workgraph: WorkGraph, display: str) -> WorkGraph:
+    """Name the calculation ``workgraph`` performs, and return it.
+
+    Each route states its own name, which :func:`koopmans.api.launch`
+    passes as the run's ``metadata.label``. That label is what the
+    progress table's top row, ``verdi process list`` and ``koopmans
+    plot``'s legend show, so a reader is given the calculation they asked
+    for rather than the graph function that implements it.
+
+    The workgraph's own ``name`` is left alone. That one identifies the
+    graph — it is what ``process_label`` wraps and what the regression
+    snapshots record — and a display name is not an identity.
+
+    Args:
+        workgraph: The route's built workgraph (mutated in place).
+        display: The name to show.
+    """
+    setattr(workgraph, _RUN_LABEL, display)
+    return workgraph
+
+
+def run_label(workgraph: WorkGraph) -> str:
+    """Return the name :func:`name_run` gave ``workgraph``, or ``""``."""
+    return str(getattr(workgraph, _RUN_LABEL, "") or "")
 
 
 def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
@@ -231,17 +262,17 @@ def prepare_common_inputs(
 
 
 def reject_kpoint_overrides(koopmans_input: KoopmansInput, messages: dict[str, str]) -> None:
-    """Raise for a per-step k-point mesh the route about to be built cannot honour.
+    """Raise for a per-step k-point override the route about to be built cannot honour.
 
-    ``messages`` maps a ``kpoints.overrides`` step name to what the user
+    ``messages`` maps a ``kpoints.overrides`` entry name to what the user
     should write instead.
 
     Args:
         koopmans_input: The parsed koopmans input.
-        messages: The message to raise for each step this route rejects.
+        messages: The message to raise for each entry this route rejects.
 
     Raises:
-        ValueError: If the input gives a mesh for one of those steps.
+        ValueError: If the input states an override for one of those entries.
     """
     for step, message in messages.items():
         if getattr(koopmans_input.kpoints.overrides, step) is not None:
@@ -272,6 +303,77 @@ def pin_step_kpoints(
         overrides.setdefault(step, {})["kpoints_distance"] = spacing
         return None
     return step_kpoints_mesh(koopmans_input.kpoints, step)
+
+
+def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
+    """Return the moment a collinear run splits its electrons by.
+
+    Call only where ``workflow.spin`` is ``collinear``; validating an input
+    in that regime requires ``calculator_parameters.tot_magnetization``.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+
+    Returns:
+        ``calculator_parameters.tot_magnetization``, as a count of unpaired
+        electrons. The field is whole by validation
+        (:data:`~koopmans.input_file.IntegerMagnetization`), so the count is
+        exact.
+
+    Raises:
+        ValueError: If the input carries no magnetization.
+    """
+    magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    if magnetization is None:
+        raise ValueError(
+            "a collinear calculation needs `calculator_parameters.tot_magnetization`, "
+            "the number of unpaired electrons."
+        )
+    return int(magnetization)
+
+
+def optional_magnetization(koopmans_input: KoopmansInput) -> int | None:
+    """Return the stated moment as a count of unpaired electrons, or ``None``.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+
+    Returns:
+        ``calculator_parameters.tot_magnetization`` where the input states
+        one, else ``None``.
+    """
+    magnetization = koopmans_input.calculator_parameters.tot_magnetization
+    return None if magnetization is None else int(magnetization)
+
+
+def pin_spin_regime(
+    koopmans_input: KoopmansInput,
+    overrides: dict[str, Any],
+) -> SpinType:
+    """Return the run's spin regime, recording a collinear magnetization in ``overrides``.
+
+    The pw.x steps of a plain-DFT route take their spin keywords from
+    aiida-quantumespresso's ``spin_type``, which the returned value feeds.
+    Only the magnetization has to travel separately: those steps run with
+    fixed occupations, and pw.x rejects those under LSDA unless
+    ``tot_magnetization`` is set.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+        overrides: The route's per-step override dict (mutated in place).
+
+    Returns:
+        The regime named by ``workflow.spin``.
+    """
+    spin = koopmans_input.workflow.spin
+    if spin != SpinType.COLLINEAR:
+        return spin
+
+    magnetization = collinear_magnetization(koopmans_input)
+    for step in overrides:
+        system = overrides[step]["pw"]["parameters"].setdefault("SYSTEM", {})
+        system["tot_magnetization"] = magnetization
+    return spin
 
 
 def _projection_site_advice(exc: ProjectionSiteError) -> str:

@@ -17,14 +17,18 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import yaml
 from pydantic import Field, RootModel, ValidationError
 
 from koopmans.aiida.setup.profile import PROFILE_NAME
 from koopmans.base import BaseModel
+
+if TYPE_CHECKING:
+    from aiida import orm
 
 __all__ = [
     "AnchorEntry",
@@ -33,6 +37,7 @@ __all__ = [
     "append_anchor_entry",
     "newest_anchor_entry",
     "read_anchor_entries",
+    "record_submission",
     "resolve_target",
 ]
 
@@ -179,6 +184,25 @@ def append_anchor_entry(anchor_path: Path, entry: AnchorEntry) -> None:
         _write_entries(anchor_path, entries)
     finally:
         lock_path.unlink(missing_ok=True)
+
+
+def record_submission(anchor_path: Path, input_path: Path, node: orm.ProcessNode) -> None:
+    """Append ``node`` as a new submission to ``anchor_path``.
+
+    Raises ``ValueError`` if ``node`` was never stored, so it has no pk.
+    Any ``OSError`` from writing the file propagates unchanged.
+    """
+    if node.pk is None:
+        raise ValueError("The submitted process was never stored, so it has no id.")
+
+    entry = AnchorEntry(
+        uuid=node.uuid,
+        pk=node.pk,
+        input=input_path.name,
+        profile=PROFILE_NAME,
+        submitted=datetime.now(UTC).isoformat(),
+    )
+    append_anchor_entry(anchor_path, entry)
 
 
 def newest_anchor_entry(anchor_path: Path) -> AnchorEntry:

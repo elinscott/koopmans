@@ -876,6 +876,61 @@ class TestFrozenWindowThreading:
         assert list(empty["exclude_bands"]) == [1, 2, 3, 4]
 
 
+class TestBandPathRejected:
+    """kcp.x screens each snapshot in a supercell; no step interpolates a path."""
+
+    def test_a_band_path_is_rejected(self, tmp_path: Path, read_input_dict: Any) -> None:
+        """Refused while the input file is read, before any snapshot is looked for."""
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_dict(d)
+
+        message = str(excinfo.value)
+        assert "Errors found in the input file" in message
+        assert "`kpoints.path`" in message
+        # `screening_method` does not select this route, so the DFPT
+        # alternative the singlepoint route offers must not appear here.
+        assert "dfpt" not in message
+
+    def test_a_gamma_only_input_is_not_rejected(self, tmp_path: Path, read_input_dict: Any) -> None:
+        """Negative control: gamma-only's fixed ``path`` names no segment to interpolate.
+
+        Every molecular trajectory carries it, so a refusal that fired on
+        ``path is not None`` would reject the task's main use.
+        """
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["kpoints"] = {"gamma_only": True}
+
+        koopmans_input = read_input_dict(d)
+
+        assert koopmans_input.kpoints.path == "G"
+
+    def test_a_dfpt_trajectory_hears_the_screening_method_first(
+        self, tmp_path: Path, read_input_dict: Any
+    ) -> None:
+        """Pins the refusal behind the screening-method blocker.
+
+        The task runs kcp.x whatever the input asks for, so an input asking
+        for DFPT screening has to hear about the method it named rather than
+        about its path — which means parsing, and being refused at build.
+        """
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"), screening_method="dfpt")
+        d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
+
+        koopmans_input = read_input_dict(d)
+
+        with pytest.raises(NotImplementedError) as excinfo:
+            build_trajectory_workgraph(koopmans_input)
+
+        message = str(excinfo.value)
+        assert "only supports DSCF screening" in message
+        assert "`kpoints.path`" not in message
+
+
 class TestPerStepKpointMeshRejected:
     """The trajectory task screens with kcp.x, which runs every step on one mesh."""
 
@@ -893,6 +948,20 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
+            build_trajectory_workgraph(koopmans_input)
+
+    def test_wannier90_density_raises(self, tmp_path: Path) -> None:
+        """No interpolated band structure exists here for a density to describe."""
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["kpoints"] = {
+            "grid": [2, 2, 2],
+            "overrides": {"wannier90": {"path_density": 25.0}},
+        }
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
             build_trajectory_workgraph(koopmans_input)
 
     def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:

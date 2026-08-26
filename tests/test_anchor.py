@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import yaml
@@ -23,8 +24,13 @@ from koopmans.aiida.anchor import (
     append_anchor_entry,
     newest_anchor_entry,
     read_anchor_entries,
+    record_submission,
     resolve_target,
 )
+from koopmans.aiida.setup.profile import PROFILE_NAME
+
+if TYPE_CHECKING:
+    from aiida import orm
 
 
 def _entry(uuid: str = "uuid-1", pk: int = 1, input_name: str = "si.yaml") -> AnchorEntry:
@@ -141,6 +147,62 @@ class TestReadAndAppend:
         anchor.write_text(yaml.safe_dump([]))
         with pytest.raises(ValueError, match="no recorded submissions"):
             newest_anchor_entry(anchor)
+
+
+class _FakeNode:
+    """Duck-types an AiiDA ``ProcessNode``'s ``pk``/``uuid``, without touching AiiDA."""
+
+    def __init__(self, uuid: str = "node-uuid", pk: int | None = 7) -> None:
+        self.uuid = uuid
+        self.pk = pk
+
+
+def _node(uuid: str = "node-uuid", pk: int | None = 7) -> orm.ProcessNode:
+    """Return a :class:`_FakeNode`, typed as a ``ProcessNode`` for ``record_submission``.
+
+    ``record_submission`` only ever reads ``pk``/``uuid`` off what it is
+    given, so a duck-typed fake exercises it fully without touching AiiDA;
+    the cast just tells mypy what :func:`record_submission` already trusts
+    at runtime.
+    """
+    return cast("orm.ProcessNode", _FakeNode(uuid=uuid, pk=pk))
+
+
+class TestRecordSubmission:
+    """``record_submission`` builds the entry both ``submit`` and ``run`` write."""
+
+    def test_records_an_entry_matching_the_node(self, tmp_path: Path) -> None:
+        """The written entry mirrors the node's pk/uuid and the input file's name."""
+        anchor = tmp_path / "si.run.yaml"
+        node = _node(uuid="abc-123", pk=42)
+
+        record_submission(anchor, tmp_path / "si.yaml", node)
+
+        entries = read_anchor_entries(anchor)
+        assert len(entries) == 1
+        assert entries[0].uuid == "abc-123"
+        assert entries[0].pk == 42
+        assert entries[0].input == "si.yaml"
+        assert entries[0].profile == PROFILE_NAME
+
+    def test_a_node_with_no_pk_is_rejected(self, tmp_path: Path) -> None:
+        """An unstored node has no id to record, and nothing is written."""
+        anchor = tmp_path / "si.run.yaml"
+        node = _node(pk=None)
+
+        with pytest.raises(ValueError, match="never stored"):
+            record_submission(anchor, tmp_path / "si.yaml", node)
+
+        assert not anchor.exists()
+
+    def test_appends_rather_than_overwrites(self, tmp_path: Path) -> None:
+        """A second submission from the same input keeps the first entry."""
+        anchor = tmp_path / "si.run.yaml"
+        record_submission(anchor, tmp_path / "si.yaml", _node(uuid="first", pk=1))
+        record_submission(anchor, tmp_path / "si.yaml", _node(uuid="second", pk=2))
+
+        entries = read_anchor_entries(anchor)
+        assert [e.uuid for e in entries] == ["first", "second"]
 
 
 class TestResolveTarget:

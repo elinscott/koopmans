@@ -16,7 +16,7 @@ from koopmans.aiida.utils import suppress_aiida_logging
 if TYPE_CHECKING:
     from aiida import orm
 
-__all__ = ["NODE_METADATA_FILE", "dump_workgraph", "trained_model_output"]
+__all__ = ["MODEL_FILENAME", "NODE_METADATA_FILE", "dump_workgraph", "trained_model_output"]
 
 
 # AiiDA's dump names each child folder "<NN>-<link_label>", appends the
@@ -48,6 +48,9 @@ _TASK_SOURCE_FILE = "source_file"
 # aiida-core's record of which node a folder came from: pk, uuid, node
 # type and timestamps. It names the folder rather than adding to it.
 NODE_METADATA_FILE = "aiida_node_metadata.yaml"
+
+# A trained screening model, as `ml: {model_file: ...}` reads it back.
+MODEL_FILENAME = "model.json"
 
 # What a step folder can hold and still count as having produced nothing.
 _NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
@@ -464,12 +467,12 @@ def trained_model_output(process: orm.ProcessNode) -> orm.Dict | None:
 
 
 def _dump_model_json(process: orm.ProcessNode, output_path: Path) -> None:
-    """Write a trained screening model as a ``model.json`` convenience copy.
+    """Write a trained screening model as a ``model.json`` copy.
 
-    The stored ``model`` ``orm.Dict`` output stays the canonical artifact
-    (a later run references it via ``ml: {model: <pk-or-uuid>}``); the JSON
-    copy feeds ``ml: {model_file: ...}`` outside the training profile.
-    Processes without a non-empty ``model`` Dict output are left alone.
+    This copy is what a later run names through ``ml: {model_file: ...}``;
+    the stored ``model`` ``orm.Dict`` output remains in the database, and
+    ``ml: {model: ...}`` names it there. Processes without a non-empty
+    ``model`` Dict output are left alone.
     """
     import json
 
@@ -477,7 +480,7 @@ def _dump_model_json(process: orm.ProcessNode, output_path: Path) -> None:
     if model_node is None:
         return
     model = model_node.get_dict()  # type: ignore[no-untyped-call]
-    (output_path / "model.json").write_text(json.dumps(model, indent=2) + "\n")
+    (output_path / MODEL_FILENAME).write_text(json.dumps(model, indent=2) + "\n")
 
 
 def dump_workgraph(

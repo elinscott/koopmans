@@ -12,103 +12,25 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
+from koopmans.aiida.labels import LabelDisplay, describe_label, executable_of, prettify_label
 from koopmans.aiida.utils import get_node_label, suppress_stdout
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from aiida.orm import ProcessNode
     from aiida_workgraph import WorkGraph
 
-
-# Acronyms that should stay uppercase after pretty-printing — these come
-# from the physics jargon used in task names (functionals, code names,
-# etc.). Add new ones here as the workflow grows.
-_ACRONYMS = frozenset({"ki", "dft", "dscf", "kipz", "pkipz", "ks", "pz", "scf", "kc", "kcw"})
-
-# Token regex for ``_prettify``: matches a leading run of caps not
-# followed by a ``Cap+lowercase`` boundary, an initial cap with
-# lowercase tail (``Iteration``), an all-lowercase run, an all-caps run
-# (acronyms standalone), or a digit run. Together this handles
-# CamelCase, snake_case, and trailing-digit suffixes uniformly.
-_PRETTIFY_TOKEN_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
-
-
-def prettify_label(raw: str) -> str:
-    """Convert an internal task / call-link label into a display string.
-
-    Rules:
-
-    * Strip a ``<plugin>-`` prefix when the left half is lowercase
-      (``kcp-ki_trial`` → ``ki_trial``). Plugin names are implementation
-      detail; the call_link_label is the action.
-    * Split on underscores and CamelCase boundaries
-      (``ScreeningIteration1`` → ``["Screening", "Iteration", "1"]``).
-    * Keep known acronyms uppercase (``ki`` → ``KI``,
-      ``dscf`` → ``DSCF``, …); other tokens get a leading capital.
-    * Re-join with single spaces.
-
-    Examples:
-    >>> prettify_label("ki_trial")
-    'KI Trial'
-    >>> prettify_label("kcp-dft_init")
-    'DFT Init'
-    >>> prettify_label("ScreeningIteration1")  # workgraph numbers from 0; users from 1
-    'Iteration 2'
-    >>> prettify_label("KoopmansDSCFWorkflow")
-    'Koopmans DSCF Workflow'
-    >>> prettify_label("convert_spin1_to_spin2")
-    'Convert Spin 1 To Spin 2'
-    """
-    if not raw:
-        return raw
-    if "-" in raw and raw.split("-", 1)[0].islower():
-        raw = raw.split("-", 1)[1]
-    # ``aiida-workgraph`` wraps the top-level process_label as
-    # ``WorkGraph<KoopmansDSCFWorkflow>``. The user already knows it's a
-    # WorkGraph from the context (it's the root of the display), so peel
-    # the envelope before tokenising.
-    m = re.match(r"^WorkGraph<(.+)>$", raw)
-    if m:
-        raw = m.group(1)
-    out: list[str] = []
-    for chunk in raw.split("_"):
-        for token in _PRETTIFY_TOKEN_RE.findall(chunk):
-            if token.isdigit():
-                out.append(token)
-            elif token.lower() in _ACRONYMS:
-                out.append(token.upper())
-            else:
-                out.append(token[0].upper() + token[1:].lower())
-    s = " ".join(out) if out else raw
-    # Physics-paper conventions that read better than the tokenised form.
-    # Order matters: the longer (nspin=N; dummy) rule must run before the
-    # bare nspin one so it consumes the trailing "Dummy".
-    s = re.sub(r"\bNspin (\d+) Dummy\b", r"(nspin=\1; dummy)", s)
-    s = re.sub(r"\bNspin (\d+)\b", r"(nspin=\1)", s)
-    s = re.sub(r"\bN Minus (\d+)\b", r"N-\1", s)
-    s = re.sub(r"\bN Plus (\d+)\b", r"N+\1", s)
-    # Compute-screening-parameters context already says "Screening" —
-    # the inner iterations are just "Iteration <N>". aiida-workgraph
-    # auto-numbers repeated tasks from 0 (first instance bare, second
-    # is "1", …) but users count from 1, so shift the index up by one.
-    s = re.sub(
-        r"\bScreening Iteration (\d+)\b",
-        lambda m: f"Iteration {int(m.group(1)) + 1}",
-        s,
-    )
-    s = re.sub(r"\bScreening Iteration\b", "Iteration 1", s)
-    # Orbital sub-graphs: parent gives the "screening" context, and
-    # ``Orb N`` is just the Map-zone key for ``Orbital N`` — collapse.
-    s = re.sub(r"\bOrb (\d+) Filled Orbital Screening\b", r"Orbital \1 (filled)", s)
-    s = re.sub(r"\bOrb (\d+) Empty Orbital Screening\b", r"Orbital \1 (empty)", s)
-    return s
+# Re-exported so the display names stay reachable as ``progress.<name>``,
+# the way every caller already spells them.
+__all__ = ["LabelDisplay", "describe_label", "describe_process", "executable_of", "prettify_label"]
 
 
 # Status display styling
 STATUS_STYLES = {
     "created": "dim",
     "waiting": "yellow",
+    "queued": "yellow",
     "running": "blue italic",
     "finished": "green",
     "failed": "red",
@@ -116,6 +38,22 @@ STATUS_STYLES = {
     "killed": "red",
     "paused": "magenta bold",
 }
+
+
+def _is_queued_on_scheduler(process_node: ProcessNode) -> bool:
+    """Return whether a CalcJob's last scheduler poll found it still queued.
+
+    ``CalcJobNode.get_scheduler_state`` reflects the engine's most recent
+    poll of the scheduler (hq, slurm, ...) and is ``None`` before the
+    first poll lands; a node with no such accessor at all has no
+    scheduler to be queued on. Both read as not-queued.
+    """
+    get_scheduler_state = getattr(process_node, "get_scheduler_state", None)
+    if get_scheduler_state is None:
+        return False
+    from aiida.schedulers.datastructures import JobState
+
+    return bool(get_scheduler_state() == JobState.QUEUED)
 
 
 def get_process_state(process_node: ProcessNode, node_type: str = "") -> str:
@@ -141,8 +79,12 @@ def get_process_state(process_node: ProcessNode, node_type: str = "") -> str:
         if state is not None:
             state_str = state.value.lower()
             # CalcJobs/CalcFunctions in "waiting" state have been submitted
-            # and are effectively "running" from the user's perspective
+            # and are effectively "running" from the user's perspective —
+            # unless the scheduler's own last poll says the job is still
+            # sitting in the queue rather than executing.
             if state_str == "waiting" and node_type in ("calcjob", "calcfunc"):
+                if node_type == "calcjob" and _is_queued_on_scheduler(process_node):
+                    return "queued"
                 return "running"
             return state_str
         return "unknown"
@@ -184,15 +126,18 @@ class ProcessRow(NamedTuple):
     label: str
     depth: int
     state: str
+    code: str | None = None
 
 
 # States a process passes through before it terminates, ordered by how
-# far along they are. ``paused`` ranks top because it is the one
-# non-terminal state the user must act on. Terminal states are absent:
-# they never travel from a hidden row to a visible one (see
-# :func:`_promoted_state`), and an unrecognised state ranks below all of
-# these.
-_STATE_RANK = {"created": 0, "waiting": 1, "running": 2, "paused": 3}
+# far along they are. ``queued`` outranks a bare ``waiting`` — a CalcJob
+# confirmed queued by the scheduler has gotten further than a process
+# still waiting on something else (upload, a sibling) — but stays behind
+# ``running``. ``paused`` ranks top because it is the one non-terminal
+# state the user must act on. Terminal states are absent: they never
+# travel from a hidden row to a visible one (see :func:`_promoted_state`),
+# and an unrecognised state ranks below all of these.
+_STATE_RANK = {"created": 0, "waiting": 1, "queued": 2, "running": 3, "paused": 4}
 _TERMINAL_STATES = frozenset({"finished", "failed", "excepted", "killed"})
 
 # Splits a label into its alternating text and digit runs. The capture
@@ -232,6 +177,37 @@ def _promoted_state(state: str) -> str:
     return "running" if state in _TERMINAL_STATES else state
 
 
+def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelDisplay:
+    """Return how one process is shown: its name, its executable, its role.
+
+    The name is the process's own ``label``, which ``aiida-koopmans``
+    sets from the step the process stands for and each route sets on the
+    run as a whole. A process that carries none — one from a run made
+    before the plugin named its steps, or one an upstream workchain
+    submits with metadata of its own — is shown by the identifier
+    provenance recorded for it, which is the internal name it really has
+    rather than a guess at the one it was meant to have.
+
+    Whether a process gets a row of its own, and whether its row is
+    counted among its siblings, are questions about the shape of the run
+    rather than about its name, and are answered from that identifier
+    either way.
+
+    Args:
+        process_node: The process to describe.
+        is_root: Whether this is the root of the whole display, which is
+            named by the workflow it runs rather than by a call link.
+    """
+    if is_root:
+        raw = getattr(process_node, "process_label", None) or "WorkGraph"
+        role = describe_label(raw)
+    else:
+        raw = get_node_label(process_node, include_code=False)
+        role = describe_label(raw, getattr(process_node, "process_label", None) or "")
+    name = (getattr(process_node, "label", "") or "").strip()
+    return role._replace(text=name or role.text, code=executable_of(process_node))
+
+
 def _reload(pk: int) -> ProcessNode:
     """Re-fetch a node by pk.
 
@@ -245,8 +221,8 @@ def _reload(pk: int) -> ProcessNode:
     return cast("ProcessNode", load_node(pk))
 
 
-def _ordered_children(process_node: ProcessNode) -> list[tuple[str, ProcessNode]]:
-    """Return the displayable children as ``(prettified label, node)``, in display order.
+def _ordered_children(process_node: ProcessNode) -> list[tuple[LabelDisplay, ProcessNode]]:
+    """Return the displayable children as ``(display, node)``, in display order.
 
     Children read in creation order, by ctime and then pk. Against that
     order, a *family* — the label with its digit runs masked, so every
@@ -266,7 +242,7 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[str, ProcessNode]
     except Exception:
         return []
 
-    entries: list[tuple[str, ProcessNode]] = []
+    entries: list[tuple[LabelDisplay, ProcessNode]] = []
     for pk in called_pks:
         if pk is None:
             continue
@@ -276,19 +252,39 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[str, ProcessNode]
             continue
         if _is_process_function_node(child):
             continue
-        entries.append((prettify_label(get_node_label(child, include_code=True)), child))
+        entries.append((describe_process(child), child))
 
     entries.sort(key=lambda entry: (entry[1].ctime, entry[1].pk or 0))
 
     positions: dict[str, list[int]] = defaultdict(list)
-    for index, (label, _) in enumerate(entries):
-        positions[_family_key(label)].append(index)
+    for index, (display, _) in enumerate(entries):
+        positions[_family_key(display.text)].append(index)
 
     for indices in positions.values():
         if len(indices) > 1 and indices == list(range(indices[0], indices[-1] + 1)):
-            run = sorted((entries[index] for index in indices), key=lambda e: _natural_key(e[0]))
+            run = sorted(
+                (entries[index] for index in indices), key=lambda e: _natural_key(e[0].text)
+            )
             entries[indices[0] : indices[-1] + 1] = run
     return entries
+
+
+class _Row:
+    """A row under construction, holding the rows nested beneath it."""
+
+    def __init__(self, display: LabelDisplay, state: str, pk: int | None = None) -> None:
+        self.text = display.text
+        self.code = display.code
+        # ``numbered`` is the wish, ``number`` the position granted; a row
+        # keeps the second once :func:`_number_siblings` has run.
+        self.numbered = display.numbered
+        self.number: int | None = None
+        self.state = state
+        self.children: list[_Row] = []
+        # Every process this row stands for: itself, plus whatever it
+        # collapsed. A row is the only handle a reader has on a process,
+        # so a process that has one is named by it.
+        self.pks: list[int] = [] if pk is None else [pk]
 
 
 def build_progress_rows(process_node: ProcessNode) -> list[ProcessRow]:
@@ -304,68 +300,150 @@ def build_progress_rows(process_node: ProcessNode) -> list[ProcessRow]:
     Returns:
         The table's rows, parents before their children.
     """
-    root_label = prettify_label(getattr(process_node, "process_label", None) or "WorkGraph")
-    rows, _ = _collect_rows(process_node, root_label, depth=0, parent_label=None)
-    return rows
+    root = describe_process(process_node, is_root=True)
+    rows, _ = _collect_rows(process_node, root, is_root=True)
+    return _flatten(rows, depth=0)
+
+
+def build_step_paths(process_node: ProcessNode) -> dict[int, tuple[str, ...]]:
+    """Map each displayed process to the named steps that lead to it.
+
+    A path reads as the table reads — siblings numbered, wrappers the
+    table hides passed over — and ends with the process's own row, so
+    two runs of the same step differ in their last element. The root row
+    names the run rather than a step of it and is left out; a process
+    with no row of its own is absent, and a process whose row collapsed
+    another shares that row's path with it.
+
+    Args:
+        process_node: The root process node.
+
+    Returns:
+        One path per displayed process, keyed by pk.
+    """
+    root = describe_process(process_node, is_root=True)
+    rows, _ = _collect_rows(process_node, root, is_root=True)
+    return {pk: path[1:] for pk, path in _row_paths(rows, ()).items()}
+
+
+def _row_paths(rows: Sequence[_Row], prefix: tuple[str, ...]) -> dict[int, tuple[str, ...]]:
+    """Return the path of row names leading to each process, keyed by pk."""
+    paths: dict[int, tuple[str, ...]] = {}
+    for row in rows:
+        path = (*prefix, row.text)
+        paths.update(dict.fromkeys(row.pks, path))
+        paths.update(_row_paths(row.children, path))
+    return paths
+
+
+def _flatten(rows: Sequence[_Row], depth: int) -> list[ProcessRow]:
+    """Return the nested rows as a flat list, parents before their children."""
+    out: list[ProcessRow] = []
+    for row in rows:
+        out.append(ProcessRow(row.text, depth, row.state, row.code))
+        out.extend(_flatten(row.children, depth + 1))
+    return out
+
+
+def _number_siblings(rows: Sequence[_Row]) -> None:
+    """Count the rows that number themselves, 1, 2, 3 in the order they ran.
+
+    The screening recursion names every iteration the same, so only
+    position tells them apart.
+    """
+    index = 0
+    for row in rows:
+        if row.numbered:
+            index += 1
+            row.number = index
+            row.text = f"{row.text} {index}"
+            row.numbered = False
 
 
 def _collect_rows(
     process_node: ProcessNode,
-    label: str,
-    depth: int,
-    parent_label: str | None,
-) -> tuple[list[ProcessRow], str | None]:
+    display: LabelDisplay,
+    is_root: bool = False,
+) -> tuple[list[_Row], str | None]:
     """Build the rows for one process and its descendants.
 
-    A process whose label is a prefix of (or identical to) its parent's
-    gets no row of its own: it is a redundant single-CalcJob wrapper —
-    the ``DFTInitialization`` ``@task.graph`` wraps one ``kcp.x`` call
-    whose label (``"DFT Init"``) is already part of the wrapper's
-    (``"DFT Init (nspin=1)"``). Its descendants are rendered against the
-    nearest visible ancestor, at that ancestor's depth.
+    Two kinds of process get no row of their own:
 
-    A hidden process lends its state to its visible ancestor: while that
-    ancestor is non-terminal it displays whichever of the two states is
-    further along, so a wrapper's row reads ``running`` while the
-    ``@task.graph`` around it still reports ``waiting``. No process is
-    hidden conditionally on its state, so a row that has appeared is
-    never withdrawn.
+    * one the display table marks transparent — a container that adds no
+      idea the row above does not already state. Its children rise to the
+      parent's depth.
+    * one that is the entire content of its parent. A container whose
+      whole subtree is a single leaf calculation collapses into one row
+      carrying the container's name and the calculation's code, and
+      collapsing chains, so ``scf`` → ``PwBaseWorkChain`` →
+      ``PwCalculation`` is the one row ``SCF`` · ``pw.x``. A restarting
+      ``PwBaseWorkChain`` runs two calculations and so does not collapse:
+      its attempts stay visible, which is when a watcher needs them. The
+      root never collapses — it names the workflow, not a step of it —
+      and neither does a row that has been given a number, which states
+      a position among siblings that no surviving row would state, nor
+      does a row that is itself about to be numbered: ``Iteration 1``
+      names a pass of the loop, and its one calculation is a separate
+      fact about that pass, not a restatement of it.
+
+    A process without a row lends its state to the row that stands for
+    it: while that row is non-terminal it displays whichever state is
+    further along, so it reads ``running`` while the ``@task.graph``
+    around it still reports ``waiting``. No process is hidden
+    conditionally on its state, so a row that has appeared is never
+    withdrawn.
 
     Args:
         process_node: The process to render.
-        label: Its prettified label.
-        depth: Indentation depth of the row it would occupy.
-        parent_label: The prettified label of the nearest visible
-            ancestor, or ``None`` for the root.
+        display: How that process is displayed.
+        is_root: Whether this is the root of the whole display.
 
     Returns:
         The rows for this subtree, and the state this process lends its
-        visible ancestor (``None`` when it has a row of its own).
+        nearest visible ancestor (``None`` when it has a row of its own).
     """
-    node_type = get_node_type(process_node) if depth > 0 else "workgraph"
+    node_type = "workgraph" if is_root else get_node_type(process_node)
     state = get_process_state(process_node, node_type)
     if state == "finished" and not process_node.is_finished_ok:
         state = "failed"
 
-    suppress_self = parent_label is not None and (
-        label == parent_label or parent_label.startswith(label + " ")
-    )
-    child_parent_label = parent_label if suppress_self else label
-    child_depth = depth if suppress_self else depth + 1
-
-    child_rows: list[ProcessRow] = []
+    child_rows: list[_Row] = []
     borrowed: list[str] = []
-    for child_label, child in _ordered_children(process_node):
-        rows, promoted = _collect_rows(child, child_label, child_depth, child_parent_label)
+    for child_display, child in _ordered_children(process_node):
+        rows, promoted = _collect_rows(child, child_display)
         child_rows.extend(rows)
         if promoted is not None:
             borrowed.append(promoted)
 
-    if suppress_self:
+    if display.transparent:
         return child_rows, _most_advanced([_promoted_state(state), *borrowed])
+
+    # Numbering happens here, once the transparent containers between an
+    # iteration and this row have handed their children up as siblings.
+    _number_siblings(child_rows)
+
+    row = _Row(display, state, getattr(process_node, "pk", None))
+    # The root names the workflow, never one of its steps, so it keeps
+    # both its row and whatever single step it has so far produced. A
+    # numbered child keeps its row for a reason of its own: the number it
+    # was just given is the only record of which sibling it is, and this
+    # row would not carry it.
+    if (
+        not is_root
+        and not row.numbered
+        and len(child_rows) == 1
+        and not child_rows[0].children
+        and child_rows[0].number is None
+    ):
+        collapsed = child_rows.pop()
+        row.code = collapsed.code or row.code
+        row.pks.extend(collapsed.pks)
+        borrowed.append(_promoted_state(collapsed.state))
+    row.children = child_rows
+
     if state not in _TERMINAL_STATES:
-        state = _most_advanced([state, *borrowed])
-    return [ProcessRow(label, depth, state), *child_rows], None
+        row.state = _most_advanced([state, *borrowed])
+    return [row], None
 
 
 def add_process_rows(table: Table, process_node: ProcessNode) -> None:
@@ -378,7 +456,7 @@ def add_process_rows(table: Table, process_node: ProcessNode) -> None:
     for row in build_progress_rows(process_node):
         style = STATUS_STYLES.get(row.state, "")
         status_text = f"[{style}]{row.state}[/{style}]" if style else row.state
-        table.add_row(f"{'  ' * row.depth}{row.label}", status_text)
+        table.add_row(f"{'  ' * row.depth}{row.label}", row.code or "", status_text)
 
 
 def _walk_paused_descendants(node: ProcessNode) -> list[tuple[int | None, str]]:
@@ -426,7 +504,8 @@ def make_progress_table(process_node: ProcessNode) -> Table | Group:
         process_node: The WorkGraphNode process to display progress for.
     """
     table = Table(box=None)
-    table.add_column("Step", no_wrap=True, min_width=70)
+    table.add_column("Step", no_wrap=True, min_width=56)
+    table.add_column("Code", no_wrap=True, min_width=14)
     table.add_column("Status", justify="right")
 
     add_process_rows(table, process_node)
@@ -455,25 +534,43 @@ def make_progress_table(process_node: ProcessNode) -> Table | Group:
     return Group(table, *hint_lines)
 
 
-def _walk_failed_descendants(
-    node: ProcessNode,
-) -> list[tuple[int | None, str, int | None, str | None, str]]:
+class ProcessFailure(NamedTuple):
+    """One terminated-not-ok process: what it is, where it sits, how it ended."""
+
+    name: str
+    code: str | None
+    path: tuple[str, ...]
+    exit_status: int | None
+    message: str | None
+    state: str
+
+
+def _walk_failed_descendants(node: ProcessNode) -> list[ProcessFailure]:
     """Collect every terminated-not-ok process in the tree, including ``node`` itself.
 
-    Returns ``(pk, process_label, exit_status, message, state)`` tuples in
-    creation order. ``state`` is ``"excepted"``, ``"killed"``, or
-    ``"failed"`` (a normal finished-not-ok exit); ``message`` is the
-    exception text for an excepted process, the exit message for a
-    failed one, and usually ``None`` for a killed one. A cascading
-    failure can appear more than once (a wrapper and the child that
-    actually failed), which is expected: the failed leaf carries the
+    Returns the failures in creation order. ``state`` is ``"excepted"``,
+    ``"killed"``, or ``"failed"`` (a normal finished-not-ok exit);
+    ``message`` is the exception text for an excepted process, the exit
+    message for a failed one, and usually ``None`` for a killed one. A
+    cascading failure can appear more than once (a wrapper and the child
+    that actually failed), which is expected: the failed leaf carries the
     real cause. As with :func:`_walk_paused_descendants`, PyFunction
     nodes the progress table hides still appear here — a failure is
     diagnostic information whether or not it has a row.
-    """
-    out: list[tuple[int | None, str, int | None, str | None, str]] = []
 
-    def _visit(n: ProcessNode) -> None:
+    A process is named by its row, which is what the reader watched go
+    past and which carries the index that tells two runs of one step
+    apart; ``path`` places that row in the run. A process with no row —
+    a PyFunction, a wrapper the table sees through — is named by its own
+    label, or by the display name of its process label when it carries
+    none, under the path of the nearest row above it.
+    """
+    paths = build_step_paths(node)
+    out: list[ProcessFailure] = []
+
+    def _visit(n: ProcessNode, inherited: tuple[str, ...]) -> None:
+        label = n.process_label or n.__class__.__name__
+        path = paths.get(n.pk, inherited) if n.pk is not None else inherited
         if n.is_terminated and not n.is_finished_ok:
             if n.is_excepted:
                 state, message = "excepted", n.exception
@@ -481,17 +578,25 @@ def _walk_failed_descendants(
                 state, message = "killed", n.exit_message
             else:
                 state, message = "failed", n.exit_message
+            named = n.pk in paths and bool(path)
             out.append(
-                (n.pk, n.process_label or n.__class__.__name__, n.exit_status, message, state)
+                ProcessFailure(
+                    name=path[-1] if named else (n.label or prettify_label(label)),
+                    code=executable_of(n),
+                    path=path[:-1] if named else path,
+                    exit_status=n.exit_status,
+                    message=message,
+                    state=state,
+                )
             )
         try:
             children = sorted(n.called, key=lambda child: (child.ctime, child.pk or 0))
         except Exception:
             return
         for child in children:
-            _visit(child)
+            _visit(child, path)
 
-    _visit(node)
+    _visit(node, ())
     return out
 
 
@@ -521,11 +626,15 @@ def render_process_once(process_node: ProcessNode, console: Console | None = Non
     console.print()
     console.print(make_progress_table(process_node))
 
-    for pk, label, exit_status, message, state in _walk_failed_descendants(process_node):
-        detail = f"exit status {exit_status}" if state == "failed" else state
-        if message:
-            detail += f": {message}"
-        console.print(f"  [red]{prettify_label(label)}[/red] (pk {pk}) — {detail}")
+    for failure in _walk_failed_descendants(process_node):
+        detail = (
+            f"exit status {failure.exit_status}" if failure.state == "failed" else failure.state
+        )
+        if failure.message:
+            detail += f": {failure.message}"
+        code = f" ({failure.code})" if failure.code else ""
+        where = f" in {' > '.join(failure.path)}" if failure.path else ""
+        console.print(f"  [red]{failure.name}[/red]{code}{where} — {detail}")
 
     if process_node.is_terminated:
         _print_outcome_banner(console, process_node)
@@ -561,7 +670,11 @@ def watch_process(
     return process_node
 
 
-def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
+def run_with_progress(
+    wg: WorkGraph,
+    refresh_interval: float = 2.0,
+    on_submitted: Callable[[ProcessNode], None] | None = None,
+) -> None:
     """Submit and run a workgraph with a live progress display.
 
     This function submits the workgraph and displays a live-updating
@@ -570,6 +683,10 @@ def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     Args:
         wg: The WorkGraph instance to run.
         refresh_interval: How often to refresh the display (in seconds).
+        on_submitted: Called with the loaded process node once the
+            submission is durably in the daemon, before the live display
+            starts watching it. A caller that kills the process at this
+            point (Ctrl-C) still leaves whatever this callback did behind.
     """
     from aiida.orm import load_node
 
@@ -590,6 +707,8 @@ def run_with_progress(wg: WorkGraph, refresh_interval: float = 2.0) -> None:
     # Display live progress by querying actual process nodes
     pk = wg.process.pk
     process_node = cast("ProcessNode", load_node(pk))
+    if on_submitted is not None:
+        on_submitted(process_node)
     process_node = watch_process(process_node, refresh_interval=refresh_interval, console=console)
 
     # Update the original wg object so callers can access the results

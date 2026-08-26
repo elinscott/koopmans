@@ -151,6 +151,50 @@ class TestPerStepKpointMesh:
         assert len(wg.tasks["scf_nscf"].inputs["nscf_kpoints"].value.get_kpoints()) == 27
         assert wg.tasks["dfpt"].inputs["kgrid"].value == [3, 3, 3]
 
+    def test_wannier90_density_raises(self) -> None:
+        """Not yet wired into this route's own wannierization step.
+
+        The guard runs before any code or pseudopotential is loaded, so it
+        needs no profile.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*DFPT"):
+            _build(d)
+
+
+class TestScopeGuardOrdering:
+    """A scope blocker (correction, init_orbitals, ...) is reported before the override.
+
+    Both guards are pure Python and need no profile; a caller fixing
+    whichever error surfaces first should never resubmit into a second one
+    the first response never mentioned.
+    """
+
+    def test_an_unsupported_correction_masks_no_override_message(self) -> None:
+        """`correction='kipz'` plus an explicit override: the correction blocker wins.
+
+        The message must name the actual blocker (`kipz`) and say nothing
+        about `overrides.wannier90` — a reader who fixes the override would
+        resubmit only to learn kipz was never supported here.
+        """
+        d = _si_dfpt_dict(correction="kipz")
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(NotImplementedError, match="kipz") as excinfo:
+            _build(d)
+        assert "wannier90" not in str(excinfo.value)
+
+    def test_a_valid_input_still_gets_the_override_refused(self) -> None:
+        """Discriminates the above from a guard that fires too early or not at all.
+
+        A KI DFPT input that clears every scope check still refuses an
+        explicit override — the guard exists, just later in the sequence.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density"):
+            _build(d)
+
 
 class TestCollinear:
     """spin='collinear' fans out per spin channel and validates its inputs."""
@@ -392,6 +436,30 @@ class TestWannier90Overrides:
 def dfpt_pdos_codes(dfpt_codes: Any, localhost_code: Any) -> dict[str, Any]:
     """Register ``dfpt_codes`` plus a projwfc code on ``localhost``."""
     return {**dfpt_codes, "projwfc": localhost_code("projwfc", "quantumespresso.projwfc")}
+
+
+class TestBandsFollowThePath:
+    """A ``kpoints.path`` alone makes the kcw.x ham step interpolate the bands."""
+
+    def test_a_path_reaches_the_kcw_ham_step(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """No switch stands between the stated path and the Koopmans band structure."""
+        from tests.fixtures import path_labels
+
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+
+        assert path_labels(wg.tasks["dfpt"].inputs["bands_kpoints"].value) == ["GAMMA", "X"]
+
+    def test_no_path_leaves_the_ham_step_uninterpolated(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: the same input without a path grows no bands path."""
+        wg = _build(_si_dfpt_dict())
+
+        assert wg.tasks["dfpt"].inputs["bands_kpoints"].value is None
 
 
 class TestProjwfcQualityCheck:
