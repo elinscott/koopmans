@@ -113,6 +113,25 @@ class TestDftEps:
         assert "ph" in names
         assert "extract_dielectric_constant" in names
 
+    def test_the_route_names_the_run_it_builds(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_ph_code: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """The name a reader sees for the whole run, set where the route is built.
+
+        ``launch`` passes it as the run's ``metadata.label``; the graph's
+        own name stays the identity the snapshots record.
+        """
+        from koopmans.aiida.workflows import run_label
+
+        wg = build_workgraph(KoopmansInput.model_validate(_si_eps_dict()))
+
+        assert run_label(wg) == "Dielectric constant"
+        assert wg.name == "DielectricTask"
+
         # ph.x runs the electric-field perturbation only (legacy
         # DFTPhWorkflow: epsil=.true., trans=.false.) at q = Gamma.
         inputph = wg.tasks["ph"].inputs["ph"]["parameters"].value.get_dict()["INPUTPH"]
@@ -271,11 +290,16 @@ class TestDftEpsSpin:
 
         The refusal is ``DielectricTask``'s, reached at build because this
         route calls it as the entry graph: the user reads it before anything
-        is submitted, rather than a ph.x abort hours into the run.
+        is submitted, rather than a ph.x abort hours into the run. It has to
+        carry the reason and the two regimes that do work, since ``spin`` is
+        the only keyword that can change here.
         """
         inp = KoopmansInput.model_validate(_si_eps_dict(spin=spin))
-        with pytest.raises(NotImplementedError, match="not implemented for noncollinear"):
+        with pytest.raises(NotImplementedError) as excinfo:
             build_workgraph(inp)
+        message = str(excinfo.value)
+        assert "not implemented for noncollinear magnetism" in message
+        assert "Use 'none' or 'collinear'." in message
 
 
 class TestDfptAutoEps:
@@ -358,6 +382,32 @@ class TestDfptAutoEps:
         assert "`ph@localhost`" in advice
         assert "Needed to compute the dielectric constant." in advice
         assert "koopmans install" in advice
+
+    @pytest.mark.parametrize("spin", ["non_collinear", "spin_orbit"])
+    def test_auto_is_refused_for_a_spinor_chain(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+        spin: str,
+    ) -> None:
+        """The refusal names ``eps_inf``, the keyword this user can still change.
+
+        DFPT itself runs in either spinor regime, so ``spin`` is not the
+        input at fault here: only the dielectric pre-computation is out of
+        reach, and stating ``eps_inf`` as a number keeps the rest of the
+        run. A refusal naming ``spin`` instead would send the user to undo
+        the one keyword that is doing what they asked.
+        """
+        d = _si_dfpt_auto_dict()
+        d["workflow"]["spin"] = spin
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(NotImplementedError) as excinfo:
+            build_singlepoint_dfpt_workgraph(inp)
+        message = str(excinfo.value)
+        assert "eps_inf='auto'" in message
+        assert "Give eps_inf a number instead." in message
 
     def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
         """A non-'auto' string eps_inf is rejected up front."""
