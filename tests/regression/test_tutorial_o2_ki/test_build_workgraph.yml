@@ -1615,7 +1615,7 @@ raw:
       identifier: <scrubbed:identifier>
       input_socket_meta: {}
       inputs:
-        alpha_numsteps: 2
+        alpha_numsteps: 1
         calculate_alpha: true
         codes:
           kcp:
