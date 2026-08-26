@@ -508,10 +508,38 @@ def _nest_by_link_label(flat: dict[str, Any]) -> dict[str, Any]:
     return nested
 
 
+def _direct_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
+    """Return the pks a direct ``CALL_CALC`` child of ``node`` created.
+
+    Only a one-hop calculation child counts: :func:`_hoist_lone_calculations`
+    only ever merges a wrapping step's *own* calculation folder up into it,
+    never a grandchild's, so a value that only becomes redundant two or
+    more layers down (the root re-exporting ``RunFinalKI``'s own re-export
+    of ``ki_final``'s output) is not caught here — dropping it there would
+    delete the only copy visible at that level.
+    """
+    from aiida.common import LinkType
+
+    created: set[int] = set()
+    for call_link in node.base.links.get_outgoing(link_type=LinkType.CALL_CALC).all():
+        for create_link in call_link.node.base.links.get_outgoing(link_type=LinkType.CREATE).all():
+            if create_link.node.pk is not None:
+                created.add(create_link.node.pk)
+    return frozenset(created)
+
+
 def _json_representable_links(
-    node: orm.ProcessNode, link_type: LinkType, incoming: bool
+    node: orm.ProcessNode,
+    link_type: LinkType,
+    incoming: bool,
+    exclude_pks: frozenset[int] = frozenset(),
 ) -> dict[str, Any]:
-    """Return ``{link_label: value}`` for the JSON-representable ``Data`` at ``link_type``."""
+    """Return ``{link_label: value}`` for the JSON-representable ``Data`` at ``link_type``.
+
+    A linked node whose pk is in ``exclude_pks`` is skipped, whatever its
+    link label — used to drop a workflow's re-export of a value its own
+    hoisted calculation already carries under a different name.
+    """
     from aiida import orm
 
     links = (
@@ -521,7 +549,7 @@ def _json_representable_links(
     ).all()
     flat = {}
     for link in links:
-        if not isinstance(link.node, orm.Data):
+        if not isinstance(link.node, orm.Data) or link.node.pk in exclude_pks:
             continue
         value = _json_value(link.node)
         if value is not _NOT_JSON_REPRESENTABLE:
@@ -535,13 +563,23 @@ def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
     A calculation's own ``INPUT_CALC``/``CREATE`` links give its inputs and
     outputs. A workflow does not create data itself, so its ``RETURN``
     links — the same ones a reader would follow from ``process.outputs`` —
-    stand in for :data:`OUTPUTS_JSON_FILE`; no :data:`INPUTS_JSON_FILE` is
+    stand in for :data:`OUTPUTS_JSON_FILE`. No :data:`INPUTS_JSON_FILE` is
     written for a workflow, since its ``INPUT_WORK`` links point at the
-    same Data its own calculations already read, and a wrapping step
-    holding one calculation is later hoisted into that calculation's own
-    folder (:func:`_hoist_lone_calculations`) — a workflow-level echo would
-    only collide with the file the hoist moves up. Neither file is written
-    when nothing linked has a JSON-representable value.
+    same Data its own calculations already read.
+
+    A workflow wrapping exactly one calculation is later hoisted into that
+    calculation's own folder (:func:`_hoist_lone_calculations`), so a
+    workflow's ``outputs.json`` never blocks that hoist: any RETURN value
+    the workflow's own direct calculation child already created is dropped
+    here (:func:`_direct_calculation_created_pks`) — the same node under a
+    second name — leaving a value genuinely produced elsewhere in the
+    workflow's own outputs.json (e.g. ``ComputeScreeningParameters``'s
+    ``alphas``, assembled several layers inside a sub-workgraph child, not
+    by a direct calculation child) untouched. A wrapper that drops down to
+    nothing writes no file at all, so the pre-existing single-calculation
+    check in :func:`_hoist_lone_calculations` runs exactly as it did before
+    this file existed. Neither file is written when nothing linked has a
+    JSON-representable value.
 
     :param node: The process the folder was dumped from.
     :param folder: The step's own dumped folder.
@@ -549,19 +587,20 @@ def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
     from aiida import orm
     from aiida.common import LinkType
 
-    links_to_write: tuple[tuple[str, LinkType, bool], ...]
+    links_to_write: tuple[tuple[str, LinkType, bool, frozenset[int]], ...]
     if isinstance(node, orm.CalculationNode):
         links_to_write = (
-            (INPUTS_JSON_FILE, LinkType.INPUT_CALC, True),
-            (OUTPUTS_JSON_FILE, LinkType.CREATE, False),
+            (INPUTS_JSON_FILE, LinkType.INPUT_CALC, True, frozenset()),
+            (OUTPUTS_JSON_FILE, LinkType.CREATE, False, frozenset()),
         )
     elif isinstance(node, orm.WorkflowNode):
-        links_to_write = ((OUTPUTS_JSON_FILE, LinkType.RETURN, False),)
+        exclude_pks = _direct_calculation_created_pks(node)
+        links_to_write = ((OUTPUTS_JSON_FILE, LinkType.RETURN, False, exclude_pks),)
     else:
         return
 
-    for filename, link_type, incoming in links_to_write:
-        flat = _json_representable_links(node, link_type, incoming)
+    for filename, link_type, incoming, exclude_pks in links_to_write:
+        flat = _json_representable_links(node, link_type, incoming, exclude_pks)
         if flat:
             (folder / filename).write_text(
                 json.dumps(_nest_by_link_label(flat), indent=2, sort_keys=True) + "\n"

@@ -1241,13 +1241,19 @@ class TestDumpDataJson:
     def _dump_a_run(output_path: Path) -> Path:
         """Dump a workgraph whose graph and calculation steps each expose Data.
 
-        ``screen`` is a ``@task.graph`` re-exporting ``build_alphas``'s
-        ``Dict`` output as its own ``alphas`` — the workflow-level RETURN
-        case #205 reports missing. ``make_report`` is a calculation with
-        one JSON output (``params``) beside a real file (``file``) — the
-        CREATE case. ``write_plain_file`` is a calculation with no
-        JSON-representable output at all, to check nothing is written for
-        it.
+        ``screen`` is a ``@task.graph`` re-exporting ``compute_alphas``'s
+        ``alphas`` as its own — the workflow-level RETURN case #205
+        reports missing. ``compute_alphas`` wraps ``build_alphas`` in a
+        further sub-workgraph layer, so the ``Dict`` node reaching
+        ``screen`` is created two hops down rather than by a direct
+        calculation child — matching how the real ``ComputeScreeningParameters``
+        assembles its own ``alphas`` several layers inside a nested
+        ``ScreeningIteration``, and keeping this case distinct from
+        ``TestHoistDropsRedundantWorkflowReturn``'s single-hop one.
+        ``make_report`` is a calculation with one JSON output (``params``)
+        beside a real file (``file``) — the CREATE case. ``write_plain_file``
+        is a calculation with no JSON-representable output at all, to
+        check nothing is written for it.
         """
         import io
 
@@ -1269,6 +1275,12 @@ class TestDumpDataJson:
             """Return the per-spin screening parameters, with no file at all."""
             return orm.Dict({"up": up, "down": down})  # type: ignore[no-untyped-call]
 
+        @task.graph(outputs=["alphas"])  # type: ignore[untyped-decorator]
+        def compute_alphas(up: list[float], down: list[float]) -> dict[str, orm.Dict]:
+            """Wrap ``build_alphas`` in one more sub-workgraph layer."""
+            alphas: orm.Dict = build_alphas(up=up, down=down).result
+            return {"alphas": alphas}
+
         @task  # type: ignore[untyped-decorator]
         def write_plain_file(text: str) -> orm.SinglefileData:
             """Return a file and nothing else."""
@@ -1276,11 +1288,11 @@ class TestDumpDataJson:
 
         @task.graph(outputs=["alphas"])  # type: ignore[untyped-decorator]
         def screen(text: str, up: list[float], down: list[float]) -> dict[str, orm.Dict]:
-            """Run all three tasks; re-export ``build_alphas``'s Dict as ``alphas``."""
+            """Run all tasks; re-export ``compute_alphas``'s Dict as ``alphas``."""
             make_report(text=text)
             write_plain_file(text=text)
-            alphas: orm.Dict = build_alphas(up=up, down=down).result
-            return {"alphas": alphas}
+            sub = compute_alphas(up=up, down=down)
+            return {"alphas": sub.alphas}
 
         wg = WorkGraph("dump_data_json")
         wg.add_task(screen, name="screen", text="hello", up=[0.7019, 0.78], down=[0.6896])
@@ -1291,7 +1303,13 @@ class TestDumpDataJson:
     def test_a_workflow_steps_return_lands_in_its_own_outputs_json(
         self, aiida_profile_clean: object, tmp_path: Path
     ) -> None:
-        """``screen`` never runs a calculation itself; its RETURN link still surfaces."""
+        """``screen`` never runs a calculation itself; its RETURN link still surfaces.
+
+        Nothing here duplicates a direct calculation child's own output —
+        ``build_alphas`` is a grandchild via ``compute_alphas`` — so
+        nothing is dropped by the redundant-echo rule under test in
+        ``TestHoistDropsRedundantWorkflowReturn``.
+        """
         import json
 
         dumped = self._dump_a_run(tmp_path / "dump")
@@ -1358,3 +1376,68 @@ class TestDumpDataJson:
 
         screen_dir = next(p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("screen"))
         assert not (screen_dir / "inputs.json").exists()
+
+
+class TestHoistDropsRedundantWorkflowReturn:
+    """A wrapper's RETURN echo of its own direct calculation's output is dropped.
+
+    Mirrors the real ``RunFinalKI`` / ``ki_final`` shape: a ``@task.graph``
+    wraps exactly one calculation and re-exports one of its Dict outputs
+    under a different link label. Before this class's fix, the wrapper's
+    own ``outputs.json`` (holding that one redundant entry) counted as a
+    second child alongside the calculation's folder, so
+    ``_hoist_lone_calculations`` no longer saw a lone calculation to merge
+    up — leaving two ``outputs.json`` files, one per label, for the same
+    underlying node.
+    """
+
+    @staticmethod
+    def _dump_a_run(output_path: Path) -> Path:
+        """Dump a workgraph graph wrapping one calculation with a Dict + a file output."""
+        import io
+
+        from aiida import orm
+        from aiida_workgraph import WorkGraph, task
+
+        from koopmans.aiida.dumping import dump_workgraph
+
+        @task(outputs=["output_parameters", "eigenvalues"])  # type: ignore[untyped-decorator]
+        def ki_final_calc(homo: float, lumo: float) -> dict[str, Any]:
+            """Return a Dict and a file, as the real KcpCalculation does."""
+            return {
+                "output_parameters": {"homo_energy": homo, "lumo_energy": lumo},
+                "eigenvalues": orm.SinglefileData(io.BytesIO(b"eigenvalues"), filename="eigs.dat"),
+            }
+
+        @task.graph(outputs=["parameters"])  # type: ignore[untyped-decorator]
+        def run_final(homo: float, lumo: float) -> dict[str, orm.Dict]:
+            """Wrap the one calculation and re-export its Dict under a new name."""
+            calc = ki_final_calc(homo=homo, lumo=lumo)
+            return {"parameters": calc.output_parameters}
+
+        wg = WorkGraph("dump_hoist_dedup")
+        wg.add_task(run_final, name="run_final", homo=-12.353, lumo=-0.4034)
+        wg.run()
+
+        return dump_workgraph(wg.process, output_path)
+
+    def test_the_wrapper_is_hoisted_with_one_outputs_json_keyed_by_the_calculation(
+        self, aiida_profile_clean: object, tmp_path: Path
+    ) -> None:
+        """The wrapper folder collapses into the calculation's, as it did before this PR."""
+        import json
+
+        dumped = self._dump_a_run(tmp_path / "dump")
+
+        assert not any(p.name.endswith("ki_final_calc") for p in dumped.rglob("*"))
+
+        run_final_dir = next(
+            p for p in dumped.rglob("*") if p.is_dir() and p.name.endswith("run_final")
+        )
+        outputs_jsons = list(dumped.rglob("outputs.json"))
+        assert outputs_jsons == [run_final_dir / "outputs.json"]
+
+        written = json.loads((run_final_dir / "outputs.json").read_text())
+        assert written == {"output_parameters": {"homo_energy": -12.353, "lumo_energy": -0.4034}}
+        assert "parameters" not in written
+        assert (run_final_dir / "outputs" / "eigenvalues" / "eigs.dat").read_text() == "eigenvalues"
