@@ -24,7 +24,6 @@ __all__ = [
     "NODE_METADATA_FILE",
     "dump_workgraph",
     "trained_model_output",
-    "write_flat_io_listing",
 ]
 
 
@@ -554,7 +553,7 @@ def _merge_move(source: Path, target: Path) -> None:
     shutil.move(str(source), str(target))
 
 
-def write_flat_io_listing(
+def _write_flat_io_listing(
     links: Sequence[tuple[str, orm.Data]],
     directory: Path,
     staged: Path,
@@ -732,7 +731,7 @@ def _write_step_io(node: orm.ProcessNode, folder: Path) -> list[Path]:
     """List ``node``'s ``Data`` inputs and outputs under ``folder``.
 
     Every linked node becomes one entry, whatever its kind
-    (:func:`write_flat_io_listing`), so a reader scanning ``outputs``
+    (:func:`_write_flat_io_listing`), so a reader scanning ``outputs``
     sees a value and a file side by side rather than a JSON listing
     beside a directory tree.
 
@@ -797,10 +796,10 @@ def _write_step_io(node: orm.ProcessNode, folder: Path) -> list[Path]:
     else:
         return []
 
-    echoed = write_flat_io_listing(
+    echoed = _write_flat_io_listing(
         inputs, folder / _INPUTS_DIR, folder / _STAGED_IO_DIRS[_INPUTS_DIR]
     )
-    write_flat_io_listing(outputs, folder / _OUTPUTS_DIR, folder / _STAGED_IO_DIRS[_OUTPUTS_DIR])
+    _write_flat_io_listing(outputs, folder / _OUTPUTS_DIR, folder / _STAGED_IO_DIRS[_OUTPUTS_DIR])
     return echoed
 
 
