@@ -64,22 +64,25 @@ MODEL_FILENAME = "model.json"
 _INPUTS_DIR = "inputs"
 _OUTPUTS_DIR = "outputs"
 
-# Where aiida-core stages the repositories of the Data a calculation read
-# and wrote, before this module folds them into the listings above.
+# Where aiida-core stages the repositories and JSON of the Data a
+# calculation read and wrote — and, for a workflow, the Data its RETURN
+# links point at — before this module folds them into the listings above.
 _STAGED_IO_DIRS = {_INPUTS_DIR: "node_inputs", _OUTPUTS_DIR: "node_outputs"}
 
 # The one CREATE link aiida-core dumps as the calculation's own files
 # rather than as a linked node: its files stay loose under `outputs`.
 _RETRIEVED_LINK_LABEL = "retrieved"
 
-# What a step folder can hold and still count as having produced nothing.
-# A step's own input listing joins this set on top: a CalcJob (the only
-# kind of step that ever gets one — a workflow never does, and a
-# bookkeeping calculation never even gets one written) echoes its own
-# Data arguments whether or not it produced anything, so without this a
-# no-op CalcJob would gain a folder of its own just to show them back.
-# The output listing stays out of it — a folder holding nothing else is
-# exactly the case this dump exists to fix (issue #205).
+# What a step folder can hold and still count as having produced
+# nothing. A step's own input listing joins this set on top: a CalcJob
+# echoes its own JSON-valued Data arguments whether or not it produced
+# anything, so without this a no-op CalcJob would gain a folder of its
+# own just to show them back. A workflow never gets an input listing at
+# all, and a bookkeeping calculation gets no JSON input listing either
+# — its repository inputs are still placed, and pruning drops the
+# folder around them once nothing else is left. The output listing
+# stays out of this set — a folder holding nothing else is exactly the
+# case this dump exists to fix (issue #205).
 _NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
 
 # The dump's own bookkeeping, which says nothing about the run.
@@ -186,11 +189,10 @@ def _prune_source_only_step_folders(path: Path, echoed: frozenset[Path] = frozen
     A bookkeeping task dumps its ``source_file`` — its code, which the
     installed package holds — and its ``aiida_node_metadata.yaml``, which
     names the node the folder came from. Any other file keeps the
-    folder, whatever the process was: aiida-core writes ``node_outputs``
-    only for ``SinglefileData`` and ``FolderData``, so an ``ArrayData`` a
-    task produced reaches disk only as the ``function_inputs`` of
-    whatever consumed it, and a calculation killed before retrieval has
-    inputs and no outputs at all.
+    folder, whatever the process was: a repository-backed output (e.g. a
+    pyfunction's ``ArrayData``, staged as ``<label>.npy``) survives here
+    the same as a calculation killed before retrieval, whose inputs are
+    staged with no outputs at all.
 
     Runs innermost first, so a folder left holding only such folders goes
     with them.
@@ -560,15 +562,17 @@ def _write_flat_io_listing(
 ) -> list[Path]:
     """Fold ``links``, already dumped under ``staged``, into one entry apiece.
 
-    A node with a JSON form (``Dict``, ``List``, ``Int``, ``Float``,
-    ``Str``, ``Bool``, and anything else aiida-core's own
-    ``include_data_json`` gave a JSON form) becomes ``<label>.json``. A
-    node whose repository holds a single file becomes ``<label>``
-    carrying that file's suffix, and one holding several keeps a
-    ``<label>/`` directory. A namespaced label splits on ``__`` into a
-    path, so ``alphas__filled`` and ``alphas__empty`` merge into one
-    ``alphas.json`` while repository content lands under ``alphas/``. A
-    node that is neither writes nothing.
+    Every linked ``Data`` node with no repository content — ``Dict``,
+    ``List``, ``Int``, ``Float``, ``Str``, ``Bool``, ``StructureData``,
+    ``KpointsData``, an ``EnumData``, and anything else aiida-core's own
+    ``include_data_json`` can render — becomes ``<label>.json``
+    (:func:`_read_staged_json`); a ``RemoteData`` or an ``AbstractCode``
+    never reaches ``links`` at all (:func:`_data_links`). A node whose
+    repository holds a single file becomes ``<label>`` carrying that
+    file's suffix, and one holding several keeps a ``<label>/``
+    directory. A namespaced label splits on ``__`` into a path, so
+    ``alphas__filled`` and ``alphas__empty`` merge into one
+    ``alphas.json`` while repository content lands under ``alphas/``.
 
     A name a retrieved file already holds — the calculation itself wrote
     ``<label>.json`` under ``directory`` — falls back to the ``<label>/``
