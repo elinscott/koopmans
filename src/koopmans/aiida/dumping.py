@@ -88,6 +88,21 @@ _NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
 # The dump's own bookkeeping, which says nothing about the run.
 _DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safeguard")
 
+# The engine's own bookkeeping, which every CalcJob carries: the folder
+# of serialized job settings and the submission script it wrote into the
+# calculation's repository, and the scheduler's two log files it read
+# back with the results. None of them is an input the run was given or a
+# result it produced. aiida-core copies a calculation's repository and
+# its retrieved folder whole, with no option to leave these out, so they
+# are dropped here (`ProcessDumpConfig` in aiida-core 715972d65 carries
+# no flag for it).
+_ENGINE_BOOKKEEPING_DIR = ".aiida"
+_ENGINE_BOOKKEEPING_FILES = (
+    "_aiidasubmit.sh",
+    "_scheduler-stdout.txt",
+    "_scheduler-stderr.txt",
+)
+
 # Sentinel for "no value here", distinct from a staged JSON value of None.
 _MISSING = object()
 
@@ -624,6 +639,12 @@ def _write_flat_io_listing(
     fallback: the value lands at ``<label>/<label>.json`` instead of
     overwriting the retrieved file.
 
+    An empty value — a ``Dict`` holding ``{}``, a ``List`` holding
+    ``[]`` — is not written: it says only that the socket was wired, so
+    a file for it is a file the reader has to open to learn nothing. A
+    namespace whose members are all empty is left out with them, rather
+    than written as ``{}``.
+
     :param links: The ``(link_label, node)`` pairs to fold in — a subset
         of what aiida-core dumped under ``staged``, filtered by whatever
         rule the caller applies (bookkeeping exclusion, ``RETURN``
@@ -644,6 +665,8 @@ def _write_flat_io_listing(
     for label, node in links:
         found, value = _read_staged_json(label, node, staged)
         if found:
+            if isinstance(value, (dict, list)) and not value:
+                continue
             values[label] = value
             owners[label] = node
         else:
@@ -943,6 +966,25 @@ def _dump_step_io(root_path: Path) -> tuple[frozenset[Path], _PlacedFiles]:
     return frozenset(echoed), placed
 
 
+def _prune_engine_bookkeeping(root_path: Path) -> None:
+    """Delete the engine's own files from every calculation folder.
+
+    Removes the ``.aiida`` settings folder and ``_aiidasubmit.sh`` a
+    CalcJob writes into its repository, and the two ``_scheduler-*`` logs
+    it retrieves alongside its results (:data:`_ENGINE_BOOKKEEPING_FILES`).
+
+    Runs before the step listings, so a calculation left holding nothing
+    but these is pruned like any other empty step.
+
+    :param root_path: Root of the freshly dumped tree.
+    """
+    for path in list(root_path.rglob("*")):
+        if path.is_dir() and path.name == _ENGINE_BOOKKEEPING_DIR:
+            shutil.rmtree(path)
+        elif path.is_file() and path.name in _ENGINE_BOOKKEEPING_FILES:
+            path.unlink()
+
+
 def _prune_workflow_metadata(root_path: Path) -> None:
     """Delete every workflow node's metadata file below the root.
 
@@ -997,7 +1039,8 @@ def dump_workgraph(
     ``include_workflow_outputs``, so a repository-less linked ``Data``
     node and a workflow's own ``RETURN`` outputs are written too), then:
     - Strips pk numbers and WorkGraph process labels from folder names
-    - Removes the dump's own bookkeeping files
+    - Removes the dump's own bookkeeping files, and the engine's (see
+      :func:`_prune_engine_bookkeeping`)
     - Folds each step's already-dumped ``Data`` inputs and outputs into
       one flat entry apiece, under its own ``inputs``/``outputs`` (see
       :func:`_dump_step_io`)
@@ -1038,6 +1081,8 @@ def dump_workgraph(
     for filename in _DUMP_BOOKKEEPING_FILES:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
+
+    _prune_engine_bookkeeping(output_path)
 
     # Every step's Data, while every folder still carries the metadata
     # file naming its node

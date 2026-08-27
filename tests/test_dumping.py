@@ -14,6 +14,7 @@ from koopmans.aiida.dumping import (
     _hoist_lone_calculations,
     _link_duplicate_files,
     _PlacedFiles,
+    _prune_engine_bookkeeping,
     _prune_source_only_step_folders,
     _prune_workflow_metadata,
     _renumber_step_folders,
@@ -571,6 +572,121 @@ class TestListingsOfOneNodeLinkToEachOther:
         assert not first.is_symlink()
         assert not second.is_symlink()
         assert first.read_text() == second.read_text() == "identical"
+
+
+class TestPruneEngineBookkeeping:
+    """The engine's own files are not what the run read or produced."""
+
+    def test_the_settings_folder_and_submit_script_go(self, tmp_path: Path) -> None:
+        """A CalcJob's repository is copied whole; only its own input stays."""
+        _make_tree(
+            tmp_path,
+            [
+                "01-scf/inputs/.aiida/calcinfo.json",
+                "01-scf/inputs/.aiida/job_tmpl.json",
+                "01-scf/inputs/_aiidasubmit.sh",
+                "01-scf/inputs/aiida.in",
+            ],
+        )
+
+        _prune_engine_bookkeeping(tmp_path)
+
+        assert [p.name for p in (tmp_path / "01-scf/inputs").iterdir()] == ["aiida.in"]
+
+    def test_the_scheduler_logs_go(self, tmp_path: Path) -> None:
+        """The two logs the scheduler wrote are retrieved beside the results."""
+        _make_tree(
+            tmp_path,
+            [
+                "01-scf/outputs/_scheduler-stdout.txt",
+                "01-scf/outputs/_scheduler-stderr.txt",
+                "01-scf/outputs/aiida.out",
+            ],
+        )
+
+        _prune_engine_bookkeeping(tmp_path)
+
+        assert [p.name for p in (tmp_path / "01-scf/outputs").iterdir()] == ["aiida.out"]
+
+    def test_a_calculation_left_with_nothing_else_is_pruned(self, tmp_path: Path) -> None:
+        """A step whose only files were the engine's own keeps no folder.
+
+        The bookkeeping goes before the step listings, so such a folder
+        reaches the prune empty and is dropped like any other.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                _metadata("01-noop"),
+                "01-noop/inputs/_aiidasubmit.sh",
+                "01-noop/outputs/_scheduler-stdout.txt",
+            ],
+        )
+
+        _prune_engine_bookkeeping(tmp_path)
+        _prune_source_only_step_folders(tmp_path)
+
+        assert list(tmp_path.iterdir()) == []
+
+
+class TestEmptyValuesAreNotListed:
+    """A listing entry holding ``{}`` is a file that says nothing."""
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def test_an_empty_dict_output_writes_no_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """``projwfc.x`` parses no scalars, so its output parameters are ``{}``."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="projwfc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "output_parameters", orm.Dict({}))  # type: ignore[no-untyped-call]
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"kept"), filename="r.txt"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-projwfc" / "outputs"
+
+        assert not (outputs / "output_parameters.json").exists()
+        assert (outputs / "report.txt").read_bytes() == b"kept"
+
+    def test_a_namespace_of_empty_values_leaves_no_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Nesting an omitted value writes no ``{"output_parameters": {}}`` either."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="projwfc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "projwfc__output_parameters", orm.Dict({}))  # type: ignore[no-untyped-call]
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"kept"), filename="r.txt"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-projwfc" / "outputs"
+
+        assert not (outputs / "projwfc.json").exists()
+        assert list(outputs.glob("*.json")) == []
 
 
 class TestPruneWorkflowMetadata:
