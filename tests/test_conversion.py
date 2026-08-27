@@ -417,6 +417,26 @@ class TestInputToKcwOverrides:
         assert "on_site_only" not in overrides["control"]
         assert "on_site_only" not in overrides["screen"]
 
+    def test_a_null_keyword_is_left_out(self, aiida_profile: Any) -> None:
+        """``null`` means the same as leaving the keyword out, not blanking the route's value.
+
+        The keyword is *set* in pydantic's sense, so ``exclude_unset`` alone
+        keeps it and the route's own value is replaced by ``None``.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "kcw": {"screen": {"niter": None, "nmix": 6}},
+                }
+            )
+        )
+        overrides = input_to_kcw_overrides(inp)
+
+        assert overrides["screen"] == {"nmix": 6}
+
     def test_unset_namelists_are_absent(self, aiida_profile: Any) -> None:
         """Setting only ``control`` leaves ``wannier``/``screen``/``ham`` out entirely."""
         from koopmans.input_file import KoopmansInput
