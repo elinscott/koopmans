@@ -763,7 +763,9 @@ def _is_calcjob_step(node: orm.ProcessNode) -> bool:
     return process_class is not PythonJob
 
 
-def _subtree_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
+def _subtree_calculation_created_pks(
+    node: orm.WorkflowNode, memo: dict[int, frozenset[int]] | None = None
+) -> frozenset[int]:
     """Return the pks a CalcJob anywhere below ``node`` created.
 
     A CalcJob is the only kind of calculation whose own folder survives to
@@ -780,9 +782,18 @@ def _subtree_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
     pyfunction child created (``ComputeScreeningParameters``'s ``alphas``),
     and not one produced outside this graph and handed in, which a
     workflow may legitimately re-export.
+
+    :param node: The workflow whose subtree is walked.
+    :param memo: Answers already worked out, keyed by pk. Every enclosing
+        graph asks about the same nested ones, so one memo shared across
+        a dump walks each subtree once.
     """
     from aiida import orm
     from aiida.common import LinkType
+
+    memo = memo if memo is not None else {}
+    if node.pk is not None and node.pk in memo:
+        return memo[node.pk]
 
     created: set[int] = set()
     for call_type in (LinkType.CALL_CALC, LinkType.CALL_WORK):
@@ -791,12 +802,16 @@ def _subtree_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
             if not isinstance(child, orm.ProcessNode):
                 continue
             if isinstance(child, orm.WorkflowNode):
-                created.update(_subtree_calculation_created_pks(child))
+                created.update(_subtree_calculation_created_pks(child, memo))
             elif _is_calcjob_step(child):
                 for create_link in child.base.links.get_outgoing(link_type=LinkType.CREATE).all():
                     if create_link.node.pk is not None:
                         created.add(create_link.node.pk)
-    return frozenset(created)
+
+    answer = frozenset(created)
+    if node.pk is not None:
+        memo[node.pk] = answer
+    return answer
 
 
 def _is_retrieved_folder(node: orm.Data) -> bool:
@@ -806,10 +821,17 @@ def _is_retrieved_folder(node: orm.Data) -> bool:
     link to it carries: the same folder reaches a workflow's ``RETURN``
     links under whatever name that workflow chose (``nscf_retrieved``,
     ``blocks__emp_1__retrieved``), and it is the same folder either way.
+
+    Anything that is not a ``FolderData`` answers no without a query —
+    ``CalcJob`` declares ``retrieved`` with ``valid_type=orm.FolderData``,
+    so no other kind of node can be one, and every listed node would
+    otherwise cost a link lookup of its own.
     """
     from aiida import orm
     from aiida.common import LinkType
 
+    if not isinstance(node, orm.FolderData):
+        return False
     return any(
         link.link_label == _RETRIEVED_LINK_LABEL and isinstance(link.node, orm.CalcJobNode)
         for link in node.base.links.get_incoming(link_type=LinkType.CREATE).all()
@@ -853,7 +875,12 @@ def _data_links(
     ]
 
 
-def _write_step_io(node: orm.ProcessNode, folder: Path, placed: _PlacedFiles) -> list[Path]:
+def _write_step_io(
+    node: orm.ProcessNode,
+    folder: Path,
+    placed: _PlacedFiles,
+    memo: dict[int, frozenset[int]],
+) -> list[Path]:
     """List ``node``'s ``Data`` inputs and outputs under ``folder``.
 
     Every linked node becomes one entry, whatever its kind
@@ -899,6 +926,8 @@ def _write_step_io(node: orm.ProcessNode, folder: Path, placed: _PlacedFiles) ->
     :param folder: The step's own dumped folder.
     :param placed: Where each written file came from, for the linking
         pass (see :class:`_PlacedFiles`).
+    :param memo: Shared across the dump's steps, so each subtree is
+        walked once (see :func:`_subtree_calculation_created_pks`).
     :return: The files listing the step's own inputs back.
     """
     from aiida import orm
@@ -913,7 +942,8 @@ def _write_step_io(node: orm.ProcessNode, folder: Path, placed: _PlacedFiles) ->
             outputs = [(label, n) for label, n in outputs if n.base.repository.list_object_names()]
     elif isinstance(node, orm.WorkflowNode) and not isinstance(node, orm.WorkFunctionNode):
         inputs = []
-        outputs = _data_links(node, LinkType.RETURN, False, _subtree_calculation_created_pks(node))
+        excluded = _subtree_calculation_created_pks(node, memo)
+        outputs = _data_links(node, LinkType.RETURN, False, excluded)
     else:
         return []
 
@@ -947,13 +977,14 @@ def _dump_step_io(root_path: Path) -> tuple[frozenset[Path], _PlacedFiles]:
 
     echoed: set[Path] = set()
     placed = _PlacedFiles()
+    memo: dict[int, frozenset[int]] = {}
     for metadata_path in root_path.rglob(NODE_METADATA_FILE):
         pk = _node_metadata(metadata_path).get("pk")
         if pk is None:
             continue
         node = orm.load_node(pk)
         if isinstance(node, orm.ProcessNode):
-            echoed.update(_write_step_io(node, metadata_path.parent, placed))
+            echoed.update(_write_step_io(node, metadata_path.parent, placed, memo))
 
     # aiida-core stages every linked node's repository and JSON
     # unconditionally, unaware of this module's own rules (a bookkeeping
