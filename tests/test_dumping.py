@@ -1164,9 +1164,13 @@ class TestDumpedNodeMetadata:
         """A step's file names the process that ran there, not a sibling's.
 
         The pk a folder carries is the way from its files back to the
-        database, so it has to be that folder's own. ``01-run`` names the
-        calculation hoisted into it rather than the workflow layer the
-        folder was.
+        database, so it has to be that folder's own. ``run``'s own
+        ``RETURN`` of ``write_note``'s file is real content of ``run``'s
+        own — a pyfunction child's value is never dropped as redundant
+        (:class:`TestWorkflowReturnKeepsPyfunctionCreatedValue`) — so
+        ``01-run`` keeps its own folder rather than being hoisted away,
+        and ``write_note`` stays nested under it, keeping its own file
+        (mirrors :class:`TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn`).
         """
         import yaml
         from aiida import orm
@@ -1182,8 +1186,12 @@ class TestDumpedNodeMetadata:
             assert node.uuid == recorded["uuid"]
             named[str(path.parent.relative_to(dumped))] = node.process_label
 
-        assert named == {"01-run": "write_note", "02-write_summary": "write_summary"}
+        assert named == {
+            "01-run/01-write_note": "write_note",
+            "02-write_summary": "write_summary",
+        }
         assert (dumped / "01-run/outputs/result.txt").read_text() == "hello"
+        assert (dumped / "01-run/01-write_note/outputs/result.txt").read_text() == "hello"
 
     def test_no_step_below_the_root_carries_a_workflow_node_metadata(
         self, aiida_profile_clean: object, tmp_path: Path
