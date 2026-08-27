@@ -1,9 +1,12 @@
 """Tests for input file parsing."""
 
 import json
+import re
+from importlib import import_module
 from pathlib import Path
 
 import pytest
+from aiida_koopmans.owned_keywords import OWNED
 
 from koopmans.input_file import (
     INPUT_FILE_FORMAT_VERSION,
@@ -11,6 +14,7 @@ from koopmans.input_file import (
     migrate_input_dict,
     read_input_file,
 )
+from koopmans.input_file._codegen import MODULES, REASONS
 from koopmans.input_file.workflow import Task
 
 # The silicon tutorial input file, relative to the tutorials directory.
@@ -723,61 +727,31 @@ class TestPathDensityRename:
         assert inp.kpoints.path_density == 20.0
 
 
-# (section, keyword, a value the DFPT route would never accept from the user,
-# a substring of the input-file setting that actually owns it).
-_KCW_ROUTE_OWNED_KEYS = [
-    ("calculator_parameters.kcw.control", "calculation", "wann2kcw", "kcw.x step being run"),
-    ("calculator_parameters.kcw.control", "prefix", "custom", "koopmans"),
-    ("calculator_parameters.kcw.control", "outdir", "custom_outdir", "koopmans"),
-    ("calculator_parameters.kcw.control", "mp1", 4, "kpoints"),
-    ("calculator_parameters.kcw.control", "mp2", 4, "kpoints"),
-    ("calculator_parameters.kcw.control", "mp3", 4, "kpoints"),
-    ("calculator_parameters.kcw.control", "l_vcut", True, "workflow.gb_correction"),
-    ("calculator_parameters.kcw.control", "spin_component", 2, "workflow.spin"),
-    ("calculator_parameters.kcw.control", "kcw_at_ks", False, "workflow.init_orbitals"),
-    ("calculator_parameters.kcw.control", "read_unitary_matrix", True, "workflow.init_orbitals"),
-    (
-        "calculator_parameters.kcw.wannier",
-        "seedname",
-        "wann",
-        "block Wannierization's product files",
-    ),
-    (
-        "calculator_parameters.kcw.wannier",
-        "num_wann_occ",
-        4,
-        "calculator_parameters.wannier90.projections",
-    ),
-    (
-        "calculator_parameters.kcw.wannier",
-        "num_wann_emp",
-        2,
-        "calculator_parameters.wannier90.projections",
-    ),
-    (
-        "calculator_parameters.kcw.wannier",
-        "have_empty",
-        True,
-        "calculator_parameters.wannier90.projections",
-    ),
-    (
-        "calculator_parameters.kcw.wannier",
-        "has_disentangle",
-        True,
-        "disentanglement window",
-    ),
-    ("calculator_parameters.kcw.screen", "i_orb", 3, "workflow.group_orbitals_by"),
-    ("calculator_parameters.kcw.screen", "check_spread", True, "workflow.group_orbitals_by"),
-    ("calculator_parameters.kcw.screen", "eps_inf", 5.0, "workflow.eps_inf"),
-    ("calculator_parameters.kcw.ham", "do_bands", True, "kpoints.path"),
+# The kcw.x models the generator emits, each with the input-file path it is
+# mounted at.
+_KCW_MODELS = [
+    model for module in MODULES if module.filename == "kcw.py" for model in module.models
 ]
 
+# (input-file path, ownership block, keyword). Read off the ownership roster
+# rather than restated here, so a keyword the DFPT route starts determining
+# is covered the moment ``aiida_koopmans`` declares it.
+_KCW_ROUTE_OWNED_KEYS = [
+    (model.path, model.block, keyword)
+    for model in _KCW_MODELS
+    for keyword in sorted(OWNED[model.block])
+]
 
-# Every remaining field of every kcw.x namelist model, with a non-default
-# value: together with ``_KCW_ROUTE_OWNED_KEYS`` this is the full field list
-# of ``ControlNamelist``/``WannierNamelist``/``ScreenNamelist``/``HamNamelist``
-# (checked by the ``python3 -c "...model_fields..."`` audit in koopmans2#164),
-# so every field is exercised as either owned or pass-through.
+# (section, keyword, the value the DFPT route forces anyway).
+_KCW_ROUTE_FORCED_VALUES = [
+    ("calculator_parameters.kcw.control", "kcw_at_ks", False),
+    ("calculator_parameters.kcw.control", "read_unitary_matrix", True),
+    ("calculator_parameters.kcw.control", "l_vcut", True),
+    ("calculator_parameters.kcw.control", "spin_component", 1),
+    ("calculator_parameters.kcw.ham", "do_bands", False),
+]
+
+# Every keyword the kcw.x models still declare, with a non-default value.
 _KCW_PASSTHROUGH_KEYS = [
     ("calculator_parameters.kcw.control", "kcw_iverbosity", 2),
     ("calculator_parameters.kcw.control", "lrpa", True),
@@ -803,44 +777,49 @@ class TestKcwCalculatorParameters:
     """``calculator_parameters.kcw`` mounts the kcw.x namelists (koopmans2#164)."""
 
     @pytest.mark.parametrize(
-        ("section", "keyword", "value", "owner_snippet"),
+        ("section", "block", "keyword"),
         _KCW_ROUTE_OWNED_KEYS,
-        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[1]}" for case in _KCW_ROUTE_OWNED_KEYS],
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[2]}" for case in _KCW_ROUTE_OWNED_KEYS],
     )
-    def test_route_owned_key_is_rejected(
-        self, section: str, keyword: str, value: object, owner_snippet: str
-    ) -> None:
-        """A user-set route-owned key fails at parse, naming the key and its owner."""
+    def test_route_owned_key_is_rejected(self, section: str, block: str, keyword: str) -> None:
+        """A key the DFPT route determines fails at parse, naming what to set instead."""
         d = _si_input_with({"ecutwfc": 20.0})
-        _set_keyword(d, section, keyword, value)
+        _set_keyword(d, section, keyword, 1)
 
         with pytest.raises(ValueError) as excinfo:
             KoopmansInput.model_validate(d)
 
         message = str(excinfo.value)
-        assert f"`{section}.{keyword}`" in message
-        assert owner_snippet in message
+        assert f"`{section}.{keyword}` is not a koopmans keyword" in message
+        assert REASONS[block][keyword] in message
 
-    def test_restating_the_default_is_accepted(self) -> None:
-        """A route-owned key stated at its own default is not rejected.
+    @pytest.mark.parametrize(
+        ("section", "keyword", "value"),
+        _KCW_ROUTE_FORCED_VALUES,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[1]}" for case in _KCW_ROUTE_FORCED_VALUES],
+    )
+    def test_restating_the_forced_value_is_rejected_too(
+        self, section: str, keyword: str, value: object
+    ) -> None:
+        """The keyword is gone, so agreeing with the route is refused like disagreeing.
 
-        The check compares against the field's default, not whether it was
-        written: ``KoopmansInput.model_dump()`` states every field
-        explicitly (e.g. the shallow ``model_copy`` pattern
-        ``TestKcpDscfInputs`` uses elsewhere), so a "was it written" check
-        would misfire on any such round trip.
+        Accepting the agreeing spelling is what an earlier check did: it
+        compared the field against its declared default, so whichever value
+        that was passed and was then overwritten by the route anyway.
         """
-        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"control": {"l_vcut": False}}})
-        inp = KoopmansInput.model_validate(d)
-        assert inp.calculator_parameters.kcw.control.l_vcut is False
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, value)
+
+        with pytest.raises(ValueError, match=rf"`{re.escape(section)}\.{keyword}`"):
+            KoopmansInput.model_validate(d)
 
     def test_dump_and_revalidate_roundtrips(self) -> None:
         """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks.
 
-        The regression this reproduces: dumping populates every kcw namelist
-        field (including the route-owned ones, at their defaults), and a
-        ``model_fields_set``-based check saw all of them as "written" on
-        re-validation.
+        ``model_dump()`` states every field explicitly, so a check keyed on
+        presence rather than on the keyword being gone from the schema would
+        refuse any input round-tripped this way — a pattern koopmans itself
+        uses to re-validate a modified input.
         """
         inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
         KoopmansInput.model_validate(inp.model_dump())
@@ -853,58 +832,33 @@ class TestKcwCalculatorParameters:
     def test_pass_through_keyword_is_accepted_as_stated(
         self, section: str, keyword: str, value: object
     ) -> None:
-        """Every field the DFPT route does not own is settable and comes back unchanged.
-
-        Together with ``test_route_owned_key_is_rejected``, this covers
-        every field of every kcw.x namelist model — see the module docstrings
-        of ``ControlNamelist`` / ``WannierNamelist`` / ``ScreenNamelist`` /
-        ``HamNamelist`` for why each of these is a genuine pass-through.
-        """
+        """Every keyword the DFPT route does not determine is settable and comes back unchanged."""
         d = _si_input_with({"ecutwfc": 20.0})
         _set_keyword(d, section, keyword, value)
 
         inp = KoopmansInput.model_validate(d)
 
-        namelist = inp.calculator_parameters.kcw
+        namelist: object = inp.calculator_parameters.kcw
         for part in section.split(".")[2:]:  # drop "calculator_parameters", "kcw"
             namelist = getattr(namelist, part)
         assert getattr(namelist, keyword) == value
 
-    def test_every_namelist_field_is_owned_or_passthrough(self) -> None:
-        """Every declared field of every kcw.x namelist model is accounted for.
+    def test_every_declared_keyword_is_exercised(self) -> None:
+        """No kcw.x keyword reaches the input file untested.
 
-        Guards the koopmans2#164 completeness audit: a pydantic-espresso
-        model regenerated with a new field must land in
-        ``_KCW_ROUTE_OWNED_KEYS`` or ``_KCW_PASSTHROUGH_KEYS`` before it can
-        silently reach, or be silently overwritten by, the DFPT route.
+        A pydantic-espresso model regenerated with a new keyword must land in
+        ``_KCW_PASSTHROUGH_KEYS`` — or in the ownership roster, which drops it
+        from the schema — before it can quietly become settable.
         """
-        from pydantic import BaseModel as PydanticBaseModel
-
-        from koopmans.input_file.kcw import (
-            ControlNamelist,
-            HamNamelist,
-            ScreenNamelist,
-            WannierNamelist,
-        )
-
-        models: dict[str, type[PydanticBaseModel]] = {
-            "calculator_parameters.kcw.control": ControlNamelist,
-            "calculator_parameters.kcw.wannier": WannierNamelist,
-            "calculator_parameters.kcw.screen": ScreenNamelist,
-            "calculator_parameters.kcw.ham": HamNamelist,
-        }
-        accounted: dict[str, set[str]] = {section: set() for section in models}
-        for section, keyword, *_rest in _KCW_ROUTE_OWNED_KEYS:
-            accounted[section].add(keyword)
+        exercised: dict[str, set[str]] = {model.path: set() for model in _KCW_MODELS}
         for section, keyword, _value in _KCW_PASSTHROUGH_KEYS:
-            accounted[section].add(keyword)
+            exercised[section].add(keyword)
 
-        for section, model in models.items():
-            declared = set(model.model_fields)
-            assert accounted[section] == declared, (
-                f"{section}: {declared - accounted[section]} are neither rejected nor "
-                "exercised as pass-through."
+        for model in _KCW_MODELS:
+            declared = set(
+                getattr(import_module("koopmans.input_file.kcw"), model.emitted).model_fields
             )
+            assert exercised[model.path] == declared, model.path
 
     def test_defaults_leave_every_namelist_unset(self) -> None:
         """With no ``kcw`` block, every namelist states nothing explicitly."""

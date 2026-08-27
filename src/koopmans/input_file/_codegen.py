@@ -132,6 +132,44 @@ MODULES: list[GeneratedModule] = [
         ],
     ),
     GeneratedModule(
+        "kcw.py",
+        "Restricted ``kcw.x`` namelists.",
+        [
+            GeneratedModel(
+                "pydantic_espresso.models.kcw.develop",
+                "ControlNamelist",
+                "ControlNamelist",
+                "kcw.CONTROL",
+                "calculator_parameters.kcw.control",
+                "``CONTROL`` namelist for ``kcw.x`` calculations.",
+            ),
+            GeneratedModel(
+                "pydantic_espresso.models.kcw.develop",
+                "WannierNamelist",
+                "WannierNamelist",
+                "kcw.WANNIER",
+                "calculator_parameters.kcw.wannier",
+                "``WANNIER`` namelist for ``kcw.x`` calculations.",
+            ),
+            GeneratedModel(
+                "pydantic_espresso.models.kcw.develop",
+                "ScreenNamelist",
+                "ScreenNamelist",
+                "kcw.SCREEN",
+                "calculator_parameters.kcw.screen",
+                "``SCREEN`` namelist for ``kcw.x`` calculations.",
+            ),
+            GeneratedModel(
+                "pydantic_espresso.models.kcw.develop",
+                "HamNamelist",
+                "HamNamelist",
+                "kcw.HAM",
+                "calculator_parameters.kcw.ham",
+                "``HAM`` namelist for ``kcw.x`` calculations.",
+            ),
+        ],
+    ),
+    GeneratedModule(
         "wannier90.py",
         "Restricted ``wannier90.x`` input.",
         [
@@ -198,6 +236,54 @@ REASONS: dict[str, dict[str, str]] = {
         "outdir": _AIIDA,
         "seedname": _AIIDA,
         "spin_component": f"{_SPIN} koopmans runs one pw2wannier90.x per spin channel.",
+    },
+    "kcw.CONTROL": {
+        "calculation": (
+            "koopmans runs the kcw.x chain itself: the Wannier gauge, the screening "
+            "and the Hamiltonian in turn."
+        ),
+        "prefix": _AIIDA,
+        "outdir": _AIIDA,
+        "mp1": "The k-point mesh comes from the `kpoints` block.",
+        "mp2": "The k-point mesh comes from the `kpoints` block.",
+        "mp3": "The k-point mesh comes from the `kpoints` block.",
+        "l_vcut": "Set `workflow.gb_correction`.",
+        "spin_component": f"{_SPIN} koopmans runs one kcw.x chain per spin channel.",
+        "kcw_at_ks": "koopmans screens Wannier functions, and always feeds kcw.x the matrices that define them.",
+        "read_unitary_matrix": "koopmans screens Wannier functions, and always feeds kcw.x the matrices that define them.",
+    },
+    "kcw.WANNIER": {
+        "seedname": (
+            "koopmans writes the wannier90 products under one seedname and points kcw.x at them."
+        ),
+        "num_wann_occ": (
+            "The manifold sizes follow from `calculator_parameters.wannier90.projections`."
+        ),
+        "num_wann_emp": (
+            "The manifold sizes follow from `calculator_parameters.wannier90.projections`."
+        ),
+        "have_empty": (
+            "Whether there is an empty manifold follows from "
+            "`calculator_parameters.wannier90.projections`."
+        ),
+        "has_disentangle": (
+            "Whether the empty manifold is disentangled follows from "
+            "`calculator_parameters.wannier90.projections` and the band count."
+        ),
+    },
+    "kcw.SCREEN": {
+        "i_orb": (
+            "koopmans screens every orbital at once, or one representative per group; "
+            "`workflow.group_orbitals_by` chooses which."
+        ),
+        "check_spread": (
+            "koopmans matches the kcw.x spread shortcut to how it screens; set "
+            "`workflow.group_orbitals_by` to group orbitals."
+        ),
+        "eps_inf": "Set `workflow.eps_inf`.",
+    },
+    "kcw.HAM": {
+        "do_bands": "An interpolated band structure runs whenever `kpoints.path` gives a path.",
     },
     "wannier90": {
         "num_wann": "The band counts follow from `calculator_parameters.wannier90.projections`.",

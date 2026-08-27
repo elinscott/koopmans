@@ -147,8 +147,8 @@ class TestDriftAlarms:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A claimed block no model covers would leave its keywords in the input file."""
-        monkeypatch.setitem(OWNED, "kcw.CONTROL", frozenset({"prefix"}))
-        with pytest.raises(ValueError, match=r"kcw.CONTROL, which no generated model covers"):
+        monkeypatch.setitem(OWNED, "pp.INPUTPP", frozenset({"prefix"}))
+        with pytest.raises(ValueError, match=r"pp.INPUTPP, which no generated model covers"):
             generate(tmp_path)
 
     def test_a_keyword_that_is_not_a_field_refuses_to_generate(
