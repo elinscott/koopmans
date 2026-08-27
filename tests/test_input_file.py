@@ -14,7 +14,7 @@ from koopmans.input_file import (
     migrate_input_dict,
     read_input_file,
 )
-from koopmans.input_file._codegen import MODULES, REASONS
+from koopmans.input_file._codegen import MODULES, REASONS, UNREACHABLE
 from koopmans.input_file.workflow import Task
 
 # The silicon tutorial input file, relative to the tutorials directory.
@@ -751,6 +751,13 @@ _KCW_ROUTE_FORCED_VALUES = [
     ("calculator_parameters.kcw.ham", "do_bands", False),
 ]
 
+# (input-file section, block, keyword) for every unreachable kcw.x keyword.
+_KCW_UNREACHABLE_KEYS = [
+    (model.path, model.block, keyword)
+    for model in _KCW_MODELS
+    for keyword in sorted(UNREACHABLE.get(model.block, {}))
+]
+
 # Every keyword the kcw.x models still declare, with a non-default value.
 _KCW_PASSTHROUGH_KEYS = [
     ("calculator_parameters.kcw.control", "kcw_iverbosity", 2),
@@ -763,7 +770,6 @@ _KCW_PASSTHROUGH_KEYS = [
     ("calculator_parameters.kcw.control", "irr_bz", True),
     ("calculator_parameters.kcw.control", "use_wct", True),
     ("calculator_parameters.kcw.wannier", "check_ks", False),
-    ("calculator_parameters.kcw.wannier", "alpha_mix", [0.5, 0.5]),
     ("calculator_parameters.kcw.screen", "niter", 50),
     ("calculator_parameters.kcw.screen", "nmix", 6),
     ("calculator_parameters.kcw.screen", "tr2", 1.0e-16),
@@ -812,6 +818,27 @@ class TestKcwCalculatorParameters:
 
         with pytest.raises(ValueError, match=rf"`{re.escape(section)}\.{keyword}`"):
             KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize(
+        ("section", "block", "keyword"),
+        _KCW_UNREACHABLE_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[2]}" for case in _KCW_UNREACHABLE_KEYS],
+    )
+    def test_unreachable_keyword_is_rejected(self, section: str, block: str, keyword: str) -> None:
+        """A keyword koopmans cannot pass through fails at parse, saying why.
+
+        Writing it would abort kcw.x at the namelist read, so accepting it
+        and forwarding it is worse than refusing it.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, [0.5, 0.5])
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}` cannot be set from a koopmans input file" in message
+        assert UNREACHABLE[block][keyword] in message
 
     def test_dump_and_revalidate_roundtrips(self) -> None:
         """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks.
@@ -868,6 +895,50 @@ class TestKcwCalculatorParameters:
         assert kcw.wannier.model_fields_set == set()
         assert kcw.screen.model_fields_set == set()
         assert kcw.ham.model_fields_set == set()
+
+
+class TestKcwScreenNeedsAScreeningStep:
+    """``kcw.screen`` configures a calculation that ``calculate_alpha: false`` skips."""
+
+    def test_a_screen_block_without_a_screening_step_is_refused(self) -> None:
+        """The namelist would be assembled and never read; say so rather than drop it."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": 50}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcw.screen` has no effect" in message
+        assert "`workflow.calculate_alpha: false`" in message
+
+    def test_the_other_namelists_are_unaffected(self) -> None:
+        """``control`` / ``wannier`` / ``ham`` reach steps that still run."""
+        d = _si_input_with(
+            {"ecutwfc": 20.0, "kcw": {"control": {"lrpa": True}, "ham": {"write_hr": False}}}
+        )
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.calculator_parameters.kcw.control.lrpa is True
+
+    def test_a_screen_block_is_fine_when_screening_runs(self) -> None:
+        """The default ``calculate_alpha: true`` runs the screen step that reads it."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": 50}}})
+        )
+
+        assert inp.calculator_parameters.kcw.screen.niter == 50
+
+    def test_the_zno_tutorial_still_parses(self, tutorials_dir: Path) -> None:
+        """The shipped ZnO input runs at ``calculate_alpha: false`` with no screen block."""
+        inp = read_input_file(tutorials_dir / "band_structures/zno/zno.json")
+
+        assert inp.workflow.calculate_alpha is False
+        assert inp.calculator_parameters.kcw.screen.model_fields_set == set()
 
 
 # (keyword, a substring of the explanation it is refused with).

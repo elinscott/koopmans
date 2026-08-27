@@ -523,6 +523,29 @@ class KoopmansInput(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def check_the_screening_step_runs(self) -> KoopmansInput:
+        """Reject ``kcw.screen`` keywords when no screening calculation runs.
+
+        ``workflow.calculate_alpha = False`` feeds ``workflow.alpha_guess``
+        straight to the Hamiltonian step, so kcw.x is never asked to solve
+        the linear-response problem the ``SCREEN`` namelist configures.
+
+        Raises:
+            ValueError: If ``calculator_parameters.kcw.screen`` states a
+                keyword and ``workflow.calculate_alpha`` is false.
+        """
+        if self.workflow.calculate_alpha:
+            return self
+        if self.calculator_parameters.kcw.screen.model_fields_set:
+            raise ValueError(
+                "`calculator_parameters.kcw.screen` has no effect with "
+                "`workflow.calculate_alpha: false`: no screening step runs, so nothing "
+                "reads that namelist. Remove the block, or set "
+                "`workflow.calculate_alpha: true`."
+            )
+        return self
+
     @classmethod
     def from_file(cls, filename: str | Path) -> KoopmansInput:
         """Load an input file and return a KoopmansInput object."""

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from aiida_koopmans.owned_keywords import OWNED
 
-__all__ = ["MODULES", "REASONS", "generate", "render"]
+__all__ = ["MODULES", "REASONS", "UNREACHABLE", "generate", "render"]
 
 _HEADER = '''\
 """{summary}
@@ -316,6 +316,24 @@ REASONS: dict[str, dict[str, str]] = {
 }
 
 
+#: Keywords a generic model declares that koopmans cannot pass through at
+#: all, and why. Distinct from :data:`REASONS`, which covers the keywords a
+#: koopmans route determines for itself: nothing here is a route decision —
+#: each is a defect in the generic model, and the keyword becomes settable
+#: again once that model is fixed. Dropped from the schema like an owned
+#: keyword, so stating one is refused rather than silently written.
+UNREACHABLE: dict[str, dict[str, str]] = {
+    "kcw.WANNIER": {
+        "alpha_mix": (
+            "kcw.x reads `alpha_mix` from its `SCREEN` namelist, and the model this "
+            "block is generated from declares it under `WANNIER`, where kcw.x aborts "
+            "reading the namelist. koopmans cannot pass it through until that is fixed "
+            "upstream; the screening runs at the kcw.x default."
+        ),
+    },
+}
+
+
 def _class_node(module: ast.Module, name: str) -> ast.ClassDef:
     """Return the class definition named ``name``.
 
@@ -344,11 +362,11 @@ def _validated_fields(node: ast.FunctionDef) -> set[str]:
     return names
 
 
-def _kept_statements(body: list[ast.stmt], owned: frozenset[str], name: str) -> list[ast.stmt]:
-    """Return the class-body statements that survive dropping ``owned``.
+def _kept_statements(body: list[ast.stmt], dropped: frozenset[str], name: str) -> list[ast.stmt]:
+    """Return the class-body statements that survive dropping ``dropped``.
 
     Raises:
-        ValueError: If an owned keyword is not a field of the class, or if a
+        ValueError: If a dropped keyword is not a field of the class, or if a
             validator covers both a dropped and a kept field.
     """
     declared = {
@@ -356,7 +374,7 @@ def _kept_statements(body: list[ast.stmt], owned: frozenset[str], name: str) -> 
         for statement in body
         if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name)
     }
-    missing = sorted(owned - declared)
+    missing = sorted(dropped - declared)
     if missing:
         raise ValueError(f"{name} declares no {', '.join(missing)}; the ownership data is stale")
 
@@ -365,14 +383,14 @@ def _kept_statements(body: list[ast.stmt], owned: frozenset[str], name: str) -> 
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
             continue  # the generic model's docstring; the emitted class has its own
         if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
-            if statement.target.id not in owned:
+            if statement.target.id not in dropped:
                 kept.append(statement)
             continue
         if isinstance(statement, ast.FunctionDef):
             covered = _validated_fields(statement)
-            if covered and covered <= owned:
+            if covered and covered <= dropped:
                 continue  # validates only keywords that no longer exist
-            if covered & owned:
+            if covered & dropped:
                 raise ValueError(
                     f"{name}.{statement.name} validates both dropped and kept keywords "
                     f"({', '.join(sorted(covered))}); split it upstream before generating"
@@ -443,6 +461,24 @@ def _reason_map(block: str) -> dict[str, str]:
     return {keyword: reasons[keyword] for keyword in sorted(owned)}
 
 
+def _unreachable_map(block: str) -> dict[str, str]:
+    """Return the unreachable keywords of ``block`` with their explanations.
+
+    Raises:
+        ValueError: If a keyword is owned as well, leaving two different
+            explanations for one removal.
+    """
+    unreachable = UNREACHABLE.get(block, {})
+    both = sorted(unreachable.keys() & OWNED.get(block, frozenset()))
+    if both:
+        raise ValueError(
+            f"{block}: {', '.join(both)} is both owned and unreachable. A keyword a route "
+            f"determines needs no second explanation; drop it from "
+            f"koopmans.input_file._codegen.UNREACHABLE."
+        )
+    return dict(sorted(unreachable.items()))
+
+
 def render(module: GeneratedModule) -> str:
     """Return the source of one generated module.
 
@@ -459,9 +495,10 @@ def render(module: GeneratedModule) -> str:
         tree = ast.parse(inspect.getsource(source))
         text = inspect.getsource(source)
         node = _class_node(tree, model.name)
-        owned = OWNED.get(model.block, frozenset())
         reasons = _reason_map(model.block)
-        kept = _kept_statements(node.body, owned, model.name)
+        unreachable = _unreachable_map(model.block)
+        dropped = frozenset(reasons) | frozenset(unreachable)
+        kept = _kept_statements(node.body, dropped, model.name)
 
         used = _used_names(kept) | {base.id for base in node.bases if isinstance(base, ast.Name)}
         model_from, model_plain = _imports(tree, used)
@@ -472,11 +509,13 @@ def render(module: GeneratedModule) -> str:
         lines = text.splitlines()
         segments = [_segment(lines, statement, model.name) for statement in kept]
         bases = ", ".join(ast.unparse(base) for base in node.bases)
-        bodies.append(_render_class(model, bases, reasons, segments))
+        bodies.append(_render_class(model, bases, reasons, unreachable, segments))
 
     from_imports["pydantic"].add("model_validator")
     from_imports["typing"].add("Any")
     from_imports["koopmans.input_file._utils"].add("raise_for_owned_keywords")
+    if any(UNREACHABLE.get(model.block) for model in module.models):
+        from_imports["koopmans.input_file._utils"].add("raise_for_unreachable_keywords")
 
     sources = dict.fromkeys(model.source for model in module.models)
     lines = [
@@ -494,29 +533,62 @@ def render(module: GeneratedModule) -> str:
 
 
 def _render_class(
-    model: GeneratedModel, bases: str, reasons: dict[str, str], segments: list[str]
+    model: GeneratedModel,
+    bases: str,
+    reasons: dict[str, str],
+    unreachable: dict[str, str],
+    segments: list[str],
 ) -> str:
     """Return the source of one generated class."""
-    constant = "_" + model.block.replace(".", "_").upper() + "_OWNED"
-    entries = "\n".join(f"    {keyword!r}: {reason!r}," for keyword, reason in reasons.items())
-    owned_map = (
-        f"#: The keywords koopmans determines, and what to set instead.\n"
-        f"{constant}: dict[str, str] = {{\n{entries}\n}}\n\n\n"
-        if reasons
-        else ""
-    )
-    validator = (
-        f'    @model_validator(mode="before")\n'
-        f"    @classmethod\n"
-        f"    def reject_owned_keywords(cls, data: Any) -> Any:\n"
-        f'        """Refuse a keyword koopmans determines, naming what to set instead."""\n'
-        f"        return raise_for_owned_keywords(data, {model.path!r}, {constant})\n\n"
-        if reasons
-        else ""
-    )
+    prefix = "_" + model.block.replace(".", "_").upper()
+    maps = ""
+    validators = ""
+    if reasons:
+        maps += _render_map(
+            f"{prefix}_OWNED",
+            "The keywords koopmans determines, and what to set instead.",
+            reasons,
+        )
+        validators += _render_validator(
+            "reject_owned_keywords",
+            "Refuse a keyword koopmans determines, naming what to set instead.",
+            "raise_for_owned_keywords",
+            model.path,
+            f"{prefix}_OWNED",
+        )
+    if unreachable:
+        maps += _render_map(
+            f"{prefix}_UNREACHABLE",
+            "The keywords koopmans cannot pass through, and why.",
+            unreachable,
+        )
+        validators += _render_validator(
+            "reject_unreachable_keywords",
+            "Refuse a keyword koopmans cannot pass through, saying why.",
+            "raise_for_unreachable_keywords",
+            model.path,
+            f"{prefix}_UNREACHABLE",
+        )
     body = "\n\n".join(segments)
     declaration = f'class {model.emitted}({bases}):\n    """{model.summary}"""\n\n'
-    return f"{owned_map}{declaration}{validator}{body}\n"
+    return f"{maps}{declaration}{validators}{body}\n"
+
+
+def _render_map(constant: str, summary: str, entries: dict[str, str]) -> str:
+    """Return the source of one keyword-to-explanation constant."""
+    lines = "\n".join(f"    {keyword!r}: {reason!r}," for keyword, reason in entries.items())
+    return f"#: {summary}\n{constant}: dict[str, str] = {{\n{lines}\n}}\n\n\n"
+
+
+def _render_validator(name: str, summary: str, helper: str, path: str, constant: str) -> str:
+    """Return the source of one ``mode="before"`` refusal validator."""
+    return (
+        f'    @model_validator(mode="before")\n'
+        f"    @classmethod\n"
+        f"    def {name}(cls, data: Any) -> Any:\n"
+        f'        """{summary}"""\n'
+        f"        return {helper}(data, {path!r}, {constant})\n\n"
+    )
 
 
 def _segment(lines: list[str], node: ast.stmt, name: str) -> str:
@@ -547,14 +619,14 @@ def generate(directory: Path | None = None) -> list[Path]:
     Returns:
         The paths written, in :data:`MODULES` order.
     """
-    ungenerated = sorted(
-        OWNED.keys() - {model.block for module in MODULES for model in module.models}
-    )
+    covered = {model.block for module in MODULES for model in module.models}
+    ungenerated = sorted((OWNED.keys() | UNREACHABLE.keys()) - covered)
     if ungenerated:
         raise ValueError(
-            f"aiida_koopmans.owned_keywords.OWNED claims {', '.join(ungenerated)}, which no "
-            f"generated model covers, so those keywords would stay in the input file. Add "
-            f"the block to koopmans.input_file._codegen.MODULES."
+            f"{', '.join(ungenerated)} is claimed in aiida_koopmans.owned_keywords.OWNED or "
+            f"in koopmans.input_file._codegen.UNREACHABLE, and no generated model covers it, "
+            f"so its keywords would stay in the input file. Add the block to "
+            f"koopmans.input_file._codegen.MODULES."
         )
     directory = directory or Path(__file__).parent / "_generated"
     directory.mkdir(exist_ok=True)

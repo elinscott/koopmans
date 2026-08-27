@@ -7,7 +7,7 @@ Do not edit: run ``just generate-input-models`` instead.
 
 # ruff: noqa
 
-from koopmans.input_file._utils import raise_for_owned_keywords
+from koopmans.input_file._utils import raise_for_owned_keywords, raise_for_unreachable_keywords
 from pydantic import Field, field_validator, model_validator
 from pydantic_espresso.namelist import Namelist
 from pydantic_espresso.quantity import Quantity
@@ -141,6 +141,12 @@ _KCW_WANNIER_OWNED: dict[str, str] = {
 }
 
 
+#: The keywords koopmans cannot pass through, and why.
+_KCW_WANNIER_UNREACHABLE: dict[str, str] = {
+    'alpha_mix': 'kcw.x reads `alpha_mix` from its `SCREEN` namelist, and the model this block is generated from declares it under `WANNIER`, where kcw.x aborts reading the namelist. koopmans cannot pass it through until that is fixed upstream; the screening runs at the kcw.x default.',
+}
+
+
 class WannierNamelist(Namelist):
     """``WANNIER`` namelist for ``kcw.x`` calculations."""
 
@@ -150,21 +156,18 @@ class WannierNamelist(Namelist):
         """Refuse a keyword koopmans determines, naming what to set instead."""
         return raise_for_owned_keywords(data, 'calculator_parameters.kcw.wannier', _KCW_WANNIER_OWNED)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_unreachable_keywords(cls, data: Any) -> Any:
+        """Refuse a keyword koopmans cannot pass through, saying why."""
+        return raise_for_unreachable_keywords(data, 'calculator_parameters.kcw.wannier', _KCW_WANNIER_UNREACHABLE)
+
     check_ks: bool = Field(
         False,
         description=dedent(
             """\
             Specify if a diagonalization of the KS matrix build using the wannier function in input
             has to be performed. This is mainly for debugging purpose."""
-        ),
-    )
-
-    alpha_mix: list[float] | None = Field(
-        None,
-        description=dedent(
-            """\
-            Mixing factor (for each iteration) for updating the scf potential:  vnew(in) =
-            alpha_mix*vold(out) + (1-alpha_mix)*vold(in)"""
         ),
     )
 
