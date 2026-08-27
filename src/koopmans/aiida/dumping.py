@@ -494,19 +494,32 @@ def _nest_by_link_label(flat: dict[str, Any]) -> dict[str, Any]:
     return nested
 
 
+_COMPOUND_SUFFIX_PREFIXES = frozenset({".tar"})
+
+
 def _lone_file(node: orm.Data, name: str) -> tuple[str, str] | None:
     """Return ``node``'s single repository file and the entry it becomes.
 
     Answers ``None`` unless the repository holds exactly one object and
     that object is a file at its root; the entry is ``name`` carrying
-    that file's suffix.
+    that file's suffix. The suffix is the filename's last dot-separated
+    component, extended by one more when the component before it is a
+    known compound prefix (:data:`_COMPOUND_SUFFIX_PREFIXES`) — so
+    ``bundle.tar.gz`` keeps ``.tar.gz`` whole, while a version-numbered
+    name like ``H_ONCV_PBE-1.0.upf`` (suffixes ``.0``, ``.upf``) keeps
+    only ``.upf``.
     """
     from aiida.repository.common import FileType
 
     objects = node.base.repository.list_objects()
     if len(objects) != 1 or objects[0].file_type is not FileType.FILE:
         return None
-    return objects[0].name, name + PurePosixPath(objects[0].name).suffix
+    suffixes = PurePosixPath(objects[0].name).suffixes
+    if len(suffixes) >= 2 and suffixes[-2] in _COMPOUND_SUFFIX_PREFIXES:
+        suffix = "".join(suffixes[-2:])
+    else:
+        suffix = suffixes[-1] if suffixes else ""
+    return objects[0].name, name + suffix
 
 
 def _merge_move(source: Path, target: Path) -> None:
@@ -538,6 +551,12 @@ def write_flat_io_listing(
     content lands under ``alphas/``. A node that is neither writes
     nothing.
 
+    A name a retrieved file already holds — the calculation itself wrote
+    ``<label>.json`` under ``directory`` — falls back to the ``<label>/``
+    directory form, mirroring :func:`_place_repository`'s own collision
+    fallback: the value lands at ``<label>/<label>.json`` instead of
+    overwriting the retrieved file.
+
     :param links: The ``(link_label, node)`` pairs to write.
     :param directory: Where the entries go; created if anything is written.
     :param staged: Where the repositories already sit as
@@ -556,6 +575,9 @@ def write_flat_io_listing(
     for name, value in _nest_by_link_label(values).items():
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{name}.json"
+        if path.exists():
+            path = directory / name / f"{name}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
         written.append(path)
     return written

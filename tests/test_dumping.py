@@ -1698,6 +1698,79 @@ class TestFlatEntryNames:
         assert (outputs / "report.txt").read_bytes() == b"stdout"
         assert (outputs / "report" / "r.txt").read_bytes() == b"linked"
 
+    def test_a_compound_suffix_survives_whole(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """``bundle.tar.gz`` keeps both parts of its suffix, not just ``.gz``."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        attach(calc, "tarred", orm.SinglefileData(io.BytesIO(b"t"), filename="bundle.tar.gz"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "tarred.tar.gz").read_bytes() == b"t"
+
+    def test_a_version_numbered_name_keeps_only_its_final_suffix(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """``H_ONCV_PBE-1.0.upf`` becomes ``<label>.upf``, not ``<label>.0.upf``.
+
+        The digit before the real suffix is part of the pseudopotential's
+        own version number, not a compound suffix like ``.tar.gz``.
+        """
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        attach(
+            calc,
+            "pseudos__H",
+            orm.SinglefileData(io.BytesIO(b"pp"), filename="H_ONCV_PBE-1.0.upf"),
+        )
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "pseudos" / "H.upf").read_bytes() == b"pp"
+
+    def test_a_retrieved_file_of_the_same_name_is_not_overwritten(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A JSON-valued link whose name collides with a retrieved file backs off.
+
+        The calculation retrieved ``results.json`` itself; a linked
+        ``results`` output with a JSON form must not clobber it, so it
+        falls back to ``results/results.json`` the way a repository-backed
+        entry falls back to a directory on the same collision.
+        """
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "results.json").write_text("RETRIEVED-ORIGINAL")
+        attach(calc, "retrieved", orm.FolderData(tree=str(tree)))
+        attach(calc, "results", orm.Dict({"a": 1}))  # type: ignore[no-untyped-call]
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "results.json").read_text() == "RETRIEVED-ORIGINAL"
+        assert json.loads((outputs / "results" / "results.json").read_text()) == {"a": 1}
+
 
 class TestHoistDropsRedundantWorkflowReturn:
     """A wrapper's RETURN echo of its own direct CalcJob's output is dropped.
