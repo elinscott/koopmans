@@ -740,31 +740,39 @@ def _is_calcjob_step(node: orm.ProcessNode) -> bool:
     return process_class is not PythonJob
 
 
-def _direct_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
-    """Return the pks a direct CalcJob ``CALL_CALC`` child of ``node`` created.
+def _subtree_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
+    """Return the pks a CalcJob anywhere below ``node`` created.
 
-    Only a one-hop CalcJob child counts. A CalcJob is the only kind of
-    calculation child whose own folder ever survives to hold the value
-    under its own label (:func:`_is_calcjob_step`), and
-    :func:`_hoist_lone_calculations` only ever merges a wrapping step's
-    *own* calculation folder up into it, never a grandchild's — so a value
-    that only becomes redundant two or more layers down (the root
-    re-exporting ``RunFinalKI``'s own re-export of ``ki_final``'s output)
-    is not caught here, and neither is one a pruned pyfunction child
-    created (``ComputeScreeningParameters``'s ``alphas``): dropping either
-    would delete the only copy the dump ever shows.
+    A CalcJob is the only kind of calculation whose own folder survives to
+    hold the value under its own label (:func:`_is_calcjob_step`), so
+    wherever in the subtree it sits, its value is already on disk once and
+    an enclosing graph's ``RETURN`` echo of it would be a second listing of
+    the same node. The whole subtree is walked because a graph's direct
+    child is often a transparent wrapper — a ``PwBaseWorkChain`` around one
+    ``PwCalculation``, a ``Wannier90WorkChain`` around the three
+    wannier90 steps — whose own folder holds the calculation rather than
+    being it.
+
+    A value no CalcJob below made is never dropped: not one a pruned
+    pyfunction child created (``ComputeScreeningParameters``'s ``alphas``),
+    and not one produced outside this graph and handed in, which a
+    workflow may legitimately re-export.
     """
     from aiida import orm
     from aiida.common import LinkType
 
     created: set[int] = set()
-    for call_link in node.base.links.get_outgoing(link_type=LinkType.CALL_CALC).all():
-        child = call_link.node
-        if not isinstance(child, orm.ProcessNode) or not _is_calcjob_step(child):
-            continue
-        for create_link in child.base.links.get_outgoing(link_type=LinkType.CREATE).all():
-            if create_link.node.pk is not None:
-                created.add(create_link.node.pk)
+    for call_type in (LinkType.CALL_CALC, LinkType.CALL_WORK):
+        for call_link in node.base.links.get_outgoing(link_type=call_type).all():
+            child = call_link.node
+            if not isinstance(child, orm.ProcessNode):
+                continue
+            if isinstance(child, orm.WorkflowNode):
+                created.update(_subtree_calculation_created_pks(child))
+            elif _is_calcjob_step(child):
+                for create_link in child.base.links.get_outgoing(link_type=LinkType.CREATE).all():
+                    if create_link.node.pk is not None:
+                        created.add(create_link.node.pk)
     return frozenset(created)
 
 
@@ -827,28 +835,21 @@ def _write_step_io(node: orm.ProcessNode, folder: Path, placed: _PlacedFiles) ->
     since its ``INPUT_WORK`` links point at the same Data its own
     calculations already read.
 
-    A workflow wrapping exactly one CalcJob is later hoisted into that
-    CalcJob's own folder (:func:`_hoist_lone_calculations`). Any RETURN
-    value the workflow's own direct CalcJob child already created is
-    dropped before writing (:func:`_direct_calculation_created_pks`) —
-    the same node under a second name — so a wrapper that only echoes
-    its CalcJob writes nothing at all, and the pre-existing
-    single-calculation check runs exactly as it did before this listing
-    existed. A value genuinely produced elsewhere is never dropped: not
-    one assembled deeper in the workflow's own subtree (e.g.
-    ``ComputeScreeningParameters``'s ``alphas``, assembled by a
-    pyfunction whose own folder is pruned — see
-    :class:`TestWorkflowReturnKeepsPyfunctionCreatedValue` in
-    ``tests/test_dumping.py``), and not a value re-exported from a
-    pyfunction child *of this same wrapper* either, by the same rule.
-    Repeating a value up several enclosing graphs this way — the same
-    node visible in more than one ``outputs`` listing under a label each
-    graph chose for itself — is accepted, not deduplicated further: only
-    a *surviving CalcJob folder* ever makes an echo redundant, so a
-    wrapper holding one such kept value keeps its own folder too, and
-    its CalcJob stays nested rather than being hoisted (see
-    :class:`TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn` in
-    ``tests/test_dumping.py``).
+    A RETURN value that a CalcJob anywhere below this workflow created is
+    dropped before writing (:func:`_subtree_calculation_created_pks`):
+    that calculation's own folder already lists it, and the echo would be
+    the same node under a second name. A workflow that only echoes what
+    its subtree made therefore writes nothing at all and, holding just
+    the one calculation, is hoisted into it.
+
+    A value no CalcJob below made is never dropped: not one a pyfunction
+    assembled, whose own folder is pruned (``ComputeScreeningParameters``'s
+    ``alphas`` — see :class:`TestWorkflowReturnKeepsPyfunctionCreatedValue`
+    in ``tests/test_dumping.py``), and not one produced outside the
+    workflow and handed in. A workflow holding such a value keeps its own
+    folder, and its calculation stays nested rather than being hoisted
+    (see :class:`TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn`
+    in ``tests/test_dumping.py``).
 
     :param node: The process the folder was dumped from.
     :param folder: The step's own dumped folder.
@@ -868,7 +869,7 @@ def _write_step_io(node: orm.ProcessNode, folder: Path, placed: _PlacedFiles) ->
             outputs = [(label, n) for label, n in outputs if n.base.repository.list_object_names()]
     elif isinstance(node, orm.WorkflowNode) and not isinstance(node, orm.WorkFunctionNode):
         inputs = []
-        outputs = _data_links(node, LinkType.RETURN, False, _direct_calculation_created_pks(node))
+        outputs = _data_links(node, LinkType.RETURN, False, _subtree_calculation_created_pks(node))
     else:
         return []
 

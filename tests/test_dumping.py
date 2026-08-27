@@ -2118,12 +2118,115 @@ class TestHoistDropsRedundantWorkflowReturn:
         assert (outputs / "eigenvalues.dat").read_text() == "eigenvalues"
 
 
+class TestReturnDedupLooksThroughWrappers:
+    """A graph drops an echo of what any calculation below it made.
+
+    The shape every upstream-wrapped step has: a workgraph calls a
+    ``PwBaseWorkChain``/``ProjwfcBaseWorkChain``, which calls the one
+    calculation. The calculation's own folder is hoisted up into the
+    wrapper's, so the value sits in the graph's own subtree under the
+    calculation's label — but the graph's direct child is the wrapper,
+    not the calculation, so a one-hop rule left the graph mirroring the
+    whole listing beside it.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def test_a_graph_over_a_wrapped_calculation_lists_nothing_of_its_own(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The mirror listing goes, and the wrapper collapses onto the calculation."""
+        import io
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        graph = make_process("aiida.workflows:workgraph.engine", caller=root, link_label="projwfc")
+        wrapper = make_process("aiida.workflows:core.pw.base", caller=graph, link_label="projwfc")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="iteration_01",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        projections = attach(
+            calc, "projections", orm.SinglefileData(io.BytesIO(b"p"), filename="proj.dat")
+        )
+        for echo in (wrapper, graph):
+            projections.base.links.add_incoming(
+                echo, link_type=LinkType.RETURN, link_label="projections"
+            )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        # The wrapper takes over the calculation's folder and holds the
+        # output once. The graph above it lists nothing of its own —
+        # before the fix it kept an ``outputs`` mirroring that listing
+        # entry for entry, beside the wrapper's folder.
+        graph_folder = dumped / "01-projwfc"
+        assert (graph_folder / "01-projwfc" / "outputs" / "projections.dat").read_bytes() == b"p"
+        assert [p.name for p in graph_folder.iterdir()] == ["01-projwfc"]
+
+    def test_a_value_made_outside_the_graph_is_still_echoed(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The discriminating case: a RETURN of a node no calculation below made.
+
+        A ``Wannier90WorkChain`` re-exports the ``nscf`` results it was
+        handed. Nothing in its own subtree created them, so its listing
+        is the only place they appear under its own labels.
+        """
+        import io
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        elsewhere = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="nscf",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        handed_in = attach(
+            elsewhere, "charge_density", orm.SinglefileData(io.BytesIO(b"rho"), filename="rho.dat")
+        )
+        graph = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize"
+        )
+        make_process(
+            self.ARITHMETIC_ADD,
+            caller=graph,
+            link_label="wannier90",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        handed_in.base.links.add_incoming(
+            graph, link_type=LinkType.RETURN, link_label="nscf__charge_density"
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        echoed = dumped / "02-wannierize" / "outputs" / "nscf" / "charge_density.dat"
+        assert echoed.read_bytes() == b"rho"
+
+
 class TestWorkflowReturnKeepsPyfunctionCreatedValue:
     """A wrapper's RETURN echo of a pyfunction child's output is never dropped.
 
-    The redundant-echo rule in :func:`koopmans.aiida.dumping._direct_calculation_created_pks`
-    only excludes a direct *CalcJob* child's own output — a pyfunction
-    child's folder is pruned regardless of what it returns
+    The redundant-echo rule in
+    :func:`koopmans.aiida.dumping._subtree_calculation_created_pks` only
+    excludes what a *CalcJob* below made — a pyfunction child's folder is
+    pruned regardless of what it returns
     (:func:`koopmans.aiida.dumping._is_calcjob_step`), so its value would
     vanish entirely from the dump if the wrapper's RETURN were dropped too.
     """
