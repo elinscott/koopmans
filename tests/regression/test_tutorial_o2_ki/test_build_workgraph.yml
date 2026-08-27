@@ -471,7 +471,6 @@ raw:
     graph_class:
       callable_name: WorkGraph
       module_path: aiida_workgraph.workgraph
-    graph_type: NORMAL
     pk: <scrubbed:pk>
   name: KoopmansDSCFWorkflow
   platform_version: <scrubbed:platform_version>
