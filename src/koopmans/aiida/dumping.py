@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import warnings
 from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
@@ -86,6 +87,9 @@ _NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
 _DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safeguard")
 
 _DIGEST_BLOCK = 1 << 20
+
+# Sentinel for "no value here", distinct from a staged JSON value of None.
+_MISSING = object()
 
 _SYMLINK_README = """\
 Some files here appear in more than one step: an input staged from an
@@ -454,27 +458,41 @@ def _describes_a_workflow(metadata_path: Path) -> bool:
     return isinstance(node_type, str) and node_type.startswith("process.workflow.")
 
 
-def _read_staged_json(label: str, staged: Path) -> tuple[bool, Any]:
-    """Return whether ``label``'s value was written under ``staged``, and it.
+def _read_staged_json(label: str, node: orm.Data, staged: Path) -> tuple[bool, Any]:
+    """Return whether ``node`` is JSON-valued, and ``label``'s staged value.
 
-    aiida-core's own ``include_data_json`` already wrote it: one file per
-    top-level namespace (``label.split("__")[0]``), nested the same way
-    :func:`_nest_by_link_label` builds it here. This descends that file
-    to ``label``'s own slot rather than asking the node directly, so a
-    repository-less node's value is read once, not serialised twice.
+    A node is JSON-valued exactly when its repository holds nothing
+    (``not node.base.repository.list_object_names()``) — the same
+    predicate aiida-core's own ``include_data_json`` branches on. For
+    such a node, the value aiida-core already wrote is looked up: one
+    file per top-level namespace (``label.split("__")[0]``), nested the
+    same way :func:`_nest_by_link_label` builds it here, descended to
+    ``label``'s own slot.
 
-    Answers ``(False, None)`` for a repository-backed node (no such file
-    exists) and for a label aiida-core dropped as a clash of its own.
+    A repository-less node whose slot is missing from that file is an
+    aiida-core nesting clash, not a repository-backed node in disguise:
+    this warns, naming ``label``, and answers ``(False, None)`` so the
+    caller skips it rather than treating it as repository-backed.
     """
-    parts = label.split("__")
-    path = staged / f"{parts[0]}.json"
-    if not path.exists():
+    if node.base.repository.list_object_names():
         return False, None
-    value: Any = json.loads(path.read_text())
-    for part in parts[1:]:
-        if not isinstance(value, dict) or part not in value:
-            return False, None
-        value = value[part]
+
+    parts = label.split("__")
+    value: Any = _MISSING
+    path = staged / f"{parts[0]}.json"
+    if path.exists():
+        value = json.loads(path.read_text())
+        for part in parts[1:]:
+            value = value[part] if isinstance(value, dict) and part in value else _MISSING
+            if value is _MISSING:
+                break
+
+    if value is _MISSING:
+        warnings.warn(
+            f"aiida-core staged no JSON for repository-less link {label!r}; skipping it",
+            stacklevel=2,
+        )
+        return False, None
     return True, value
 
 
@@ -572,7 +590,7 @@ def write_flat_io_listing(
     """
     values: dict[str, Any] = {}
     for label, node in links:
-        found, value = _read_staged_json(label, staged)
+        found, value = _read_staged_json(label, node, staged)
         if found:
             values[label] = value
         else:

@@ -1244,6 +1244,55 @@ class TestDumpedNodeMetadata:
         ]
 
 
+class TestReadStagedJson:
+    """Whether a node is JSON-valued is decided from the node, not the staged file."""
+
+    def test_a_repository_backed_node_is_never_read_as_json(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A repository-backed node answers ``(False, None)``, whatever ``staged`` holds.
+
+        A same-named staged file existing by coincidence must never be
+        read for a node that carries its own repository content — that
+        would misreport a file-backed node as JSON-valued.
+        """
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import _read_staged_json
+
+        node = orm.SinglefileData(io.BytesIO(b"hello"), filename="f.txt").store()
+        staged = tmp_path / "staged"
+        staged.mkdir()
+        (staged / "report.json").write_text('{"report": 1}')
+
+        found, value = _read_staged_json("report", node, staged)
+
+        assert (found, value) == (False, None)
+
+    def test_a_repository_less_node_with_no_staged_slot_warns_and_is_skipped(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A missing staged slot for a repository-less node is an aiida-core nesting clash.
+
+        Warns naming the label, and answers ``(False, None)`` rather than
+        silently falling back to treating the node as repository-backed.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import _read_staged_json
+
+        node = orm.Dict({"x": 1}).store()  # type: ignore[no-untyped-call]
+        staged = tmp_path / "staged"
+        staged.mkdir()
+
+        with pytest.warns(UserWarning, match="parameters"):
+            found, value = _read_staged_json("parameters", node, staged)
+
+        assert (found, value) == (False, None)
+
+
 class TestStepIoListing:
     """A step lists every ``Data`` input and output as one entry apiece.
 
