@@ -925,6 +925,38 @@ class TestKcwScreenNeedsAScreeningStep:
 
         assert inp.calculator_parameters.kcw.control.lrpa is True
 
+    def test_a_null_keyword_is_not_a_stated_one(self) -> None:
+        """``null`` means the keyword was left out, here as in the overrides it builds."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": None}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.calculator_parameters.kcw.screen.niter is None
+
+    def test_an_empty_screen_block_is_accepted(self) -> None:
+        """A block stating no keyword asks for nothing, so there is nothing to refuse."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        KoopmansInput.model_validate(d)
+
+    def test_dump_and_revalidate_roundtrips(self) -> None:
+        """``model_dump()`` -> ``model_validate()`` must not trip this check.
+
+        A dump states every field explicitly, defaults included, so a check
+        keyed on presence rather than on a value of the keyword's own would
+        refuse any ``calculate_alpha: false`` input round-tripped this way.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+        inp = KoopmansInput.model_validate(d)
+
+        KoopmansInput.model_validate(inp.model_dump())
+
     def test_a_screen_block_is_fine_when_screening_runs(self) -> None:
         """The default ``calculate_alpha: true`` runs the screen step that reads it."""
         inp = KoopmansInput.model_validate(

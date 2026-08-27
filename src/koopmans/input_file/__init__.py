@@ -531,13 +531,21 @@ class KoopmansInput(BaseModel):
         straight to the Hamiltonian step, so kcw.x is never asked to solve
         the linear-response problem the ``SCREEN`` namelist configures.
 
+        A keyword counts as stated when it carries a value of its own: one
+        written as ``null`` means the same as an omitted one, and a value
+        equal to the namelist default asks for nothing the default does not
+        already give.
+
         Raises:
             ValueError: If ``calculator_parameters.kcw.screen`` states a
                 keyword and ``workflow.calculate_alpha`` is false.
         """
         if self.workflow.calculate_alpha:
             return self
-        if self.calculator_parameters.kcw.screen.model_fields_set:
+        stated = self.calculator_parameters.kcw.screen.model_dump(
+            exclude_unset=True, exclude_none=True, exclude_defaults=True
+        )
+        if stated:
             raise ValueError(
                 "`calculator_parameters.kcw.screen` has no effect with "
                 "`workflow.calculate_alpha: false`: no screening step runs, so nothing "
