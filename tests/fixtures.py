@@ -1043,7 +1043,7 @@ def make_process(
     exclusive and pick a ``CalcJobNode``/``CalcFunctionNode``/
     ``WorkFunctionNode`` instead of the default ``WorkflowNode`` — the
     distinction a dumped tree's bookkeeping prune keys off
-    (:func:`koopmans.aiida.dumping._write_data_json`): a
+    (:func:`koopmans.aiida.dumping._write_step_io`): a
     ``CalcFunctionNode`` is a plain pyfunction, and a ``WorkFunctionNode``
     is a ``@workfunction`` (python code that only ever hands back
     *existing* Data, e.g. ``resolve_pseudo_family_task``) — neither is
@@ -1052,7 +1052,7 @@ def make_process(
     run on, so it is a real ``CalcJobNode`` like any domain CalcJob;
     build one with ``calcjob=True`` and a process_type naming
     ``aiida_pythonjob``'s own generic runner (see
-    ``TestDumpDataJson.PYTHONJOB`` in ``tests/test_dumping.py``), since
+    ``TestStepIoListing.PYTHONJOB`` in ``tests/test_dumping.py``), since
     ``_is_calcjob_step`` excludes it by comparing ``process_class``, not
     by node type.
     """

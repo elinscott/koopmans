@@ -9,7 +9,7 @@ import re
 import shutil
 from collections import defaultdict
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from koopmans.aiida.utils import suppress_aiida_logging
@@ -19,12 +19,11 @@ if TYPE_CHECKING:
     from aiida.common import LinkType
 
 __all__ = [
-    "INPUTS_JSON_FILE",
     "MODEL_FILENAME",
     "NODE_METADATA_FILE",
-    "OUTPUTS_JSON_FILE",
     "dump_workgraph",
     "trained_model_output",
+    "write_flat_io_listing",
 ]
 
 
@@ -61,23 +60,30 @@ NODE_METADATA_FILE = "aiida_node_metadata.yaml"
 # A trained screening model, as `ml: {model_file: ...}` reads it back.
 MODEL_FILENAME = "model.json"
 
-# A step's Data inputs/outputs that have no repository and so never reach
-# aiida-core's dump: Dict, List, Int, Float, Str, Bool.
-INPUTS_JSON_FILE = "inputs.json"
-OUTPUTS_JSON_FILE = "outputs.json"
+# Where a step's Data inputs and outputs are listed.
+_INPUTS_DIR = "inputs"
+_OUTPUTS_DIR = "outputs"
+
+# Where aiida-core stages the repositories of the Data a calculation read
+# and wrote, before this module folds them into the listings above.
+_STAGED_IO_DIRS = {_INPUTS_DIR: "node_inputs", _OUTPUTS_DIR: "node_outputs"}
+
+# The one CREATE link aiida-core dumps as the calculation's own files
+# rather than as a linked node: its files stay loose under `outputs`.
+_RETRIEVED_LINK_LABEL = "retrieved"
 
 # Marks a linked Data node as holding no JSON-native value.
 _NOT_JSON_REPRESENTABLE = object()
 
 # What a step folder can hold and still count as having produced nothing.
-# INPUTS_JSON_FILE joins this set: a CalcJob (the only kind of step that
-# ever writes one — a workflow never does, and a bookkeeping calculation
-# never even gets one written) echoes its own Data arguments whether or
-# not it produced anything, so without this a no-op CalcJob would gain a
-# folder of its own just to show them back. OUTPUTS_JSON_FILE stays out
-# of it — a folder holding nothing else is exactly the case this dump
-# exists to fix (issue #205).
-_NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE, INPUTS_JSON_FILE})
+# A step's own input listing joins this set on top: a CalcJob (the only
+# kind of step that ever gets one — a workflow never does, and a
+# bookkeeping calculation never even gets one written) echoes its own
+# Data arguments whether or not it produced anything, so without this a
+# no-op CalcJob would gain a folder of its own just to show them back.
+# The output listing stays out of it — a folder holding nothing else is
+# exactly the case this dump exists to fix (issue #205).
+_NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
 
 # The dump's own bookkeeping, which says nothing about the run.
 _DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safeguard")
@@ -127,7 +133,7 @@ def _family_key(label: str) -> str:
 
 def _is_calculation_folder(path: Path) -> bool:
     """Return whether the folder holds one dumped process, run and recorded."""
-    return (path / "inputs").is_dir() and (path / "outputs").is_dir()
+    return (path / _INPUTS_DIR).is_dir() and (path / _OUTPUTS_DIR).is_dir()
 
 
 def _step_folders(path: Path) -> list[Path]:
@@ -174,7 +180,7 @@ def _content_keys(root_path: Path) -> dict[Path, str]:
     return keys
 
 
-def _prune_source_only_step_folders(path: Path) -> None:
+def _prune_source_only_step_folders(path: Path, echoed: frozenset[Path] = frozenset()) -> None:
     """Delete step folders holding nothing but python tasks' own source.
 
     A bookkeeping task dumps its ``source_file`` — its code, which the
@@ -188,10 +194,18 @@ def _prune_source_only_step_folders(path: Path) -> None:
 
     Runs innermost first, so a folder left holding only such folders goes
     with them.
+
+    :param path: Folder whose step subfolders are considered.
+    :param echoed: Files that echo a step's own arguments back and so
+        count as nothing produced, alongside :data:`_NON_CONTENT_FILES`.
     """
     for child in _step_folders(path):
-        _prune_source_only_step_folders(child)
-        if all(item.name in _NON_CONTENT_FILES for item in child.rglob("*") if item.is_file()):
+        _prune_source_only_step_folders(child, echoed)
+        if all(
+            item.name in _NON_CONTENT_FILES or item in echoed
+            for item in child.rglob("*")
+            if item.is_file()
+        ):
             shutil.rmtree(child)
 
 
@@ -353,7 +367,7 @@ def _hoist_lone_calculations(path: Path) -> None:
         _hoist_lone_calculations(child)
 
 
-def _tidy_dumped_tree(root_path: Path) -> None:
+def _tidy_dumped_tree(root_path: Path, echoed: frozenset[Path] = frozenset()) -> None:
     """Prune, renumber and flatten the step folders of a dumped tree.
 
     The passes run in a fixed order:
@@ -378,8 +392,10 @@ def _tidy_dumped_tree(root_path: Path) -> None:
     another.
 
     :param root_path: Root of the dumped tree; it is never itself pruned.
+    :param echoed: Files that count as nothing produced when pruning (see
+        :func:`_prune_source_only_step_folders`).
     """
-    _prune_source_only_step_folders(root_path)
+    _prune_source_only_step_folders(root_path, echoed)
     _renumber_step_folders(root_path)
     _strip_process_label_suffixes(root_path)
     _hoist_lone_calculations(root_path)
@@ -409,38 +425,6 @@ def _simplify_folder_names(root_path: Path) -> None:
         new_path = dir_path.parent / new_name
         if dir_path != new_path and not new_path.exists():
             shutil.move(str(dir_path), str(new_path))
-
-
-def _simplify_calcjob_dump(output_path: Path) -> None:
-    """Simplify the structure of a dumped CalcJobNode.
-
-    - Merges node_inputs into inputs
-    - Merges node_outputs into outputs
-    - Removes the dump's own bookkeeping files
-
-    :param output_path: Path to the dumped calculation directory.
-    """
-    # Merge node_inputs into inputs
-    node_inputs = output_path / "node_inputs"
-    inputs = output_path / "inputs"
-    if node_inputs.exists():
-        for item in node_inputs.iterdir():
-            shutil.move(str(item), str(inputs / item.name))
-        node_inputs.rmdir()
-
-    # Merge node_outputs into outputs
-    node_outputs = output_path / "node_outputs"
-    outputs = output_path / "outputs"
-    if node_outputs.exists():
-        for item in node_outputs.iterdir():
-            shutil.move(str(item), str(outputs / item.name))
-        node_outputs.rmdir()
-
-    # Drop the dump's own bookkeeping; the node metadata stays
-    for filename in _DUMP_BOOKKEEPING_FILES:
-        filepath = output_path / filename
-        if filepath.exists():
-            filepath.unlink()
 
 
 def _node_metadata(metadata_path: Path) -> dict[str, Any]:
@@ -510,6 +494,98 @@ def _nest_by_link_label(flat: dict[str, Any]) -> dict[str, Any]:
     return nested
 
 
+def _lone_file(node: orm.Data, name: str) -> tuple[str, str] | None:
+    """Return ``node``'s single repository file and the entry it becomes.
+
+    Answers ``None`` unless the repository holds exactly one object and
+    that object is a file at its root; the entry is ``name`` carrying
+    that file's suffix.
+    """
+    from aiida.repository.common import FileType
+
+    objects = node.base.repository.list_objects()
+    if len(objects) != 1 or objects[0].file_type is not FileType.FILE:
+        return None
+    return objects[0].name, name + PurePosixPath(objects[0].name).suffix
+
+
+def _merge_move(source: Path, target: Path) -> None:
+    """Move ``source`` onto ``target``, merging directories that both hold."""
+    if source.is_dir() and target.is_dir():
+        for item in source.iterdir():
+            _merge_move(item, target / item.name)
+        source.rmdir()
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+
+
+def write_flat_io_listing(
+    links: Sequence[tuple[str, orm.Data]],
+    directory: Path,
+    staged: Path | None = None,
+) -> list[Path]:
+    """Write one entry per linked ``Data`` node directly under ``directory``.
+
+    Offered as a candidate for aiida-core's own dump.
+
+    A node with a JSON form (``Dict``, ``List``, ``Int``, ``Float``,
+    ``Str``, ``Bool``) becomes ``<label>.json``. A node whose repository
+    holds a single file becomes ``<label>`` carrying that file's suffix,
+    and one holding several keeps a ``<label>/`` directory. A namespaced
+    label splits on ``__`` into a path, so ``alphas__filled`` and
+    ``alphas__empty`` merge into one ``alphas.json`` while repository
+    content lands under ``alphas/``. A node that is neither writes
+    nothing.
+
+    :param links: The ``(link_label, node)`` pairs to write.
+    :param directory: Where the entries go; created if anything is written.
+    :param staged: Where the repositories already sit as
+        ``<label parts>``; without it, only JSON is written.
+    :return: The JSON files written.
+    """
+    values: dict[str, Any] = {}
+    for label, node in links:
+        value = _json_value(node)
+        if value is not _NOT_JSON_REPRESENTABLE:
+            values[label] = value
+        elif staged is not None:
+            _place_repository(node, label, staged, directory)
+
+    written = []
+    for name, value in _nest_by_link_label(values).items():
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{name}.json"
+        path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        written.append(path)
+    return written
+
+
+def _place_repository(node: orm.Data, label: str, staged: Path, directory: Path) -> None:
+    """Move one node's already-dumped repository into its flat entry.
+
+    Names the entry for the link label, so a lone file takes the label
+    and its own suffix. A name the target directory already holds — a
+    file the calculation itself retrieved under that name — falls back to
+    the ``<label>/`` directory.
+    """
+    parts = label.split("__")
+    source = staged.joinpath(*parts)
+    if not source.exists():
+        return
+
+    lone = _lone_file(node, parts[-1])
+    if lone is not None:
+        filename, entry = lone
+        target = directory.joinpath(*parts[:-1], entry)
+        if (source / filename).is_file() and not target.exists():
+            _merge_move(source / filename, target)
+            if not any(source.iterdir()):
+                source.rmdir()
+                return
+    _merge_move(source, directory.joinpath(*parts))
+
+
 def _is_calcjob_step(node: orm.ProcessNode) -> bool:
     """Return whether ``node`` is a genuine external-code calculation.
 
@@ -572,17 +648,19 @@ def _direct_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
     return frozenset(created)
 
 
-def _json_representable_links(
+def _data_links(
     node: orm.ProcessNode,
     link_type: LinkType,
     incoming: bool,
     exclude_pks: frozenset[int] = frozenset(),
-) -> dict[str, Any]:
-    """Return ``{link_label: value}`` for the JSON-representable ``Data`` at ``link_type``.
+) -> list[tuple[str, orm.Data]]:
+    """Return the ``(link_label, node)`` pairs for the ``Data`` at ``link_type``.
 
     A linked node whose pk is in ``exclude_pks`` is skipped, whatever its
     link label — used to drop a workflow's re-export of a value its own
-    hoisted calculation already carries under a different name.
+    hoisted calculation already carries under a different name. So is
+    ``retrieved``, whose files aiida-core already writes loose under
+    ``outputs``.
     """
     from aiida import orm
 
@@ -591,45 +669,48 @@ def _json_representable_links(
         if incoming
         else node.base.links.get_outgoing(link_type=link_type)
     ).all()
-    flat = {}
-    for link in links:
-        if not isinstance(link.node, orm.Data) or link.node.pk in exclude_pks:
-            continue
-        value = _json_value(link.node)
-        if value is not _NOT_JSON_REPRESENTABLE:
-            flat[link.link_label] = value
-    return flat
+    return [
+        (link.link_label, link.node)
+        for link in links
+        if isinstance(link.node, orm.Data)
+        and link.node.pk not in exclude_pks
+        and link.link_label != _RETRIEVED_LINK_LABEL
+    ]
 
 
-def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
-    """Write ``folder``'s :data:`INPUTS_JSON_FILE`/:data:`OUTPUTS_JSON_FILE`.
+def _write_step_io(node: orm.ProcessNode, folder: Path) -> list[Path]:
+    """List ``node``'s ``Data`` inputs and outputs under ``folder``.
 
-    Only a genuine CalcJob or a true workflow node gets either file
-    (:func:`_is_calcjob_step`) — a plain calcfunction/pyfunction/PythonJob
-    helper, or a ``@workfunction`` (a ``WorkFunctionNode``: python code
-    that only ever hands back *existing* Data, e.g.
-    ``resolve_pseudo_family_task``), is bookkeeping and gets neither,
-    whatever it returns, so it is pruned exactly as it was before this
-    module existed (:func:`_prune_source_only_step_folders`, via
-    :data:`_NON_CONTENT_FILES` for a bare :data:`INPUTS_JSON_FILE` and
-    simply never having :data:`OUTPUTS_JSON_FILE` to begin with). Its
-    own values reach the dump only where an enclosing workflow
-    re-exports them through a ``RETURN`` link.
+    Every linked node becomes one entry, whatever its kind
+    (:func:`write_flat_io_listing`), so a reader scanning ``outputs``
+    sees a value and a file side by side rather than a JSON listing
+    beside a directory tree.
+
+    Only a genuine CalcJob or a true workflow node has its values
+    written (:func:`_is_calcjob_step`) — a plain
+    calcfunction/pyfunction/PythonJob helper, or a ``@workfunction`` (a
+    ``WorkFunctionNode``: python code that only ever hands back
+    *existing* Data, e.g. ``resolve_pseudo_family_task``), is
+    bookkeeping, so only the repositories it read and wrote are placed
+    and it is pruned exactly as it was before this module wrote any
+    listing (:func:`_prune_source_only_step_folders`). Its own values
+    reach the dump only where an enclosing workflow re-exports them
+    through a ``RETURN`` link.
 
     A CalcJob's own ``INPUT_CALC``/``CREATE`` links give its inputs and
     outputs. A workflow does not create data itself, so its ``RETURN``
-    links — the same ones a reader would follow from ``process.outputs`` —
-    stand in for :data:`OUTPUTS_JSON_FILE`. No :data:`INPUTS_JSON_FILE` is
-    written for a workflow, since its ``INPUT_WORK`` links point at the
-    same Data its own calculations already read.
+    links — the same ones a reader would follow from ``process.outputs``
+    — stand in for its outputs. No inputs are listed for a workflow,
+    since its ``INPUT_WORK`` links point at the same Data its own
+    calculations already read.
 
     A workflow wrapping exactly one CalcJob is later hoisted into that
     CalcJob's own folder (:func:`_hoist_lone_calculations`). Any RETURN
     value the workflow's own direct CalcJob child already created is
     dropped before writing (:func:`_direct_calculation_created_pks`) —
     the same node under a second name — so a wrapper that only echoes
-    its CalcJob writes no file at all, and the pre-existing
-    single-calculation check runs exactly as it did before this file
+    its CalcJob writes nothing at all, and the pre-existing
+    single-calculation check runs exactly as it did before this listing
     existed. A value genuinely produced elsewhere is never dropped: not
     one assembled deeper in the workflow's own subtree (e.g.
     ``ComputeScreeningParameters``'s ``alphas``, assembled by a
@@ -638,43 +719,43 @@ def _write_data_json(node: orm.ProcessNode, folder: Path) -> None:
     ``tests/test_dumping.py``), and not a value re-exported from a
     pyfunction child *of this same wrapper* either, by the same rule.
     Repeating a value up several enclosing graphs this way — the same
-    node visible in more than one ``outputs.json`` under a label each
+    node visible in more than one ``outputs`` listing under a label each
     graph chose for itself — is accepted, not deduplicated further: only
     a *surviving CalcJob folder* ever makes an echo redundant, so a
     wrapper holding one such kept value keeps its own folder too, and
     its CalcJob stays nested rather than being hoisted (see
     :class:`TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn` in
-    ``tests/test_dumping.py``). Neither file is written when nothing
-    linked has a JSON-representable value.
+    ``tests/test_dumping.py``).
 
     :param node: The process the folder was dumped from.
     :param folder: The step's own dumped folder.
+    :return: The files listing the step's own inputs back.
     """
     from aiida import orm
     from aiida.common import LinkType
 
-    links_to_write: tuple[tuple[str, LinkType, bool, frozenset[int]], ...]
-    if _is_calcjob_step(node):
-        links_to_write = (
-            (INPUTS_JSON_FILE, LinkType.INPUT_CALC, True, frozenset()),
-            (OUTPUTS_JSON_FILE, LinkType.CREATE, False, frozenset()),
-        )
+    is_calcjob = _is_calcjob_step(node)
+    if isinstance(node, orm.CalculationNode):
+        inputs = _data_links(node, LinkType.INPUT_CALC, True)
+        outputs = _data_links(node, LinkType.CREATE, False)
+        if not is_calcjob:
+            inputs = [(label, n) for label, n in inputs if n.base.repository.list_object_names()]
+            outputs = [(label, n) for label, n in outputs if n.base.repository.list_object_names()]
     elif isinstance(node, orm.WorkflowNode) and not isinstance(node, orm.WorkFunctionNode):
-        exclude_pks = _direct_calculation_created_pks(node)
-        links_to_write = ((OUTPUTS_JSON_FILE, LinkType.RETURN, False, exclude_pks),)
+        inputs = []
+        outputs = _data_links(node, LinkType.RETURN, False, _direct_calculation_created_pks(node))
     else:
-        return
+        return []
 
-    for filename, link_type, incoming, exclude_pks in links_to_write:
-        flat = _json_representable_links(node, link_type, incoming, exclude_pks)
-        if flat:
-            (folder / filename).write_text(
-                json.dumps(_nest_by_link_label(flat), indent=2, sort_keys=True) + "\n"
-            )
+    echoed = write_flat_io_listing(
+        inputs, folder / _INPUTS_DIR, folder / _STAGED_IO_DIRS[_INPUTS_DIR]
+    )
+    write_flat_io_listing(outputs, folder / _OUTPUTS_DIR, folder / _STAGED_IO_DIRS[_OUTPUTS_DIR])
+    return echoed
 
 
-def _dump_data_json(root_path: Path) -> None:
-    """Write every step's :data:`INPUTS_JSON_FILE`/:data:`OUTPUTS_JSON_FILE`.
+def _dump_step_io(root_path: Path) -> frozenset[Path]:
+    """List every step's ``Data`` inputs and outputs (see :func:`_write_step_io`).
 
     Reads each step's pk from its own :data:`NODE_METADATA_FILE` — the file
     that already ties a folder back to its node — so this has to run before
@@ -682,16 +763,31 @@ def _dump_data_json(root_path: Path) -> None:
     :func:`_tidy_dumped_tree` moves folders around.
 
     :param root_path: Root of the freshly dumped tree.
+    :return: The files listing a step's own inputs back, which count as
+        nothing produced when pruning.
     """
     from aiida import orm
 
+    echoed: set[Path] = set()
     for metadata_path in root_path.rglob(NODE_METADATA_FILE):
         pk = _node_metadata(metadata_path).get("pk")
         if pk is None:
             continue
         node = orm.load_node(pk)
         if isinstance(node, orm.ProcessNode):
-            _write_data_json(node, metadata_path.parent)
+            echoed.update(_write_step_io(node, metadata_path.parent))
+
+    # Anything aiida-core staged that no link accounted for still belongs
+    # in the step's own listing, under the name aiida-core gave it.
+    for listing, staged in _STAGED_IO_DIRS.items():
+        for leftover in sorted(root_path.rglob(staged), key=lambda p: -len(p.parts)):
+            if not leftover.is_dir():
+                continue
+            if any(leftover.iterdir()):
+                _merge_move(leftover, leftover.parent / listing)
+            else:
+                leftover.rmdir()
+    return frozenset(echoed)
 
 
 def _prune_workflow_metadata(root_path: Path) -> None:
@@ -746,10 +842,9 @@ def dump_workgraph(
 
     Uses AiiDA's dump functionality, then:
     - Strips pk numbers and WorkGraph process labels from folder names
-    - Simplifies each CalcJobNode folder structure
     - Removes the dump's own bookkeeping files
-    - Writes each step's JSON-representable ``Data`` inputs/outputs (see
-      :func:`_dump_data_json`)
+    - Lists each step's ``Data`` inputs and outputs, one entry apiece,
+      under its own ``inputs``/``outputs`` (see :func:`_dump_step_io`)
     - Keeps each calculation's ``aiida_node_metadata.yaml``, and the
       root's (see :func:`_prune_workflow_metadata`)
     - Tidies the step folders (see :func:`_tidy_dumped_tree`)
@@ -781,24 +876,18 @@ def dump_workgraph(
     # Strip pk numbers and WorkGraph process labels from all folder names
     _simplify_folder_names(output_path)
 
-    # Simplify each CalcJobNode folder (merge node_inputs/outputs)
-    for folder in output_path.rglob("*"):
-        # CalcJob folders are identified by having an "inputs" subdirectory
-        if folder.is_dir() and (folder / "inputs").exists():
-            _simplify_calcjob_dump(folder)
-
     # Remove the dump's own bookkeeping throughout the tree
     for filename in _DUMP_BOOKKEEPING_FILES:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
 
-    # Every step's JSON-representable Data, while every folder still
-    # carries the metadata file naming its node
-    _dump_data_json(output_path)
+    # Every step's Data, while every folder still carries the metadata
+    # file naming its node
+    echoed = _dump_step_io(output_path)
 
     _prune_workflow_metadata(output_path)
 
-    _tidy_dumped_tree(output_path)
+    _tidy_dumped_tree(output_path, echoed)
 
     _dump_model_json(process, output_path)
 
