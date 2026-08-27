@@ -38,7 +38,7 @@ from koopmans.plotting import (
     write_series_json,
 )
 from koopmans.plotting.resolve import SUGGESTION_LIMIT
-from tests.fixtures import make_process
+from tests.fixtures import attach, make_process
 
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
 PW_BASE = "aiida.workflows:quantumespresso.pw.base"
@@ -88,18 +88,6 @@ def make_spin_bands(kpoints: list[list[float]], energies: list[list[list[float]]
     bands.set_kpoints(kpoints)  # type: ignore[no-untyped-call]
     bands.set_bands(np.asarray(energies, dtype=float), units="eV")  # type: ignore[no-untyped-call]
     return bands
-
-
-def attach(node: orm.ProcessNode, socket: str, data: orm.Data) -> orm.Data:
-    """Link ``data`` as an output of ``node`` under the link label ``socket``."""
-    if isinstance(node, orm.CalcJobNode):
-        # A calculation creates its outputs, so the node must still be unstored.
-        data.base.links.add_incoming(node, link_type=LinkType.CREATE, link_label=socket)
-        return data.store()
-    # A workflow only returns data that already exists.
-    data.store()
-    data.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=socket)
-    return data
 
 
 def write_run_folder(root: Path, name: str, node: orm.ProcessNode | None) -> Path:

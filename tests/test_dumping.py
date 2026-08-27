@@ -13,8 +13,11 @@ from koopmans.aiida.dumping import (
     NODE_METADATA_FILE,
     _hoist_lone_calculations,
     _link_duplicate_files,
+    _PlacedFiles,
+    _prune_engine_bookkeeping,
     _prune_source_only_step_folders,
     _prune_workflow_metadata,
+    _record_task_sources,
     _renumber_step_folders,
     _simplify_folder_names,
     _strip_process_label_suffixes,
@@ -106,9 +109,10 @@ def _lambdas(name: str, content: str = "trial-hamiltonian") -> list[tuple[str, s
 
     aiida-core dumps an ``ArrayData`` only as its consumer's
     ``function_inputs``, never under the task that produced it, so this
-    is the tree's one copy of that array unless a sibling holds the same
-    bytes. Every caller is the same task, so they share a ``source_file``
-    too.
+    is the tree's one copy of that array unless a sibling was handed the
+    same node. Every caller is the same task, so they share a
+    ``source_file`` too — aiida-core's copy of the code that ran, which
+    groups by its own text rather than by a node.
     """
     return [
         _metadata(name),
@@ -279,14 +283,22 @@ class TestPruneSourceOnlyStepFolders:
 
 
 class TestLinkDuplicateFiles:
-    """Repeated bytes become one real file and links to it."""
+    """One node's content listed twice becomes one real file and links to it."""
+
+    @staticmethod
+    def _placed(root: Path, *entries: tuple[str, int, str, bool]) -> Any:
+        """Return a record of ``(path, pk, content, created_here)`` entries."""
+        placed = _PlacedFiles()
+        for path, pk, content, created_here in entries:
+            placed.record(root / path, pk, content, created_here)
+        return placed
 
     def test_a_staged_copy_points_at_the_step_that_produced_it(self, tmp_path: Path) -> None:
         """The producer keeps the file; its consumer links to it.
 
         A merge step writes ``hr.dat`` and the next step is handed it, so
-        the copy under ``outputs`` is the one to keep whatever the tree
-        order says.
+        the copy the producing step created is the one to keep whatever
+        the tree order says.
         """
         _make_tree(
             tmp_path,
@@ -295,8 +307,13 @@ class TestLinkDuplicateFiles:
                 ("03-wann2kc/inputs/hr.dat", "merged-hamiltonian"),
             ],
         )
+        placed = self._placed(
+            tmp_path,
+            ("02-prepare_kcw_wannier_files/outputs/hr.dat", 71, "hr.dat", True),
+            ("03-wann2kc/inputs/hr.dat", 71, "hr.dat", False),
+        )
 
-        assert _link_duplicate_files(tmp_path) == 1
+        assert _link_duplicate_files(placed) == 1
 
         producer = tmp_path / "02-prepare_kcw_wannier_files/outputs/hr.dat"
         consumer = tmp_path / "03-wann2kc/inputs/hr.dat"
@@ -313,7 +330,7 @@ class TestLinkDuplicateFiles:
         The fold step stages the matrices it then writes back out, so
         both copies live under the one folder. ``inputs`` sorts before
         ``outputs``, so tree order alone would keep the staged copy; only
-        the preference for a producing ``outputs`` copy picks the other.
+        the preference for the creating step's copy picks the other.
         """
         _make_tree(
             tmp_path,
@@ -322,16 +339,127 @@ class TestLinkDuplicateFiles:
                 ("01-fold/outputs/wannier_files/aiida_u.mat", "unitary-matrix"),
             ],
         )
+        placed = self._placed(
+            tmp_path,
+            ("01-fold/inputs/wannier_files/aiida_u.mat", 88, "aiida_u.mat", False),
+            ("01-fold/outputs/wannier_files/aiida_u.mat", 88, "aiida_u.mat", True),
+        )
 
-        assert _link_duplicate_files(tmp_path) == 1
+        assert _link_duplicate_files(placed) == 1
 
         assert not (tmp_path / "01-fold/outputs/wannier_files/aiida_u.mat").is_symlink()
         assert (tmp_path / "01-fold/inputs/wannier_files/aiida_u.mat").is_symlink()
 
-    def test_a_symlink_already_in_the_tree_is_left_alone(self, tmp_path: Path) -> None:
+    def test_equal_bytes_from_different_nodes_stay_separate_files(self, tmp_path: Path) -> None:
+        """A run that computed the same array twice computed it twice.
+
+        Two ``pw.x`` steps of one structure write the same cell to their
+        own trajectories, and a fan-out's identical scheduler logs
+        repeat across every step. Linking those would assert a
+        relationship the provenance graph does not hold.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("01-scf/outputs/output_trajectory/cells.npy", "the cell"),
+                ("02-nscf/outputs/output_trajectory/cells.npy", "the cell"),
+            ],
+        )
+        placed = self._placed(
+            tmp_path,
+            ("01-scf/outputs/output_trajectory/cells.npy", 11, "cells.npy", True),
+            ("02-nscf/outputs/output_trajectory/cells.npy", 22, "cells.npy", True),
+        )
+
+        assert _link_duplicate_files(placed) == 0
+
+        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
+
+    def test_two_parts_of_one_node_stay_separate_files(self, tmp_path: Path) -> None:
+        """One node's own arrays are not linked to one another.
+
+        A ``ProjectionData`` holds one energy array per projector, all
+        equal; they are different parts of one node, and the entry is the
+        node.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("01-projwfc/outputs/projections/energy_array_0.npy", "the energy grid"),
+                ("01-projwfc/outputs/projections/energy_array_1.npy", "the energy grid"),
+            ],
+        )
+        placed = self._placed(
+            tmp_path,
+            ("01-projwfc/outputs/projections/energy_array_0.npy", 5, "energy_array_0.npy", True),
+            ("01-projwfc/outputs/projections/energy_array_1.npy", 5, "energy_array_1.npy", True),
+        )
+
+        assert _link_duplicate_files(placed) == 0
+
+        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
+
+    def test_a_file_no_pass_placed_is_never_linked(self, tmp_path: Path) -> None:
+        """aiida-core's own files are outside the rule.
+
+        A calculation's retrieved ``aiida.wout`` and its input script are
+        copied in by aiida-core, not listed from a link, so two steps
+        that retrieved identical text keep a file each.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("01-wannier90_pp/outputs/aiida.wout", "same header, same run"),
+                ("02-wannier90_pp/outputs/aiida.wout", "same header, same run"),
+            ],
+        )
+
+        assert _link_duplicate_files(_PlacedFiles()) == 0
+
+        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
+
+    def test_one_value_written_at_two_depths_stays_two_files(self, tmp_path: Path) -> None:
+        """A node listed under a namespace differs in bytes from a bare listing.
+
+        ``nscf__output_parameters`` writes ``{"output_parameters": ...}``
+        while the calculation that created the node writes the value
+        itself; the two hold the same node but not the same bytes, so
+        neither may stand in for the other.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("01-nscf/outputs/output_parameters.json", '{"energy": -12.0}\n'),
+                ("02-wannier90/outputs/nscf.json", '{"output_parameters": {"energy": -12.0}}\n'),
+            ],
+        )
+        placed = self._placed(
+            tmp_path,
+            ("01-nscf/outputs/output_parameters.json", 42, "digest-of-the-bare-value", True),
+            ("02-wannier90/outputs/nscf.json", 42, "digest-of-the-nested-value", False),
+        )
+
+        assert _link_duplicate_files(placed) == 0
+
+        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
+
+    def test_a_file_a_later_pass_deleted_is_left_out(self, tmp_path: Path) -> None:
+        """Pruning a step folder takes its copy out of the group."""
+        _make_tree(tmp_path, [("01-scf/inputs/pseudo.upf", "pseudopotential")])
+        placed = self._placed(
+            tmp_path,
+            ("01-scf/inputs/pseudo.upf", 3, "Si.upf", False),
+            ("02-pruned/inputs/pseudo.upf", 3, "Si.upf", False),
+        )
+
+        assert _link_duplicate_files(placed) == 0
+
+        assert not (tmp_path / "01-scf/inputs/pseudo.upf").is_symlink()
+
+    def test_a_symlink_already_in_the_tree_is_never_linked_through(self, tmp_path: Path) -> None:
         """A tree that already holds links is not linked into a loop.
 
-        Ranking an existing link as the copy to keep would replace the
+        Ranking an existing link ahead of the real file would replace the
         real file with a link to it, leaving the two pointing at each
         other and the bytes gone.
         """
@@ -340,66 +468,94 @@ class TestLinkDuplicateFiles:
         link = tmp_path / "01-step/outputs/data.mat"
         link.parent.mkdir(parents=True)
         link.symlink_to(os.path.relpath(real, link.parent))
+        # Both are recorded as the one node's one file, so only the
+        # symlink check keeps them apart; the link sorts first, being
+        # the creating step's copy.
+        placed = self._placed(
+            tmp_path,
+            ("01-step/inputs/data.mat", 9, "data.mat", False),
+            ("01-step/outputs/data.mat", 9, "data.mat", True),
+        )
 
-        assert _link_duplicate_files(tmp_path) == 0
+        assert _link_duplicate_files(placed) == 0
 
         assert not real.is_symlink()
         assert real.read_text() == "payload"
         assert link.read_text() == "payload"
 
-    def test_empty_files_are_never_linked(self, tmp_path: Path) -> None:
-        """A successful run leaves an empty scheduler log under every step.
+    def test_a_task_source_fanned_out_collapses_to_one_copy(self, tmp_path: Path) -> None:
+        """One task run once per orbital writes its code under each call.
 
-        They are byte-identical to one another, so the rule would tie
-        every step to one arbitrary sibling for no bytes saved.
+        The source is aiida-core's copy of the code, not a listed node,
+        so it groups by its own text; a source holding different code
+        stays a file of its own.
         """
+        source = "def compute_alpha_from_dscf():\n    return alpha\n"
         _make_tree(
             tmp_path,
             [
-                ("01-scf/outputs/_scheduler-stderr.txt", ""),
-                ("02-nscf/outputs/_scheduler-stderr.txt", ""),
-                ("03-bands/outputs/_scheduler-stderr.txt", ""),
+                ("01-orb_1/inputs/source_file", source),
+                ("02-orb_2/inputs/source_file", source),
+                ("03-orb_3/inputs/source_file", source),
+                ("04-max_alpha_error/inputs/source_file", "def max_alpha_error():\n    pass\n"),
             ],
         )
+        placed = _PlacedFiles()
+        _record_task_sources(tmp_path, placed)
 
-        assert _link_duplicate_files(tmp_path) == 0
+        assert _link_duplicate_files(placed) == 2
 
-        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
+        first = tmp_path / "01-orb_1/inputs/source_file"
+        assert not first.is_symlink()
+        for step in ("02-orb_2", "03-orb_3"):
+            assert (tmp_path / step / "inputs/source_file").is_symlink()
+            assert (tmp_path / step / "inputs/source_file").read_text() == source
+        assert not (tmp_path / "04-max_alpha_error/inputs/source_file").is_symlink()
 
-    def test_the_smallest_real_payload_still_links(self, tmp_path: Path) -> None:
-        """Only length zero is exempt, so a 95-byte input still collapses.
+    def test_a_task_source_is_never_linked_to_a_data_file(self, tmp_path: Path) -> None:
+        """A data file with a source's bytes is a different thing entirely.
 
-        That is the smallest duplicated file either tutorial dump holds;
-        exempting it would be exempting payload.
+        Sources collapse among themselves and never across the boundary:
+        no data file is made to depend on a folder that carries only
+        code.
         """
-        content = "x" * 95
+        shared = "def compute():\n    return 1\n"
         _make_tree(
             tmp_path,
-            [("01-scf/outputs/aiida.in", content), ("02-nscf/inputs/aiida.in", content)],
+            [
+                ("01-compute_alpha/inputs/function_inputs/payload.npy", shared),
+                ("02-other_task/inputs/source_file", shared),
+            ],
         )
+        placed = self._placed(
+            tmp_path,
+            ("01-compute_alpha/inputs/function_inputs/payload.npy", 12, "payload.npy", False),
+        )
+        _record_task_sources(tmp_path, placed)
 
-        assert _link_duplicate_files(tmp_path) == 1
+        assert _link_duplicate_files(placed) == 0
 
-        assert (tmp_path / "02-nscf/inputs/aiida.in").read_text() == content
-
-    def test_a_unique_file_is_left_alone(self, tmp_path: Path) -> None:
-        """Only repeated bytes are replaced."""
-        _make_tree(tmp_path, [("01-scf/outputs/aiida.out", "one of a kind")])
-
-        assert _link_duplicate_files(tmp_path) == 0
-
-        assert not (tmp_path / "01-scf/outputs/aiida.out").is_symlink()
+        payload = tmp_path / "01-compute_alpha/inputs/function_inputs/payload.npy"
+        source = tmp_path / "02-other_task/inputs/source_file"
+        assert not payload.is_symlink()
+        assert not source.is_symlink()
+        assert payload.read_text() == source.read_text() == shared
 
     def test_the_links_are_relative_and_survive_a_move(self, tmp_path: Path) -> None:
         """A dump handed to someone else still resolves."""
         _make_tree(
             tmp_path,
             [
-                ("dump/01-scf/outputs/pseudo.upf", "pseudopotential"),
+                ("dump/01-scf/inputs/pseudo.upf", "pseudopotential"),
                 ("dump/02-nscf/inputs/pseudo.upf", "pseudopotential"),
             ],
         )
-        _link_duplicate_files(tmp_path / "dump")
+        placed = self._placed(
+            tmp_path,
+            ("dump/01-scf/inputs/pseudo.upf", 3, "Si.upf", False),
+            ("dump/02-nscf/inputs/pseudo.upf", 3, "Si.upf", False),
+        )
+        _link_duplicate_files(placed)
 
         moved = tmp_path / "moved"
         shutil.move(str(tmp_path / "dump"), str(moved))
@@ -408,53 +564,311 @@ class TestLinkDuplicateFiles:
         assert not Path(os.readlink(link)).is_absolute()
         assert link.read_text() == "pseudopotential"
 
-    def test_repeated_task_sources_collapse_to_one_copy(self, tmp_path: Path) -> None:
-        """One task run once per orbital dumps its code under each folder."""
-        source = "def compute_alpha_from_dscf():\n    return alpha\n"
+    def test_a_folder_move_carries_the_records_with_it(self, tmp_path: Path) -> None:
+        """Renumbering a step folder does not lose track of what it holds.
+
+        The tidying passes rename and hoist folders between the listing
+        and the linking, so a record follows the file it names.
+        """
         _make_tree(
             tmp_path,
             [
-                ("01-orb_1/inputs/source_file", source),
-                ("01-orb_1/inputs/function_inputs/lambdas.npy", "first payload"),
-                ("02-orb_2/inputs/source_file", source),
-                ("02-orb_2/inputs/function_inputs/lambdas.npy", "second payload"),
+                ("07-scf/outputs/pseudo.upf", "pseudopotential"),
+                ("09-nscf/inputs/pseudo.upf", "pseudopotential"),
             ],
         )
+        placed = self._placed(
+            tmp_path,
+            ("07-scf/outputs/pseudo.upf", 3, "Si.upf", True),
+            ("09-nscf/inputs/pseudo.upf", 3, "Si.upf", False),
+        )
 
-        assert _link_duplicate_files(tmp_path) == 1
+        _renumber_step_folders(tmp_path, placed)
 
-        first = tmp_path / "01-orb_1/inputs/source_file"
-        second = tmp_path / "02-orb_2/inputs/source_file"
+        assert _link_duplicate_files(placed) == 1
+        assert not (tmp_path / "01-scf/outputs/pseudo.upf").is_symlink()
+        assert (tmp_path / "02-nscf/inputs/pseudo.upf").read_text() == "pseudopotential"
+
+
+class TestListingsOfOneNodeLinkToEachOther:
+    """The rule holds on a real run: the same node, not the same bytes."""
+
+    def test_a_pseudopotential_two_calculations_read_is_one_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Two calculations handed one file node keep one copy between them."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        pseudo = orm.SinglefileData(io.BytesIO(b"a pseudopotential"), filename="Si.upf").store()
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        for label in ("scf", "nscf"):
+            make_process(
+                TestStepIoListing.ARITHMETIC_ADD,
+                caller=root,
+                link_label=label,
+                calcjob=True,
+                computer=aiida_localhost,
+                inputs={"pseudos__Si": pseudo},
+            )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        first = dumped / "01-scf/inputs/pseudos/Si.upf"
+        second = dumped / "02-nscf/inputs/pseudos/Si.upf"
         assert not first.is_symlink()
         assert second.is_symlink()
-        assert second.read_text() == source
+        assert second.read_text() == "a pseudopotential"
 
-    def test_a_task_source_is_never_linked_to_a_data_file(self, tmp_path: Path) -> None:
-        """A task's source and a data file with its bytes both stay real files.
+    def test_two_nodes_holding_the_same_bytes_keep_a_file_each(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The discriminating case: identical content, different provenance.
 
-        Sources collapse among themselves, but never across the boundary:
-        no data file is made to depend on a folder that carries only
-        code. Both folders here survive the prune, so the two would
-        otherwise be linked whichever way the ordering fell.
+        Under a content-digest rule these two would collapse into one
+        file and a link; each was written by its own calculation, so each
+        keeps its own copy.
         """
-        shared = "def compute():\n    return 1\n"
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        for label in ("scf", "nscf"):
+            calc = make_process(
+                TestStepIoListing.ARITHMETIC_ADD,
+                caller=root,
+                link_label=label,
+                calcjob=True,
+                computer=aiida_localhost,
+            )
+            attach(calc, "report", orm.SinglefileData(io.BytesIO(b"identical"), filename="r.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        first = dumped / "01-scf/outputs/report.txt"
+        second = dumped / "02-nscf/outputs/report.txt"
+        assert not first.is_symlink()
+        assert not second.is_symlink()
+        assert first.read_text() == second.read_text() == "identical"
+
+
+class TestPruneEngineBookkeeping:
+    """The engine's own files are not what the run read or produced."""
+
+    def test_the_settings_folder_and_submit_script_go(self, tmp_path: Path) -> None:
+        """A CalcJob's repository is copied whole; only its own input stays."""
         _make_tree(
             tmp_path,
             [
-                ("01-compute_alpha/inputs/function_inputs/payload.npy", shared),
-                ("02-other_task/inputs/source_file", shared),
-                ("02-other_task/inputs/function_inputs/kept.npy", "a payload of its own"),
+                "01-scf/inputs/.aiida/calcinfo.json",
+                "01-scf/inputs/.aiida/job_tmpl.json",
+                "01-scf/inputs/_aiidasubmit.sh",
+                "01-scf/inputs/aiida.in",
             ],
         )
 
-        _prune_source_only_step_folders(tmp_path)
-        _link_duplicate_files(tmp_path)
+        _prune_engine_bookkeeping(tmp_path)
 
-        payload = tmp_path / "01-compute_alpha/inputs/function_inputs/payload.npy"
-        source = tmp_path / "02-other_task/inputs/source_file"
-        assert not payload.is_symlink()
-        assert not source.is_symlink()
-        assert payload.read_text() == source.read_text() == shared
+        assert [p.name for p in (tmp_path / "01-scf/inputs").iterdir()] == ["aiida.in"]
+
+    def test_the_scheduler_logs_go(self, tmp_path: Path) -> None:
+        """The two logs the scheduler wrote are retrieved beside the results."""
+        _make_tree(
+            tmp_path,
+            [
+                "01-scf/outputs/_scheduler-stdout.txt",
+                "01-scf/outputs/_scheduler-stderr.txt",
+                "01-scf/outputs/aiida.out",
+            ],
+        )
+
+        _prune_engine_bookkeeping(tmp_path)
+
+        assert [p.name for p in (tmp_path / "01-scf/outputs").iterdir()] == ["aiida.out"]
+
+    #: A real, always-registered CalcJob — enough to resolve ``process_class``.
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def _run_with_scheduler_noise(
+        self,
+        computer: Any,
+        tmp_path: Path,
+        exit_status: int = 0,
+        process_state: str = "finished",
+    ) -> Any:
+        """Return a root whose one calculation retrieved a non-empty stderr.
+
+        Nothing else is retrieved and nothing is created, so what the
+        scheduler wrote is all the folder can hold: whether it survives
+        is exactly whether that file does.
+        """
+        from aiida import orm
+
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="pw",
+            calcjob=True,
+            computer=computer,
+            exit_status=exit_status,
+            process_state=process_state,
+        )
+        tree = tmp_path / f"tree-{exit_status}-{process_state}"
+        tree.mkdir()
+        (tree / "_scheduler-stderr.txt").write_text(
+            "Note: The following floating-point exceptions are signalling: IEEE_UNDERFLOW\n"
+        )
+        attach(calc, "retrieved", orm.FolderData(tree=str(tree)))
+        return root
+
+    def test_a_finished_run_loses_its_scheduler_noise_and_its_folder(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The GNU builds warn on every successful call; that is not a result."""
+        from koopmans.aiida.dumping import dump_workgraph
+
+        root = self._run_with_scheduler_noise(aiida_localhost, tmp_path)
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("pw") for p in dumped.rglob("*"))
+
+    def test_a_failed_run_keeps_the_stderr_that_explains_it(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A crashed calculation keeps its folder, its stderr and its metadata.
+
+        The same file under the same name as the run above, kept or
+        dropped by how the calculation ended alone. Dropping it here
+        would take the folder with it, and the run's one record of the
+        failure would be missing from the dump.
+        """
+        from koopmans.aiida.dumping import dump_workgraph
+
+        root = self._run_with_scheduler_noise(aiida_localhost, tmp_path, exit_status=305)
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        outputs = dumped / "01-pw" / "outputs"
+        assert "IEEE_UNDERFLOW" in (outputs / "_scheduler-stderr.txt").read_text()
+        assert (dumped / "01-pw" / NODE_METADATA_FILE).is_file()
+
+    def test_a_killed_run_keeps_its_stderr_too(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A killed calculation never reached an exit status to report.
+
+        Asking for a nonzero exit status would drop this one's stderr and
+        its folder with it, which is why the test is that the calculation
+        did not finish successfully.
+        """
+        from koopmans.aiida.dumping import dump_workgraph
+
+        root = self._run_with_scheduler_noise(aiida_localhost, tmp_path, process_state="killed")
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert "IEEE_UNDERFLOW" in (dumped / "01-pw/outputs/_scheduler-stderr.txt").read_text()
+
+    def test_an_empty_scheduler_log_goes_however_the_run_ended(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Length zero says nothing, so a failure keeps no empty log either."""
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="pw",
+            calcjob=True,
+            computer=aiida_localhost,
+            exit_status=305,
+        )
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "_scheduler-stderr.txt").write_text("")
+        (tree / "aiida.out").write_text("what the code printed")
+        attach(calc, "retrieved", orm.FolderData(tree=str(tree)))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-pw" / "outputs"
+
+        assert not (outputs / "_scheduler-stderr.txt").exists()
+        assert (outputs / "aiida.out").read_text() == "what the code printed"
+
+
+class TestEmptyValuesAreNotListed:
+    """A listing entry holding ``{}`` is a file that says nothing."""
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def test_an_empty_dict_output_writes_no_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """``projwfc.x`` parses no scalars, so its output parameters are ``{}``."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="projwfc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "output_parameters", orm.Dict({}))  # type: ignore[no-untyped-call]
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"kept"), filename="r.txt"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-projwfc" / "outputs"
+
+        assert not (outputs / "output_parameters.json").exists()
+        assert (outputs / "report.txt").read_bytes() == b"kept"
+
+    def test_a_namespace_of_empty_values_leaves_no_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Nesting an omitted value writes no ``{"output_parameters": {}}`` either."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="projwfc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "projwfc__output_parameters", orm.Dict({}))  # type: ignore[no-untyped-call]
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"kept"), filename="r.txt"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-projwfc" / "outputs"
+
+        assert not (outputs / "projwfc.json").exists()
+        assert list(outputs.glob("*.json")) == []
 
 
 class TestPruneWorkflowMetadata:
@@ -868,8 +1282,8 @@ class TestTidyDumpedTree:
         *_bookkeeping(f"{SCREENING}/02-extract_self_hartree_from_kcp"),
         *_bookkeeping(f"{SCREENING}/03-assign_orbital_groups"),
         *_calculation(f"{ORBITALS}/01-compute_alpha_orb_1/01-dft_n_minus_1-KcpCalculation"),
-        # Every orbital is handed the same KI trial Hamiltonian, which
-        # reaches disk only here — so all but the last copy of it go.
+        # Every orbital is handed the one KI trial Hamiltonian node,
+        # which reaches disk only here — so all but the first copy go.
         *_lambdas(f"{ORBITALS}/01-compute_alpha_orb_1/02-compute_alpha_from_dscf"),
         # The dump numbers the fan-out lexicographically by map key, so
         # orb_10 sits between orb_1 and orb_2 until the renumbering.
@@ -982,11 +1396,19 @@ class TestTidyDumpedTree:
         The bookkeeping steps are gone, the survivors count from one, no
         folder names a CalcJob class, and each step that ran a single
         calculation holds that calculation's own ``inputs``/``outputs``.
+        Every orbital is handed the one KI trial Hamiltonian, so its
+        array is listed under each and links back to the first; the one
+        task those calls ran writes its source under each of them, and
+        those collapse the same way.
         """
         root = tmp_path / "ozone"
         _make_tree(root, self.OZONE_DUMP)
+        placed = _PlacedFiles()
+        for path in root.rglob("lambdas.npy"):
+            placed.record(path, 4711, "lambdas.npy", False)
+        _record_task_sources(root, placed)
 
-        _tidy_dumped_tree(root)
+        _tidy_dumped_tree(root, placed=placed)
 
         assert _render(root) == dedent(self.TIDIED)
 
@@ -1108,7 +1530,14 @@ class TestDumpedNodeMetadata:
 
         @task  # type: ignore[untyped-decorator]
         def count_electrons(charge: int) -> int:
-            """Return an electron count, leaving nothing on disk but this code."""
+            """Return an electron count, leaving nothing on disk but this code.
+
+            A plain ``@task`` is a ``CalcFunctionNode`` — bookkeeping,
+            never a genuine calculation (see
+            ``koopmans.aiida.dumping._is_calcjob_step``) — so it gets no
+            output listing for this ``int`` however real it is
+            (see ``TestStepIoListing``).
+            """
             return 8 - charge
 
         @task  # type: ignore[untyped-decorator]
@@ -1157,9 +1586,13 @@ class TestDumpedNodeMetadata:
         """A step's file names the process that ran there, not a sibling's.
 
         The pk a folder carries is the way from its files back to the
-        database, so it has to be that folder's own. ``01-run`` names the
-        calculation hoisted into it rather than the workflow layer the
-        folder was.
+        database, so it has to be that folder's own. ``run``'s own
+        ``RETURN`` of ``write_note``'s file is real content of ``run``'s
+        own — a pyfunction child's value is never dropped as redundant
+        (:class:`TestWorkflowReturnKeepsPyfunctionCreatedValue`) — so
+        ``01-run`` keeps its own folder rather than being hoisted away,
+        and ``write_note`` stays nested under it, keeping its own file
+        (mirrors :class:`TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn`).
         """
         import yaml
         from aiida import orm
@@ -1175,8 +1608,12 @@ class TestDumpedNodeMetadata:
             assert node.uuid == recorded["uuid"]
             named[str(path.parent.relative_to(dumped))] = node.process_label
 
-        assert named == {"01-run": "write_note", "02-write_summary": "write_summary"}
-        assert (dumped / "01-run/outputs/result/note.txt").read_text() == "hello"
+        assert named == {
+            "01-run/01-write_note": "write_note",
+            "02-write_summary": "write_summary",
+        }
+        assert (dumped / "01-run/outputs/result.txt").read_text() == "hello"
+        assert (dumped / "01-run/01-write_note/outputs/result.txt").read_text() == "hello"
 
     def test_no_step_below_the_root_carries_a_workflow_node_metadata(
         self, aiida_profile_clean: object, tmp_path: Path
@@ -1227,3 +1664,1157 @@ class TestDumpedNodeMetadata:
             "01-run",
             "02-write_summary",
         ]
+
+
+class TestReadStagedJson:
+    """Whether a node is JSON-valued is decided from the node, not the staged file."""
+
+    def test_a_repository_backed_node_is_never_read_as_json(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A repository-backed node answers ``(False, None)``, whatever ``staged`` holds.
+
+        A same-named staged file existing by coincidence must never be
+        read for a node that carries its own repository content — that
+        would misreport a file-backed node as JSON-valued.
+        """
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import _read_staged_json
+
+        node = orm.SinglefileData(io.BytesIO(b"hello"), filename="f.txt").store()
+        staged = tmp_path / "staged"
+        staged.mkdir()
+        (staged / "report.json").write_text('{"report": 1}')
+
+        found, value = _read_staged_json("report", node, staged)
+
+        assert (found, value) == (False, None)
+
+    def test_a_repository_less_node_with_no_staged_slot_warns_and_is_skipped(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A missing staged slot for a repository-less node is an aiida-core nesting clash.
+
+        Warns naming the label, and answers ``(False, None)`` rather than
+        silently falling back to treating the node as repository-backed.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import _read_staged_json
+
+        node = orm.Dict({"x": 1}).store()  # type: ignore[no-untyped-call]
+        staged = tmp_path / "staged"
+        staged.mkdir()
+
+        with pytest.warns(UserWarning, match="parameters"):
+            found, value = _read_staged_json("parameters", node, staged)
+
+        assert (found, value) == (False, None)
+
+
+class TestStepIoListing:
+    """A step lists every ``Data`` input and output as one entry apiece.
+
+    Built on :func:`tests.fixtures.make_process`/:func:`tests.fixtures.attach`
+    rather than a live ``WorkGraph`` run, so a ``CalcJobNode``, a
+    ``CalcFunctionNode`` (a plain pyfunction) and a ``PythonJob``-typed
+    ``CalcJobNode`` can be told apart directly — the distinction
+    :func:`koopmans.aiida.dumping._is_calcjob_step` keys off. Every
+    scenario wraps its calculation under a trivial workflow ``root``,
+    matching how a real dump is never a bare CalcJob at its top level
+    (see ``ARITHMETIC_ADD``'s own probe: dumping a CalcJob with no
+    wrapper skips aiida-core's ``node_outputs`` → ``outputs`` merge,
+    which only ever walks a root's *descendants*).
+    """
+
+    #: A real, always-registered CalcJob — enough to resolve ``process_class``.
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+    #: A domain CalcJob's own class each real one gets; PyFunction has no
+    #: entry point of its own to resolve (it runs in-process, no
+    #: scheduler/computer needed), so this string is never actually
+    #: loaded — only ``isinstance(node, orm.CalcFunctionNode)`` decides.
+    PYFUNCTION = "aiida_pythonjob.calculations:pyfunction.pyfunction"
+    #: A real, always-registered PythonJob — a genuine CalcJobNode, but
+    #: excluded by :func:`koopmans.aiida.dumping._is_calcjob_step`'s
+    #: ``process_class`` comparison (mutant ``m4_no_pythonjob`` drops
+    #: that comparison and treats it as a real CalcJob).
+    PYTHONJOB = "aiida.calculations:pythonjob.pythonjob"
+
+    def test_a_calcjobs_dict_output_lands_beside_its_own_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A CalcJob's Dict CREATE output sits next to a real file it also created."""
+        import io
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "output_parameters", orm.Dict({"homo_energy": -12.353, "lumo_energy": -4.02}))  # type: ignore[no-untyped-call]
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        outputs = dumped / "01-calc" / "outputs"
+        written = json.loads((outputs / "output_parameters.json").read_text())
+        assert written == {"homo_energy": -12.353, "lumo_energy": -4.02}
+        assert (outputs / "report.txt").read_text() == "hello"
+
+    def test_a_pythonjob_helper_never_lists_its_outputs(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A ``PythonJob`` is a real ``CalcJobNode`` but still bookkeeping.
+
+        Distinguishes it from a domain CalcJob by ``process_class``, not
+        node type — an ``isinstance(node, orm.CalcJobNode)``-only check
+        would wrongly write ``result.json`` here.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        helper = make_process(
+            self.PYTHONJOB, caller=root, link_label="helper", calcjob=True, computer=aiida_localhost
+        )
+        attach(helper, "result", orm.Dict({"gap": 1.5}))  # type: ignore[no-untyped-call]
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        # Nothing is listed, and with no other content either (no
+        # repository file, no input listing), the folder is pruned away
+        # entirely — a domain CalcJob returning the same Dict survives
+        # with its listing (test_a_calcjobs_dict_output_lands_beside_its_own_file).
+        assert not any(p.name.endswith("helper") for p in dumped.rglob("*"))
+
+    def test_a_calcjob_with_no_json_representable_output_writes_no_json(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A CalcJob that creates only a file gets no JSON entry."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        outputs = dumped / "01-calc" / "outputs"
+        assert list(outputs.glob("*.json")) == []
+        assert (outputs / "report.txt").read_text() == "hello"
+
+    def test_a_plain_pyfunctions_dict_input_alone_leaves_no_folder(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A bare input listing does not rescue a folder from the prune.
+
+        A step's own input listing is non-content for the same reason a
+        scalar-argument helper task always was: without this, every
+        pyfunction taking a Data argument would gain a folder of its own
+        just to echo it back.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        make_process(
+            self.PYFUNCTION,
+            caller=root,
+            link_label="helper",
+            calcfunction=True,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("helper") for p in dumped.rglob("*"))
+
+    def test_a_calcjobs_data_inputs_land_in_its_input_listing(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A CalcJob's own Dict input is directly link-labelled, unlike a pyfunction's.
+
+        Also gives the calculation a real file output, so its folder has
+        content to survive the prune besides the input listing under test
+        — a bare input listing does not by itself (see
+        ``test_a_plain_pyfunctions_dict_input_alone_leaves_no_folder``).
+        """
+        import io
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        written = json.loads((dumped / "01-calc" / "inputs" / "parameters.json").read_text())
+        assert written == {"x": 1}
+
+    def test_a_calcjob_with_only_a_dict_input_and_no_output_leaves_no_folder(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A bare CalcJob input listing, with no other content, does not survive.
+
+        Mirrors ``test_a_plain_pyfunctions_dict_input_alone_leaves_no_folder``
+        for a genuine CalcJob rather than a pyfunction, so the rule that
+        an echoed input counts as nothing produced is pinned for both
+        step kinds that can ever gain one.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("calc") for p in dumped.rglob("*"))
+
+    def test_the_same_calcjob_with_a_dict_output_too_survives(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Adding a real output to the same setup makes the folder survive, with both files."""
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+        attach(calc, "output_parameters", orm.Dict({"y": 2}))  # type: ignore[no-untyped-call]
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        calc_dir = dumped / "01-calc"
+        assert json.loads((calc_dir / "inputs" / "parameters.json").read_text()) == {"x": 1}
+        assert json.loads((calc_dir / "outputs" / "output_parameters.json").read_text()) == {"y": 2}
+
+    def test_a_plain_pyfunction_lists_neither_its_inputs_nor_its_outputs(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A pyfunction is bookkeeping and lists no value, whatever it returns.
+
+        A real file output still lands under ``outputs/`` as aiida-core's
+        own dumper always wrote it — only the values this module adds are
+        withheld.
+        """
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        helper = make_process(
+            self.PYFUNCTION,
+            caller=root,
+            link_label="helper",
+            calcfunction=True,
+            inputs={"parameters": orm.Dict({"x": 1})},  # type: ignore[no-untyped-call]
+        )
+        attach(helper, "output_parameters", orm.Dict({"homo_energy": -12.353}))  # type: ignore[no-untyped-call]
+        attach(helper, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        helper_dir = dumped / "01-helper"
+        assert list(helper_dir.rglob("*.json")) == []
+        assert (helper_dir / "outputs" / "report.txt").read_text() == "hello"
+
+    def test_a_workflow_steps_return_lands_in_its_own_output_listing(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A workflow's RETURN surfaces a pyfunction's value its own folder never shows.
+
+        The pyfunction ``compute_alphas`` creates no file, so its own
+        folder is pruned entirely — matching ``no per-iteration helper
+        folders`` — and ``alphas`` reaches the reader only via ``root``'s
+        own RETURN, exactly the real ``ComputeScreeningParameters`` case.
+        """
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        compute_alphas = make_process(
+            self.PYFUNCTION, caller=root, link_label="compute_alphas", calcfunction=True
+        )
+        from aiida.common.links import LinkType
+
+        alphas_dict = orm.Dict({"up": [0.7019, 0.78], "down": [0.6896]})  # type: ignore[no-untyped-call]
+        alphas = attach(compute_alphas, "result", alphas_dict)
+        alphas.base.links.add_incoming(root, link_type=LinkType.RETURN, link_label="alphas")
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("compute_alphas") for p in dumped.rglob("*"))
+        written = json.loads((dumped / "outputs" / "alphas.json").read_text())
+        assert written == {"up": [0.7019, 0.78], "down": [0.6896]}
+
+    def test_a_workflow_step_never_lists_its_own_inputs(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """``root``'s own INPUT_WORK Data is never listed under ``inputs``.
+
+        Listing it would only risk colliding with a hoisted calculation's
+        own input listing (see
+        :func:`koopmans.aiida.dumping._write_step_io`).
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            label="root",
+            inputs={"text": orm.Str("hello")},  # type: ignore[no-untyped-call]
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not (dumped / "inputs").exists()
+
+    def test_code_and_remote_folder_links_are_not_listed(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Scratch paths and code labels are not results, so neither gets an entry.
+
+        ``structure`` and ``kpoints`` are genuine repository-less Data
+        (issue #204's own regression target), so both survive alongside
+        ``code`` and ``remote_folder`` to show the exclusion is by type,
+        not "every repository-less input except one". A real file output
+        keeps the folder itself from being pruned, the same reason
+        ``test_a_calcjobs_data_inputs_land_in_its_input_listing`` gives
+        its own calculation a ``report.txt`` — the input listing alone
+        counts as nothing produced (:data:`_NON_CONTENT_FILES`).
+        """
+        import io
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        structure = orm.StructureData()
+        structure.set_cell([[1, 0, 0], [0, 1, 0], [0, 0, 1]])  # type: ignore[no-untyped-call]
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        kpoints = orm.KpointsData()
+        kpoints.set_kpoints_mesh([2, 2, 2])  # type: ignore[no-untyped-call]
+        code = orm.InstalledCode(
+            computer=aiida_localhost,
+            filepath_executable="/bin/true",
+            default_calc_job_plugin=self.ARITHMETIC_ADD,
+        )
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"code": code, "structure": structure, "kpoints": kpoints},
+        )
+        attach(
+            calc,
+            "remote_folder",
+            orm.RemoteData(remote_path="/scratch/run", computer=aiida_localhost),
+        )
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        calc_dir = dumped / "01-calc"
+        assert json.loads((calc_dir / "inputs" / "structure.json").read_text())
+        assert json.loads((calc_dir / "inputs" / "kpoints.json").read_text())
+        assert not (calc_dir / "inputs" / "code.json").exists()
+        assert not any((calc_dir / "inputs").rglob("code*"))
+        assert (calc_dir / "outputs" / "report.txt").read_text() == "hello"
+        assert not (calc_dir / "outputs" / "remote_folder.json").exists()
+        assert not any((calc_dir / "outputs").rglob("remote_folder*"))
+
+    def test_a_killed_calculations_remote_folder_output_does_not_rescue_it(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A calculation killed before retrieval, its only output ``remote_folder``.
+
+        Real-node variant of
+        ``TestPruneSourceOnlyStepFolders.test_a_killed_calculation_survives``:
+        with ``remote_folder`` excluded from the listing (see
+        :func:`koopmans.aiida.dumping._data_links`), a killed calculation
+        whose sole output is ``remote_folder`` is pruned exactly as one
+        with no outputs at all — the scratch path never rescues the
+        folder by counting as a produced value.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(
+            calc,
+            "remote_folder",
+            orm.RemoteData(remote_path="/scratch/run", computer=aiida_localhost),
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("calc") for p in dumped.rglob("*"))
+
+
+class TestFlatEntryNames:
+    """Every entry under ``inputs``/``outputs`` is named for its link label.
+
+    The rule that distinguishes this layout from aiida-core's own: a node
+    is one entry, whether it holds a value or files, so the two kinds sit
+    side by side in one listing instead of a JSON file beside a directory
+    tree.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def _calc(self, aiida_localhost: Any) -> tuple[Any, Any]:
+        """Return a ``(root, calc)`` pair, the calculation wrapped as a real dump has it."""
+        from tests.fixtures import make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        return root, calc
+
+    def test_a_single_file_repository_takes_the_link_labels_name(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Two nodes whose files share a name stay apart, keyed by their labels.
+
+        The shape this replaces gave both files a directory of their own
+        (``output_lambdas/lambdas.npy``, ``output_bare_lambdas/lambdas.npy``),
+        so the reader had to open a directory to learn which was which.
+        """
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        attach(calc, "output_lambdas", orm.SinglefileData(io.BytesIO(b"ki"), filename="l.npy"))
+        attach(calc, "output_bare_lambdas", orm.SinglefileData(io.BytesIO(b"pz"), filename="l.npy"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "output_lambdas.npy").read_bytes() == b"ki"
+        assert (outputs / "output_bare_lambdas.npy").read_bytes() == b"pz"
+
+    def test_a_repository_of_several_files_keeps_a_directory(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Only a lone file collapses into the listing; several stay under the label."""
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "a.dat").write_text("one")
+        (tree / "b.dat").write_text("two")
+        attach(calc, "output_folder", orm.FolderData(tree=str(tree)))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "output_folder" / "a.dat").read_text() == "one"
+        assert (outputs / "output_folder" / "b.dat").read_text() == "two"
+
+    def test_a_namespaced_label_nests_values_into_one_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """``alphas__filled`` and ``alphas__empty`` become one ``alphas.json``."""
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        attach(calc, "alphas__filled", orm.List([0.66, 0.79]))  # type: ignore[no-untyped-call]
+        attach(calc, "alphas__empty", orm.List([0.73]))  # type: ignore[no-untyped-call]
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert json.loads((outputs / "alphas.json").read_text()) == {
+            "filled": [0.66, 0.79],
+            "empty": [0.73],
+        }
+
+    def test_a_namespaced_label_nests_files_under_one_directory(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """``pseudos__O``'s lone file becomes ``pseudos/O.upf``, not ``pseudos/O/O.upf``."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        attach(calc, "wf__O", orm.SinglefileData(io.BytesIO(b"pp"), filename="O.upf"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "wf" / "O.upf").read_bytes() == b"pp"
+
+    def test_a_name_the_calculations_own_files_already_use_keeps_its_directory(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A collision with a retrieved file falls back to the ``<label>/`` form.
+
+        The retrieved files sit loose under ``outputs`` — the calculation
+        wrote them itself — so a linked node whose flattened name is
+        already taken keeps a directory rather than overwriting one.
+        """
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "report.txt").write_text("stdout")
+        attach(calc, "retrieved", orm.FolderData(tree=str(tree)))
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"linked"), filename="r.txt"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "report.txt").read_bytes() == b"stdout"
+        assert (outputs / "report" / "r.txt").read_bytes() == b"linked"
+
+    def test_a_compound_suffix_survives_whole(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """``bundle.tar.gz`` keeps both parts of its suffix, not just ``.gz``."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        attach(calc, "tarred", orm.SinglefileData(io.BytesIO(b"t"), filename="bundle.tar.gz"))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "tarred.tar.gz").read_bytes() == b"t"
+
+    def test_a_version_numbered_name_keeps_only_its_final_suffix(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """``H_ONCV_PBE-1.0.upf`` becomes ``<label>.upf``, not ``<label>.0.upf``.
+
+        The digit before the real suffix is part of the pseudopotential's
+        own version number, not a compound suffix like ``.tar.gz``.
+        """
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        attach(
+            calc,
+            "pseudos__H",
+            orm.SinglefileData(io.BytesIO(b"pp"), filename="H_ONCV_PBE-1.0.upf"),
+        )
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "pseudos" / "H.upf").read_bytes() == b"pp"
+
+    def test_a_retrieved_file_of_the_same_name_is_not_overwritten(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A JSON-valued link whose name collides with a retrieved file backs off.
+
+        The calculation retrieved ``results.json`` itself; a linked
+        ``results`` output with a JSON form must not clobber it, so it
+        falls back to ``results/results.json`` the way a repository-backed
+        entry falls back to a directory on the same collision.
+        """
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach
+
+        root, calc = self._calc(aiida_localhost)
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "results.json").write_text("RETRIEVED-ORIGINAL")
+        attach(calc, "retrieved", orm.FolderData(tree=str(tree)))
+        attach(calc, "results", orm.Dict({"a": 1}))  # type: ignore[no-untyped-call]
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-calc" / "outputs"
+
+        assert (outputs / "results.json").read_text() == "RETRIEVED-ORIGINAL"
+        assert json.loads((outputs / "results" / "results.json").read_text()) == {"a": 1}
+
+
+class TestHoistDropsRedundantWorkflowReturn:
+    """A wrapper's RETURN echo of its own direct CalcJob's output is dropped.
+
+    Mirrors the real ``RunFinalKI`` / ``ki_final`` shape: a workflow wraps
+    exactly one CalcJob and re-exports one of its Dict outputs under a
+    different link label. Before this class's fix, the wrapper's own
+    output listing (holding that one redundant entry) counted as a second
+    child alongside the calculation's folder, so
+    ``_hoist_lone_calculations`` no longer saw a lone calculation to merge
+    up — leaving the same underlying node listed twice, once per label.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def test_the_wrapper_is_hoisted_with_one_entry_keyed_by_the_calculation(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The wrapper folder collapses into the CalcJob's, as it did before this PR."""
+        import io
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        # The dump root's own metadata file always survives as a sibling
+        # (see TestHoistLoneCalculations.test_a_lone_top_level_calculation_keeps_its_folder),
+        # so ``wrapper`` has to sit one layer below the root to be
+        # eligible for the hoist under test, exactly as ``RunFinalKI``
+        # sits below the real top-level workgraph.
+        true_root = make_process("aiida.workflows:workgraph.engine", label="true_root")
+        wrapper = make_process(
+            "aiida.workflows:workgraph.engine", caller=true_root, link_label="run_final"
+        )
+        ki_final = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="ki_final",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        from aiida.common.links import LinkType
+
+        parameters = attach(
+            ki_final,
+            "output_parameters",
+            orm.Dict({"homo_energy": -12.353, "lumo_energy": -0.4034}),  # type: ignore[no-untyped-call]
+        )
+        attach(
+            ki_final,
+            "eigenvalues",
+            orm.SinglefileData(io.BytesIO(b"eigenvalues"), filename="eigs.dat"),
+        )
+        # The wrapper re-exports the same Dict node under a different label.
+        parameters.base.links.add_incoming(
+            wrapper, link_type=LinkType.RETURN, link_label="parameters"
+        )
+
+        dumped = dump_workgraph(true_root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("ki_final") for p in dumped.rglob("*"))
+        outputs = dumped / "01-run_final" / "outputs"
+        assert sorted(p.name for p in dumped.rglob("*.json")) == ["output_parameters.json"]
+
+        written = json.loads((outputs / "output_parameters.json").read_text())
+        assert written == {"homo_energy": -12.353, "lumo_energy": -0.4034}
+        assert (outputs / "eigenvalues.dat").read_text() == "eigenvalues"
+
+
+class TestAGraphIndexesWhatItsCalculationsProduced:
+    """A graph's ``outputs`` names the run's answers, and links to them.
+
+    The shape every upstream-wrapped step has: a workgraph calls a
+    ``PwBaseWorkChain``/``ProjwfcBaseWorkChain``, which calls the one
+    calculation. The graph has a name of its own for each value and keeps
+    an entry under it; the entry is a symlink to the copy the producing
+    step already holds, so the index costs no second copy of anything.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def test_the_graphs_entry_is_a_link_to_the_producing_step(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The graph names the value; the calculation keeps the real file."""
+        import io
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        graph = make_process("aiida.workflows:workgraph.engine", caller=root, link_label="projwfc")
+        wrapper = make_process("aiida.workflows:core.pw.base", caller=graph, link_label="projwfc")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="iteration_01",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        projections = attach(
+            calc, "projections", orm.SinglefileData(io.BytesIO(b"p"), filename="proj.dat")
+        )
+        for echo in (wrapper, graph):
+            projections.base.links.add_incoming(
+                echo, link_type=LinkType.RETURN, link_label="projections"
+            )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        # The wrapper's own echo goes, so it folds onto the calculation
+        # and reads as the step it stands for rather than as a folder
+        # around an ``iteration_01``.
+        produced = dumped / "01-projwfc/01-projwfc/outputs/projections.dat"
+        indexed = dumped / "01-projwfc/outputs/projections.dat"
+        assert not produced.is_symlink()
+        assert indexed.is_symlink()
+        assert indexed.resolve() == produced.resolve()
+        assert indexed.read_bytes() == b"p"
+
+    def test_a_namespaced_json_value_is_not_written_a_second_time(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A nested rendering is bytes no link can serve, so it is dropped.
+
+        Under ``bands__output_parameters`` the value would be written as
+        ``{"output_parameters": ...}``, which differs from the bare
+        listing the calculation wrote — so the entry could only be a
+        second real copy of the same numbers. The value stays where the
+        calculation put it.
+        """
+        import json
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        graph = make_process("aiida.workflows:workgraph.engine", caller=root, link_label="run")
+        wrapper = make_process("aiida.workflows:core.pw.base", caller=graph, link_label="bands")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="iteration_01",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        parameters = attach(calc, "output_parameters", orm.Dict({"fermi_energy": 6.6}))  # type: ignore[no-untyped-call]
+        parameters.base.links.add_incoming(
+            graph, link_type=LinkType.RETURN, link_label="bands__output_parameters"
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not (dumped / "01-run/outputs/bands.json").exists()
+        written = json.loads(
+            (dumped / "01-run/01-bands/outputs/output_parameters.json").read_text()
+        )
+        assert written == {"fermi_energy": 6.6}
+
+    def test_a_flat_json_label_is_indexed_and_links(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The same value under a flat label writes the same bytes, so it links.
+
+        This is what makes the namespaced case above a rule about the
+        rendering rather than about JSON values.
+        """
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        graph = make_process("aiida.workflows:workgraph.engine", caller=root, link_label="run")
+        wrapper = make_process("aiida.workflows:core.pw.base", caller=graph, link_label="bands")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="iteration_01",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        parameters = attach(calc, "output_parameters", orm.Dict({"fermi_energy": 6.6}))  # type: ignore[no-untyped-call]
+        parameters.base.links.add_incoming(
+            graph, link_type=LinkType.RETURN, link_label="parameters"
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        indexed = dumped / "01-run/outputs/parameters.json"
+        assert indexed.is_symlink()
+        assert indexed.resolve() == (dumped / "01-run/01-bands/outputs/output_parameters.json")
+
+    def test_a_value_made_outside_the_graph_is_still_echoed(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A ``RETURN`` of a node no calculation below made is an echo like any other.
+
+        A ``Wannier90WorkChain`` re-exports the ``nscf`` results it was
+        handed; the index names them under its own labels wherever they
+        were produced.
+        """
+        import io
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        elsewhere = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="nscf",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        handed_in = attach(
+            elsewhere, "charge_density", orm.SinglefileData(io.BytesIO(b"rho"), filename="rho.dat")
+        )
+        graph = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize"
+        )
+        make_process(
+            self.ARITHMETIC_ADD,
+            caller=graph,
+            link_label="wannier90",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        handed_in.base.links.add_incoming(
+            graph, link_type=LinkType.RETURN, link_label="nscf__charge_density"
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        echoed = dumped / "02-wannierize" / "outputs" / "nscf" / "charge_density.dat"
+        assert echoed.read_bytes() == b"rho"
+
+
+class TestRetrievedFolderIsNeverListed:
+    """A calculation's retrieved folder is never a listing of its own.
+
+    aiida-core writes those files loose under the calculation's
+    ``outputs``, so listing the folder repeats every one of them. The
+    exclusion goes by the folder's own ``CREATE`` link, not by the label
+    a link to it carries: a workflow re-exports it under whatever name it
+    chose, and ``koopmans`` graphs choose ``nscf_retrieved`` and
+    ``blocks__emp_1__retrieved``.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def test_a_workflows_echo_under_another_name_is_not_listed(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The retrieved folder of a calculation outside the graph stays unlisted.
+
+        The calculation ran outside this graph, so the redundant-echo
+        rule leaves the link alone; only its being a retrieved folder
+        keeps it out of the listing.
+        """
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        elsewhere = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="nscf",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "aiida.out").write_text("the scf output")
+        (tree / "data-file-schema.xml").write_text("<xml/>")
+        retrieved = attach(elsewhere, "retrieved", orm.FolderData(tree=str(tree)))
+        graph = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize"
+        )
+        make_process(
+            self.ARITHMETIC_ADD,
+            caller=graph,
+            link_label="wannier90",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        retrieved.base.links.add_incoming(
+            graph, link_type=LinkType.RETURN, link_label="nscf_retrieved"
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.startswith("nscf_retrieved") for p in dumped.rglob("*"))
+        # The files themselves are where the calculation retrieved them.
+        assert (dumped / "01-nscf" / "outputs" / "aiida.out").read_text() == "the scf output"
+
+
+class TestWorkflowReturnKeepsPyfunctionCreatedValue:
+    """A wrapper's RETURN echo of a pyfunction child's output is never dropped.
+
+    The redundant-echo rule in
+    :func:`koopmans.aiida.dumping._direct_calculation_created_pks` only
+    excludes what a directly-called *CalcJob* made — a pyfunction child's
+    folder is pruned regardless of what it returns
+    (:func:`koopmans.aiida.dumping._is_calcjob_step`), so its value would
+    vanish entirely from the dump if the wrapper's RETURN were dropped too.
+    """
+
+    PYFUNCTION = "aiida_pythonjob.calculations:pyfunction.pyfunction"
+
+    def test_the_pyfunctions_folder_is_pruned_but_its_value_survives_via_the_wrapper(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """The helper leaves no folder; the wrapper's own listing still shows its value."""
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        wrapper = make_process("aiida.workflows:workgraph.engine", label="wrapper")
+        generate_alphas = make_process(
+            self.PYFUNCTION, caller=wrapper, link_label="generate_alphas", calcfunction=True
+        )
+        from aiida.common.links import LinkType
+
+        alphas = attach(generate_alphas, "result", orm.Dict({"up": [0.6], "down": [0.6]}))  # type: ignore[no-untyped-call]
+        # The wrapper re-exports the same Dict node under a different label.
+        alphas.base.links.add_incoming(wrapper, link_type=LinkType.RETURN, link_label="alphas")
+
+        dumped = dump_workgraph(wrapper, tmp_path / "dump")
+
+        assert not any(p.name.endswith("generate_alphas") for p in dumped.rglob("*"))
+        written = json.loads((dumped / "outputs" / "alphas.json").read_text())
+        assert written == {"up": [0.6], "down": [0.6]}
+
+
+class TestWorkFunctionIsBookkeeping:
+    """A ``@workfunction`` (``WorkFunctionNode``) is bookkeeping, exactly like a pyfunction.
+
+    ``resolve_pseudo_family_task`` — the codebase's only workfunction —
+    is one solely because it hands back *existing* ``UpfData`` nodes
+    rather than creating new ones; nothing about that makes it a step a
+    reader needs its own folder for.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+    WORKFUNCTION = "aiida_koopmans.utils.pseudos.resolve_pseudo_family_task"
+
+    def test_a_workfunctions_dict_return_gets_no_folder_of_its_own(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """No folder for the workfunction; its siblings number contiguously; its RETURN survives."""
+        import io
+        import json
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        helper = make_process(
+            self.WORKFUNCTION, caller=root, link_label="resolve_family", workfunction=True
+        )
+        family = attach(helper, "family_name", orm.Str("SG15"))  # type: ignore[no-untyped-call]
+        family.base.links.add_incoming(root, link_type=LinkType.RETURN, link_label="family_name")
+
+        scf = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="scf",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(scf, "report", orm.SinglefileData(io.BytesIO(b"x"), filename="r.txt"))
+        nscf = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="nscf",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(nscf, "report", orm.SinglefileData(io.BytesIO(b"y"), filename="s.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        # No folder for the workfunction.
+        assert not any(p.name.endswith("resolve_family") for p in dumped.rglob("*"))
+        # Its two real-calculation siblings number contiguously from one,
+        # with no gap left where the pruned workfunction would have sat.
+        # (the root's own output listing sits beside them)
+        assert sorted(p.name for p in dumped.iterdir() if p.is_dir()) == [
+            "01-scf",
+            "02-nscf",
+            "outputs",
+        ]
+        # The enclosing graph's own RETURN of the workfunction's value survives.
+        assert json.loads((dumped / "outputs" / "family_name.json").read_text()) == "SG15"
+
+
+class TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn:
+    """A wrapper's own folder survives when it keeps a genuine RETURN value.
+
+    Repeating a value up the tree is accepted (each graph states what it
+    returns): only a *direct CalcJob child's* echo is dropped. A pyfunction
+    child's value is never dropped, so a wrapper re-exporting one keeps a
+    real output listing of its own — and the lone CalcJob it also wraps
+    stays nested rather than being hoisted, since the wrapper's folder no
+    longer holds *only* that one calculation.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+    PYFUNCTION = "aiida_pythonjob.calculations:pyfunction.pyfunction"
+
+    def test_the_calcjob_stays_nested_and_the_wrapper_keeps_its_listing(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Mirrors a workflow wrapping both a CalcJob and a bookkeeping helper."""
+        import io
+        import json
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        wrapper = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="run_final"
+        )
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="ki_final",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(calc, "eigenvalues", orm.SinglefileData(io.BytesIO(b"eig"), filename="e.dat"))
+        helper = make_process(
+            self.PYFUNCTION, caller=wrapper, link_label="postprocess", calcfunction=True
+        )
+        gap = attach(helper, "result", orm.Dict({"value": 1.5}))  # type: ignore[no-untyped-call]
+        gap.base.links.add_incoming(wrapper, link_type=LinkType.RETURN, link_label="gap")
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        # The bookkeeping helper leaves no folder of its own.
+        assert not any(p.name.endswith("postprocess") for p in dumped.rglob("*"))
+        # The CalcJob is NOT hoisted: the wrapper's own output listing is
+        # real content, so the wrapper is not left holding only one child.
+        assert (dumped / "01-run_final" / "01-ki_final").is_dir()
+        written = json.loads((dumped / "01-run_final" / "outputs" / "gap.json").read_text())
+        assert written == {"value": 1.5}

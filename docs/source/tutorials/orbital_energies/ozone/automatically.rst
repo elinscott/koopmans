@@ -212,29 +212,38 @@ to mirror the workflow outline above:
     │   ├── inputs
     │   └── outputs
     ├── 05-ComputeScreeningParameters
-    │   └── 01-ScreeningIteration
-    │       ├── 01-ki_trial
-    │       │   ├── inputs
-    │       │   └── outputs
-    │       └── 02-compute_orbital_screening_parameters
-    │           ├── 01-compute_alpha_orb_1
-    │           │   ├── 01-dft_n_minus_1
-    │           │   └── 02-compute_alpha_from_dscf
-    │           ├── ...
-    │           └── 10-compute_alpha_orb_10
-    │               ├── 01-dft_n_plus_1_dummy
-    │               ├── 02-pz_print
-    │               ├── 03-dft_n_plus_1
-    │               └── 04-compute_alpha_from_dscf
+    │   ├── 01-ScreeningIteration
+    │   │   ├── 01-ki_trial
+    │   │   │   ├── inputs
+    │   │   │   └── outputs
+    │   │   ├── 02-compute_orbital_screening_parameters
+    │   │   │   ├── 01-compute_alpha_orb_1
+    │   │   │   │   ├── 01-dft_n_minus_1
+    │   │   │   │   ├── 02-compute_alpha_from_dscf
+    │   │   │   │   └── outputs
+    │   │   │   ├── ...
+    │   │   │   ├── 10-compute_alpha_orb_10
+    │   │   │   │   ├── 01-dft_n_plus_1_dummy
+    │   │   │   │   ├── 02-pz_print
+    │   │   │   │   ├── 03-dft_n_plus_1
+    │   │   │   │   ├── 04-compute_alpha_from_dscf
+    │   │   │   │   └── outputs
+    │   │   │   └── outputs
+    │   │   └── outputs
+    │   └── outputs
     ├── 06-RunFinalKI
     │   ├── inputs
     │   └── outputs
+    ├── outputs
     └── README
 
-One directory per step, numbered in the order the steps ran. A step that is a Quantum
-ESPRESSO calculation holds the exact input file the engine generated (``aiida.cpi``)
-plus its pseudopotentials in ``inputs/``, and everything the calculation wrote
-(``aiida.cpo`` and more) in ``outputs/``.
+One directory per step, numbered in the order the steps ran. Every step lists what it
+read in ``inputs/`` and what it produced in ``outputs/``, one entry per name whatever
+kind of thing it is: a Quantum ESPRESSO calculation's ``inputs/`` holds the exact input
+file the engine generated (``aiida.cpi``) and its pseudopotentials, and its ``outputs/``
+holds everything the calculation wrote (``aiida.cpo`` and more) alongside the parsed
+results as ``.json`` files. A step that ran no calculation of its own — the screening
+loop, or the run as a whole — has only the ``outputs/`` listing.
 
 .. note::
 
@@ -252,6 +261,15 @@ electron affinity comes with it, as the negative of the LUMO energy. Open
 ``ozone/06-RunFinalKI/outputs/aiida.cpo`` and search near the bottom for the ``HOMO
 Eigenvalue`` and ``LUMO Eigenvalue`` lines — and, for the PBE comparison, find the same
 lines in the initialization output, ``ozone/04-dft_init_nspin2/outputs/aiida.cpo``.
+
+.. tip::
+
+    Searching an output file is how you see a number in the code's own words, but every
+    step also lists what it produced as JSON beside it. The two energies above are
+    ``homo_energy`` and ``lumo_energy`` in
+    ``ozone/06-RunFinalKI/outputs/output_parameters.json``, and the screening parameters
+    are in ``ozone/05-ComputeScreeningParameters/outputs/alphas.json``, grouped by
+    ``filled`` and ``empty`` and then by spin channel (here just ``none``).
 
 .. question:: What do you find?
 
