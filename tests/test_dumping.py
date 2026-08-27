@@ -697,7 +697,13 @@ class TestPruneEngineBookkeeping:
     #: A real, always-registered CalcJob — enough to resolve ``process_class``.
     ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
 
-    def _run_with_scheduler_noise(self, computer: Any, tmp_path: Path, exit_status: int) -> Any:
+    def _run_with_scheduler_noise(
+        self,
+        computer: Any,
+        tmp_path: Path,
+        exit_status: int = 0,
+        process_state: str = "finished",
+    ) -> Any:
         """Return a root whose one calculation retrieved a non-empty stderr.
 
         Nothing else is retrieved and nothing is created, so what the
@@ -716,8 +722,9 @@ class TestPruneEngineBookkeeping:
             calcjob=True,
             computer=computer,
             exit_status=exit_status,
+            process_state=process_state,
         )
-        tree = tmp_path / f"tree-{exit_status}"
+        tree = tmp_path / f"tree-{exit_status}-{process_state}"
         tree.mkdir()
         (tree / "_scheduler-stderr.txt").write_text(
             "Note: The following floating-point exceptions are signalling: IEEE_UNDERFLOW\n"
@@ -731,7 +738,7 @@ class TestPruneEngineBookkeeping:
         """The GNU builds warn on every successful call; that is not a result."""
         from koopmans.aiida.dumping import dump_workgraph
 
-        root = self._run_with_scheduler_noise(aiida_localhost, tmp_path, exit_status=0)
+        root = self._run_with_scheduler_noise(aiida_localhost, tmp_path)
 
         dumped = dump_workgraph(root, tmp_path / "dump")
 
@@ -742,10 +749,10 @@ class TestPruneEngineBookkeeping:
     ) -> None:
         """A crashed calculation keeps its folder, its stderr and its metadata.
 
-        The same file under the same name, kept or dropped by the exit
-        status alone. Dropping it here would take the folder with it and
-        the run's one record of the failure would be missing from the
-        dump.
+        The same file under the same name as the run above, kept or
+        dropped by how the calculation ended alone. Dropping it here
+        would take the folder with it, and the run's one record of the
+        failure would be missing from the dump.
         """
         from koopmans.aiida.dumping import dump_workgraph
 
@@ -756,6 +763,23 @@ class TestPruneEngineBookkeeping:
         outputs = dumped / "01-pw" / "outputs"
         assert "IEEE_UNDERFLOW" in (outputs / "_scheduler-stderr.txt").read_text()
         assert (dumped / "01-pw" / NODE_METADATA_FILE).is_file()
+
+    def test_a_killed_run_keeps_its_stderr_too(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A killed calculation never reached an exit status to report.
+
+        Asking for a nonzero exit status would drop this one's stderr and
+        its folder with it, which is why the test is that the calculation
+        did not finish successfully.
+        """
+        from koopmans.aiida.dumping import dump_workgraph
+
+        root = self._run_with_scheduler_noise(aiida_localhost, tmp_path, process_state="killed")
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert "IEEE_UNDERFLOW" in (dumped / "01-pw/outputs/_scheduler-stderr.txt").read_text()
 
     def test_an_empty_scheduler_log_goes_however_the_run_ended(
         self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
@@ -2393,24 +2417,22 @@ class TestHoistDropsRedundantWorkflowReturn:
         assert (outputs / "eigenvalues.dat").read_text() == "eigenvalues"
 
 
-class TestReturnDedupLooksThroughWrappers:
-    """A graph drops an echo of what any calculation below it made.
+class TestAGraphIndexesWhatItsCalculationsProduced:
+    """A graph's ``outputs`` names the run's answers, and links to them.
 
     The shape every upstream-wrapped step has: a workgraph calls a
     ``PwBaseWorkChain``/``ProjwfcBaseWorkChain``, which calls the one
-    calculation. The calculation's own folder is hoisted up into the
-    wrapper's, so the value sits in the graph's own subtree under the
-    calculation's label — but the graph's direct child is the wrapper,
-    not the calculation, so a one-hop rule left the graph mirroring the
-    whole listing beside it.
+    calculation. The graph has a name of its own for each value and keeps
+    an entry under it; the entry is a symlink to the copy the producing
+    step already holds, so the index costs no second copy of anything.
     """
 
     ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
 
-    def test_a_graph_over_a_wrapped_calculation_lists_nothing_of_its_own(
+    def test_the_graphs_entry_is_a_link_to_the_producing_step(
         self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
     ) -> None:
-        """The mirror listing goes, and the wrapper collapses onto the calculation."""
+        """The graph names the value; the calculation keeps the real file."""
         import io
 
         from aiida import orm
@@ -2439,22 +2461,101 @@ class TestReturnDedupLooksThroughWrappers:
 
         dumped = dump_workgraph(root, tmp_path / "dump")
 
-        # The wrapper takes over the calculation's folder and holds the
-        # output once. The graph above it lists nothing of its own —
-        # before the fix it kept an ``outputs`` mirroring that listing
-        # entry for entry, beside the wrapper's folder.
-        graph_folder = dumped / "01-projwfc"
-        assert (graph_folder / "01-projwfc" / "outputs" / "projections.dat").read_bytes() == b"p"
-        assert [p.name for p in graph_folder.iterdir()] == ["01-projwfc"]
+        # The wrapper's own echo goes, so it folds onto the calculation
+        # and reads as the step it stands for rather than as a folder
+        # around an ``iteration_01``.
+        produced = dumped / "01-projwfc/01-projwfc/outputs/projections.dat"
+        indexed = dumped / "01-projwfc/outputs/projections.dat"
+        assert not produced.is_symlink()
+        assert indexed.is_symlink()
+        assert indexed.resolve() == produced.resolve()
+        assert indexed.read_bytes() == b"p"
+
+    def test_a_namespaced_json_value_is_not_written_a_second_time(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A nested rendering is bytes no link can serve, so it is dropped.
+
+        Under ``bands__output_parameters`` the value would be written as
+        ``{"output_parameters": ...}``, which differs from the bare
+        listing the calculation wrote — so the entry could only be a
+        second real copy of the same numbers. The value stays where the
+        calculation put it.
+        """
+        import json
+
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        graph = make_process("aiida.workflows:workgraph.engine", caller=root, link_label="run")
+        wrapper = make_process("aiida.workflows:core.pw.base", caller=graph, link_label="bands")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="iteration_01",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        parameters = attach(calc, "output_parameters", orm.Dict({"fermi_energy": 6.6}))  # type: ignore[no-untyped-call]
+        parameters.base.links.add_incoming(
+            graph, link_type=LinkType.RETURN, link_label="bands__output_parameters"
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not (dumped / "01-run/outputs/bands.json").exists()
+        written = json.loads(
+            (dumped / "01-run/01-bands/outputs/output_parameters.json").read_text()
+        )
+        assert written == {"fermi_energy": 6.6}
+
+    def test_a_flat_json_label_is_indexed_and_links(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The same value under a flat label writes the same bytes, so it links.
+
+        This is what makes the namespaced case above a rule about the
+        rendering rather than about JSON values.
+        """
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        graph = make_process("aiida.workflows:workgraph.engine", caller=root, link_label="run")
+        wrapper = make_process("aiida.workflows:core.pw.base", caller=graph, link_label="bands")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=wrapper,
+            link_label="iteration_01",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        parameters = attach(calc, "output_parameters", orm.Dict({"fermi_energy": 6.6}))  # type: ignore[no-untyped-call]
+        parameters.base.links.add_incoming(
+            graph, link_type=LinkType.RETURN, link_label="parameters"
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        indexed = dumped / "01-run/outputs/parameters.json"
+        assert indexed.is_symlink()
+        assert indexed.resolve() == (dumped / "01-run/01-bands/outputs/output_parameters.json")
 
     def test_a_value_made_outside_the_graph_is_still_echoed(
         self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
     ) -> None:
-        """The discriminating case: a RETURN of a node no calculation below made.
+        """A ``RETURN`` of a node no calculation below made is an echo like any other.
 
         A ``Wannier90WorkChain`` re-exports the ``nscf`` results it was
-        handed. Nothing in its own subtree created them, so its listing
-        is the only place they appear under its own labels.
+        handed; the index names them under its own labels wherever they
+        were produced.
         """
         import io
 
@@ -2561,9 +2662,9 @@ class TestWorkflowReturnKeepsPyfunctionCreatedValue:
     """A wrapper's RETURN echo of a pyfunction child's output is never dropped.
 
     The redundant-echo rule in
-    :func:`koopmans.aiida.dumping._subtree_calculation_created_pks` only
-    excludes what a *CalcJob* below made — a pyfunction child's folder is
-    pruned regardless of what it returns
+    :func:`koopmans.aiida.dumping._direct_calculation_created_pks` only
+    excludes what a directly-called *CalcJob* made — a pyfunction child's
+    folder is pruned regardless of what it returns
     (:func:`koopmans.aiida.dumping._is_calcjob_step`), so its value would
     vanish entirely from the dump if the wrapper's RETURN were dropped too.
     """

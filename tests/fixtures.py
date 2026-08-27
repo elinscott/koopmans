@@ -1024,6 +1024,7 @@ def make_process(
     computer: Any = None,
     process_label: str | None = None,
     inputs: dict[str, Any] | None = None,
+    process_state: str = "finished",
 ) -> Any:
     """Return a stored, finished process node of the given ``process_type``.
 
@@ -1055,6 +1056,12 @@ def make_process(
     ``TestStepIoListing.PYTHONJOB`` in ``tests/test_dumping.py``), since
     ``_is_calcjob_step`` excludes it by comparing ``process_class``, not
     by node type.
+
+    ``process_state`` names one of plumpy's states ("finished", "killed",
+    "excepted", ...). Only a finished process carries an exit status, so
+    ``exit_status`` is set for that state alone — which is what makes a
+    killed node answer ``is_finished_ok`` false with no exit status to
+    read.
     """
     from aiida import orm
     from aiida.common.links import LinkType
@@ -1082,8 +1089,9 @@ def make_process(
     node.store()
     if process_label is not None:
         node.set_process_label(process_label)
-    node.set_process_state(ProcessState.FINISHED)
-    node.set_exit_status(exit_status)
+    node.set_process_state(ProcessState(process_state))
+    if ProcessState(process_state) is ProcessState.FINISHED:
+        node.set_exit_status(exit_status)
     if exit_message is not None:
         node.set_exit_message(exit_message)
     return node

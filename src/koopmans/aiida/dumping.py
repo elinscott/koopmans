@@ -106,9 +106,9 @@ _ENGINE_BOOKKEEPING_FILES = ("_aiidasubmit.sh",)
 # What the scheduler wrote about the job, retrieved beside the results.
 # A run that finished writes noise here — the GNU builds emit half a
 # kilobyte of IEEE-exception summaries on every successful pw.x call —
-# but a run that failed may have written its only account of the failure
-# here, so these two are kept by :func:`_prune_engine_bookkeeping` when
-# the calculation reports a nonzero exit status.
+# but a run that did not may have written its only account of what went
+# wrong here, so these two are kept by :func:`_prune_engine_bookkeeping`
+# for a calculation that did not finish successfully.
 _SCHEDULER_LOG_FILES = ("_scheduler-stdout.txt", "_scheduler-stderr.txt")
 
 # Sentinel for "no value here", distinct from a staged JSON value of None.
@@ -803,55 +803,73 @@ def _is_calcjob_step(node: orm.ProcessNode) -> bool:
     return process_class is not PythonJob
 
 
-def _subtree_calculation_created_pks(
-    node: orm.WorkflowNode, memo: dict[int, frozenset[int]] | None = None
-) -> frozenset[int]:
-    """Return the pks a CalcJob anywhere below ``node`` created.
+def _direct_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
+    """Return the pks a CalcJob called directly by ``node`` created.
 
-    A CalcJob is the only kind of calculation whose own folder survives to
-    hold the value under its own label (:func:`_is_calcjob_step`), so
-    wherever in the subtree it sits, its value is already on disk once and
-    an enclosing graph's ``RETURN`` echo of it would be a second listing of
-    the same node. The whole subtree is walked because a graph's direct
-    child is often a transparent wrapper — a ``PwBaseWorkChain`` around one
-    ``PwCalculation``, a ``Wannier90WorkChain`` around the three
-    wannier90 steps — whose own folder holds the calculation rather than
-    being it.
+    A workflow that calls one calculation and nothing else is folded into
+    that calculation's folder (:func:`_hoist_lone_calculations`), where the
+    two listings would be the same entries under the same names. Dropping
+    the echo is what leaves the wrapper holding a single child to be
+    folded, so a ``PwBaseWorkChain`` reads as the ``scf`` step it stands
+    for rather than as a folder around an ``iteration_01``.
 
-    A value no CalcJob below made is never dropped: not one a pruned
-    pyfunction child created (``ComputeScreeningParameters``'s ``alphas``),
-    and not one produced outside this graph and handed in, which a
-    workflow may legitimately re-export.
-
-    :param node: The workflow whose subtree is walked.
-    :param memo: Answers already worked out, keyed by pk. Every enclosing
-        graph asks about the same nested ones, so one memo shared across
-        a dump walks each subtree once.
+    Only a one-hop CalcJob child counts. A graph whose child is itself a
+    workflow — the usual shape, a workgraph over an upstream WorkChain —
+    keeps its echo: it has a name of its own for the value, its folder
+    survives whatever the hoist does, and the entry costs a symlink.
     """
     from aiida import orm
     from aiida.common import LinkType
 
-    memo = memo if memo is not None else {}
-    if node.pk is not None and node.pk in memo:
-        return memo[node.pk]
-
     created: set[int] = set()
-    for call_type in (LinkType.CALL_CALC, LinkType.CALL_WORK):
-        for call_link in node.base.links.get_outgoing(link_type=call_type).all():
-            child = call_link.node
-            if not isinstance(child, orm.ProcessNode):
-                continue
-            if isinstance(child, orm.WorkflowNode):
-                created.update(_subtree_calculation_created_pks(child, memo))
-            elif _is_calcjob_step(child):
-                for create_link in child.base.links.get_outgoing(link_type=LinkType.CREATE).all():
-                    if create_link.node.pk is not None:
-                        created.add(create_link.node.pk)
+    for call_link in node.base.links.get_outgoing(link_type=LinkType.CALL_CALC).all():
+        child = call_link.node
+        if not isinstance(child, orm.ProcessNode) or not _is_calcjob_step(child):
+            continue
+        for create_link in child.base.links.get_outgoing(link_type=LinkType.CREATE).all():
+            if create_link.node.pk is not None:
+                created.add(create_link.node.pk)
+    return frozenset(created)
 
-    answer = frozenset(created)
-    if node.pk is not None:
-        memo[node.pk] = answer
-    return answer
+
+def _listed_by_its_creator(node: orm.Data) -> bool:
+    """Return whether the calculation that created ``node`` lists it itself.
+
+    Only a CalcJob keeps a folder holding its own listing
+    (:func:`_is_calcjob_step`); a pyfunction's folder is pruned whatever it
+    returns, so a value it created reaches the dump through an enclosing
+    workflow's echo alone.
+    """
+    from aiida import orm
+    from aiida.common import LinkType
+
+    return any(
+        isinstance(link.node, orm.ProcessNode) and _is_calcjob_step(link.node)
+        for link in node.base.links.get_incoming(link_type=LinkType.CREATE).all()
+    )
+
+
+def _repeats_its_producers_listing(label: str, node: orm.Data) -> bool:
+    """Return whether listing ``node`` under ``label`` would repeat a real copy.
+
+    A workflow's ``RETURN`` echo is normally worth keeping: it names the
+    run's answers under the labels the workflow chose, and the entry costs
+    a symlink to the copy the producing step already holds
+    (:func:`_link_duplicate_files`).
+
+    A JSON value reached through a namespaced label is the exception. It is
+    written nested inside its namespace — ``bands.json`` holding
+    ``{"output_parameters": ...}`` — which differs byte for byte from the
+    bare ``output_parameters.json`` the calculation that created it wrote,
+    so nothing links the two and the echo would be a second real copy of
+    the same value. A flat label writes the value itself and does link; a
+    node with repository content links file by file whatever the label.
+    """
+    return (
+        "__" in label
+        and not node.base.repository.list_object_names()
+        and _listed_by_its_creator(node)
+    )
 
 
 def _is_retrieved_folder(node: orm.Data) -> bool:
@@ -882,21 +900,17 @@ def _data_links(
     node: orm.ProcessNode,
     link_type: LinkType,
     incoming: bool,
-    exclude_pks: frozenset[int] = frozenset(),
 ) -> list[tuple[str, orm.Data]]:
     """Return the ``(link_label, node)`` pairs for the ``Data`` at ``link_type``.
 
-    A linked node whose pk is in ``exclude_pks`` is skipped, whatever its
-    link label — used to drop a workflow's re-export of a value a
-    calculation below it already carries under a different name. So is a
-    calculation's ``retrieved`` folder (:func:`_is_retrieved_folder`),
-    wherever it is linked from: aiida-core already writes those files
-    loose under the calculation's own ``outputs``, so listing the folder
-    again — under the calculation itself or under a workflow re-exporting
-    it — would repeat every retrieved file. Links to scratch folders and
-    codes are not listed either: a ``RemoteData`` names a path on a
-    remote computer, and an ``AbstractCode`` names an executable —
-    neither is a result.
+    A calculation's ``retrieved`` folder is left out
+    (:func:`_is_retrieved_folder`), wherever it is linked from: aiida-core
+    already writes those files loose under the calculation's own
+    ``outputs``, so listing the folder again — under the calculation
+    itself or under a workflow re-exporting it — would repeat every
+    retrieved file. Links to scratch folders and codes are not listed
+    either: a ``RemoteData`` names a path on a remote computer, and an
+    ``AbstractCode`` names an executable — neither is a result.
     """
     from aiida import orm
 
@@ -910,17 +924,11 @@ def _data_links(
         for link in links
         if isinstance(link.node, orm.Data)
         and not isinstance(link.node, (orm.RemoteData, orm.AbstractCode))
-        and link.node.pk not in exclude_pks
         and not _is_retrieved_folder(link.node)
     ]
 
 
-def _write_step_io(
-    node: orm.ProcessNode,
-    folder: Path,
-    placed: _PlacedFiles,
-    memo: dict[int, frozenset[int]],
-) -> list[Path]:
+def _write_step_io(node: orm.ProcessNode, folder: Path, placed: _PlacedFiles) -> list[Path]:
     """List ``node``'s ``Data`` inputs and outputs under ``folder``.
 
     Every linked node becomes one entry, whatever its kind
@@ -946,28 +954,30 @@ def _write_step_io(
     since its ``INPUT_WORK`` links point at the same Data its own
     calculations already read.
 
-    A RETURN value that a CalcJob anywhere below this workflow created is
-    dropped before writing (:func:`_subtree_calculation_created_pks`):
-    that calculation's own folder already lists it, and the echo would be
-    the same node under a second name. A workflow that only echoes what
-    its subtree made therefore writes nothing at all and, holding just
-    the one calculation, is hoisted into it.
+    A workflow's ``RETURN`` echo of a value a calculation below it
+    produced is kept, so a graph's ``outputs`` reads as an index of the
+    run's answers under the names that graph gave them, up to the run's
+    own root. The entry costs no second copy: it holds the same part of
+    the same node as the producing step's, so the linking pass makes it a
+    relative symlink to it (:func:`_link_duplicate_files`).
 
-    A value no CalcJob below made is never dropped: not one a pyfunction
-    assembled, whose own folder is pruned (``ComputeScreeningParameters``'s
-    ``alphas`` — see :class:`TestWorkflowReturnKeepsPyfunctionCreatedValue`
-    in ``tests/test_dumping.py``), and not one produced outside the
-    workflow and handed in. A workflow holding such a value keeps its own
-    folder, and its calculation stays nested rather than being hoisted
-    (see :class:`TestWrapperKeepsItsOwnFolderBesideAKeptPyfunctionReturn`
-    in ``tests/test_dumping.py``).
+    Two echoes are dropped. A JSON value under a namespaced label, which
+    no link can serve (:func:`_repeats_its_producers_listing`); and a
+    value the workflow's own directly-called calculation created
+    (:func:`_direct_calculation_created_pks`), which would be the same
+    entry under the same name once the two folders are folded together.
+
+    A value the workflow's own calculations did not produce is an echo
+    like any other: one a pyfunction assembled, whose folder is pruned
+    (``ComputeScreeningParameters``'s ``alphas`` — see
+    :class:`TestWorkflowReturnKeepsPyfunctionCreatedValue` in
+    ``tests/test_dumping.py``), and one produced outside the workflow and
+    handed in.
 
     :param node: The process the folder was dumped from.
     :param folder: The step's own dumped folder.
     :param placed: Where each written file came from, for the linking
         pass (see :class:`_PlacedFiles`).
-    :param memo: Shared across the dump's steps, so each subtree is
-        walked once (see :func:`_subtree_calculation_created_pks`).
     :return: The files listing the step's own inputs back.
     """
     from aiida import orm
@@ -982,8 +992,12 @@ def _write_step_io(
             outputs = [(label, n) for label, n in outputs if n.base.repository.list_object_names()]
     elif isinstance(node, orm.WorkflowNode) and not isinstance(node, orm.WorkFunctionNode):
         inputs = []
-        excluded = _subtree_calculation_created_pks(node, memo)
-        outputs = _data_links(node, LinkType.RETURN, False, excluded)
+        own = _direct_calculation_created_pks(node)
+        outputs = [
+            (label, linked)
+            for label, linked in _data_links(node, LinkType.RETURN, False)
+            if linked.pk not in own and not _repeats_its_producers_listing(label, linked)
+        ]
     else:
         return []
 
@@ -1033,14 +1047,13 @@ def _dump_step_io(root_path: Path) -> tuple[frozenset[Path], _PlacedFiles]:
 
     echoed: set[Path] = set()
     placed = _PlacedFiles()
-    memo: dict[int, frozenset[int]] = {}
     for metadata_path in root_path.rglob(NODE_METADATA_FILE):
         pk = _node_metadata(metadata_path).get("pk")
         if pk is None:
             continue
         node = orm.load_node(pk)
         if isinstance(node, orm.ProcessNode):
-            echoed.update(_write_step_io(node, metadata_path.parent, placed, memo))
+            echoed.update(_write_step_io(node, metadata_path.parent, placed))
 
     # aiida-core stages every linked node's repository and JSON
     # unconditionally, unaware of this module's own rules (a bookkeeping
@@ -1056,12 +1069,15 @@ def _dump_step_io(root_path: Path) -> tuple[frozenset[Path], _PlacedFiles]:
 
 
 def _failed_calculation_folder(path: Path, root_path: Path) -> bool:
-    """Return whether ``path`` sits under a calculation that reports a failure.
+    """Return whether ``path`` sits under a calculation that did not succeed.
 
     Reads the pk from the nearest enclosing :data:`NODE_METADATA_FILE`,
     which every dumped process folder still carries at this point, and
-    asks that node for its exit status. A workflow folder, an
-    unrecognizable metadata file and the root all answer no.
+    asks that node whether it finished successfully. ``is_finished_ok``
+    rather than the exit status, so a calculation that was excepted or
+    killed — which has no exit status at all — counts as failed too. A
+    workflow folder, an unrecognizable metadata file and the root all
+    answer no.
     """
     from aiida import orm
 
@@ -1072,7 +1088,7 @@ def _failed_calculation_folder(path: Path, root_path: Path) -> bool:
             if pk is None:
                 return False
             node = orm.load_node(pk)
-            return isinstance(node, orm.CalcJobNode) and bool(node.exit_status)
+            return isinstance(node, orm.CalcJobNode) and not node.is_finished_ok
         if folder == root_path:
             break
     return False
@@ -1084,11 +1100,11 @@ def _prune_engine_bookkeeping(root_path: Path) -> None:
     Removes the ``.aiida`` settings folder and the ``_aiidasubmit.sh`` a
     CalcJob writes into its repository. The two ``_scheduler-*`` logs it
     retrieves alongside its results go too, unless one is non-empty and
-    its calculation reports a nonzero exit status: a run that finished
+    its calculation did not finish successfully: a run that finished
     leaves only the build's own warning noise there, while a run that
-    failed may have left its one account of the failure — and dropping
-    that would take the whole folder with it, the calculation having
-    nothing else to show.
+    failed, was excepted or was killed may have left its one account of
+    what went wrong — and dropping that would take the whole folder with
+    it, the calculation having nothing else to show.
 
     Runs before the step listings, so a calculation left holding nothing
     but these is pruned like any other empty step.
