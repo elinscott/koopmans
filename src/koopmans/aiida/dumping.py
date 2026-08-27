@@ -88,8 +88,6 @@ _NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
 # The dump's own bookkeeping, which says nothing about the run.
 _DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safeguard")
 
-_DIGEST_BLOCK = 1 << 20
-
 # Sentinel for "no value here", distinct from a staged JSON value of None.
 _MISSING = object()
 
@@ -150,40 +148,84 @@ def _step_folders(path: Path) -> list[Path]:
     return [child for _, _, child in numbered]
 
 
-def _file_digest(path: Path) -> str:
-    """Return the SHA-256 of a file's contents."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(_DIGEST_BLOCK), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def _text_digest(text: str) -> str:
+    """Return the SHA-256 of a string."""
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
-def _content_keys(root_path: Path) -> dict[Path, str]:
-    """Return a key per real file that two share exactly when identical.
+class _PlacedFiles:
+    """Which node's content each file this module placed holds.
 
-    A file whose size occurs once in the tree can have no twin, so it
-    takes a key of its own and is never read — which keeps the pass off
-    the large outputs a finished run retrieves.
+    A file is identified by two things: the ``Data`` node the bytes came
+    from, and which part of that node's content the file is — the path
+    inside the node's repository, or, for a JSON listing, the digest of
+    the text written. The digest is what settles the JSON case because a
+    node's value is written at whatever depth its link label nests to, so
+    the same node can reach disk as ``nscf.json`` holding
+    ``{"output_parameters": ...}`` in one step and as
+    ``output_parameters.json`` holding the value itself in another; only
+    equal bytes make two listings the same file.
 
-    Symlinks are left out, so a tree that already holds some is not
-    counted through them.
+    ``created_here`` marks the copy the calculation that created the node
+    placed under its own ``outputs`` — where a reader following a link
+    should land, rather than in some later step that was handed it.
+
+    Paths are absolute and are kept current as the tidying passes move
+    folders: every pass that renames or deletes reports it here.
     """
-    by_size: dict[int, list[Path]] = defaultdict(list)
-    for path in root_path.rglob("*"):
-        if path.is_file() and not path.is_symlink():
-            by_size[path.stat().st_size].append(path)
 
-    keys: dict[Path, str] = {}
-    for size, paths in by_size.items():
-        if len(paths) == 1:
-            keys[paths[0]] = f"{size}:{paths[0]}"
-        else:
-            keys.update({path: f"{size}:{_file_digest(path)}" for path in paths})
-    return keys
+    def __init__(self) -> None:
+        self._origins: dict[Path, tuple[int, str, bool]] = {}
+
+    def record(self, path: Path, pk: int | None, content: str, created_here: bool) -> None:
+        """Note that ``path`` holds part ``content`` of the node ``pk``.
+
+        A node with no pk is unstored and so has no identity to group by;
+        nothing is recorded for one, and every node a dumped link points
+        at is stored.
+        """
+        if pk is not None:
+            self._origins[path] = (pk, content, created_here)
+
+    def moved(self, source: Path, target: Path) -> None:
+        """Follow a move of ``source`` — a file or a whole folder — to ``target``."""
+        for path in [p for p in self._origins if p == source or source in p.parents]:
+            self._origins[target / path.relative_to(source)] = self._origins.pop(path)
+
+    def dropped(self, path: Path) -> None:
+        """Forget everything recorded at ``path`` or below it."""
+        for recorded in [p for p in self._origins if p == path or path in p.parents]:
+            del self._origins[recorded]
+
+    def duplicate_groups(self) -> list[list[Path]]:
+        """Return each set of paths holding one node's same content, canonical first.
+
+        Only groups of two or more are returned, and only real files: a
+        pass may have deleted a recorded file, and a tree that already
+        holds a symlink is never linked through it.
+        """
+        groups: dict[tuple[int, str], list[Path]] = defaultdict(list)
+        for path, (pk, content, _) in self._origins.items():
+            if path.is_file() and not path.is_symlink():
+                groups[(pk, content)].append(path)
+        return [
+            sorted(paths, key=lambda path: (not self._origins[path][2], str(path)))
+            for paths in groups.values()
+            if len(paths) > 1
+        ]
 
 
-def _prune_source_only_step_folders(path: Path, echoed: frozenset[Path] = frozenset()) -> None:
+def _move(source: Path, target: Path, placed: _PlacedFiles) -> None:
+    """Move ``source`` to ``target``, keeping ``placed`` current."""
+    shutil.move(str(source), str(target))
+    placed.moved(source, target)
+
+
+def _prune_source_only_step_folders(
+    path: Path,
+    echoed: frozenset[Path] = frozenset(),
+    placed: _PlacedFiles | None = None,
+) -> None:
     """Delete step folders holding nothing but python tasks' own source.
 
     A bookkeeping task dumps its ``source_file`` — its code, which the
@@ -200,65 +242,43 @@ def _prune_source_only_step_folders(path: Path, echoed: frozenset[Path] = frozen
     :param path: Folder whose step subfolders are considered.
     :param echoed: Files that echo a step's own arguments back and so
         count as nothing produced, alongside :data:`_NON_CONTENT_FILES`.
+    :param placed: Record of where each listed node's content sits, kept
+        current as folders go.
     """
+    placed = placed if placed is not None else _PlacedFiles()
     for child in _step_folders(path):
-        _prune_source_only_step_folders(child, echoed)
+        _prune_source_only_step_folders(child, echoed, placed)
         if all(
             item.name in _NON_CONTENT_FILES or item in echoed
             for item in child.rglob("*")
             if item.is_file()
         ):
             shutil.rmtree(child)
+            placed.dropped(child)
 
 
-def _canonical_rank(path: Path, root_path: Path) -> tuple[int, str]:
-    """Return the sort key that picks which copy of a file stays real.
+def _link_duplicate_files(placed: _PlacedFiles) -> int:
+    """Replace a node's repeated content with symlinks to one real copy.
 
-    A copy under a step's ``outputs`` ranks first: that step produced the
-    file, and is where a reader following a link should land rather than
-    in some later step that was handed it. Tree order settles the rest.
-    """
-    relative = path.relative_to(root_path)
-    return (0 if "outputs" in relative.parts else 1, str(relative))
+    Two files are linked only when they hold the same part of the same
+    node: a value staged into a later step's ``inputs`` points back at
+    the ``outputs`` it came from, and a pseudopotential every calculation
+    reads is one file. Equal bytes from different nodes stay separate
+    real files — a run that computes the same array twice computed it
+    twice, and the dump says so.
 
+    The copy kept is the one the calculation that created the node placed
+    under its own ``outputs``; where no such copy exists — a value a
+    workflow re-exports, an input read by several steps — tree order
+    settles it.
 
-def _link_duplicate_files(root_path: Path) -> int:
-    """Replace repeated files with relative symlinks to one real copy.
+    Links are relative, so the tree survives being moved.
 
-    Every step that ran keeps its folder and its own listing; only the
-    repeated bytes go, so a file staged into a later step's ``inputs``
-    now points at the ``outputs`` it came from. Links are relative, so
-    the tree survives being moved.
-
-    An empty file is left alone, and never serves as a target. A
-    successful run leaves an empty ``_scheduler-stderr.txt`` under every
-    calculation; linking them together saves nothing and asserts a
-    relationship between unrelated steps that the reader then has to
-    puzzle out.
-
-    A ``source_file`` links only to another ``source_file``: one task run
-    once per orbital dumps its code under each, and those copies collapse
-    like any other, but no data file is ever made to depend on a folder
-    that carries only code.
-
-    Expects a freshly written tree that holds no symlinks of its own. Any
-    it does find are left where they are and never chosen as the copy to
-    keep: a link ranked ahead of the real file would leave the two
-    pointing at each other and the bytes gone.
-
-    :param root_path: Root of the tidied tree.
+    :param placed: Where each file this module placed came from.
     :return: How many symlinks were made.
     """
-    groups: dict[tuple[bool, str], list[Path]] = defaultdict(list)
-    for path, key in _content_keys(root_path).items():
-        if path.stat().st_size:
-            groups[(path.name == _TASK_SOURCE_FILE, key)].append(path)
-
     created = 0
-    for paths in groups.values():
-        if len(paths) < 2:
-            continue
-        canonical, *duplicates = sorted(paths, key=lambda path: _canonical_rank(path, root_path))
+    for canonical, *duplicates in placed.duplicate_groups():
         for duplicate in duplicates:
             duplicate.unlink()
             duplicate.symlink_to(os.path.relpath(canonical, duplicate.parent))
@@ -297,12 +317,17 @@ def _display_order(children: Sequence[Path]) -> list[tuple[Path, str]]:
     return ordered
 
 
-def _renumber_step_folders(path: Path) -> None:
+def _renumber_step_folders(path: Path, placed: _PlacedFiles | None = None) -> None:
     """Renumber the step folders under ``path`` contiguously from one.
 
     Numbers follow :func:`_display_order` rather than the order the dump
     wrote, and keep the zero padding it used.
+
+    :param path: Folder whose step subfolders are renumbered.
+    :param placed: Record of where each listed node's content sits, kept
+        current as folders move.
     """
+    placed = placed if placed is not None else _PlacedFiles()
     children = _step_folders(path)
     widths = [len(m.group(1)) for c in children if (m := _STEP_FOLDER_NAME.match(c.name))]
     width = max(widths, default=2)
@@ -319,35 +344,40 @@ def _renumber_step_folders(path: Path) -> None:
             parked.append(child)
             continue
         staging = child.parent / f".tidy-{index}-{child.name}"
-        shutil.move(str(child), str(staging))
+        _move(child, staging, placed)
         parked.append(staging)
 
     for staged, final_name in zip(parked, final_names, strict=True):
         renamed = staged.parent / final_name
         if staged != renamed:
-            shutil.move(str(staged), str(renamed))
-        _renumber_step_folders(renamed)
+            _move(staged, renamed, placed)
+        _renumber_step_folders(renamed, placed)
 
 
-def _strip_process_label_suffixes(path: Path) -> None:
+def _strip_process_label_suffixes(path: Path, placed: _PlacedFiles | None = None) -> None:
     """Drop the trailing "-<ProcessLabel>" from every step folder.
 
     The CalcJob class name on a calculation folder and the WorkChain
     class name on the step wrapping it both go. A folder whose stripped
     name is already taken keeps its suffix.
+
+    :param path: Folder whose step subfolders are renamed.
+    :param placed: Record of where each listed node's content sits, kept
+        current as folders move.
     """
+    placed = placed if placed is not None else _PlacedFiles()
     for child in _step_folders(path):
         renamed = child
         match = _PROCESS_LABEL_SUFFIX.match(child.name)
         if match is not None:
             stripped = child.parent / match.group(1)
             if not stripped.exists():
-                shutil.move(str(child), str(stripped))
+                _move(child, stripped, placed)
                 renamed = stripped
-        _strip_process_label_suffixes(renamed)
+        _strip_process_label_suffixes(renamed, placed)
 
 
-def _hoist_lone_calculations(path: Path) -> None:
+def _hoist_lone_calculations(path: Path, placed: _PlacedFiles | None = None) -> None:
     """Lift a lone calculation's contents into the step folder holding it.
 
     Hoists only when that calculation is everything the folder holds, so
@@ -357,19 +387,28 @@ def _hoist_lone_calculations(path: Path) -> None:
     Descends top-down and stops at the folder it hoists into, so a chain
     of single-child steps collapses by one layer only and every step name
     on the way survives.
+
+    :param path: Folder whose step subfolders are considered.
+    :param placed: Record of where each listed node's content sits, kept
+        current as folders move.
     """
+    placed = placed if placed is not None else _PlacedFiles()
     children = list(path.iterdir())
     if len(children) == 1 and children[0].is_dir() and _is_calculation_folder(children[0]):
         calculation = children[0]
         for item in calculation.iterdir():
-            shutil.move(str(item), str(path / item.name))
+            _move(item, path / item.name, placed)
         calculation.rmdir()
         return
     for child in _step_folders(path):
-        _hoist_lone_calculations(child)
+        _hoist_lone_calculations(child, placed)
 
 
-def _tidy_dumped_tree(root_path: Path, echoed: frozenset[Path] = frozenset()) -> None:
+def _tidy_dumped_tree(
+    root_path: Path,
+    echoed: frozenset[Path] = frozenset(),
+    placed: _PlacedFiles | None = None,
+) -> None:
     """Prune, renumber and flatten the step folders of a dumped tree.
 
     The passes run in a fixed order:
@@ -379,8 +418,8 @@ def _tidy_dumped_tree(root_path: Path, echoed: frozenset[Path] = frozenset()) ->
     - every step folder drops its trailing "-<ProcessLabel>";
     - a step folder holding nothing but one calculation takes over its
       contents;
-    - files repeated across steps become relative symlinks to one copy,
-      and the root gains a ``README`` saying so.
+    - a node's content listed under more than one step becomes relative
+      symlinks to one copy, and the root gains a ``README`` saying so.
 
     Pruning has to precede flattening: a step is left holding a single
     calculation only once its bookkeeping siblings are gone. Stripping
@@ -396,12 +435,15 @@ def _tidy_dumped_tree(root_path: Path, echoed: frozenset[Path] = frozenset()) ->
     :param root_path: Root of the dumped tree; it is never itself pruned.
     :param echoed: Files that count as nothing produced when pruning (see
         :func:`_prune_source_only_step_folders`).
+    :param placed: Where each file this module placed came from (see
+        :class:`_PlacedFiles`); without it nothing is linked.
     """
-    _prune_source_only_step_folders(root_path, echoed)
-    _renumber_step_folders(root_path)
-    _strip_process_label_suffixes(root_path)
-    _hoist_lone_calculations(root_path)
-    if _link_duplicate_files(root_path):
+    placed = placed if placed is not None else _PlacedFiles()
+    _prune_source_only_step_folders(root_path, echoed, placed)
+    _renumber_step_folders(root_path, placed)
+    _strip_process_label_suffixes(root_path, placed)
+    _hoist_lone_calculations(root_path, placed)
+    if _link_duplicate_files(placed):
         (root_path / "README").write_text(_SYMLINK_README)
 
 
@@ -559,6 +601,8 @@ def _write_flat_io_listing(
     links: Sequence[tuple[str, orm.Data]],
     directory: Path,
     staged: Path,
+    placed: _PlacedFiles,
+    created_here: bool,
 ) -> list[Path]:
     """Fold ``links``, already dumped under ``staged``, into one entry apiece.
 
@@ -589,15 +633,21 @@ def _write_flat_io_listing(
     :param staged: Where aiida-core already dumped ``links``' repository
         content and JSON, as ``<label parts>`` directories and
         ``<top label part>.json`` files.
+    :param placed: Where each written file came from, for the linking
+        pass (see :class:`_PlacedFiles`).
+    :param created_here: Whether these links are the ``CREATE`` links of
+        the calculation that made the nodes.
     :return: The JSON files written.
     """
     values: dict[str, Any] = {}
+    owners: dict[str, orm.Data] = {}
     for label, node in links:
         found, value = _read_staged_json(label, node, staged)
         if found:
             values[label] = value
+            owners[label] = node
         else:
-            _place_repository(node, label, staged, directory)
+            _place_repository(node, label, staged, directory, placed, created_here)
 
     written = []
     for name, value in _nest_by_link_label(values).items():
@@ -606,18 +656,32 @@ def _write_flat_io_listing(
         if path.exists():
             path = directory / name / f"{name}.json"
             path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        text = json.dumps(value, indent=2, sort_keys=True) + "\n"
+        path.write_text(text)
         written.append(path)
+        pks = {owners[label].pk for label in values if label.split("__")[0] == name}
+        if len(pks) == 1:
+            placed.record(path, pks.pop(), _text_digest(text), created_here)
     return written
 
 
-def _place_repository(node: orm.Data, label: str, staged: Path, directory: Path) -> None:
+def _place_repository(
+    node: orm.Data,
+    label: str,
+    staged: Path,
+    directory: Path,
+    placed: _PlacedFiles,
+    created_here: bool,
+) -> None:
     """Move one node's already-dumped repository into its flat entry.
 
     Names the entry for the link label, so a lone file takes the label
     and its own suffix. A name the target directory already holds — a
     file the calculation itself retrieved under that name — falls back to
     the ``<label>/`` directory.
+
+    Every file moved is recorded in ``placed`` under the node it came
+    from and its path inside that node's repository.
     """
     parts = label.split("__")
     source = staged.joinpath(*parts)
@@ -630,10 +694,16 @@ def _place_repository(node: orm.Data, label: str, staged: Path, directory: Path)
         target = directory.joinpath(*parts[:-1], entry)
         if (source / filename).is_file() and not target.exists():
             _merge_move(source / filename, target)
+            placed.record(target, node.pk, filename, created_here)
             if not any(source.iterdir()):
                 source.rmdir()
                 return
-    _merge_move(source, directory.joinpath(*parts))
+
+    inner = [path.relative_to(source) for path in source.rglob("*") if path.is_file()]
+    entry_directory = directory.joinpath(*parts)
+    _merge_move(source, entry_directory)
+    for relative in inner:
+        placed.record(entry_directory / relative, node.pk, str(relative), created_here)
 
 
 def _is_calcjob_step(node: orm.ProcessNode) -> bool:
@@ -731,7 +801,7 @@ def _data_links(
     ]
 
 
-def _write_step_io(node: orm.ProcessNode, folder: Path) -> list[Path]:
+def _write_step_io(node: orm.ProcessNode, folder: Path, placed: _PlacedFiles) -> list[Path]:
     """List ``node``'s ``Data`` inputs and outputs under ``folder``.
 
     Every linked node becomes one entry, whatever its kind
@@ -782,6 +852,8 @@ def _write_step_io(node: orm.ProcessNode, folder: Path) -> list[Path]:
 
     :param node: The process the folder was dumped from.
     :param folder: The step's own dumped folder.
+    :param placed: Where each written file came from, for the linking
+        pass (see :class:`_PlacedFiles`).
     :return: The files listing the step's own inputs back.
     """
     from aiida import orm
@@ -801,13 +873,19 @@ def _write_step_io(node: orm.ProcessNode, folder: Path) -> list[Path]:
         return []
 
     echoed = _write_flat_io_listing(
-        inputs, folder / _INPUTS_DIR, folder / _STAGED_IO_DIRS[_INPUTS_DIR]
+        inputs, folder / _INPUTS_DIR, folder / _STAGED_IO_DIRS[_INPUTS_DIR], placed, False
     )
-    _write_flat_io_listing(outputs, folder / _OUTPUTS_DIR, folder / _STAGED_IO_DIRS[_OUTPUTS_DIR])
+    _write_flat_io_listing(
+        outputs,
+        folder / _OUTPUTS_DIR,
+        folder / _STAGED_IO_DIRS[_OUTPUTS_DIR],
+        placed,
+        isinstance(node, orm.CalculationNode),
+    )
     return echoed
 
 
-def _dump_step_io(root_path: Path) -> frozenset[Path]:
+def _dump_step_io(root_path: Path) -> tuple[frozenset[Path], _PlacedFiles]:
     """List every step's ``Data`` inputs and outputs (see :func:`_write_step_io`).
 
     Reads each step's pk from its own :data:`NODE_METADATA_FILE` — the file
@@ -817,18 +895,20 @@ def _dump_step_io(root_path: Path) -> frozenset[Path]:
 
     :param root_path: Root of the freshly dumped tree.
     :return: The files listing a step's own inputs back, which count as
-        nothing produced when pruning.
+        nothing produced when pruning, and where every file written came
+        from, for the linking pass.
     """
     from aiida import orm
 
     echoed: set[Path] = set()
+    placed = _PlacedFiles()
     for metadata_path in root_path.rglob(NODE_METADATA_FILE):
         pk = _node_metadata(metadata_path).get("pk")
         if pk is None:
             continue
         node = orm.load_node(pk)
         if isinstance(node, orm.ProcessNode):
-            echoed.update(_write_step_io(node, metadata_path.parent))
+            echoed.update(_write_step_io(node, metadata_path.parent, placed))
 
     # aiida-core stages every linked node's repository and JSON
     # unconditionally, unaware of this module's own rules (a bookkeeping
@@ -838,7 +918,7 @@ def _dump_step_io(root_path: Path) -> frozenset[Path]:
     for staged in _STAGED_IO_DIRS.values():
         for leftover in root_path.rglob(staged):
             shutil.rmtree(leftover, ignore_errors=True)
-    return frozenset(echoed)
+    return frozenset(echoed), placed
 
 
 def _prune_workflow_metadata(root_path: Path) -> None:
@@ -939,11 +1019,11 @@ def dump_workgraph(
 
     # Every step's Data, while every folder still carries the metadata
     # file naming its node
-    echoed = _dump_step_io(output_path)
+    echoed, placed = _dump_step_io(output_path)
 
     _prune_workflow_metadata(output_path)
 
-    _tidy_dumped_tree(output_path, echoed)
+    _tidy_dumped_tree(output_path, echoed, placed)
 
     _dump_model_json(process, output_path)
 

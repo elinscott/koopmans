@@ -13,6 +13,7 @@ from koopmans.aiida.dumping import (
     NODE_METADATA_FILE,
     _hoist_lone_calculations,
     _link_duplicate_files,
+    _PlacedFiles,
     _prune_source_only_step_folders,
     _prune_workflow_metadata,
     _renumber_step_folders,
@@ -106,9 +107,10 @@ def _lambdas(name: str, content: str = "trial-hamiltonian") -> list[tuple[str, s
 
     aiida-core dumps an ``ArrayData`` only as its consumer's
     ``function_inputs``, never under the task that produced it, so this
-    is the tree's one copy of that array unless a sibling holds the same
-    bytes. Every caller is the same task, so they share a ``source_file``
-    too.
+    is the tree's one copy of that array unless a sibling was handed the
+    same node. Every caller is the same task, so they carry a
+    ``source_file`` apiece — aiida-core's copy of the code that ran, not
+    a listed node.
     """
     return [
         _metadata(name),
@@ -279,14 +281,22 @@ class TestPruneSourceOnlyStepFolders:
 
 
 class TestLinkDuplicateFiles:
-    """Repeated bytes become one real file and links to it."""
+    """One node's content listed twice becomes one real file and links to it."""
+
+    @staticmethod
+    def _placed(root: Path, *entries: tuple[str, int, str, bool]) -> Any:
+        """Return a record of ``(path, pk, content, created_here)`` entries."""
+        placed = _PlacedFiles()
+        for path, pk, content, created_here in entries:
+            placed.record(root / path, pk, content, created_here)
+        return placed
 
     def test_a_staged_copy_points_at_the_step_that_produced_it(self, tmp_path: Path) -> None:
         """The producer keeps the file; its consumer links to it.
 
         A merge step writes ``hr.dat`` and the next step is handed it, so
-        the copy under ``outputs`` is the one to keep whatever the tree
-        order says.
+        the copy the producing step created is the one to keep whatever
+        the tree order says.
         """
         _make_tree(
             tmp_path,
@@ -295,8 +305,13 @@ class TestLinkDuplicateFiles:
                 ("03-wann2kc/inputs/hr.dat", "merged-hamiltonian"),
             ],
         )
+        placed = self._placed(
+            tmp_path,
+            ("02-prepare_kcw_wannier_files/outputs/hr.dat", 71, "hr.dat", True),
+            ("03-wann2kc/inputs/hr.dat", 71, "hr.dat", False),
+        )
 
-        assert _link_duplicate_files(tmp_path) == 1
+        assert _link_duplicate_files(placed) == 1
 
         producer = tmp_path / "02-prepare_kcw_wannier_files/outputs/hr.dat"
         consumer = tmp_path / "03-wann2kc/inputs/hr.dat"
@@ -313,7 +328,7 @@ class TestLinkDuplicateFiles:
         The fold step stages the matrices it then writes back out, so
         both copies live under the one folder. ``inputs`` sorts before
         ``outputs``, so tree order alone would keep the staged copy; only
-        the preference for a producing ``outputs`` copy picks the other.
+        the preference for the creating step's copy picks the other.
         """
         _make_tree(
             tmp_path,
@@ -322,84 +337,138 @@ class TestLinkDuplicateFiles:
                 ("01-fold/outputs/wannier_files/aiida_u.mat", "unitary-matrix"),
             ],
         )
+        placed = self._placed(
+            tmp_path,
+            ("01-fold/inputs/wannier_files/aiida_u.mat", 88, "aiida_u.mat", False),
+            ("01-fold/outputs/wannier_files/aiida_u.mat", 88, "aiida_u.mat", True),
+        )
 
-        assert _link_duplicate_files(tmp_path) == 1
+        assert _link_duplicate_files(placed) == 1
 
         assert not (tmp_path / "01-fold/outputs/wannier_files/aiida_u.mat").is_symlink()
         assert (tmp_path / "01-fold/inputs/wannier_files/aiida_u.mat").is_symlink()
 
-    def test_a_symlink_already_in_the_tree_is_left_alone(self, tmp_path: Path) -> None:
-        """A tree that already holds links is not linked into a loop.
+    def test_equal_bytes_from_different_nodes_stay_separate_files(self, tmp_path: Path) -> None:
+        """A run that computed the same array twice computed it twice.
 
-        Ranking an existing link as the copy to keep would replace the
-        real file with a link to it, leaving the two pointing at each
-        other and the bytes gone.
-        """
-        _make_tree(tmp_path, [("01-step/inputs/data.mat", "payload")])
-        real = tmp_path / "01-step/inputs/data.mat"
-        link = tmp_path / "01-step/outputs/data.mat"
-        link.parent.mkdir(parents=True)
-        link.symlink_to(os.path.relpath(real, link.parent))
-
-        assert _link_duplicate_files(tmp_path) == 0
-
-        assert not real.is_symlink()
-        assert real.read_text() == "payload"
-        assert link.read_text() == "payload"
-
-    def test_empty_files_are_never_linked(self, tmp_path: Path) -> None:
-        """A successful run leaves an empty scheduler log under every step.
-
-        They are byte-identical to one another, so the rule would tie
-        every step to one arbitrary sibling for no bytes saved.
+        Two ``pw.x`` steps of one structure write the same cell to their
+        own trajectories, and a fan-out's identical scheduler logs
+        repeat across every step. Linking those would assert a
+        relationship the provenance graph does not hold.
         """
         _make_tree(
             tmp_path,
             [
-                ("01-scf/outputs/_scheduler-stderr.txt", ""),
-                ("02-nscf/outputs/_scheduler-stderr.txt", ""),
-                ("03-bands/outputs/_scheduler-stderr.txt", ""),
+                ("01-scf/outputs/output_trajectory/cells.npy", "the cell"),
+                ("02-nscf/outputs/output_trajectory/cells.npy", "the cell"),
             ],
         )
+        placed = self._placed(
+            tmp_path,
+            ("01-scf/outputs/output_trajectory/cells.npy", 11, "cells.npy", True),
+            ("02-nscf/outputs/output_trajectory/cells.npy", 22, "cells.npy", True),
+        )
 
-        assert _link_duplicate_files(tmp_path) == 0
+        assert _link_duplicate_files(placed) == 0
 
         assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
 
-    def test_the_smallest_real_payload_still_links(self, tmp_path: Path) -> None:
-        """Only length zero is exempt, so a 95-byte input still collapses.
+    def test_two_parts_of_one_node_stay_separate_files(self, tmp_path: Path) -> None:
+        """One node's own arrays are not linked to one another.
 
-        That is the smallest duplicated file either tutorial dump holds;
-        exempting it would be exempting payload.
+        A ``ProjectionData`` holds one energy array per projector, all
+        equal; they are different parts of one node, and the entry is the
+        node.
         """
-        content = "x" * 95
         _make_tree(
             tmp_path,
-            [("01-scf/outputs/aiida.in", content), ("02-nscf/inputs/aiida.in", content)],
+            [
+                ("01-projwfc/outputs/projections/energy_array_0.npy", "the energy grid"),
+                ("01-projwfc/outputs/projections/energy_array_1.npy", "the energy grid"),
+            ],
+        )
+        placed = self._placed(
+            tmp_path,
+            ("01-projwfc/outputs/projections/energy_array_0.npy", 5, "energy_array_0.npy", True),
+            ("01-projwfc/outputs/projections/energy_array_1.npy", 5, "energy_array_1.npy", True),
         )
 
-        assert _link_duplicate_files(tmp_path) == 1
+        assert _link_duplicate_files(placed) == 0
 
-        assert (tmp_path / "02-nscf/inputs/aiida.in").read_text() == content
+        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
 
-    def test_a_unique_file_is_left_alone(self, tmp_path: Path) -> None:
-        """Only repeated bytes are replaced."""
-        _make_tree(tmp_path, [("01-scf/outputs/aiida.out", "one of a kind")])
+    def test_a_file_no_pass_placed_is_never_linked(self, tmp_path: Path) -> None:
+        """aiida-core's own files are outside the rule.
 
-        assert _link_duplicate_files(tmp_path) == 0
+        A calculation's retrieved ``aiida.wout`` and its input script are
+        copied in by aiida-core, not listed from a link, so two steps
+        that retrieved identical text keep a file each.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("01-wannier90_pp/outputs/aiida.wout", "same header, same run"),
+                ("02-wannier90_pp/outputs/aiida.wout", "same header, same run"),
+            ],
+        )
 
-        assert not (tmp_path / "01-scf/outputs/aiida.out").is_symlink()
+        assert _link_duplicate_files(_PlacedFiles()) == 0
+
+        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
+
+    def test_one_value_written_at_two_depths_stays_two_files(self, tmp_path: Path) -> None:
+        """A node listed under a namespace differs in bytes from a bare listing.
+
+        ``nscf__output_parameters`` writes ``{"output_parameters": ...}``
+        while the calculation that created the node writes the value
+        itself; the two hold the same node but not the same bytes, so
+        neither may stand in for the other.
+        """
+        _make_tree(
+            tmp_path,
+            [
+                ("01-nscf/outputs/output_parameters.json", '{"energy": -12.0}\n'),
+                ("02-wannier90/outputs/nscf.json", '{"output_parameters": {"energy": -12.0}}\n'),
+            ],
+        )
+        placed = self._placed(
+            tmp_path,
+            ("01-nscf/outputs/output_parameters.json", 42, "digest-of-the-bare-value", True),
+            ("02-wannier90/outputs/nscf.json", 42, "digest-of-the-nested-value", False),
+        )
+
+        assert _link_duplicate_files(placed) == 0
+
+        assert not any(p.is_symlink() for p in tmp_path.rglob("*"))
+
+    def test_a_file_a_later_pass_deleted_is_left_out(self, tmp_path: Path) -> None:
+        """Pruning a step folder takes its copy out of the group."""
+        _make_tree(tmp_path, [("01-scf/inputs/pseudo.upf", "pseudopotential")])
+        placed = self._placed(
+            tmp_path,
+            ("01-scf/inputs/pseudo.upf", 3, "Si.upf", False),
+            ("02-pruned/inputs/pseudo.upf", 3, "Si.upf", False),
+        )
+
+        assert _link_duplicate_files(placed) == 0
+
+        assert not (tmp_path / "01-scf/inputs/pseudo.upf").is_symlink()
 
     def test_the_links_are_relative_and_survive_a_move(self, tmp_path: Path) -> None:
         """A dump handed to someone else still resolves."""
         _make_tree(
             tmp_path,
             [
-                ("dump/01-scf/outputs/pseudo.upf", "pseudopotential"),
+                ("dump/01-scf/inputs/pseudo.upf", "pseudopotential"),
                 ("dump/02-nscf/inputs/pseudo.upf", "pseudopotential"),
             ],
         )
-        _link_duplicate_files(tmp_path / "dump")
+        placed = self._placed(
+            tmp_path,
+            ("dump/01-scf/inputs/pseudo.upf", 3, "Si.upf", False),
+            ("dump/02-nscf/inputs/pseudo.upf", 3, "Si.upf", False),
+        )
+        _link_duplicate_files(placed)
 
         moved = tmp_path / "moved"
         shutil.move(str(tmp_path / "dump"), str(moved))
@@ -408,53 +477,100 @@ class TestLinkDuplicateFiles:
         assert not Path(os.readlink(link)).is_absolute()
         assert link.read_text() == "pseudopotential"
 
-    def test_repeated_task_sources_collapse_to_one_copy(self, tmp_path: Path) -> None:
-        """One task run once per orbital dumps its code under each folder."""
-        source = "def compute_alpha_from_dscf():\n    return alpha\n"
+    def test_a_folder_move_carries_the_records_with_it(self, tmp_path: Path) -> None:
+        """Renumbering a step folder does not lose track of what it holds.
+
+        The tidying passes rename and hoist folders between the listing
+        and the linking, so a record follows the file it names.
+        """
         _make_tree(
             tmp_path,
             [
-                ("01-orb_1/inputs/source_file", source),
-                ("01-orb_1/inputs/function_inputs/lambdas.npy", "first payload"),
-                ("02-orb_2/inputs/source_file", source),
-                ("02-orb_2/inputs/function_inputs/lambdas.npy", "second payload"),
+                ("07-scf/outputs/pseudo.upf", "pseudopotential"),
+                ("09-nscf/inputs/pseudo.upf", "pseudopotential"),
             ],
         )
+        placed = self._placed(
+            tmp_path,
+            ("07-scf/outputs/pseudo.upf", 3, "Si.upf", True),
+            ("09-nscf/inputs/pseudo.upf", 3, "Si.upf", False),
+        )
 
-        assert _link_duplicate_files(tmp_path) == 1
+        _renumber_step_folders(tmp_path, placed)
 
-        first = tmp_path / "01-orb_1/inputs/source_file"
-        second = tmp_path / "02-orb_2/inputs/source_file"
+        assert _link_duplicate_files(placed) == 1
+        assert not (tmp_path / "01-scf/outputs/pseudo.upf").is_symlink()
+        assert (tmp_path / "02-nscf/inputs/pseudo.upf").read_text() == "pseudopotential"
+
+
+class TestListingsOfOneNodeLinkToEachOther:
+    """The rule holds on a real run: the same node, not the same bytes."""
+
+    def test_a_pseudopotential_two_calculations_read_is_one_file(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Two calculations handed one file node keep one copy between them."""
+        import io
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        pseudo = orm.SinglefileData(io.BytesIO(b"a pseudopotential"), filename="Si.upf").store()
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        for label in ("scf", "nscf"):
+            make_process(
+                TestStepIoListing.ARITHMETIC_ADD,
+                caller=root,
+                link_label=label,
+                calcjob=True,
+                computer=aiida_localhost,
+                inputs={"pseudos__Si": pseudo},
+            )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        first = dumped / "01-scf/inputs/pseudos/Si.upf"
+        second = dumped / "02-nscf/inputs/pseudos/Si.upf"
         assert not first.is_symlink()
         assert second.is_symlink()
-        assert second.read_text() == source
+        assert second.read_text() == "a pseudopotential"
 
-    def test_a_task_source_is_never_linked_to_a_data_file(self, tmp_path: Path) -> None:
-        """A task's source and a data file with its bytes both stay real files.
+    def test_two_nodes_holding_the_same_bytes_keep_a_file_each(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The discriminating case: identical content, different provenance.
 
-        Sources collapse among themselves, but never across the boundary:
-        no data file is made to depend on a folder that carries only
-        code. Both folders here survive the prune, so the two would
-        otherwise be linked whichever way the ordering fell.
+        Under a content-digest rule these two would collapse into one
+        file and a link; each was written by its own calculation, so each
+        keeps its own copy.
         """
-        shared = "def compute():\n    return 1\n"
-        _make_tree(
-            tmp_path,
-            [
-                ("01-compute_alpha/inputs/function_inputs/payload.npy", shared),
-                ("02-other_task/inputs/source_file", shared),
-                ("02-other_task/inputs/function_inputs/kept.npy", "a payload of its own"),
-            ],
-        )
+        import io
 
-        _prune_source_only_step_folders(tmp_path)
-        _link_duplicate_files(tmp_path)
+        from aiida import orm
 
-        payload = tmp_path / "01-compute_alpha/inputs/function_inputs/payload.npy"
-        source = tmp_path / "02-other_task/inputs/source_file"
-        assert not payload.is_symlink()
-        assert not source.is_symlink()
-        assert payload.read_text() == source.read_text() == shared
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        for label in ("scf", "nscf"):
+            calc = make_process(
+                TestStepIoListing.ARITHMETIC_ADD,
+                caller=root,
+                link_label=label,
+                calcjob=True,
+                computer=aiida_localhost,
+            )
+            attach(calc, "report", orm.SinglefileData(io.BytesIO(b"identical"), filename="r.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        first = dumped / "01-scf/outputs/report.txt"
+        second = dumped / "02-nscf/outputs/report.txt"
+        assert not first.is_symlink()
+        assert not second.is_symlink()
+        assert first.read_text() == second.read_text() == "identical"
 
 
 class TestPruneWorkflowMetadata:
@@ -868,8 +984,8 @@ class TestTidyDumpedTree:
         *_bookkeeping(f"{SCREENING}/02-extract_self_hartree_from_kcp"),
         *_bookkeeping(f"{SCREENING}/03-assign_orbital_groups"),
         *_calculation(f"{ORBITALS}/01-compute_alpha_orb_1/01-dft_n_minus_1-KcpCalculation"),
-        # Every orbital is handed the same KI trial Hamiltonian, which
-        # reaches disk only here — so all but the last copy of it go.
+        # Every orbital is handed the one KI trial Hamiltonian node,
+        # which reaches disk only here — so all but the first copy go.
         *_lambdas(f"{ORBITALS}/01-compute_alpha_orb_1/02-compute_alpha_from_dscf"),
         # The dump numbers the fan-out lexicographically by map key, so
         # orb_10 sits between orb_1 and orb_2 until the renumbering.
@@ -940,7 +1056,7 @@ class TestTidyDumpedTree:
         │           │           ├── function_inputs
         │           │           │   └── trial_lambdas
         │           │           │       └── lambdas.npy -> (link)
-        │           │           └── source_file -> (link)
+        │           │           └── source_file
         │           └── 03-compute_alpha_orb_10
         │               ├── 01-dft_n_plus_1_dummy
         │               │   ├── aiida_node_metadata.yaml
@@ -966,7 +1082,7 @@ class TestTidyDumpedTree:
         │                       ├── function_inputs
         │                       │   └── trial_lambdas
         │                       │       └── lambdas.npy -> (link)
-        │                       └── source_file -> (link)
+        │                       └── source_file
         ├── 05-RunFinalKI
         │   ├── aiida_node_metadata.yaml
         │   ├── inputs
@@ -982,11 +1098,18 @@ class TestTidyDumpedTree:
         The bookkeeping steps are gone, the survivors count from one, no
         folder names a CalcJob class, and each step that ran a single
         calculation holds that calculation's own ``inputs``/``outputs``.
+        Every orbital is handed the one KI trial Hamiltonian, so its
+        array is listed under each and links back to the first; each
+        step's ``source_file`` is aiida-core's copy of the code that ran,
+        not a listed node, so those stay a file apiece.
         """
         root = tmp_path / "ozone"
         _make_tree(root, self.OZONE_DUMP)
+        placed = _PlacedFiles()
+        for path in root.rglob("lambdas.npy"):
+            placed.record(path, 4711, "lambdas.npy", False)
 
-        _tidy_dumped_tree(root)
+        _tidy_dumped_tree(root, placed=placed)
 
         assert _render(root) == dedent(self.TIDIED)
 
