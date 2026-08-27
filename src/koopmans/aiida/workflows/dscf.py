@@ -379,9 +379,17 @@ def band_interpolation_inputs(
     path asks for no band structure, and must then leave
     ``unfold_and_interpolate`` at its defaults.
 
+    A ``smooth_int_factor`` above 1 adds the denser mesh the
+    smooth-interpolation method Wannierizes: the explicit k-point list and
+    its Monkhorst-Pack dimensions, both derived from ``kpoints.grid``.
+
     Raises:
         ValueError: If the input shapes an interpolation it does not ask for.
+        NotImplementedError: If smooth interpolation is asked for on an
+            initialisation route that builds no Wannier functions.
     """
+    from koopmans.aiida.conversion import smooth_grid, smooth_kpoints_mesh
+
     kpath = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
     settings = koopmans_input.calculator_parameters.unfold_and_interpolate
     if kpath is None:
@@ -395,7 +403,20 @@ def band_interpolation_inputs(
         return {}
     # The DOS keeps the interpolation's own smearing and window: the input
     # file has no block naming them.
-    return {"kpath": kpath, "unfold_and_interpolate": settings.model_dump()}
+    inputs: dict[str, Any] = {"kpath": kpath, "unfold_and_interpolate": settings.model_dump()}
+    if settings.do_smooth_interpolation:
+        init_orbitals = koopmans_input.workflow.init_orbitals
+        if init_orbitals not in (VariationalOrbitalType.MLWFS, VariationalOrbitalType.PROJWFS):
+            raise NotImplementedError(
+                f"init_orbitals={init_orbitals.value!r} builds no Wannier functions, and "
+                "the smooth-interpolation method swaps one Wannier-gauge DFT Hamiltonian "
+                "for another. Set init_orbitals to 'mlwfs' or 'projwfs', or set "
+                "`calculator_parameters.unfold_and_interpolate.smooth_int_factor` to 1."
+            )
+        factor = settings.smooth_int_factor
+        inputs["smooth_kpoints"] = smooth_kpoints_mesh(koopmans_input.kpoints, factor)
+        inputs["smooth_mp_grid"] = smooth_grid(koopmans_input.kpoints, factor)
+    return inputs
 
 
 def require_supported_correction(correction: Correction) -> None:
