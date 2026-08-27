@@ -72,9 +72,6 @@ _STAGED_IO_DIRS = {_INPUTS_DIR: "node_inputs", _OUTPUTS_DIR: "node_outputs"}
 # rather than as a linked node: its files stay loose under `outputs`.
 _RETRIEVED_LINK_LABEL = "retrieved"
 
-# Marks a linked Data node as holding no JSON-native value.
-_NOT_JSON_REPRESENTABLE = object()
-
 # What a step folder can hold and still count as having produced nothing.
 # A step's own input listing joins this set on top: a CalcJob (the only
 # kind of step that ever gets one — a workflow never does, and a
@@ -457,22 +454,28 @@ def _describes_a_workflow(metadata_path: Path) -> bool:
     return isinstance(node_type, str) and node_type.startswith("process.workflow.")
 
 
-def _json_value(node: orm.Data) -> Any:
-    """Return ``node``'s value as a JSON-native object.
+def _read_staged_json(label: str, staged: Path) -> tuple[bool, Any]:
+    """Return whether ``label``'s value was written under ``staged``, and it.
 
-    Answers :data:`_NOT_JSON_REPRESENTABLE` for anything else, including a
-    repository-backed ``Data`` type (``ArrayData``, ``FolderData``,
-    ``SinglefileData``, ``RemoteData``, …), which has no JSON form.
+    aiida-core's own ``include_data_json`` already wrote it: one file per
+    top-level namespace (``label.split("__")[0]``), nested the same way
+    :func:`_nest_by_link_label` builds it here. This descends that file
+    to ``label``'s own slot rather than asking the node directly, so a
+    repository-less node's value is read once, not serialised twice.
+
+    Answers ``(False, None)`` for a repository-backed node (no such file
+    exists) and for a label aiida-core dropped as a clash of its own.
     """
-    from aiida import orm
-
-    if isinstance(node, orm.Dict):
-        return node.get_dict()  # type: ignore[no-untyped-call]
-    if isinstance(node, orm.List):
-        return node.get_list()  # type: ignore[no-untyped-call]
-    if isinstance(node, (orm.Int, orm.Float, orm.Str, orm.Bool)):
-        return node.value
-    return _NOT_JSON_REPRESENTABLE
+    parts = label.split("__")
+    path = staged / f"{parts[0]}.json"
+    if not path.exists():
+        return False, None
+    value: Any = json.loads(path.read_text())
+    for part in parts[1:]:
+        if not isinstance(value, dict) or part not in value:
+            return False, None
+        value = value[part]
+    return True, value
 
 
 def _nest_by_link_label(flat: dict[str, Any]) -> dict[str, Any]:
@@ -536,20 +539,19 @@ def _merge_move(source: Path, target: Path) -> None:
 def write_flat_io_listing(
     links: Sequence[tuple[str, orm.Data]],
     directory: Path,
-    staged: Path | None = None,
+    staged: Path,
 ) -> list[Path]:
-    """Write one entry per linked ``Data`` node directly under ``directory``.
-
-    Offered as a candidate for aiida-core's own dump.
+    """Fold ``links``, already dumped under ``staged``, into one entry apiece.
 
     A node with a JSON form (``Dict``, ``List``, ``Int``, ``Float``,
-    ``Str``, ``Bool``) becomes ``<label>.json``. A node whose repository
-    holds a single file becomes ``<label>`` carrying that file's suffix,
-    and one holding several keeps a ``<label>/`` directory. A namespaced
-    label splits on ``__`` into a path, so ``alphas__filled`` and
-    ``alphas__empty`` merge into one ``alphas.json`` while repository
-    content lands under ``alphas/``. A node that is neither writes
-    nothing.
+    ``Str``, ``Bool``, and anything else aiida-core's own
+    ``include_data_json`` gave a JSON form) becomes ``<label>.json``. A
+    node whose repository holds a single file becomes ``<label>``
+    carrying that file's suffix, and one holding several keeps a
+    ``<label>/`` directory. A namespaced label splits on ``__`` into a
+    path, so ``alphas__filled`` and ``alphas__empty`` merge into one
+    ``alphas.json`` while repository content lands under ``alphas/``. A
+    node that is neither writes nothing.
 
     A name a retrieved file already holds — the calculation itself wrote
     ``<label>.json`` under ``directory`` — falls back to the ``<label>/``
@@ -557,18 +559,23 @@ def write_flat_io_listing(
     fallback: the value lands at ``<label>/<label>.json`` instead of
     overwriting the retrieved file.
 
-    :param links: The ``(link_label, node)`` pairs to write.
+    :param links: The ``(link_label, node)`` pairs to fold in — a subset
+        of what aiida-core dumped under ``staged``, filtered by whatever
+        rule the caller applies (bookkeeping exclusion, ``RETURN``
+        dedup); a label ``staged`` holds but ``links`` omits is left
+        there, for :func:`_dump_step_io` to discard.
     :param directory: Where the entries go; created if anything is written.
-    :param staged: Where the repositories already sit as
-        ``<label parts>``; without it, only JSON is written.
+    :param staged: Where aiida-core already dumped ``links``' repository
+        content and JSON, as ``<label parts>`` directories and
+        ``<top label part>.json`` files.
     :return: The JSON files written.
     """
     values: dict[str, Any] = {}
     for label, node in links:
-        value = _json_value(node)
-        if value is not _NOT_JSON_REPRESENTABLE:
+        found, value = _read_staged_json(label, staged)
+        if found:
             values[label] = value
-        elif staged is not None:
+        else:
             _place_repository(node, label, staged, directory)
 
     written = []
@@ -799,16 +806,14 @@ def _dump_step_io(root_path: Path) -> frozenset[Path]:
         if isinstance(node, orm.ProcessNode):
             echoed.update(_write_step_io(node, metadata_path.parent))
 
-    # Anything aiida-core staged that no link accounted for still belongs
-    # in the step's own listing, under the name aiida-core gave it.
-    for listing, staged in _STAGED_IO_DIRS.items():
-        for leftover in sorted(root_path.rglob(staged), key=lambda p: -len(p.parts)):
-            if not leftover.is_dir():
-                continue
-            if any(leftover.iterdir()):
-                _merge_move(leftover, leftover.parent / listing)
-            else:
-                leftover.rmdir()
+    # aiida-core stages every linked node's repository and JSON
+    # unconditionally, unaware of this module's own rules (a bookkeeping
+    # step lists no value, a workflow's RETURN dedup drops a duplicate);
+    # whatever a step's own listing above left unclaimed is exactly what
+    # those rules drop, so it goes rather than being merged in.
+    for staged in _STAGED_IO_DIRS.values():
+        for leftover in root_path.rglob(staged):
+            shutil.rmtree(leftover, ignore_errors=True)
     return frozenset(echoed)
 
 
@@ -862,11 +867,14 @@ def dump_workgraph(
 ) -> Path:
     """Dump a workgraph to a local directory with simplified structure.
 
-    Uses AiiDA's dump functionality, then:
+    Uses AiiDA's dump functionality (with ``include_data_json`` and
+    ``include_workflow_outputs``, so a repository-less linked ``Data``
+    node and a workflow's own ``RETURN`` outputs are written too), then:
     - Strips pk numbers and WorkGraph process labels from folder names
     - Removes the dump's own bookkeeping files
-    - Lists each step's ``Data`` inputs and outputs, one entry apiece,
-      under its own ``inputs``/``outputs`` (see :func:`_dump_step_io`)
+    - Folds each step's already-dumped ``Data`` inputs and outputs into
+      one flat entry apiece, under its own ``inputs``/``outputs`` (see
+      :func:`_dump_step_io`)
     - Keeps each calculation's ``aiida_node_metadata.yaml``, and the
       root's (see :func:`_prune_workflow_metadata`)
     - Tidies the step folders (see :func:`_tidy_dumped_tree`)
@@ -891,6 +899,8 @@ def dump_workgraph(
             include_inputs=True,
             include_outputs=True,
             include_attributes=False,
+            include_data_json=True,
+            include_workflow_outputs=True,
             overwrite=True,
             dump_unsealed=True,
         )
