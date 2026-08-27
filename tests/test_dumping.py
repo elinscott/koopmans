@@ -1566,6 +1566,102 @@ class TestStepIoListing:
 
         assert not (dumped / "inputs").exists()
 
+    def test_code_and_remote_folder_links_are_not_listed(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Scratch paths and code labels are not results, so neither gets an entry.
+
+        ``structure`` and ``kpoints`` are genuine repository-less Data
+        (issue #204's own regression target), so both survive alongside
+        ``code`` and ``remote_folder`` to show the exclusion is by type,
+        not "every repository-less input except one". A real file output
+        keeps the folder itself from being pruned, the same reason
+        ``test_a_calcjobs_data_inputs_land_in_its_input_listing`` gives
+        its own calculation a ``report.txt`` — the input listing alone
+        counts as nothing produced (:data:`_NON_CONTENT_FILES`).
+        """
+        import io
+        import json
+
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        structure = orm.StructureData()
+        structure.set_cell([[1, 0, 0], [0, 1, 0], [0, 0, 1]])  # type: ignore[no-untyped-call]
+        structure.append_atom(position=(0, 0, 0), symbols="Si")  # type: ignore[no-untyped-call]
+        kpoints = orm.KpointsData()
+        kpoints.set_kpoints_mesh([2, 2, 2])  # type: ignore[no-untyped-call]
+        code = orm.InstalledCode(
+            computer=aiida_localhost,
+            filepath_executable="/bin/true",
+            default_calc_job_plugin=self.ARITHMETIC_ADD,
+        )
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"code": code, "structure": structure, "kpoints": kpoints},
+        )
+        attach(
+            calc,
+            "remote_folder",
+            orm.RemoteData(remote_path="/scratch/run", computer=aiida_localhost),
+        )
+        attach(calc, "report", orm.SinglefileData(io.BytesIO(b"hello"), filename="report.txt"))
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        calc_dir = dumped / "01-calc"
+        assert json.loads((calc_dir / "inputs" / "structure.json").read_text())
+        assert json.loads((calc_dir / "inputs" / "kpoints.json").read_text())
+        assert not (calc_dir / "inputs" / "code.json").exists()
+        assert not any((calc_dir / "inputs").rglob("code*"))
+        assert (calc_dir / "outputs" / "report.txt").read_text() == "hello"
+        assert not (calc_dir / "outputs" / "remote_folder.json").exists()
+        assert not any((calc_dir / "outputs").rglob("remote_folder*"))
+
+    def test_a_killed_calculations_remote_folder_output_does_not_rescue_it(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A calculation killed before retrieval, its only output ``remote_folder``.
+
+        Real-node variant of
+        ``TestPruneSourceOnlyStepFolders.test_a_killed_calculation_survives``:
+        with ``remote_folder`` excluded from the listing (see
+        :func:`koopmans.aiida.dumping._data_links`), a killed calculation
+        whose sole output is ``remote_folder`` is pruned exactly as one
+        with no outputs at all — the scratch path never rescues the
+        folder by counting as a produced value.
+        """
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="calc",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        attach(
+            calc,
+            "remote_folder",
+            orm.RemoteData(remote_path="/scratch/run", computer=aiida_localhost),
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("calc") for p in dumped.rglob("*"))
+
 
 class TestFlatEntryNames:
     """Every entry under ``inputs``/``outputs`` is named for its link label.

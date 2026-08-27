@@ -689,7 +689,9 @@ def _data_links(
     link label — used to drop a workflow's re-export of a value its own
     hoisted calculation already carries under a different name. So is
     ``retrieved``, whose files aiida-core already writes loose under
-    ``outputs``.
+    ``outputs``. Links to scratch folders and codes are not listed: a
+    ``RemoteData`` names a path on a remote computer, and an
+    ``AbstractCode`` names an executable — neither is a result.
     """
     from aiida import orm
 
@@ -702,6 +704,7 @@ def _data_links(
         (link.link_label, link.node)
         for link in links
         if isinstance(link.node, orm.Data)
+        and not isinstance(link.node, (orm.RemoteData, orm.AbstractCode))
         and link.node.pk not in exclude_pks
         and link.link_label != _RETRIEVED_LINK_LABEL
     ]
