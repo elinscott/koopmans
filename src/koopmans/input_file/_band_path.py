@@ -20,26 +20,23 @@ NO_BAND_PATH_ON_DFT_EPS = (
     "Remove `kpoints.path`, or run `task: dft_bands` to get a band structure."
 )
 
-#: Why no kcp.x route interpolates a band structure yet: kcp.x works in the
-#: supercell the k-mesh folds to, where the band structure has collapsed onto
-#: the zone centre. Recovering it means unfolding the converged Koopmans
-#: Hamiltonian back onto the primitive cell and interpolating it — a stage
-#: koopmans has not ported (koopmans#188).
-_KCP_HAS_NO_BANDS = (
-    "`kpoints.path` cannot take effect on the kcp.x route: its steps work in the "
-    "supercell `kpoints.grid` folds to, and unfolding the converged Koopmans "
-    "Hamiltonian back onto that path is not ported yet. Remove "
-    "`kpoints.path`.{alternative}"
+#: What to write instead of a k-path on a molecular ΔSCF. The interpolation
+#: unfolds the converged Koopmans Hamiltonian in the Wannier basis, which the
+#: Kohn-Sham-initialised molecular route does not build — and an isolated
+#: molecule has no band structure to unfold onto in the first place.
+NO_BAND_PATH_ON_MOLECULAR_DSCF = (
+    "`kpoints.path` cannot take effect in a molecular calculation: a band structure "
+    "is a property of a periodic system, and this cell is periodic along no direction. "
+    "Remove `kpoints.path`; the ΔSCF eigenvalues are already the molecule's spectrum."
 )
 
-NO_BAND_PATH_ON_DSCF = _KCP_HAS_NO_BANDS.format(
-    alternative=" Screening with `screening_method = 'dfpt'` gives you a Koopmans band "
-    "structure along it."
+#: What to write instead of a k-path on the trajectory task.
+NO_BAND_PATH_ON_TRAJECTORY = (
+    "`kpoints.path` cannot take effect in a `trajectory` calculation: it screens each "
+    "snapshot and reports screening parameters and eigenvalues, not band structures. "
+    "Remove `kpoints.path`, or run `task: singlepoint` on the structure whose band "
+    "structure you want."
 )
-
-#: The same rejection without the DFPT alternative, which the trajectory task
-#: does not offer.
-NO_BAND_PATH_ON_TRAJECTORY = _KCP_HAS_NO_BANDS.format(alternative="")
 
 
 def dscf_initialization_is_supported(init_orbitals: VariationalOrbitalType, periodic: bool) -> bool:
@@ -72,10 +69,17 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool) -> str | None:
             # kcw.x interpolates along the path.
             return None
         if not dscf_initialization_is_supported(workflow.init_orbitals, periodic):
-            # No kcp.x route exists for this initialisation, and sending the
-            # reader to `screening_method = 'dfpt'` earns a second refusal.
+            # No kcp.x route exists for this initialisation, and naming the
+            # path earns the reader a second refusal.
             return None
-        return NO_BAND_PATH_ON_DSCF
+        if workflow.init_orbitals in (
+            VariationalOrbitalType.MLWFS,
+            VariationalOrbitalType.PROJWFS,
+        ):
+            # The Wannier-initialised route unfolds its Koopmans Hamiltonian
+            # and interpolates it along the path.
+            return None
+        return NO_BAND_PATH_ON_MOLECULAR_DSCF
 
     if workflow.task == Task.TRAJECTORY:
         if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:

@@ -677,6 +677,15 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        kpath:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
+            required: false
         kpoints:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1095,6 +1104,13 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
+        plotting:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         pseudo_family:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1125,6 +1141,13 @@ raw:
             child_default_link_limit: 1
             required: true
         tot_magnetization:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        unfold_and_interpolate:
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -1197,6 +1220,20 @@ raw:
           meta:
             child_default_link_limit: 1
             required: true
+        band_structure:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.bands.BandsData
+            required: false
+        band_structure_reference:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            required: false
         bare_lambdas:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -1283,6 +1320,25 @@ raw:
             meta:
               child_default_link_limit: 1
               required: true
+          meta:
+            child_default_link_limit: 1
+            required: false
+        dos:
+          dynamic: false
+          fields:
+            dos:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+            energies:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: true
+          identifier: <scrubbed:identifier>
           meta:
             child_default_link_limit: 1
             required: false
@@ -1430,6 +1486,7 @@ raw:
         is_first_iteration: false
         metadata:
           label: Final KI
+        write_hr: false
       log: ''
       metadata:
         pk: <scrubbed:pk>
@@ -1615,7 +1672,7 @@ raw:
       identifier: <scrubbed:identifier>
       input_socket_meta: {}
       inputs:
-        alpha_numsteps: 2
+        alpha_numsteps: 1
         calculate_alpha: true
         codes:
           kcp:
@@ -1850,6 +1907,15 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                required: false
+            kpath:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             kpoints:
               dynamic: false
@@ -2269,6 +2335,13 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
+            plotting:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             pseudo_family:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2299,6 +2372,13 @@ raw:
                 child_default_link_limit: 1
                 required: true
             tot_magnetization:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            unfold_and_interpolate:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
@@ -2402,6 +2482,20 @@ raw:
               meta:
                 child_default_link_limit: 1
                 required: true
+            band_structure:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.bands.BandsData
+                required: false
+            band_structure_reference:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                required: false
             bare_lambdas:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2488,6 +2582,25 @@ raw:
                 meta:
                   child_default_link_limit: 1
                   required: true
+              meta:
+                child_default_link_limit: 1
+                required: false
+            dos:
+              dynamic: false
+              fields:
+                dos:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+                energies:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    required: true
+              identifier: <scrubbed:identifier>
               meta:
                 child_default_link_limit: 1
                 required: false

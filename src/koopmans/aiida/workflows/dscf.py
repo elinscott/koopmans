@@ -12,6 +12,7 @@ from koopmans.aiida.conversion import (
     NORM_CONSERVING_DUAL,
     atoms_input_to_structure,
     input_to_pw_parameters,
+    kpoints_input_to_interpolation_path,
 )
 from koopmans.aiida.workflows import (
     collinear_magnetization,
@@ -30,6 +31,7 @@ from koopmans.aiida.workflows.blocks import (
 from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
 from koopmans.aiida.workflows.grouping import grouping_tol
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
+from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
@@ -126,6 +128,12 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     extra_kwargs: dict[str, Any] = {}
     if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
+        # On this route the input file's nbnd sizes the pw.x runs — the
+        # states the blocks disentangle among — while kcp.x takes one
+        # variational orbital per Wannier function the projections
+        # describe. They are different numbers and both are needed.
+        inputs["nbnd"] = int(extra_kwargs.pop("nbnd"))
+    extra_kwargs.update(band_interpolation_inputs(koopmans_input, structure))
 
     # load_codes loads every configured member of DscfCodes. Every
     # NotRequired member exists for the Wannier-seeded initialisation;
@@ -149,23 +157,27 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     )
 
 
-def _require_nbnd_matches_projections(
-    nbnd: int,
+def _kcp_nbnd_from_projections(
     structure: orm.StructureData,
     projection_blocks: list[list[Projection]],
     num_occ_bands: int,
     spin_label: str = "",
-) -> None:
-    """Reject an ``nbnd`` or a projection set inconsistent with each other.
+) -> int:
+    """Return kcp.x's orbital count: one variational orbital per Wannier function.
 
     The merged evc_occupied/evc_empty files that seed the supercell kcp.x
     run carry one orbital per projected Wannier function, so the
-    projections must cover the whole occupied manifold and kcp.x's
-    ``nbnd`` must equal their total, no more and no fewer.
+    projections fix the count. They must cover the whole occupied
+    manifold; the empty ones they add on top become kcp.x's empty states.
+
+    Raises:
+        ValueError: If the projections leave an occupied band unspanned.
     """
     from aiida_koopmans.projections import projection_num_wann
 
-    nwann = sum(projection_num_wann(structure, p) for block in projection_blocks for p in block)
+    nwann = int(
+        sum(projection_num_wann(structure, p) for block in projection_blocks for p in block)
+    )
     if nwann < num_occ_bands:
         raise ValueError(
             f"The {spin_label}projections in `calculator_parameters.w90.projections` "
@@ -174,22 +186,27 @@ def _require_nbnd_matches_projections(
             "seed the supercell kcp.x initialisation; add projections covering the whole "
             "occupied manifold."
         )
-    if nbnd < num_occ_bands:
-        raise ValueError(
-            f"nbnd = {nbnd} is less than the number of {spin_label}occupied bands "
-            f"({num_occ_bands}). Increase `calculator_parameters.nbnd` (or "
-            f"`calculator_parameters.kcp.system.nbnd`) to at least {num_occ_bands}."
-        )
-    if nbnd != nwann:
-        raise ValueError(
-            f"nbnd = {nbnd} is inconsistent with the {spin_label}projections in "
-            "`calculator_parameters.w90.projections`:\n"
-            f"  empty bands implied by nbnd = {nbnd - num_occ_bands}\n"
-            f"  empty Wannier functions in the projections = {nwann - num_occ_bands}\n"
-            "Set `calculator_parameters.nbnd` (or `calculator_parameters.kcp.system.nbnd`) "
-            f"to {nwann}, the total number of Wannier functions the projections describe, "
-            "or add or remove projections to match."
-        )
+    return nwann
+
+
+def _require_explicit_kcp_nbnd_matches(
+    koopmans_input: KoopmansInput, nwann: int, spin_label: str = ""
+) -> None:
+    """Reject a hand-written kcp.x ``nbnd`` the projections contradict.
+
+    On the Wannier route the orbital count is derived, so this fires only
+    when the user states one themselves.
+    """
+    stated = koopmans_input.calculator_parameters.kcp.system.nbnd
+    if stated is None or int(stated) == nwann:
+        return
+    raise ValueError(
+        f"`calculator_parameters.kcp.system.nbnd` = {int(stated)} is inconsistent with the "
+        f"{spin_label}projections in `calculator_parameters.w90.projections`, which describe "
+        f"{nwann} Wannier functions — one kcp.x variational orbital each. Set it to {nwann}, "
+        "drop it (the projections fix it on this route), or add or remove projections to "
+        "match."
+    )
 
 
 def _require_nscf_covers_nbnd(nscf_nbnd: int, nbnd: int) -> None:
@@ -215,6 +232,17 @@ def dscf_wannier_init_inputs(
     the k-mesh, and the Makov-Payne knobs. The molecular/kohn-sham route
     needs none of this; the wannierize + fold-to-supercell codes ride the
     caller's ``DscfCodes`` namespace.
+
+    Args:
+        koopmans_input: The parsed input file.
+        structure: The primitive cell.
+        nbnd: The band count the pw.x steps run — the states the blocks
+            disentangle among.
+
+    Returns:
+        The extra workflow kwargs, ``nbnd`` among them: on this route it
+        is kcp.x's own orbital count, derived from the projections rather
+        than taken from the input file.
     """
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -259,18 +287,23 @@ def dscf_wannier_init_inputs(
             )
         nocc_up = (nelec + magnetization) // 2
         nocc_down = (nelec - magnetization) // 2
-        # nbnd must equal the number of Wannier functions the projections
-        # describe: the merged evc_occupied/evc_empty files carry one
-        # kcp.x orbital per projected Wannier function, so a mismatch here
-        # is wrong regardless of how many bands the nscf computes. Checked
-        # against the raw projections, ahead of the nscf guard below, so
-        # an oversized nbnd is diagnosed by name instead of surfacing as
-        # an nscf shortfall.
-        _require_nbnd_matches_projections(nbnd, structure, w90.up.projections, nocc_up, "spin up ")
-        _require_nbnd_matches_projections(
-            nbnd, structure, w90.down.projections, nocc_down, "spin down "
+        # kcp.x takes one variational orbital per projected Wannier
+        # function: the merged evc_occupied/evc_empty files carry exactly
+        # those. Both channels feed one kcp.x run, so their counts must
+        # agree.
+        kcp_nbnd = _kcp_nbnd_from_projections(structure, w90.up.projections, nocc_up, "spin up ")
+        nwann_down = _kcp_nbnd_from_projections(
+            structure, w90.down.projections, nocc_down, "spin down "
         )
-        _require_nscf_covers_nbnd(nscf_nbnd, nbnd)
+        if nwann_down != kcp_nbnd:
+            raise ValueError(
+                f"The spin up projections describe {kcp_nbnd} Wannier functions and the "
+                f"spin down ones {nwann_down}. Both channels share one kcp.x orbital "
+                "count, so `calculator_parameters.w90.up.projections` and "
+                "`calculator_parameters.w90.down.projections` must describe equally many."
+            )
+        _require_explicit_kcp_nbnd_matches(koopmans_input, kcp_nbnd)
+        _require_nscf_covers_nbnd(nscf_nbnd, kcp_nbnd)
         up_blocks = create_explicit_blocks(
             structure, w90.up.projections, nscf_nbnd, nocc_up, SpinChannel.UP
         )
@@ -291,8 +324,9 @@ def dscf_wannier_init_inputs(
                 "Wannier-initialised DSCF route."
             )
         nocc = nelec // 2
-        _require_nbnd_matches_projections(nbnd, structure, calc_params.wannier90.projections, nocc)
-        _require_nscf_covers_nbnd(nscf_nbnd, nbnd)
+        kcp_nbnd = _kcp_nbnd_from_projections(structure, calc_params.wannier90.projections, nocc)
+        _require_explicit_kcp_nbnd_matches(koopmans_input, kcp_nbnd)
+        _require_nscf_covers_nbnd(nscf_nbnd, kcp_nbnd)
         blocks = create_explicit_blocks(
             structure, calc_params.wannier90.projections, nscf_nbnd, nocc, SpinChannel.NONE
         )
@@ -322,6 +356,7 @@ def dscf_wannier_init_inputs(
         wannier_overrides["wannier90"] = w90_user
 
     return {
+        "nbnd": kcp_nbnd,
         "blocks": blocks,
         "kgrid": list(kpoints_input.grid),
         "kpoints": kpoints_input_to_kpoints_mesh(kpoints_input),
@@ -330,6 +365,37 @@ def dscf_wannier_init_inputs(
         "mp_correction": workflow.mp_correction,
         "eps_inf": workflow.eps_inf,
     }
+
+
+def band_interpolation_inputs(
+    koopmans_input: KoopmansInput,
+    structure: orm.StructureData,
+) -> dict[str, Any]:
+    """Assemble the unfold-and-interpolate inputs, or none when no path is named.
+
+    A ΔSCF run computes on a Γ-point supercell, so its band structure has
+    to be recovered by unfolding the Koopmans Hamiltonian in the Wannier
+    basis and interpolating it along ``kpoints.path``. An input naming no
+    path asks for no band structure, and must then leave
+    ``unfold_and_interpolate`` at its defaults.
+
+    Raises:
+        ValueError: If the input shapes an interpolation it does not ask for.
+    """
+    kpath = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    settings = koopmans_input.calculator_parameters.unfold_and_interpolate
+    if kpath is None:
+        if settings.model_dump() != UnfoldAndInterpolateConfig().model_dump():
+            raise ValueError(
+                "`calculator_parameters.unfold_and_interpolate` shapes the band "
+                "structure interpolation, and this input asks for none. Add the path "
+                "to interpolate along as `kpoints: {path: ...}`, or restore the "
+                "block's defaults."
+            )
+        return {}
+    # The DOS keeps the interpolation's own smearing and window: the input
+    # file has no block naming them.
+    return {"kpath": kpath, "unfold_and_interpolate": settings.model_dump()}
 
 
 def require_supported_correction(correction: Correction) -> None:
