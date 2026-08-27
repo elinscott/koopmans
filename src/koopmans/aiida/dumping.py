@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
+import warnings
 from collections import defaultdict
 from collections.abc import Sequence
-from pathlib import Path
-from typing import TYPE_CHECKING
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any
 
 from koopmans.aiida.utils import suppress_aiida_logging
 
 if TYPE_CHECKING:
     from aiida import orm
+    from aiida.common import LinkType
 
-__all__ = ["MODEL_FILENAME", "NODE_METADATA_FILE", "dump_workgraph", "trained_model_output"]
+__all__ = [
+    "MODEL_FILENAME",
+    "NODE_METADATA_FILE",
+    "dump_workgraph",
+    "trained_model_output",
+]
 
 
 # AiiDA's dump names each child folder "<NN>-<link_label>", appends the
@@ -45,6 +53,11 @@ _PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
 # The dumped source of a python task: its code, not data the run made.
 _TASK_SOURCE_FILE = "source_file"
 
+# What a dumped task source is grouped by in place of a node pk, which it
+# has none of: aiida-core copies it from the calculation's own
+# repository, not from a link. A string never collides with a pk.
+_TASK_SOURCE_ORIGIN = "task source"
+
 # aiida-core's record of which node a folder came from: pk, uuid, node
 # type and timestamps. It names the folder rather than adding to it.
 NODE_METADATA_FILE = "aiida_node_metadata.yaml"
@@ -52,13 +65,54 @@ NODE_METADATA_FILE = "aiida_node_metadata.yaml"
 # A trained screening model, as `ml: {model_file: ...}` reads it back.
 MODEL_FILENAME = "model.json"
 
-# What a step folder can hold and still count as having produced nothing.
+# Where a step's Data inputs and outputs are listed.
+_INPUTS_DIR = "inputs"
+_OUTPUTS_DIR = "outputs"
+
+# Where aiida-core stages the repositories and JSON of the Data a
+# calculation read and wrote — and, for a workflow, the Data its RETURN
+# links point at — before this module folds them into the listings above.
+_STAGED_IO_DIRS = {_INPUTS_DIR: "node_inputs", _OUTPUTS_DIR: "node_outputs"}
+
+# The one CREATE link aiida-core dumps as the calculation's own files
+# rather than as a linked node: its files stay loose under `outputs`.
+_RETRIEVED_LINK_LABEL = "retrieved"
+
+# What a step folder can hold and still count as having produced
+# nothing. A step's own input listing joins this set on top: a CalcJob
+# echoes its own JSON-valued Data arguments whether or not it produced
+# anything, so without this a no-op CalcJob would gain a folder of its
+# own just to show them back. A workflow never gets an input listing at
+# all, and a bookkeeping calculation gets no JSON input listing either
+# — its repository inputs are still placed, and pruning drops the
+# folder around them once nothing else is left. The output listing
+# stays out of this set — a folder holding nothing else is exactly the
+# case this dump exists to fix (issue #205).
 _NON_CONTENT_FILES = frozenset({_TASK_SOURCE_FILE, NODE_METADATA_FILE})
 
 # The dump's own bookkeeping, which says nothing about the run.
 _DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safeguard")
 
-_DIGEST_BLOCK = 1 << 20
+# The engine's own bookkeeping, which every CalcJob carries: the folder
+# of serialized job settings and the submission script it wrote into the
+# calculation's repository. Neither is an input the run was given or a
+# result it produced. aiida-core copies a calculation's repository and
+# its retrieved folder whole, with no option to leave these out, so they
+# are dropped here (`ProcessDumpConfig` in aiida-core 715972d65 carries
+# no flag for it).
+_ENGINE_BOOKKEEPING_DIR = ".aiida"
+_ENGINE_BOOKKEEPING_FILES = ("_aiidasubmit.sh",)
+
+# What the scheduler wrote about the job, retrieved beside the results.
+# A run that finished writes noise here — the GNU builds emit half a
+# kilobyte of IEEE-exception summaries on every successful pw.x call —
+# but a run that did not may have written its only account of what went
+# wrong here, so these two are kept by :func:`_prune_engine_bookkeeping`
+# for a calculation that did not finish successfully.
+_SCHEDULER_LOG_FILES = ("_scheduler-stdout.txt", "_scheduler-stderr.txt")
+
+# Sentinel for "no value here", distinct from a staged JSON value of None.
+_MISSING = object()
 
 _SYMLINK_README = """\
 Some files here appear in more than one step: an input staged from an
@@ -103,7 +157,7 @@ def _family_key(label: str) -> str:
 
 def _is_calculation_folder(path: Path) -> bool:
     """Return whether the folder holds one dumped process, run and recorded."""
-    return (path / "inputs").is_dir() and (path / "outputs").is_dir()
+    return (path / _INPUTS_DIR).is_dir() and (path / _OUTPUTS_DIR).is_dir()
 
 
 def _step_folders(path: Path) -> list[Path]:
@@ -117,108 +171,169 @@ def _step_folders(path: Path) -> list[Path]:
     return [child for _, _, child in numbered]
 
 
+def _text_digest(text: str) -> str:
+    """Return the SHA-256 of a string."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 def _file_digest(path: Path) -> str:
-    """Return the SHA-256 of a file's contents."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(_DIGEST_BLOCK), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    """Return the SHA-256 of a file, read whole.
 
-
-def _content_keys(root_path: Path) -> dict[Path, str]:
-    """Return a key per real file that two share exactly when identical.
-
-    A file whose size occurs once in the tree can have no twin, so it
-    takes a key of its own and is never read — which keeps the pass off
-    the large outputs a finished run retrieves.
-
-    Symlinks are left out, so a tree that already holds some is not
-    counted through them.
+    Only :func:`_record_task_sources` calls this, on the python sources a
+    dump holds a handful of.
     """
-    by_size: dict[int, list[Path]] = defaultdict(list)
-    for path in root_path.rglob("*"):
-        if path.is_file() and not path.is_symlink():
-            by_size[path.stat().st_size].append(path)
-
-    keys: dict[Path, str] = {}
-    for size, paths in by_size.items():
-        if len(paths) == 1:
-            keys[paths[0]] = f"{size}:{paths[0]}"
-        else:
-            keys.update({path: f"{size}:{_file_digest(path)}" for path in paths})
-    return keys
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _prune_source_only_step_folders(path: Path) -> None:
+class _PlacedFiles:
+    """Which node's content each file this module placed holds.
+
+    A file is identified by two things: the ``Data`` node the bytes came
+    from, and which part of that node's content the file is — the path
+    inside the node's repository, or, for a JSON listing, the digest of
+    the text written. The digest is what settles the JSON case because a
+    node's value is written at whatever depth its link label nests to, so
+    the same node can reach disk as ``nscf.json`` holding
+    ``{"output_parameters": ...}`` in one step and as
+    ``output_parameters.json`` holding the value itself in another; only
+    equal bytes make two listings the same file.
+
+    A python task's own ``source_file`` has no node behind it and is
+    identified by its text instead (:meth:`record_task_source`).
+
+    ``created_here`` marks the copy the calculation that created the node
+    placed under its own ``outputs`` — where a reader following a link
+    should land, rather than in some later step that was handed it.
+
+    Paths are absolute and are kept current as the tidying passes move
+    folders: every pass that renames or deletes reports it here.
+    """
+
+    def __init__(self) -> None:
+        self._origins: dict[Path, tuple[int | str, str, bool]] = {}
+
+    def record(self, path: Path, pk: int | None, content: str, created_here: bool) -> None:
+        """Note that ``path`` holds part ``content`` of the node ``pk``.
+
+        A node with no pk is unstored and so has no identity to group by;
+        nothing is recorded for one, and every node a dumped link points
+        at is stored.
+        """
+        if pk is not None:
+            self._origins[path] = (pk, content, created_here)
+
+    def record_task_source(self, path: Path, digest: str) -> None:
+        """Note that ``path`` holds the python source digesting to ``digest``.
+
+        A task's source is aiida-core's copy of the code that ran rather
+        than a listed node, so it has no node to be identified by, and
+        one task run once per orbital writes the same text under each
+        call. Its origin is :data:`_TASK_SOURCE_ORIGIN`, which is not a
+        pk, so sources group among themselves and no data file is ever
+        made to depend on a folder that carries only code.
+        """
+        self._origins[path] = (_TASK_SOURCE_ORIGIN, digest, False)
+
+    def moved(self, source: Path, target: Path) -> None:
+        """Follow a move of ``source`` — a file or a whole folder — to ``target``."""
+        for path in [p for p in self._origins if p == source or source in p.parents]:
+            self._origins[target / path.relative_to(source)] = self._origins.pop(path)
+
+    def dropped(self, path: Path) -> None:
+        """Forget everything recorded at ``path`` or below it."""
+        for recorded in [p for p in self._origins if p == path or path in p.parents]:
+            del self._origins[recorded]
+
+    def duplicate_groups(self) -> list[list[Path]]:
+        """Return each set of paths holding one node's same content, canonical first.
+
+        Only groups of two or more are returned, and only real files: a
+        pass may have deleted a recorded file, and a tree that already
+        holds a symlink is never linked through it.
+        """
+        groups: dict[tuple[int | str, str], list[Path]] = defaultdict(list)
+        for path, (pk, content, _) in self._origins.items():
+            if path.is_file() and not path.is_symlink():
+                groups[(pk, content)].append(path)
+        return [
+            sorted(paths, key=lambda path: (not self._origins[path][2], str(path)))
+            for paths in groups.values()
+            if len(paths) > 1
+        ]
+
+
+def _move(source: Path, target: Path, placed: _PlacedFiles) -> None:
+    """Move ``source`` to ``target``, keeping ``placed`` current."""
+    shutil.move(str(source), str(target))
+    placed.moved(source, target)
+
+
+def _prune_source_only_step_folders(
+    path: Path,
+    echoed: frozenset[Path] = frozenset(),
+    placed: _PlacedFiles | None = None,
+) -> None:
     """Delete step folders holding nothing but python tasks' own source.
 
     A bookkeeping task dumps its ``source_file`` — its code, which the
     installed package holds — and its ``aiida_node_metadata.yaml``, which
     names the node the folder came from. Any other file keeps the
-    folder, whatever the process was: aiida-core writes ``node_outputs``
-    only for ``SinglefileData`` and ``FolderData``, so an ``ArrayData`` a
-    task produced reaches disk only as the ``function_inputs`` of
-    whatever consumed it, and a calculation killed before retrieval has
-    inputs and no outputs at all.
+    folder, whatever the process was: a repository-backed output (e.g. a
+    pyfunction's ``ArrayData``, staged as ``<label>.npy``) survives here
+    the same as a calculation killed before retrieval, whose inputs are
+    staged with no outputs at all.
 
     Runs innermost first, so a folder left holding only such folders goes
     with them.
+
+    :param path: Folder whose step subfolders are considered.
+    :param echoed: Files that echo a step's own arguments back and so
+        count as nothing produced, alongside :data:`_NON_CONTENT_FILES`.
+    :param placed: Record of where each listed node's content sits, kept
+        current as folders go.
     """
+    placed = placed if placed is not None else _PlacedFiles()
     for child in _step_folders(path):
-        _prune_source_only_step_folders(child)
-        if all(item.name in _NON_CONTENT_FILES for item in child.rglob("*") if item.is_file()):
+        _prune_source_only_step_folders(child, echoed, placed)
+        if all(
+            item.name in _NON_CONTENT_FILES or item in echoed
+            for item in child.rglob("*")
+            if item.is_file()
+        ):
             shutil.rmtree(child)
+            placed.dropped(child)
 
 
-def _canonical_rank(path: Path, root_path: Path) -> tuple[int, str]:
-    """Return the sort key that picks which copy of a file stays real.
+def _link_duplicate_files(placed: _PlacedFiles) -> int:
+    """Replace a node's repeated content with symlinks to one real copy.
 
-    A copy under a step's ``outputs`` ranks first: that step produced the
-    file, and is where a reader following a link should land rather than
-    in some later step that was handed it. Tree order settles the rest.
-    """
-    relative = path.relative_to(root_path)
-    return (0 if "outputs" in relative.parts else 1, str(relative))
+    Two files are linked only when they hold the same part of the same
+    node: a value staged into a later step's ``inputs`` points back at
+    the ``outputs`` it came from, and a pseudopotential every calculation
+    reads is one file. Equal bytes from different nodes stay separate
+    real files — a run that computes the same array twice computed it
+    twice, and the dump says so.
 
+    The copy kept is the one the calculation that created the node placed
+    under its own ``outputs``; where no such copy exists — a value a
+    workflow re-exports, an input read by several steps — tree order
+    settles it.
 
-def _link_duplicate_files(root_path: Path) -> int:
-    """Replace repeated files with relative symlinks to one real copy.
+    Two exceptions to "the same node" are worth naming. A python task's
+    ``source_file`` has no node at all, and collapses among other task
+    sources holding the same text (:meth:`_PlacedFiles.record_task_source`).
+    A JSON listing that merged more than one node — an ``alphas.json``
+    built from ``alphas__filled`` and ``alphas__empty`` — belongs to no
+    single node, so it is not recorded and never links, however many
+    steps write the same one.
 
-    Every step that ran keeps its folder and its own listing; only the
-    repeated bytes go, so a file staged into a later step's ``inputs``
-    now points at the ``outputs`` it came from. Links are relative, so
-    the tree survives being moved.
+    Links are relative, so the tree survives being moved.
 
-    An empty file is left alone, and never serves as a target. A
-    successful run leaves an empty ``_scheduler-stderr.txt`` under every
-    calculation; linking them together saves nothing and asserts a
-    relationship between unrelated steps that the reader then has to
-    puzzle out.
-
-    A ``source_file`` links only to another ``source_file``: one task run
-    once per orbital dumps its code under each, and those copies collapse
-    like any other, but no data file is ever made to depend on a folder
-    that carries only code.
-
-    Expects a freshly written tree that holds no symlinks of its own. Any
-    it does find are left where they are and never chosen as the copy to
-    keep: a link ranked ahead of the real file would leave the two
-    pointing at each other and the bytes gone.
-
-    :param root_path: Root of the tidied tree.
+    :param placed: Where each file this module placed came from.
     :return: How many symlinks were made.
     """
-    groups: dict[tuple[bool, str], list[Path]] = defaultdict(list)
-    for path, key in _content_keys(root_path).items():
-        if path.stat().st_size:
-            groups[(path.name == _TASK_SOURCE_FILE, key)].append(path)
-
     created = 0
-    for paths in groups.values():
-        if len(paths) < 2:
-            continue
-        canonical, *duplicates = sorted(paths, key=lambda path: _canonical_rank(path, root_path))
+    for canonical, *duplicates in placed.duplicate_groups():
         for duplicate in duplicates:
             duplicate.unlink()
             duplicate.symlink_to(os.path.relpath(canonical, duplicate.parent))
@@ -257,12 +372,17 @@ def _display_order(children: Sequence[Path]) -> list[tuple[Path, str]]:
     return ordered
 
 
-def _renumber_step_folders(path: Path) -> None:
+def _renumber_step_folders(path: Path, placed: _PlacedFiles | None = None) -> None:
     """Renumber the step folders under ``path`` contiguously from one.
 
     Numbers follow :func:`_display_order` rather than the order the dump
     wrote, and keep the zero padding it used.
+
+    :param path: Folder whose step subfolders are renumbered.
+    :param placed: Record of where each listed node's content sits, kept
+        current as folders move.
     """
+    placed = placed if placed is not None else _PlacedFiles()
     children = _step_folders(path)
     widths = [len(m.group(1)) for c in children if (m := _STEP_FOLDER_NAME.match(c.name))]
     width = max(widths, default=2)
@@ -279,35 +399,40 @@ def _renumber_step_folders(path: Path) -> None:
             parked.append(child)
             continue
         staging = child.parent / f".tidy-{index}-{child.name}"
-        shutil.move(str(child), str(staging))
+        _move(child, staging, placed)
         parked.append(staging)
 
     for staged, final_name in zip(parked, final_names, strict=True):
         renamed = staged.parent / final_name
         if staged != renamed:
-            shutil.move(str(staged), str(renamed))
-        _renumber_step_folders(renamed)
+            _move(staged, renamed, placed)
+        _renumber_step_folders(renamed, placed)
 
 
-def _strip_process_label_suffixes(path: Path) -> None:
+def _strip_process_label_suffixes(path: Path, placed: _PlacedFiles | None = None) -> None:
     """Drop the trailing "-<ProcessLabel>" from every step folder.
 
     The CalcJob class name on a calculation folder and the WorkChain
     class name on the step wrapping it both go. A folder whose stripped
     name is already taken keeps its suffix.
+
+    :param path: Folder whose step subfolders are renamed.
+    :param placed: Record of where each listed node's content sits, kept
+        current as folders move.
     """
+    placed = placed if placed is not None else _PlacedFiles()
     for child in _step_folders(path):
         renamed = child
         match = _PROCESS_LABEL_SUFFIX.match(child.name)
         if match is not None:
             stripped = child.parent / match.group(1)
             if not stripped.exists():
-                shutil.move(str(child), str(stripped))
+                _move(child, stripped, placed)
                 renamed = stripped
-        _strip_process_label_suffixes(renamed)
+        _strip_process_label_suffixes(renamed, placed)
 
 
-def _hoist_lone_calculations(path: Path) -> None:
+def _hoist_lone_calculations(path: Path, placed: _PlacedFiles | None = None) -> None:
     """Lift a lone calculation's contents into the step folder holding it.
 
     Hoists only when that calculation is everything the folder holds, so
@@ -317,19 +442,28 @@ def _hoist_lone_calculations(path: Path) -> None:
     Descends top-down and stops at the folder it hoists into, so a chain
     of single-child steps collapses by one layer only and every step name
     on the way survives.
+
+    :param path: Folder whose step subfolders are considered.
+    :param placed: Record of where each listed node's content sits, kept
+        current as folders move.
     """
+    placed = placed if placed is not None else _PlacedFiles()
     children = list(path.iterdir())
     if len(children) == 1 and children[0].is_dir() and _is_calculation_folder(children[0]):
         calculation = children[0]
         for item in calculation.iterdir():
-            shutil.move(str(item), str(path / item.name))
+            _move(item, path / item.name, placed)
         calculation.rmdir()
         return
     for child in _step_folders(path):
-        _hoist_lone_calculations(child)
+        _hoist_lone_calculations(child, placed)
 
 
-def _tidy_dumped_tree(root_path: Path) -> None:
+def _tidy_dumped_tree(
+    root_path: Path,
+    echoed: frozenset[Path] = frozenset(),
+    placed: _PlacedFiles | None = None,
+) -> None:
     """Prune, renumber and flatten the step folders of a dumped tree.
 
     The passes run in a fixed order:
@@ -339,8 +473,8 @@ def _tidy_dumped_tree(root_path: Path) -> None:
     - every step folder drops its trailing "-<ProcessLabel>";
     - a step folder holding nothing but one calculation takes over its
       contents;
-    - files repeated across steps become relative symlinks to one copy,
-      and the root gains a ``README`` saying so.
+    - a node's content listed under more than one step becomes relative
+      symlinks to one copy, and the root gains a ``README`` saying so.
 
     Pruning has to precede flattening: a step is left holding a single
     calculation only once its bookkeeping siblings are gone. Stripping
@@ -354,12 +488,17 @@ def _tidy_dumped_tree(root_path: Path) -> None:
     another.
 
     :param root_path: Root of the dumped tree; it is never itself pruned.
+    :param echoed: Files that count as nothing produced when pruning (see
+        :func:`_prune_source_only_step_folders`).
+    :param placed: Where each file this module placed came from (see
+        :class:`_PlacedFiles`); without it nothing is linked.
     """
-    _prune_source_only_step_folders(root_path)
-    _renumber_step_folders(root_path)
-    _strip_process_label_suffixes(root_path)
-    _hoist_lone_calculations(root_path)
-    if _link_duplicate_files(root_path):
+    placed = placed if placed is not None else _PlacedFiles()
+    _prune_source_only_step_folders(root_path, echoed, placed)
+    _renumber_step_folders(root_path, placed)
+    _strip_process_label_suffixes(root_path, placed)
+    _hoist_lone_calculations(root_path, placed)
+    if _link_duplicate_files(placed):
         (root_path / "README").write_text(_SYMLINK_README)
 
 
@@ -387,36 +526,21 @@ def _simplify_folder_names(root_path: Path) -> None:
             shutil.move(str(dir_path), str(new_path))
 
 
-def _simplify_calcjob_dump(output_path: Path) -> None:
-    """Simplify the structure of a dumped CalcJobNode.
+def _node_metadata(metadata_path: Path) -> dict[str, Any]:
+    """Return a dumped metadata file's ``Node data`` mapping, or ``{}``.
 
-    - Merges node_inputs into inputs
-    - Merges node_outputs into outputs
-    - Removes the dump's own bookkeeping files
-
-    :param output_path: Path to the dumped calculation directory.
+    A file that cannot be read at all — unparseable, not text, unreadable,
+    or truncated mid-write — answers ``{}`` rather than raising, so a
+    reader keeps whatever it was deciding from the file's absence.
     """
-    # Merge node_inputs into inputs
-    node_inputs = output_path / "node_inputs"
-    inputs = output_path / "inputs"
-    if node_inputs.exists():
-        for item in node_inputs.iterdir():
-            shutil.move(str(item), str(inputs / item.name))
-        node_inputs.rmdir()
+    import yaml
 
-    # Merge node_outputs into outputs
-    node_outputs = output_path / "node_outputs"
-    outputs = output_path / "outputs"
-    if node_outputs.exists():
-        for item in node_outputs.iterdir():
-            shutil.move(str(item), str(outputs / item.name))
-        node_outputs.rmdir()
-
-    # Drop the dump's own bookkeeping; the node metadata stays
-    for filename in _DUMP_BOOKKEEPING_FILES:
-        filepath = output_path / filename
-        if filepath.exists():
-            filepath.unlink()
+    try:
+        parsed = yaml.safe_load(metadata_path.read_text())
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return {}
+    node_data = parsed.get("Node data", {}) if isinstance(parsed, dict) else {}
+    return node_data if isinstance(node_data, dict) else {}
 
 
 def _describes_a_workflow(metadata_path: Path) -> bool:
@@ -425,19 +549,578 @@ def _describes_a_workflow(metadata_path: Path) -> bool:
     Reads the node's own ``node_type``, which every dumped process
     records: ``process.workflow.…`` for a workgraph or a WorkChain,
     ``process.calculation.…`` for a CalcJob or a python task. Nothing
-    else in the file decides, and a file that cannot be read at all —
-    unparseable, not text, unreadable — answers no, so it is kept rather
-    than deleted on a guess.
+    else in the file decides, and a file that cannot be read at all
+    answers no, so it is kept rather than deleted on a guess.
     """
-    import yaml
-
-    try:
-        parsed = yaml.safe_load(metadata_path.read_text())
-    except (OSError, UnicodeDecodeError, yaml.YAMLError):
-        return False
-    node_data = parsed.get("Node data", {}) if isinstance(parsed, dict) else {}
-    node_type = node_data.get("node_type") if isinstance(node_data, dict) else None
+    node_type = _node_metadata(metadata_path).get("node_type")
     return isinstance(node_type, str) and node_type.startswith("process.workflow.")
+
+
+def _read_staged_json(label: str, node: orm.Data, staged: Path) -> tuple[bool, Any]:
+    """Return whether ``node`` is JSON-valued, and ``label``'s staged value.
+
+    A node is JSON-valued exactly when its repository holds nothing
+    (``not node.base.repository.list_object_names()``) — the same
+    predicate aiida-core's own ``include_data_json`` branches on. For
+    such a node, the value aiida-core already wrote is looked up: one
+    file per top-level namespace (``label.split("__")[0]``), nested the
+    same way :func:`_nest_by_link_label` builds it here, descended to
+    ``label``'s own slot.
+
+    A repository-less node whose slot is missing from that file is an
+    aiida-core nesting clash, not a repository-backed node in disguise:
+    this warns, naming ``label``, and answers ``(False, None)`` so the
+    caller skips it rather than treating it as repository-backed.
+    """
+    if node.base.repository.list_object_names():
+        return False, None
+
+    parts = label.split("__")
+    value: Any = _MISSING
+    path = staged / f"{parts[0]}.json"
+    if path.exists():
+        value = json.loads(path.read_text())
+        for part in parts[1:]:
+            value = value[part] if isinstance(value, dict) and part in value else _MISSING
+            if value is _MISSING:
+                break
+
+    if value is _MISSING:
+        warnings.warn(
+            f"aiida-core staged no JSON for repository-less link {label!r}; skipping it",
+            stacklevel=2,
+        )
+        return False, None
+    return True, value
+
+
+def _nest_by_link_label(flat: dict[str, Any]) -> dict[str, Any]:
+    """Turn ``{link_label: value}`` into nested dicts on the ``__`` separator.
+
+    Mirrors aiida-core's own reading of a namespaced link label as a path
+    (``NodeRepoIoDumper._dump_calculation_io_files`` splits on the same
+    separator to build a directory), so a namespace socket like ``alphas``
+    with sub-outputs ``filled``/``empty`` nests the same way here as its
+    repository-backed siblings do under ``outputs/``.
+    """
+    nested: dict[str, Any] = {}
+    for label, value in flat.items():
+        cursor = nested
+        parts = label.split("__")
+        for part in parts[:-1]:
+            cursor = cursor.setdefault(part, {})
+        cursor[parts[-1]] = value
+    return nested
+
+
+_COMPOUND_SUFFIX_PREFIXES = frozenset({".tar"})
+
+
+def _lone_file(node: orm.Data, name: str) -> tuple[str, str] | None:
+    """Return ``node``'s single repository file and the entry it becomes.
+
+    Answers ``None`` unless the repository holds exactly one object and
+    that object is a file at its root; the entry is ``name`` carrying
+    that file's suffix. The suffix is the filename's last dot-separated
+    component, extended by one more when the component before it is a
+    known compound prefix (:data:`_COMPOUND_SUFFIX_PREFIXES`) — so
+    ``bundle.tar.gz`` keeps ``.tar.gz`` whole, while a version-numbered
+    name like ``H_ONCV_PBE-1.0.upf`` (suffixes ``.0``, ``.upf``) keeps
+    only ``.upf``.
+    """
+    from aiida.repository.common import FileType
+
+    objects = node.base.repository.list_objects()
+    if len(objects) != 1 or objects[0].file_type is not FileType.FILE:
+        return None
+    suffixes = PurePosixPath(objects[0].name).suffixes
+    if len(suffixes) >= 2 and suffixes[-2] in _COMPOUND_SUFFIX_PREFIXES:
+        suffix = "".join(suffixes[-2:])
+    else:
+        suffix = suffixes[-1] if suffixes else ""
+    return objects[0].name, name + suffix
+
+
+def _merge_move(source: Path, target: Path) -> None:
+    """Move ``source`` onto ``target``, merging directories that both hold."""
+    if source.is_dir() and target.is_dir():
+        for item in source.iterdir():
+            _merge_move(item, target / item.name)
+        source.rmdir()
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+
+
+def _write_flat_io_listing(
+    links: Sequence[tuple[str, orm.Data]],
+    directory: Path,
+    staged: Path,
+    placed: _PlacedFiles,
+    created_here: bool,
+) -> list[Path]:
+    """Fold ``links``, already dumped under ``staged``, into one entry apiece.
+
+    Every linked ``Data`` node with no repository content — ``Dict``,
+    ``List``, ``Int``, ``Float``, ``Str``, ``Bool``, ``StructureData``,
+    ``KpointsData``, an ``EnumData``, and anything else aiida-core's own
+    ``include_data_json`` can render — becomes ``<label>.json``
+    (:func:`_read_staged_json`); a ``RemoteData`` or an ``AbstractCode``
+    never reaches ``links`` at all (:func:`_data_links`). A node whose
+    repository holds a single file becomes ``<label>`` carrying that
+    file's suffix, and one holding several keeps a ``<label>/``
+    directory. A namespaced label splits on ``__`` into a path, so
+    ``alphas__filled`` and ``alphas__empty`` merge into one
+    ``alphas.json`` while repository content lands under ``alphas/``.
+
+    A name a retrieved file already holds — the calculation itself wrote
+    ``<label>.json`` under ``directory`` — falls back to the ``<label>/``
+    directory form, mirroring :func:`_place_repository`'s own collision
+    fallback: the value lands at ``<label>/<label>.json`` instead of
+    overwriting the retrieved file.
+
+    An empty value — a ``Dict`` holding ``{}``, a ``List`` holding
+    ``[]`` — is not written: it says only that the socket was wired, so
+    a file for it is a file the reader has to open to learn nothing. A
+    namespace whose members are all empty is left out with them, rather
+    than written as ``{}``.
+
+    :param links: The ``(link_label, node)`` pairs to fold in — a subset
+        of what aiida-core dumped under ``staged``, filtered by whatever
+        rule the caller applies (bookkeeping exclusion, ``RETURN``
+        dedup); a label ``staged`` holds but ``links`` omits is left
+        there, for :func:`_dump_step_io` to discard.
+    :param directory: Where the entries go; created if anything is written.
+    :param staged: Where aiida-core already dumped ``links``' repository
+        content and JSON, as ``<label parts>`` directories and
+        ``<top label part>.json`` files.
+    :param placed: Where each written file came from, for the linking
+        pass (see :class:`_PlacedFiles`).
+    :param created_here: Whether these links are the ``CREATE`` links of
+        the calculation that made the nodes.
+    :return: The JSON files written.
+    """
+    values: dict[str, Any] = {}
+    owners: dict[str, orm.Data] = {}
+    for label, node in links:
+        found, value = _read_staged_json(label, node, staged)
+        if found:
+            if isinstance(value, (dict, list)) and not value:
+                continue
+            values[label] = value
+            owners[label] = node
+        else:
+            _place_repository(node, label, staged, directory, placed, created_here)
+
+    written = []
+    for name, value in _nest_by_link_label(values).items():
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{name}.json"
+        if path.exists():
+            path = directory / name / f"{name}.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(value, indent=2, sort_keys=True) + "\n"
+        path.write_text(text)
+        written.append(path)
+        pks = {owners[label].pk for label in values if label.split("__")[0] == name}
+        if len(pks) == 1:
+            placed.record(path, pks.pop(), _text_digest(text), created_here)
+    return written
+
+
+def _place_repository(
+    node: orm.Data,
+    label: str,
+    staged: Path,
+    directory: Path,
+    placed: _PlacedFiles,
+    created_here: bool,
+) -> None:
+    """Move one node's already-dumped repository into its flat entry.
+
+    Names the entry for the link label, so a lone file takes the label
+    and its own suffix. A name the target directory already holds — a
+    file the calculation itself retrieved under that name — falls back to
+    the ``<label>/`` directory.
+
+    Every file moved is recorded in ``placed`` under the node it came
+    from and its path inside that node's repository.
+    """
+    parts = label.split("__")
+    source = staged.joinpath(*parts)
+    if not source.exists():
+        return
+
+    lone = _lone_file(node, parts[-1])
+    if lone is not None:
+        filename, entry = lone
+        target = directory.joinpath(*parts[:-1], entry)
+        if (source / filename).is_file() and not target.exists():
+            _merge_move(source / filename, target)
+            placed.record(target, node.pk, filename, created_here)
+            if not any(source.iterdir()):
+                source.rmdir()
+                return
+
+    inner = [path.relative_to(source) for path in source.rglob("*") if path.is_file()]
+    entry_directory = directory.joinpath(*parts)
+    _merge_move(source, entry_directory)
+    for relative in inner:
+        placed.record(entry_directory / relative, node.pk, str(relative), created_here)
+
+
+def _is_calcjob_step(node: orm.ProcessNode) -> bool:
+    """Return whether ``node`` is a genuine external-code calculation.
+
+    A step folder is kept for a CalcJob or a workflow node only; a plain
+    calcfunction/pyfunction helper is bookkeeping and is pruned as it was
+    before this module wrote any JSON, whatever it returns. A domain
+    CalcJob (``KcpCalculation``, ``PwCalculation``, …) resolves to its own
+    dedicated ``CalcJob`` subclass; a ``PythonJob``-wrapped helper always
+    resolves to ``aiida_pythonjob``'s own generic runner class regardless
+    of the python function it ran, so comparing the process class — not
+    just ``isinstance(node, orm.CalcJobNode)`` — tells the two apart. A
+    plain pyfunction (in-process, no code) is a ``CalcFunctionNode``,
+    never a ``CalcJobNode`` at all, so the ``isinstance`` check alone
+    already excludes it.
+
+    A ``CalcJobNode`` with no resolvable ``process_type`` (none set at
+    all, or one naming an entry point no longer installed) cannot answer
+    the ``PythonJob`` comparison, so this counts it as a CalcJob anyway:
+    the node class itself is already the stronger signal, and only a
+    genuine ``PythonJob`` node — resolvable by definition, since it just
+    ran — would ever need the narrower exclusion.
+    """
+    from aiida import orm
+    from aiida_pythonjob import PythonJob
+
+    if not isinstance(node, orm.CalcJobNode):
+        return False
+    try:
+        process_class = node.process_class
+    except ValueError:
+        return True
+    return process_class is not PythonJob
+
+
+def _direct_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
+    """Return the pks a CalcJob called directly by ``node`` created.
+
+    A workflow that calls one calculation and nothing else is folded into
+    that calculation's folder (:func:`_hoist_lone_calculations`), where the
+    two listings would be the same entries under the same names. Dropping
+    the echo is what leaves the wrapper holding a single child to be
+    folded, so a ``PwBaseWorkChain`` reads as the ``scf`` step it stands
+    for rather than as a folder around an ``iteration_01``.
+
+    Only a one-hop CalcJob child counts. A graph whose child is itself a
+    workflow — the usual shape, a workgraph over an upstream WorkChain —
+    keeps its echo: it has a name of its own for the value, its folder
+    survives whatever the hoist does, and the entry costs a symlink.
+    """
+    from aiida import orm
+    from aiida.common import LinkType
+
+    created: set[int] = set()
+    for call_link in node.base.links.get_outgoing(link_type=LinkType.CALL_CALC).all():
+        child = call_link.node
+        if not isinstance(child, orm.ProcessNode) or not _is_calcjob_step(child):
+            continue
+        for create_link in child.base.links.get_outgoing(link_type=LinkType.CREATE).all():
+            if create_link.node.pk is not None:
+                created.add(create_link.node.pk)
+    return frozenset(created)
+
+
+def _listed_by_its_creator(node: orm.Data) -> bool:
+    """Return whether the calculation that created ``node`` lists it itself.
+
+    Only a CalcJob keeps a folder holding its own listing
+    (:func:`_is_calcjob_step`); a pyfunction's folder is pruned whatever it
+    returns, so a value it created reaches the dump through an enclosing
+    workflow's echo alone.
+    """
+    from aiida import orm
+    from aiida.common import LinkType
+
+    return any(
+        isinstance(link.node, orm.ProcessNode) and _is_calcjob_step(link.node)
+        for link in node.base.links.get_incoming(link_type=LinkType.CREATE).all()
+    )
+
+
+def _repeats_its_producers_listing(label: str, node: orm.Data) -> bool:
+    """Return whether listing ``node`` under ``label`` would repeat a real copy.
+
+    A workflow's ``RETURN`` echo is normally worth keeping: it names the
+    run's answers under the labels the workflow chose, and the entry costs
+    a symlink to the copy the producing step already holds
+    (:func:`_link_duplicate_files`).
+
+    A JSON value reached through a namespaced label is the exception. It is
+    written nested inside its namespace — ``bands.json`` holding
+    ``{"output_parameters": ...}`` — which differs byte for byte from the
+    bare ``output_parameters.json`` the calculation that created it wrote,
+    so nothing links the two and the echo would be a second real copy of
+    the same value. A flat label writes the value itself and does link; a
+    node with repository content links file by file whatever the label.
+    """
+    return (
+        "__" in label
+        and not node.base.repository.list_object_names()
+        and _listed_by_its_creator(node)
+    )
+
+
+def _is_retrieved_folder(node: orm.Data) -> bool:
+    """Return whether ``node`` is a calculation's ``retrieved`` output.
+
+    Answers from the node's own ``CREATE`` link, not from the label a
+    link to it carries: the same folder reaches a workflow's ``RETURN``
+    links under whatever name that workflow chose (``nscf_retrieved``,
+    ``blocks__emp_1__retrieved``), and it is the same folder either way.
+
+    Anything that is not a ``FolderData`` answers no without a query —
+    ``CalcJob`` declares ``retrieved`` with ``valid_type=orm.FolderData``,
+    so no other kind of node can be one, and every listed node would
+    otherwise cost a link lookup of its own.
+    """
+    from aiida import orm
+    from aiida.common import LinkType
+
+    if not isinstance(node, orm.FolderData):
+        return False
+    return any(
+        link.link_label == _RETRIEVED_LINK_LABEL and isinstance(link.node, orm.CalcJobNode)
+        for link in node.base.links.get_incoming(link_type=LinkType.CREATE).all()
+    )
+
+
+def _data_links(
+    node: orm.ProcessNode,
+    link_type: LinkType,
+    incoming: bool,
+) -> list[tuple[str, orm.Data]]:
+    """Return the ``(link_label, node)`` pairs for the ``Data`` at ``link_type``.
+
+    A calculation's ``retrieved`` folder is left out
+    (:func:`_is_retrieved_folder`), wherever it is linked from: aiida-core
+    already writes those files loose under the calculation's own
+    ``outputs``, so listing the folder again — under the calculation
+    itself or under a workflow re-exporting it — would repeat every
+    retrieved file. Links to scratch folders and codes are not listed
+    either: a ``RemoteData`` names a path on a remote computer, and an
+    ``AbstractCode`` names an executable — neither is a result.
+    """
+    from aiida import orm
+
+    links = (
+        node.base.links.get_incoming(link_type=link_type)
+        if incoming
+        else node.base.links.get_outgoing(link_type=link_type)
+    ).all()
+    return [
+        (link.link_label, link.node)
+        for link in links
+        if isinstance(link.node, orm.Data)
+        and not isinstance(link.node, (orm.RemoteData, orm.AbstractCode))
+        and not _is_retrieved_folder(link.node)
+    ]
+
+
+def _write_step_io(node: orm.ProcessNode, folder: Path, placed: _PlacedFiles) -> list[Path]:
+    """List ``node``'s ``Data`` inputs and outputs under ``folder``.
+
+    Every linked node becomes one entry, whatever its kind
+    (:func:`_write_flat_io_listing`), so a reader scanning ``outputs``
+    sees a value and a file side by side rather than a JSON listing
+    beside a directory tree.
+
+    Only a genuine CalcJob or a true workflow node has its values
+    written (:func:`_is_calcjob_step`) — a plain
+    calcfunction/pyfunction/PythonJob helper, or a ``@workfunction`` (a
+    ``WorkFunctionNode``: python code that only ever hands back
+    *existing* Data, e.g. ``resolve_pseudo_family_task``), is
+    bookkeeping, so only the repositories it read and wrote are placed
+    and it is pruned exactly as it was before this module wrote any
+    listing (:func:`_prune_source_only_step_folders`). Its own values
+    reach the dump only where an enclosing workflow re-exports them
+    through a ``RETURN`` link.
+
+    A CalcJob's own ``INPUT_CALC``/``CREATE`` links give its inputs and
+    outputs. A workflow does not create data itself, so its ``RETURN``
+    links — the same ones a reader would follow from ``process.outputs``
+    — stand in for its outputs. No inputs are listed for a workflow,
+    since its ``INPUT_WORK`` links point at the same Data its own
+    calculations already read.
+
+    A workflow's ``RETURN`` echo of a value a calculation below it
+    produced is kept, so a graph's ``outputs`` reads as an index of the
+    run's answers under the names that graph gave them, up to the run's
+    own root. The entry costs no second copy: it holds the same part of
+    the same node as the producing step's, so the linking pass makes it a
+    relative symlink to it (:func:`_link_duplicate_files`).
+
+    Two echoes are dropped. A JSON value under a namespaced label, which
+    no link can serve (:func:`_repeats_its_producers_listing`); and a
+    value the workflow's own directly-called calculation created
+    (:func:`_direct_calculation_created_pks`), which would be the same
+    entry under the same name once the two folders are folded together.
+
+    A value the workflow's own calculations did not produce is an echo
+    like any other: one a pyfunction assembled, whose folder is pruned
+    (``ComputeScreeningParameters``'s ``alphas`` — see
+    :class:`TestWorkflowReturnKeepsPyfunctionCreatedValue` in
+    ``tests/test_dumping.py``), and one produced outside the workflow and
+    handed in.
+
+    :param node: The process the folder was dumped from.
+    :param folder: The step's own dumped folder.
+    :param placed: Where each written file came from, for the linking
+        pass (see :class:`_PlacedFiles`).
+    :return: The files listing the step's own inputs back.
+    """
+    from aiida import orm
+    from aiida.common import LinkType
+
+    is_calcjob = _is_calcjob_step(node)
+    if isinstance(node, orm.CalculationNode):
+        inputs = _data_links(node, LinkType.INPUT_CALC, True)
+        outputs = _data_links(node, LinkType.CREATE, False)
+        if not is_calcjob:
+            inputs = [(label, n) for label, n in inputs if n.base.repository.list_object_names()]
+            outputs = [(label, n) for label, n in outputs if n.base.repository.list_object_names()]
+    elif isinstance(node, orm.WorkflowNode) and not isinstance(node, orm.WorkFunctionNode):
+        inputs = []
+        own = _direct_calculation_created_pks(node)
+        outputs = [
+            (label, linked)
+            for label, linked in _data_links(node, LinkType.RETURN, False)
+            if linked.pk not in own and not _repeats_its_producers_listing(label, linked)
+        ]
+    else:
+        return []
+
+    echoed = _write_flat_io_listing(
+        inputs, folder / _INPUTS_DIR, folder / _STAGED_IO_DIRS[_INPUTS_DIR], placed, False
+    )
+    _write_flat_io_listing(
+        outputs,
+        folder / _OUTPUTS_DIR,
+        folder / _STAGED_IO_DIRS[_OUTPUTS_DIR],
+        placed,
+        isinstance(node, orm.CalculationNode),
+    )
+    return echoed
+
+
+def _record_task_sources(root_path: Path, placed: _PlacedFiles) -> None:
+    """Record every dumped task source, so identical ones link to one copy.
+
+    A python task's ``source_file`` is aiida-core's copy of the code that
+    ran, not a node the step listed, so nothing else records it; one task
+    run once per orbital writes the same text under each call, and a
+    screening run fans that out over every orbital.
+
+    :param root_path: Root of the freshly dumped tree.
+    :param placed: Where each file this module placed came from.
+    """
+    for path in root_path.rglob(_TASK_SOURCE_FILE):
+        if path.is_file() and not path.is_symlink():
+            placed.record_task_source(path, _file_digest(path))
+
+
+def _dump_step_io(root_path: Path) -> tuple[frozenset[Path], _PlacedFiles]:
+    """List every step's ``Data`` inputs and outputs (see :func:`_write_step_io`).
+
+    Reads each step's pk from its own :data:`NODE_METADATA_FILE` — the file
+    that already ties a folder back to its node — so this has to run before
+    :func:`_prune_workflow_metadata` deletes the workflow ones, and before
+    :func:`_tidy_dumped_tree` moves folders around.
+
+    :param root_path: Root of the freshly dumped tree.
+    :return: The files listing a step's own inputs back, which count as
+        nothing produced when pruning, and where every file written came
+        from, for the linking pass.
+    """
+    from aiida import orm
+
+    echoed: set[Path] = set()
+    placed = _PlacedFiles()
+    for metadata_path in root_path.rglob(NODE_METADATA_FILE):
+        pk = _node_metadata(metadata_path).get("pk")
+        if pk is None:
+            continue
+        node = orm.load_node(pk)
+        if isinstance(node, orm.ProcessNode):
+            echoed.update(_write_step_io(node, metadata_path.parent, placed))
+
+    # aiida-core stages every linked node's repository and JSON
+    # unconditionally, unaware of this module's own rules (a bookkeeping
+    # step lists no value, a workflow's RETURN dedup drops a duplicate);
+    # whatever a step's own listing above left unclaimed is exactly what
+    # those rules drop, so it goes rather than being merged in.
+    for staged in _STAGED_IO_DIRS.values():
+        for leftover in root_path.rglob(staged):
+            shutil.rmtree(leftover, ignore_errors=True)
+
+    _record_task_sources(root_path, placed)
+    return frozenset(echoed), placed
+
+
+def _failed_calculation_folder(path: Path, root_path: Path) -> bool:
+    """Return whether ``path`` sits under a calculation that did not succeed.
+
+    Reads the pk from the nearest enclosing :data:`NODE_METADATA_FILE`,
+    which every dumped process folder still carries at this point, and
+    asks that node whether it finished successfully. ``is_finished_ok``
+    rather than the exit status, so a calculation that was excepted or
+    killed — which has no exit status at all — counts as failed too. A
+    workflow folder, an unrecognizable metadata file and the root all
+    answer no.
+    """
+    from aiida import orm
+
+    for folder in path.parents:
+        metadata = folder / NODE_METADATA_FILE
+        if metadata.is_file():
+            pk = _node_metadata(metadata).get("pk")
+            if pk is None:
+                return False
+            node = orm.load_node(pk)
+            return isinstance(node, orm.CalcJobNode) and not node.is_finished_ok
+        if folder == root_path:
+            break
+    return False
+
+
+def _prune_engine_bookkeeping(root_path: Path) -> None:
+    """Delete the engine's own files from every calculation folder.
+
+    Removes the ``.aiida`` settings folder and the ``_aiidasubmit.sh`` a
+    CalcJob writes into its repository. The two ``_scheduler-*`` logs it
+    retrieves alongside its results go too, unless one is non-empty and
+    its calculation did not finish successfully: a run that finished
+    leaves only the build's own warning noise there, while a run that
+    failed, was excepted or was killed may have left its one account of
+    what went wrong — and dropping that would take the whole folder with
+    it, the calculation having nothing else to show.
+
+    Runs before the step listings, so a calculation left holding nothing
+    but these is pruned like any other empty step.
+
+    :param root_path: Root of the freshly dumped tree.
+    """
+    for path in list(root_path.rglob("*")):
+        if path.is_dir() and path.name == _ENGINE_BOOKKEEPING_DIR:
+            shutil.rmtree(path)
+        elif not path.is_file():
+            continue
+        elif path.name in _ENGINE_BOOKKEEPING_FILES:
+            path.unlink()
+        elif path.name in _SCHEDULER_LOG_FILES:
+            if not (path.stat().st_size and _failed_calculation_folder(path, root_path)):
+                path.unlink()
 
 
 def _prune_workflow_metadata(root_path: Path) -> None:
@@ -490,10 +1173,15 @@ def dump_workgraph(
 ) -> Path:
     """Dump a workgraph to a local directory with simplified structure.
 
-    Uses AiiDA's dump functionality, then:
+    Uses AiiDA's dump functionality (with ``include_data_json`` and
+    ``include_workflow_outputs``, so a repository-less linked ``Data``
+    node and a workflow's own ``RETURN`` outputs are written too), then:
     - Strips pk numbers and WorkGraph process labels from folder names
-    - Simplifies each CalcJobNode folder structure
-    - Removes the dump's own bookkeeping files
+    - Removes the dump's own bookkeeping files, and the engine's (see
+      :func:`_prune_engine_bookkeeping`)
+    - Folds each step's already-dumped ``Data`` inputs and outputs into
+      one flat entry apiece, under its own ``inputs``/``outputs`` (see
+      :func:`_dump_step_io`)
     - Keeps each calculation's ``aiida_node_metadata.yaml``, and the
       root's (see :func:`_prune_workflow_metadata`)
     - Tidies the step folders (see :func:`_tidy_dumped_tree`)
@@ -518,6 +1206,8 @@ def dump_workgraph(
             include_inputs=True,
             include_outputs=True,
             include_attributes=False,
+            include_data_json=True,
+            include_workflow_outputs=True,
             overwrite=True,
             dump_unsealed=True,
         )
@@ -525,20 +1215,20 @@ def dump_workgraph(
     # Strip pk numbers and WorkGraph process labels from all folder names
     _simplify_folder_names(output_path)
 
-    # Simplify each CalcJobNode folder (merge node_inputs/outputs)
-    for folder in output_path.rglob("*"):
-        # CalcJob folders are identified by having an "inputs" subdirectory
-        if folder.is_dir() and (folder / "inputs").exists():
-            _simplify_calcjob_dump(folder)
-
     # Remove the dump's own bookkeeping throughout the tree
     for filename in _DUMP_BOOKKEEPING_FILES:
         for filepath in output_path.rglob(filename):
             filepath.unlink()
 
+    _prune_engine_bookkeeping(output_path)
+
+    # Every step's Data, while every folder still carries the metadata
+    # file naming its node
+    echoed, placed = _dump_step_io(output_path)
+
     _prune_workflow_metadata(output_path)
 
-    _tidy_dumped_tree(output_path)
+    _tidy_dumped_tree(output_path, echoed, placed)
 
     _dump_model_json(process, output_path)
 

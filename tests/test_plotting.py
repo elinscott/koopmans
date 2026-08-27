@@ -38,7 +38,7 @@ from koopmans.plotting import (
     write_series_json,
 )
 from koopmans.plotting.resolve import SUGGESTION_LIMIT
-from tests.fixtures import make_process
+from tests.fixtures import attach, make_process
 
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
 PW_BASE = "aiida.workflows:quantumespresso.pw.base"
@@ -48,6 +48,7 @@ W90_CALC = "aiida_wannier90.calculations.wannier90.Wannier90Calculation"
 PW_CALC = "aiida.calculations:quantumespresso.pw"
 W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
 MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands"
+BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.dscf.build_band_structure"
 
 #: A cubic cell, so that reciprocal-space distances are easy to reason about.
 CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
@@ -87,18 +88,6 @@ def make_spin_bands(kpoints: list[list[float]], energies: list[list[list[float]]
     bands.set_kpoints(kpoints)  # type: ignore[no-untyped-call]
     bands.set_bands(np.asarray(energies, dtype=float), units="eV")  # type: ignore[no-untyped-call]
     return bands
-
-
-def attach(node: orm.ProcessNode, socket: str, data: orm.Data) -> orm.Data:
-    """Link ``data`` as an output of ``node`` under the link label ``socket``."""
-    if isinstance(node, orm.CalcJobNode):
-        # A calculation creates its outputs, so the node must still be unstored.
-        data.base.links.add_incoming(node, link_type=LinkType.CREATE, link_label=socket)
-        return data.store()
-    # A workflow only returns data that already exists.
-    data.store()
-    data.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=socket)
-    return data
 
 
 def write_run_folder(root: Path, name: str, node: orm.ProcessNode | None) -> Path:
@@ -622,6 +611,33 @@ class TestResolver:
 
         assert [item.label for item in found] == ["Wannier interpolation"]
 
+    def test_unfolded_dscf_bands_are_recognized(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """The ΔSCF interpolation's band structure is plottable, with its own edge.
+
+        Before this producer is registered, a ΔSCF run reports that it has
+        nothing to draw. The valence-band maximum travels as an input of
+        the step that built the bands, so it survives a route that
+        computes no occupations.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="KoopmansDSCFWorkflow")
+        built = make_process(
+            BUILD_BAND_STRUCTURE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(1.25).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 1.25, 4.0]]))
+        folder = write_run_folder(tmp_path, "si_dscf", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["KI"]
+        assert found[0].vbm == pytest.approx(1.25)
+
     def test_split_mode_names_the_gauge_fragments_and_merge(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
     ) -> None:
@@ -846,6 +862,8 @@ class TestResolver:
         message = str(excinfo.value)
         assert "KoopmansDSCFWorkflow" in message
         assert "supercell" in message
+        # The reason names the input line that asks for the interpolation.
+        assert "kpoints: {path" in message
 
     def test_unknown_route_lists_what_koopmans_plots(
         self, aiida_profile: Any, tmp_path: Path

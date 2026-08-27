@@ -9,6 +9,7 @@ from aiida_quantumespresso.common.types import SpinType
 from koopmans.aiida.workflows import (
     collinear_magnetization,
     load_codes,
+    name_run,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
@@ -151,24 +152,27 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
 
     kcw_overrides = input_to_kcw_overrides(koopmans_input)
 
-    return SinglepointDFPTWorkflow.build(
-        codes=codes,
-        structure=structure,
-        kpoints=nscf_mesh,
-        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
-        bands_kpoints=bands_kpoints,
-        pseudo_family=pseudo_family,
-        overrides=overrides,
-        # 'auto' prepends the scf + ph.x dielectric steps inside
-        # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
-        # periodic default, on).
-        eps_inf=eps_inf,
-        l_vcut=workflow.gb_correction,
-        spin=spin,
-        manifolds=manifolds,
-        group_orbitals_tol=group_orbitals_tol,
-        kcw_overrides=kcw_overrides or None,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
+    return name_run(
+        SinglepointDFPTWorkflow.build(
+            codes=codes,
+            structure=structure,
+            kpoints=nscf_mesh,
+            scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
+            bands_kpoints=bands_kpoints,
+            pseudo_family=pseudo_family,
+            overrides=overrides,
+            # 'auto' prepends the scf + ph.x dielectric steps inside
+            # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
+            # periodic default, on).
+            eps_inf=eps_inf,
+            l_vcut=workflow.gb_correction,
+            spin=spin,
+            manifolds=manifolds,
+            group_orbitals_tol=group_orbitals_tol,
+            kcw_overrides=kcw_overrides or None,
+            parallelization=koopmans_input.parallelization.as_mapping() or None,
+        ),
+        "Koopmans DFPT",
     )
 
 

@@ -1019,9 +1019,12 @@ def make_process(
     exit_status: int = 0,
     exit_message: str | None = None,
     calcjob: bool = False,
+    calcfunction: bool = False,
+    workfunction: bool = False,
     computer: Any = None,
     process_label: str | None = None,
     inputs: dict[str, Any] | None = None,
+    process_state: str = "finished",
 ) -> Any:
     """Return a stored, finished process node of the given ``process_type``.
 
@@ -1036,31 +1039,80 @@ def make_process(
     (``__`` separating namespace levels, e.g. ``pw__parameters``), so
     resolvers that key off a run's declared inputs (rather than its
     process type) have something to read.
+
+    ``calcjob``, ``calcfunction`` and ``workfunction`` are mutually
+    exclusive and pick a ``CalcJobNode``/``CalcFunctionNode``/
+    ``WorkFunctionNode`` instead of the default ``WorkflowNode`` — the
+    distinction a dumped tree's bookkeeping prune keys off
+    (:func:`koopmans.aiida.dumping._write_step_io`): a
+    ``CalcFunctionNode`` is a plain pyfunction, and a ``WorkFunctionNode``
+    is a ``@workfunction`` (python code that only ever hands back
+    *existing* Data, e.g. ``resolve_pseudo_family_task``) — neither is
+    ever treated as a genuine calculation or workflow step. A
+    ``PythonJob`` helper is a different case again — it needs a code to
+    run on, so it is a real ``CalcJobNode`` like any domain CalcJob;
+    build one with ``calcjob=True`` and a process_type naming
+    ``aiida_pythonjob``'s own generic runner (see
+    ``TestStepIoListing.PYTHONJOB`` in ``tests/test_dumping.py``), since
+    ``_is_calcjob_step`` excludes it by comparing ``process_class``, not
+    by node type.
+
+    ``process_state`` names one of plumpy's states ("finished", "killed",
+    "excepted", ...). Only a finished process carries an exit status, so
+    ``exit_status`` is set for that state alone — which is what makes a
+    killed node answer ``is_finished_ok`` false with no exit status to
+    read.
     """
     from aiida import orm
     from aiida.common.links import LinkType
     from plumpy.process_states import ProcessState
 
-    node: Any = orm.CalcJobNode() if calcjob else orm.WorkflowNode()
+    if calcjob:
+        node: Any = orm.CalcJobNode()
+    elif calcfunction:
+        node = orm.CalcFunctionNode()
+    elif workfunction:
+        node = orm.WorkFunctionNode()
+    else:
+        node = orm.WorkflowNode()
     node.process_type = process_type
     node.label = label
     if calcjob:
         node.computer = computer
         node.set_option("resources", {"num_machines": 1})
     if caller is not None:
-        link_type = LinkType.CALL_CALC if calcjob else LinkType.CALL_WORK
+        link_type = LinkType.CALL_CALC if (calcjob or calcfunction) else LinkType.CALL_WORK
         node.base.links.add_incoming(caller, link_type=link_type, link_label=link_label)
     for name, data in (inputs or {}).items():
-        input_type = LinkType.INPUT_CALC if calcjob else LinkType.INPUT_WORK
+        input_type = LinkType.INPUT_CALC if (calcjob or calcfunction) else LinkType.INPUT_WORK
         node.base.links.add_incoming(data.store(), link_type=input_type, link_label=name)
     node.store()
     if process_label is not None:
         node.set_process_label(process_label)
-    node.set_process_state(ProcessState.FINISHED)
-    node.set_exit_status(exit_status)
+    node.set_process_state(ProcessState(process_state))
+    if ProcessState(process_state) is ProcessState.FINISHED:
+        node.set_exit_status(exit_status)
     if exit_message is not None:
         node.set_exit_message(exit_message)
     return node
+
+
+def attach(node: Any, socket: str, data: Any) -> Any:
+    """Link ``data`` as an output of ``node`` under the link label ``socket``.
+
+    A calculation (``CalcJobNode``/``CalcFunctionNode``) creates its
+    outputs, so ``data`` must still be unstored; a workflow only returns
+    data that already exists, so ``data`` is stored first.
+    """
+    from aiida import orm
+    from aiida.common.links import LinkType
+
+    if isinstance(node, (orm.CalcJobNode, orm.CalcFunctionNode)):
+        data.base.links.add_incoming(node, link_type=LinkType.CREATE, link_label=socket)
+        return data.store()
+    data.store()
+    data.base.links.add_incoming(node, link_type=LinkType.RETURN, link_label=socket)
+    return data
 
 
 def si_external_projector_tables() -> dict[str, list[dict[str, Any]]]:

@@ -60,6 +60,36 @@ def load_code(name: str, executable: str) -> orm.AbstractCode:
         ) from exc
 
 
+#: Where :func:`name_run` records a name for :func:`koopmans.api.launch`.
+_RUN_LABEL = "_koopmans_run_label"
+
+
+def name_run(workgraph: WorkGraph, display: str) -> WorkGraph:
+    """Name the calculation ``workgraph`` performs, and return it.
+
+    Each route states its own name, which :func:`koopmans.api.launch`
+    passes as the run's ``metadata.label``. That label is what the
+    progress table's top row, ``verdi process list`` and ``koopmans
+    plot``'s legend show, so a reader is given the calculation they asked
+    for rather than the graph function that implements it.
+
+    The workgraph's own ``name`` is left alone. That one identifies the
+    graph — it is what ``process_label`` wraps and what the regression
+    snapshots record — and a display name is not an identity.
+
+    Args:
+        workgraph: The route's built workgraph (mutated in place).
+        display: The name to show.
+    """
+    setattr(workgraph, _RUN_LABEL, display)
+    return workgraph
+
+
+def run_label(workgraph: WorkGraph) -> str:
+    """Return the name :func:`name_run` gave ``workgraph``, or ``""``."""
+    return str(getattr(workgraph, _RUN_LABEL, "") or "")
+
+
 def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
     """Load every configured ``<member>@localhost`` code a codes TypedDict declares.
 
