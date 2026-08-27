@@ -548,40 +548,131 @@ class TestPeriodicMlwfsBuild:
         assert set(extra["wannier_overrides"]) == {"scf", "nscf"}
 
 
-class TestNbndProjectionValidation:
-    """The kcp.x ``nbnd`` must match the total Wannier functions the projections describe.
+class TestKcpNbndComesFromTheProjections:
+    """On the Wannier route the input file's ``nbnd`` sizes pw.x, not kcp.x.
 
-    Regression for koopmans#163: an oversized ``nbnd`` (e.g. a primitive
-    orbital count multiplied by ``prod(kgrid)``, the supercell convention)
-    used to fall through silently and surface, if at all, as a wrong
-    diagnosis from the nscf-sizing guard below.
+    kcp.x runs one variational orbital per projected Wannier function: the
+    merged evc_occupied/evc_empty files carry exactly those. The top-level
+    ``nbnd`` is the pw.x band count the blocks disentangle among, which is
+    normally larger.
     """
 
-    def test_supercell_sized_nbnd_rejected(
+    def test_the_kcp_step_takes_the_wannier_count_and_the_nscf_the_input_one(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """An oversized nbnd is named directly, not diagnosed as an nscf shortfall.
+        """20 bands for pw.x, 8 variational orbitals for kcp.x, from one input.
 
-        The primitive projections describe 8 Wannier functions
-        (occ_1 + emp_1, 4 each); setting ``nbnd`` to the supercell count
-        (8 x prod(kgrid) = 64) is the koopmans#163 mistake. The nscf band
-        count defaults to ``nbnd`` when ``pw.system.nbnd`` is unset, so the
-        nscf-sizing guard cannot see this error — only a check against the
-        projections can, and it must run first.
+        The two numbers must differ here: an implementation that fed one
+        of them to both steps would agree with only half of this.
         """
         d = _si_dscf_dict()
-        d["calculator_parameters"]["nbnd"] = 64
-        with pytest.raises(ValueError, match="inconsistent with the projections") as excinfo:
+        d["calculator_parameters"]["nbnd"] = 20
+        wg = _build(d)
+        assert wg.inputs["nbnd"].value == 8
+        # The kcp.x runs happen on the diag(2,2,2) supercell, where the
+        # same 8 Wannier functions become 8 x 8 orbitals.
+        assert wg.tasks["wannier_initialization"].inputs["nbnd"].value == 64
+        nscf = wg.tasks["wannier_initialization"].inputs["wannier_overrides"]["nscf"].value
+        assert nscf["pw"]["parameters"]["SYSTEM"]["nbnd"] == 20
+
+    def test_the_disentanglement_window_is_sized_from_the_input_nbnd(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The blocks index the nscf bands, so 20 bands means an empty block of 20.
+
+        Sizing the blocks by the kcp.x orbital count instead would leave
+        the bands above it neither included nor excluded, and wannier90
+        rejects the mmn it is then handed.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["nbnd"] = 20
+        wg = _build(d)
+        blocks = wg.tasks["wannier_initialization"].inputs["blocks"].value
+        assert [b["num_bands"] for b in blocks] == [4, 16]
+        assert [b["num_wann"] for b in blocks] == [4, 4]
+
+    def test_the_shipped_silicon_tutorial_builds_as_a_singlepoint(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+        tutorials_dir: Any,
+    ) -> None:
+        """The tutorial's own projections and band count reach the two steps that need them.
+
+        The shipped input Wannierizes 20 pw.x bands and projects two sp3
+        blocks (4 Wannier functions each). Only the singlepoint keywords
+        the tutorial names as the KI variant are overlaid; the
+        projections, windows and band count are the tutorial's.
+        """
+        import json
+
+        si_json = tutorials_dir / "band_structures/silicon_finite_differences/si.json"
+        d = json.loads(si_json.read_text())
+        d["workflow"].update(
+            {
+                "task": "singlepoint",
+                "correction": "ki",
+                "screening_method": "dscf",
+                "init_orbitals": "mlwfs",
+                "alpha_guess": 0.077,
+                "mp_correction": False,
+                "pseudo_library": fake_sg15_cutoffs_family.label,
+            }
+        )
+        d["calculator_parameters"]["nbnd"] = 20
+
+        wg = build_singlepoint_workgraph(KoopmansInput.model_validate(d))
+
+        assert wg.inputs["nbnd"].value == 8
+        nscf = wg.tasks["wannier_initialization"].inputs["wannier_overrides"]["nscf"].value
+        assert nscf["pw"]["parameters"]["SYSTEM"]["nbnd"] == 20
+
+    def test_a_supercell_sized_kcp_nbnd_is_rejected(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Regression for koopmans#163, at the keyword that now states the count.
+
+        The primitive projections describe 8 Wannier functions
+        (occ_1 + emp_1, 4 each); writing the supercell count
+        (8 x prod(kgrid) = 64) into ``kcp.system.nbnd`` is the koopmans#163
+        mistake, and must be named directly rather than surfacing as an
+        nscf shortfall.
+        """
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["kcp"] = {"system": {"nbnd": 64}}
+        with pytest.raises(ValueError, match="inconsistent with the") as excinfo:
             _build(d)
         assert "nscf runs" not in str(excinfo.value)
 
-    def test_nbnd_below_occupied_bands_rejected(
+    def test_a_matching_kcp_nbnd_is_accepted(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """An nbnd smaller than the occupied-band count names the electron count."""
+        """Negative control: it is the disagreement that raises, not the keyword."""
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["kcp"] = {"system": {"nbnd": 8}}
+        assert _build(d).inputs["nbnd"].value == 8
+
+    def test_an_input_nbnd_below_the_wannier_count_is_an_nscf_shortfall(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Too few pw.x bands to span the Wannier functions is named as such."""
         d = _si_dscf_dict()
         d["calculator_parameters"]["nbnd"] = 2
-        with pytest.raises(ValueError, match=r"less than the number of.*occupied bands"):
+        with pytest.raises(ValueError, match=r"The nscf runs 2 bands but the kcp\.x steps need 8"):
+            _build(d)
+
+    def test_spin_channels_describing_different_counts_are_refused(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """One kcp.x run, one orbital count: the channels cannot disagree."""
+        d = _si_collinear_dscf_dict()
+        d["calculator_parameters"]["wannier90"]["down"]["projections"] = [
+            [{"site": "Si", "ang_mtm": "sp"}],
+            [{"site": "Si", "ang_mtm": "sp"}],
+            [{"site": "Si", "ang_mtm": "l=0"}],
+        ]
+        with pytest.raises(ValueError, match="spin up projections describe 8"):
             _build(d)
 
     def test_genuine_nscf_shortfall_still_raises_pw_guard(
@@ -598,12 +689,14 @@ class TestNbndProjectionValidation:
         with pytest.raises(ValueError, match=r"The nscf runs 6 bands but the kcp\.x steps need 8"):
             _build(d)
 
-    def test_collinear_mismatch_names_the_spin_channel(
+    def test_a_collinear_shortfall_names_the_spin_channel(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """A collinear mismatch is checked, and reported, per spin channel."""
+        """Projections are checked, and reported, per spin channel."""
         d = _si_collinear_dscf_dict()
-        d["calculator_parameters"]["nbnd"] = 64
+        d["calculator_parameters"]["wannier90"]["up"]["projections"] = [
+            [{"site": "Si", "ang_mtm": "l=0"}]
+        ]
         with pytest.raises(ValueError, match="spin up projections"):
             _build(d)
 
@@ -696,53 +789,13 @@ class TestPerStepKpointMeshRejected:
 
 
 class TestBandPathRejected:
-    """The kcp.x route cannot yet unfold its supercell Hamiltonian onto a path."""
+    """Where a ΔSCF band path still has nowhere to go."""
 
-    def test_a_band_path_is_rejected(self, read_input_dict: Any) -> None:
-        """A path the route silently dropped would look like a band structure was coming.
+    def test_a_molecular_kohn_sham_path_is_rejected(self, read_input_dict: Any) -> None:
+        """A molecule has no band structure, whatever the interpolation can do.
 
         Refused while the input file is read, so the reader gets the error
         report rather than a traceback out of the graph build.
-        """
-        d = _si_dscf_dict()
-        d["kpoints"]["path"] = "GX"
-
-        with pytest.raises(ValueError) as excinfo:
-            read_input_dict(d)
-
-        message = str(excinfo.value)
-        assert "Errors found in the input file" in message
-        assert "`kpoints.path`" in message
-        assert "screening_method = 'dfpt'" in message
-
-    def test_the_dfpt_route_takes_the_same_path(
-        self,
-        aiida_profile_clean: Any,
-        installed_pw_code: Any,
-        installed_kcw_code: Any,
-        installed_wannier_codes: Any,
-        fake_sg15_pseudo_family: Any,
-    ) -> None:
-        """Discriminates the guard from a blanket refusal: only kcp.x lacks the stage.
-
-        The message sends the reader to ``screening_method = 'dfpt'``, so
-        the same input under that method must build rather than raise.
-        """
-        from koopmans.aiida.workflows import build_workgraph
-
-        d = _si_dscf_dict(screening_method="dfpt")
-        d["kpoints"]["path"] = "GX"
-
-        wg = build_workgraph(KoopmansInput.model_validate(d))
-
-        assert wg.tasks["dfpt"].inputs["bands_kpoints"].value is not None
-
-    def test_a_molecular_kohn_sham_path_is_still_rejected(self, read_input_dict: Any) -> None:
-        """The other route kcp.x does run has no band structure either.
-
-        Pins the refusal against being dropped for ``kohn-sham`` wholesale:
-        molecular runs are the initialisation route kcp.x supports, so a
-        path there still has nowhere to go.
         """
         d = _si_dscf_dict(init_orbitals="kohn-sham")
         d["atoms"]["cell_parameters"] = {
@@ -755,7 +808,23 @@ class TestBandPathRejected:
         with pytest.raises(ValueError) as excinfo:
             read_input_dict(d)
 
-        assert "`kpoints.path`" in str(excinfo.value)
+        message = str(excinfo.value)
+        assert "Errors found in the input file" in message
+        assert "`kpoints.path`" in message
+        assert "periodic along no direction" in message
+
+    def test_the_same_input_periodic_and_wannier_initialized_parses(
+        self, read_input_dict: Any
+    ) -> None:
+        """Discriminates the refusal from a blanket one on the kcp.x route.
+
+        The periodic Wannier-initialised route interpolates the same path,
+        so only the molecular input may be refused.
+        """
+        d = _si_dscf_dict()
+        d["kpoints"]["path"] = "GX"
+
+        read_input_dict(d)
 
     def test_a_periodic_kohn_sham_input_hears_its_own_blocker_first(
         self, aiida_profile_clean: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
@@ -821,3 +890,78 @@ class TestCutoffLessPseudoFamily:
         assert pw.parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
         expected = fake_sg15_family_without_cutoffs.get_pseudos(structure=structure)
         assert pw.pseudos["Si"].uuid == expected["Si"].uuid
+
+
+class TestBandPathBuildsTheInterpolation:
+    """``kpoints.path`` gates the unfold-and-interpolate stage.
+
+    Without a path the ΔSCF route finishes on a supercell and there is
+    nothing to plot, which is the state these tests discriminate against.
+    """
+
+    @staticmethod
+    def _with_bands(**workflow_updates: Any) -> dict[str, Any]:
+        d = _si_dscf_dict(**workflow_updates)
+        d["kpoints"]["path"] = "GXG"
+        return d
+
+    def test_the_stage_is_absent_without_a_path(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: the same input naming no path builds no interpolation."""
+        wg = _build(_si_dscf_dict())
+        assert "interpolate_band_structure" not in wg.get_task_names()
+        assert wg.tasks["RunFinalKI"].inputs["write_hr"].value == False  # noqa: E712
+
+    def test_a_path_builds_the_interpolation(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The path adds the interpolation stage and its one required input."""
+        wg = _build(self._with_bands())
+        names = wg.get_task_names()
+        assert "interpolate_band_structure" in names, names
+        # The Hamiltonians the stage reads only exist because the final KI
+        # is asked to print them.
+        assert wg.tasks["RunFinalKI"].inputs["write_hr"].value == True  # noqa: E712
+
+    def test_the_input_path_reaches_the_interpolation(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Nothing downstream can recover a path the dispatcher does not hand over."""
+        d = self._with_bands()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+        kpath = wg.tasks["interpolate_band_structure"].inputs["kpath"].value
+        assert [label for _, label in kpath.labels] == ["GAMMA", "X"]
+
+    def test_the_knobs_reach_the_interpolation(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The `unfold_and_interpolate` block shapes the stage that runs."""
+        d = self._with_bands()
+        d["calculator_parameters"]["unfold_and_interpolate"] = {
+            "use_ws_distance": False,
+            "do_dos": False,
+        }
+        wg = _build(d)
+        stage = wg.tasks["interpolate_band_structure"]
+        assert stage.inputs["use_ws_distance"].value == False  # noqa: E712
+        assert stage.inputs["do_dos"].value == False  # noqa: E712
+
+    def test_the_knobs_alone_are_refused(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Settings that shape a stage no path asks for cannot take effect."""
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["unfold_and_interpolate"] = {"do_dos": False}
+        with pytest.raises(ValueError, match=r"kpoints: \{path"):
+            _build(d)
+
+    def test_smooth_interpolation_is_refused_by_name(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """An input that cannot take effect raises rather than being dropped."""
+        d = self._with_bands()
+        d["calculator_parameters"]["unfold_and_interpolate"] = {"smooth_int_factor": 2}
+        with pytest.raises(NotImplementedError, match="smooth_int_factor"):
+            _build(d)

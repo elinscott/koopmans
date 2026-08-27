@@ -108,6 +108,18 @@ def _no_references(
     return None, None
 
 
+def _unfolded_band_references(
+    node: orm.ProcessNode, bands: orm.BandsData
+) -> tuple[float | None, float | None]:
+    """Return the valence band edge the unfold-and-interpolate stage computed.
+
+    A ΔSCF interpolation carries no occupations, so the edge cannot be read
+    off the bands; it travels as an input of the step that built them.
+    """
+    reference = getattr(node.inputs, "reference", None)
+    return (None if reference is None else float(reference.value)), None
+
+
 def _declared_pw_parameters(node: orm.ProcessNode) -> dict[str, Any]:
     """Return the pw.x namelists ``node`` declared, if any.
 
@@ -241,6 +253,15 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         series="Wannier interpolation",
         references=_no_references,
     ),
+    # The ΔSCF route's unfold-and-interpolate stage: the step that attaches
+    # the interpolated eigenvalues to their k-path is the one that names a
+    # band structure, and it carries the valence band edge as an input.
+    BandProducer(
+        process_type="aiida_koopmans.workgraphs.ui.dscf.build_band_structure",
+        socket="result",
+        series="KI",
+        references=_unfolded_band_references,
+    ),
 )
 
 
@@ -254,10 +275,18 @@ def _producers_for(step: orm.ProcessNode) -> list[BandProducer]:
     ]
 
 
-#: Why a ΔSCF route draws a blank.
+#: Why a ΔSCF singlepoint draws a blank: it computes on a supercell, so its
+#: bands exist only once the unfold-and-interpolate stage has been asked for.
 _SUPERCELL_REASON = (
-    "the ΔSCF route computes on a supercell, and recovering primitive-cell "
-    "bands from it needs unfold-and-interpolate, which no route calls"
+    "the ΔSCF route computes on a supercell, so a primitive-cell band structure "
+    "has to be asked for; add the path to interpolate along as "
+    "`kpoints: {path: ...}` and rerun"
+)
+
+#: The same blank on the trajectory route, which runs no interpolation stage.
+_TRAJECTORY_REASON = (
+    "the trajectory route screens each snapshot on a supercell and reports "
+    "screening parameters and eigenvalues, not band structures"
 )
 
 #: Why a wannierization draws a blank, whether the folder names the koopmans
@@ -273,7 +302,7 @@ _NO_WANNIER_PATH_REASON = (
 #: calculation a folder inside it names.
 _EMPTY_REASONS = {
     "KoopmansDSCFWorkflow": _SUPERCELL_REASON,
-    "TrajectoryWorkflow": _SUPERCELL_REASON,
+    "TrajectoryWorkflow": _TRAJECTORY_REASON,
     "SinglepointDFPTWorkflow": (
         "kcw.x interpolates a band structure only when it is given a k-point "
         "path; add `kpoints: {path: ...}` to the input file and rerun"
