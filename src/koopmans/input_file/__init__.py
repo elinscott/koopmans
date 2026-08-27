@@ -524,7 +524,7 @@ class KoopmansInput(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def check_the_screening_step_runs(self) -> KoopmansInput:
+    def check_kcw_screen_has_a_step_to_reach(self) -> KoopmansInput:
         """Reject ``kcw.screen`` keywords when no screening calculation runs.
 
         ``workflow.calculate_alpha = False`` feeds ``workflow.alpha_guess``
