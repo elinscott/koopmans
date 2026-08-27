@@ -2220,6 +2220,68 @@ class TestReturnDedupLooksThroughWrappers:
         assert echoed.read_bytes() == b"rho"
 
 
+class TestRetrievedFolderIsNeverListed:
+    """A calculation's retrieved folder is never a listing of its own.
+
+    aiida-core writes those files loose under the calculation's
+    ``outputs``, so listing the folder repeats every one of them. The
+    exclusion goes by the folder's own ``CREATE`` link, not by the label
+    a link to it carries: a workflow re-exports it under whatever name it
+    chose, and ``koopmans`` graphs choose ``nscf_retrieved`` and
+    ``blocks__emp_1__retrieved``.
+    """
+
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
+
+    def test_a_workflows_echo_under_another_name_is_not_listed(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The retrieved folder of a calculation outside the graph stays unlisted.
+
+        The calculation ran outside this graph, so the redundant-echo
+        rule leaves the link alone; only its being a retrieved folder
+        keeps it out of the listing.
+        """
+        from aiida import orm
+        from aiida.common.links import LinkType
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        elsewhere = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="nscf",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "aiida.out").write_text("the scf output")
+        (tree / "data-file-schema.xml").write_text("<xml/>")
+        retrieved = attach(elsewhere, "retrieved", orm.FolderData(tree=str(tree)))
+        graph = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize"
+        )
+        make_process(
+            self.ARITHMETIC_ADD,
+            caller=graph,
+            link_label="wannier90",
+            calcjob=True,
+            computer=aiida_localhost,
+        )
+        retrieved.base.links.add_incoming(
+            graph, link_type=LinkType.RETURN, link_label="nscf_retrieved"
+        )
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.startswith("nscf_retrieved") for p in dumped.rglob("*"))
+        # The files themselves are where the calculation retrieved them.
+        assert (dumped / "01-nscf" / "outputs" / "aiida.out").read_text() == "the scf output"
+
+
 class TestWorkflowReturnKeepsPyfunctionCreatedValue:
     """A wrapper's RETURN echo of a pyfunction child's output is never dropped.
 

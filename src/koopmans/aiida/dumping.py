@@ -776,6 +776,23 @@ def _subtree_calculation_created_pks(node: orm.WorkflowNode) -> frozenset[int]:
     return frozenset(created)
 
 
+def _is_retrieved_folder(node: orm.Data) -> bool:
+    """Return whether ``node`` is a calculation's ``retrieved`` output.
+
+    Answers from the node's own ``CREATE`` link, not from the label a
+    link to it carries: the same folder reaches a workflow's ``RETURN``
+    links under whatever name that workflow chose (``nscf_retrieved``,
+    ``blocks__emp_1__retrieved``), and it is the same folder either way.
+    """
+    from aiida import orm
+    from aiida.common import LinkType
+
+    return any(
+        link.link_label == _RETRIEVED_LINK_LABEL and isinstance(link.node, orm.CalcJobNode)
+        for link in node.base.links.get_incoming(link_type=LinkType.CREATE).all()
+    )
+
+
 def _data_links(
     node: orm.ProcessNode,
     link_type: LinkType,
@@ -785,12 +802,16 @@ def _data_links(
     """Return the ``(link_label, node)`` pairs for the ``Data`` at ``link_type``.
 
     A linked node whose pk is in ``exclude_pks`` is skipped, whatever its
-    link label — used to drop a workflow's re-export of a value its own
-    hoisted calculation already carries under a different name. So is
-    ``retrieved``, whose files aiida-core already writes loose under
-    ``outputs``. Links to scratch folders and codes are not listed: a
-    ``RemoteData`` names a path on a remote computer, and an
-    ``AbstractCode`` names an executable — neither is a result.
+    link label — used to drop a workflow's re-export of a value a
+    calculation below it already carries under a different name. So is a
+    calculation's ``retrieved`` folder (:func:`_is_retrieved_folder`),
+    wherever it is linked from: aiida-core already writes those files
+    loose under the calculation's own ``outputs``, so listing the folder
+    again — under the calculation itself or under a workflow re-exporting
+    it — would repeat every retrieved file. Links to scratch folders and
+    codes are not listed either: a ``RemoteData`` names a path on a
+    remote computer, and an ``AbstractCode`` names an executable —
+    neither is a result.
     """
     from aiida import orm
 
@@ -805,7 +826,7 @@ def _data_links(
         if isinstance(link.node, orm.Data)
         and not isinstance(link.node, (orm.RemoteData, orm.AbstractCode))
         and link.node.pk not in exclude_pks
-        and link.link_label != _RETRIEVED_LINK_LABEL
+        and not _is_retrieved_folder(link.node)
     ]
 
 
