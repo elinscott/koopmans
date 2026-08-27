@@ -53,6 +53,11 @@ _PROCESS_LABEL_SUFFIX = re.compile(r"^(\d+-.+)-[A-Z][A-Za-z0-9]*$")
 # The dumped source of a python task: its code, not data the run made.
 _TASK_SOURCE_FILE = "source_file"
 
+# What a dumped task source is grouped by in place of a node pk, which it
+# has none of: aiida-core copies it from the calculation's own
+# repository, not from a link. A string never collides with a pk.
+_TASK_SOURCE_ORIGIN = "task source"
+
 # aiida-core's record of which node a folder came from: pk, uuid, node
 # type and timestamps. It names the folder rather than adding to it.
 NODE_METADATA_FILE = "aiida_node_metadata.yaml"
@@ -90,18 +95,21 @@ _DUMP_BOOKKEEPING_FILES = ("README.md", "aiida_dump_log.json", ".aiida_dump_safe
 
 # The engine's own bookkeeping, which every CalcJob carries: the folder
 # of serialized job settings and the submission script it wrote into the
-# calculation's repository, and the scheduler's two log files it read
-# back with the results. None of them is an input the run was given or a
+# calculation's repository. Neither is an input the run was given or a
 # result it produced. aiida-core copies a calculation's repository and
 # its retrieved folder whole, with no option to leave these out, so they
 # are dropped here (`ProcessDumpConfig` in aiida-core 715972d65 carries
 # no flag for it).
 _ENGINE_BOOKKEEPING_DIR = ".aiida"
-_ENGINE_BOOKKEEPING_FILES = (
-    "_aiidasubmit.sh",
-    "_scheduler-stdout.txt",
-    "_scheduler-stderr.txt",
-)
+_ENGINE_BOOKKEEPING_FILES = ("_aiidasubmit.sh",)
+
+# What the scheduler wrote about the job, retrieved beside the results.
+# A run that finished writes noise here — the GNU builds emit half a
+# kilobyte of IEEE-exception summaries on every successful pw.x call —
+# but a run that failed may have written its only account of the failure
+# here, so these two are kept by :func:`_prune_engine_bookkeeping` when
+# the calculation reports a nonzero exit status.
+_SCHEDULER_LOG_FILES = ("_scheduler-stdout.txt", "_scheduler-stderr.txt")
 
 # Sentinel for "no value here", distinct from a staged JSON value of None.
 _MISSING = object()
@@ -168,6 +176,15 @@ def _text_digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def _file_digest(path: Path) -> str:
+    """Return the SHA-256 of a file, read whole.
+
+    Only :func:`_record_task_sources` calls this, on the python sources a
+    dump holds a handful of.
+    """
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 class _PlacedFiles:
     """Which node's content each file this module placed holds.
 
@@ -181,6 +198,9 @@ class _PlacedFiles:
     ``output_parameters.json`` holding the value itself in another; only
     equal bytes make two listings the same file.
 
+    A python task's own ``source_file`` has no node behind it and is
+    identified by its text instead (:meth:`record_task_source`).
+
     ``created_here`` marks the copy the calculation that created the node
     placed under its own ``outputs`` — where a reader following a link
     should land, rather than in some later step that was handed it.
@@ -190,7 +210,7 @@ class _PlacedFiles:
     """
 
     def __init__(self) -> None:
-        self._origins: dict[Path, tuple[int, str, bool]] = {}
+        self._origins: dict[Path, tuple[int | str, str, bool]] = {}
 
     def record(self, path: Path, pk: int | None, content: str, created_here: bool) -> None:
         """Note that ``path`` holds part ``content`` of the node ``pk``.
@@ -201,6 +221,18 @@ class _PlacedFiles:
         """
         if pk is not None:
             self._origins[path] = (pk, content, created_here)
+
+    def record_task_source(self, path: Path, digest: str) -> None:
+        """Note that ``path`` holds the python source digesting to ``digest``.
+
+        A task's source is aiida-core's copy of the code that ran rather
+        than a listed node, so it has no node to be identified by, and
+        one task run once per orbital writes the same text under each
+        call. Its origin is :data:`_TASK_SOURCE_ORIGIN`, which is not a
+        pk, so sources group among themselves and no data file is ever
+        made to depend on a folder that carries only code.
+        """
+        self._origins[path] = (_TASK_SOURCE_ORIGIN, digest, False)
 
     def moved(self, source: Path, target: Path) -> None:
         """Follow a move of ``source`` — a file or a whole folder — to ``target``."""
@@ -219,7 +251,7 @@ class _PlacedFiles:
         pass may have deleted a recorded file, and a tree that already
         holds a symlink is never linked through it.
         """
-        groups: dict[tuple[int, str], list[Path]] = defaultdict(list)
+        groups: dict[tuple[int | str, str], list[Path]] = defaultdict(list)
         for path, (pk, content, _) in self._origins.items():
             if path.is_file() and not path.is_symlink():
                 groups[(pk, content)].append(path)
@@ -286,6 +318,14 @@ def _link_duplicate_files(placed: _PlacedFiles) -> int:
     under its own ``outputs``; where no such copy exists — a value a
     workflow re-exports, an input read by several steps — tree order
     settles it.
+
+    Two exceptions to "the same node" are worth naming. A python task's
+    ``source_file`` has no node at all, and collapses among other task
+    sources holding the same text (:meth:`_PlacedFiles.record_task_source`).
+    A JSON listing that merged more than one node — an ``alphas.json``
+    built from ``alphas__filled`` and ``alphas__empty`` — belongs to no
+    single node, so it is not recorded and never links, however many
+    steps write the same one.
 
     Links are relative, so the tree survives being moved.
 
@@ -960,6 +1000,22 @@ def _write_step_io(
     return echoed
 
 
+def _record_task_sources(root_path: Path, placed: _PlacedFiles) -> None:
+    """Record every dumped task source, so identical ones link to one copy.
+
+    A python task's ``source_file`` is aiida-core's copy of the code that
+    ran, not a node the step listed, so nothing else records it; one task
+    run once per orbital writes the same text under each call, and a
+    screening run fans that out over every orbital.
+
+    :param root_path: Root of the freshly dumped tree.
+    :param placed: Where each file this module placed came from.
+    """
+    for path in root_path.rglob(_TASK_SOURCE_FILE):
+        if path.is_file() and not path.is_symlink():
+            placed.record_task_source(path, _file_digest(path))
+
+
 def _dump_step_io(root_path: Path) -> tuple[frozenset[Path], _PlacedFiles]:
     """List every step's ``Data`` inputs and outputs (see :func:`_write_step_io`).
 
@@ -994,15 +1050,45 @@ def _dump_step_io(root_path: Path) -> tuple[frozenset[Path], _PlacedFiles]:
     for staged in _STAGED_IO_DIRS.values():
         for leftover in root_path.rglob(staged):
             shutil.rmtree(leftover, ignore_errors=True)
+
+    _record_task_sources(root_path, placed)
     return frozenset(echoed), placed
+
+
+def _failed_calculation_folder(path: Path, root_path: Path) -> bool:
+    """Return whether ``path`` sits under a calculation that reports a failure.
+
+    Reads the pk from the nearest enclosing :data:`NODE_METADATA_FILE`,
+    which every dumped process folder still carries at this point, and
+    asks that node for its exit status. A workflow folder, an
+    unrecognizable metadata file and the root all answer no.
+    """
+    from aiida import orm
+
+    for folder in path.parents:
+        metadata = folder / NODE_METADATA_FILE
+        if metadata.is_file():
+            pk = _node_metadata(metadata).get("pk")
+            if pk is None:
+                return False
+            node = orm.load_node(pk)
+            return isinstance(node, orm.CalcJobNode) and bool(node.exit_status)
+        if folder == root_path:
+            break
+    return False
 
 
 def _prune_engine_bookkeeping(root_path: Path) -> None:
     """Delete the engine's own files from every calculation folder.
 
-    Removes the ``.aiida`` settings folder and ``_aiidasubmit.sh`` a
-    CalcJob writes into its repository, and the two ``_scheduler-*`` logs
-    it retrieves alongside its results (:data:`_ENGINE_BOOKKEEPING_FILES`).
+    Removes the ``.aiida`` settings folder and the ``_aiidasubmit.sh`` a
+    CalcJob writes into its repository. The two ``_scheduler-*`` logs it
+    retrieves alongside its results go too, unless one is non-empty and
+    its calculation reports a nonzero exit status: a run that finished
+    leaves only the build's own warning noise there, while a run that
+    failed may have left its one account of the failure — and dropping
+    that would take the whole folder with it, the calculation having
+    nothing else to show.
 
     Runs before the step listings, so a calculation left holding nothing
     but these is pruned like any other empty step.
@@ -1012,8 +1098,13 @@ def _prune_engine_bookkeeping(root_path: Path) -> None:
     for path in list(root_path.rglob("*")):
         if path.is_dir() and path.name == _ENGINE_BOOKKEEPING_DIR:
             shutil.rmtree(path)
-        elif path.is_file() and path.name in _ENGINE_BOOKKEEPING_FILES:
+        elif not path.is_file():
+            continue
+        elif path.name in _ENGINE_BOOKKEEPING_FILES:
             path.unlink()
+        elif path.name in _SCHEDULER_LOG_FILES:
+            if not (path.stat().st_size and _failed_calculation_folder(path, root_path)):
+                path.unlink()
 
 
 def _prune_workflow_metadata(root_path: Path) -> None:

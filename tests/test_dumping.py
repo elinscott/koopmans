@@ -17,6 +17,7 @@ from koopmans.aiida.dumping import (
     _prune_engine_bookkeeping,
     _prune_source_only_step_folders,
     _prune_workflow_metadata,
+    _record_task_sources,
     _renumber_step_folders,
     _simplify_folder_names,
     _strip_process_label_suffixes,
@@ -109,9 +110,9 @@ def _lambdas(name: str, content: str = "trial-hamiltonian") -> list[tuple[str, s
     aiida-core dumps an ``ArrayData`` only as its consumer's
     ``function_inputs``, never under the task that produced it, so this
     is the tree's one copy of that array unless a sibling was handed the
-    same node. Every caller is the same task, so they carry a
-    ``source_file`` apiece — aiida-core's copy of the code that ran, not
-    a listed node.
+    same node. Every caller is the same task, so they share a
+    ``source_file`` too — aiida-core's copy of the code that ran, which
+    groups by its own text rather than by a node.
     """
     return [
         _metadata(name),
@@ -455,6 +456,91 @@ class TestLinkDuplicateFiles:
 
         assert not (tmp_path / "01-scf/inputs/pseudo.upf").is_symlink()
 
+    def test_a_symlink_already_in_the_tree_is_never_linked_through(self, tmp_path: Path) -> None:
+        """A tree that already holds links is not linked into a loop.
+
+        Ranking an existing link ahead of the real file would replace the
+        real file with a link to it, leaving the two pointing at each
+        other and the bytes gone.
+        """
+        _make_tree(tmp_path, [("01-step/inputs/data.mat", "payload")])
+        real = tmp_path / "01-step/inputs/data.mat"
+        link = tmp_path / "01-step/outputs/data.mat"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(os.path.relpath(real, link.parent))
+        # Both are recorded as the one node's one file, so only the
+        # symlink check keeps them apart; the link sorts first, being
+        # the creating step's copy.
+        placed = self._placed(
+            tmp_path,
+            ("01-step/inputs/data.mat", 9, "data.mat", False),
+            ("01-step/outputs/data.mat", 9, "data.mat", True),
+        )
+
+        assert _link_duplicate_files(placed) == 0
+
+        assert not real.is_symlink()
+        assert real.read_text() == "payload"
+        assert link.read_text() == "payload"
+
+    def test_a_task_source_fanned_out_collapses_to_one_copy(self, tmp_path: Path) -> None:
+        """One task run once per orbital writes its code under each call.
+
+        The source is aiida-core's copy of the code, not a listed node,
+        so it groups by its own text; a source holding different code
+        stays a file of its own.
+        """
+        source = "def compute_alpha_from_dscf():\n    return alpha\n"
+        _make_tree(
+            tmp_path,
+            [
+                ("01-orb_1/inputs/source_file", source),
+                ("02-orb_2/inputs/source_file", source),
+                ("03-orb_3/inputs/source_file", source),
+                ("04-max_alpha_error/inputs/source_file", "def max_alpha_error():\n    pass\n"),
+            ],
+        )
+        placed = _PlacedFiles()
+        _record_task_sources(tmp_path, placed)
+
+        assert _link_duplicate_files(placed) == 2
+
+        first = tmp_path / "01-orb_1/inputs/source_file"
+        assert not first.is_symlink()
+        for step in ("02-orb_2", "03-orb_3"):
+            assert (tmp_path / step / "inputs/source_file").is_symlink()
+            assert (tmp_path / step / "inputs/source_file").read_text() == source
+        assert not (tmp_path / "04-max_alpha_error/inputs/source_file").is_symlink()
+
+    def test_a_task_source_is_never_linked_to_a_data_file(self, tmp_path: Path) -> None:
+        """A data file with a source's bytes is a different thing entirely.
+
+        Sources collapse among themselves and never across the boundary:
+        no data file is made to depend on a folder that carries only
+        code.
+        """
+        shared = "def compute():\n    return 1\n"
+        _make_tree(
+            tmp_path,
+            [
+                ("01-compute_alpha/inputs/function_inputs/payload.npy", shared),
+                ("02-other_task/inputs/source_file", shared),
+            ],
+        )
+        placed = self._placed(
+            tmp_path,
+            ("01-compute_alpha/inputs/function_inputs/payload.npy", 12, "payload.npy", False),
+        )
+        _record_task_sources(tmp_path, placed)
+
+        assert _link_duplicate_files(placed) == 0
+
+        payload = tmp_path / "01-compute_alpha/inputs/function_inputs/payload.npy"
+        source = tmp_path / "02-other_task/inputs/source_file"
+        assert not payload.is_symlink()
+        assert not source.is_symlink()
+        assert payload.read_text() == source.read_text() == shared
+
     def test_the_links_are_relative_and_survive_a_move(self, tmp_path: Path) -> None:
         """A dump handed to someone else still resolves."""
         _make_tree(
@@ -608,25 +694,97 @@ class TestPruneEngineBookkeeping:
 
         assert [p.name for p in (tmp_path / "01-scf/outputs").iterdir()] == ["aiida.out"]
 
-    def test_a_calculation_left_with_nothing_else_is_pruned(self, tmp_path: Path) -> None:
-        """A step whose only files were the engine's own keeps no folder.
+    #: A real, always-registered CalcJob — enough to resolve ``process_class``.
+    ARITHMETIC_ADD = "aiida.calculations:core.arithmetic.add"
 
-        The bookkeeping goes before the step listings, so such a folder
-        reaches the prune empty and is dropped like any other.
+    def _run_with_scheduler_noise(self, computer: Any, tmp_path: Path, exit_status: int) -> Any:
+        """Return a root whose one calculation retrieved a non-empty stderr.
+
+        Nothing else is retrieved and nothing is created, so what the
+        scheduler wrote is all the folder can hold: whether it survives
+        is exactly whether that file does.
         """
-        _make_tree(
-            tmp_path,
-            [
-                _metadata("01-noop"),
-                "01-noop/inputs/_aiidasubmit.sh",
-                "01-noop/outputs/_scheduler-stdout.txt",
-            ],
+        from aiida import orm
+
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="pw",
+            calcjob=True,
+            computer=computer,
+            exit_status=exit_status,
         )
+        tree = tmp_path / f"tree-{exit_status}"
+        tree.mkdir()
+        (tree / "_scheduler-stderr.txt").write_text(
+            "Note: The following floating-point exceptions are signalling: IEEE_UNDERFLOW\n"
+        )
+        attach(calc, "retrieved", orm.FolderData(tree=str(tree)))
+        return root
 
-        _prune_engine_bookkeeping(tmp_path)
-        _prune_source_only_step_folders(tmp_path)
+    def test_a_finished_run_loses_its_scheduler_noise_and_its_folder(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """The GNU builds warn on every successful call; that is not a result."""
+        from koopmans.aiida.dumping import dump_workgraph
 
-        assert list(tmp_path.iterdir()) == []
+        root = self._run_with_scheduler_noise(aiida_localhost, tmp_path, exit_status=0)
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        assert not any(p.name.endswith("pw") for p in dumped.rglob("*"))
+
+    def test_a_failed_run_keeps_the_stderr_that_explains_it(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """A crashed calculation keeps its folder, its stderr and its metadata.
+
+        The same file under the same name, kept or dropped by the exit
+        status alone. Dropping it here would take the folder with it and
+        the run's one record of the failure would be missing from the
+        dump.
+        """
+        from koopmans.aiida.dumping import dump_workgraph
+
+        root = self._run_with_scheduler_noise(aiida_localhost, tmp_path, exit_status=305)
+
+        dumped = dump_workgraph(root, tmp_path / "dump")
+
+        outputs = dumped / "01-pw" / "outputs"
+        assert "IEEE_UNDERFLOW" in (outputs / "_scheduler-stderr.txt").read_text()
+        assert (dumped / "01-pw" / NODE_METADATA_FILE).is_file()
+
+    def test_an_empty_scheduler_log_goes_however_the_run_ended(
+        self, aiida_profile: Any, aiida_localhost: Any, tmp_path: Path
+    ) -> None:
+        """Length zero says nothing, so a failure keeps no empty log either."""
+        from aiida import orm
+
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import attach, make_process
+
+        root = make_process("aiida.workflows:workgraph.engine", label="root")
+        calc = make_process(
+            self.ARITHMETIC_ADD,
+            caller=root,
+            link_label="pw",
+            calcjob=True,
+            computer=aiida_localhost,
+            exit_status=305,
+        )
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "_scheduler-stderr.txt").write_text("")
+        (tree / "aiida.out").write_text("what the code printed")
+        attach(calc, "retrieved", orm.FolderData(tree=str(tree)))
+
+        outputs = dump_workgraph(root, tmp_path / "dump") / "01-pw" / "outputs"
+
+        assert not (outputs / "_scheduler-stderr.txt").exists()
+        assert (outputs / "aiida.out").read_text() == "what the code printed"
 
 
 class TestEmptyValuesAreNotListed:
@@ -1172,7 +1330,7 @@ class TestTidyDumpedTree:
         │           │           ├── function_inputs
         │           │           │   └── trial_lambdas
         │           │           │       └── lambdas.npy -> (link)
-        │           │           └── source_file
+        │           │           └── source_file -> (link)
         │           └── 03-compute_alpha_orb_10
         │               ├── 01-dft_n_plus_1_dummy
         │               │   ├── aiida_node_metadata.yaml
@@ -1198,7 +1356,7 @@ class TestTidyDumpedTree:
         │                       ├── function_inputs
         │                       │   └── trial_lambdas
         │                       │       └── lambdas.npy -> (link)
-        │                       └── source_file
+        │                       └── source_file -> (link)
         ├── 05-RunFinalKI
         │   ├── aiida_node_metadata.yaml
         │   ├── inputs
@@ -1215,15 +1373,16 @@ class TestTidyDumpedTree:
         folder names a CalcJob class, and each step that ran a single
         calculation holds that calculation's own ``inputs``/``outputs``.
         Every orbital is handed the one KI trial Hamiltonian, so its
-        array is listed under each and links back to the first; each
-        step's ``source_file`` is aiida-core's copy of the code that ran,
-        not a listed node, so those stay a file apiece.
+        array is listed under each and links back to the first; the one
+        task those calls ran writes its source under each of them, and
+        those collapse the same way.
         """
         root = tmp_path / "ozone"
         _make_tree(root, self.OZONE_DUMP)
         placed = _PlacedFiles()
         for path in root.rglob("lambdas.npy"):
             placed.record(path, 4711, "lambdas.npy", False)
+        _record_task_sources(root, placed)
 
         _tidy_dumped_tree(root, placed=placed)
 
