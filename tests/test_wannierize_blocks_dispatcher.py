@@ -1250,10 +1250,10 @@ class TestWannier90PathDensity:
         quotes: densities differ by construction, not by tutorial-specific
         configuration.
         """
-        import json
+        import yaml
 
-        si_json = tutorials_dir / "band_structures/silicon_finite_differences/si.json"
-        d = json.loads(si_json.read_text())
+        si_yaml = tutorials_dir / "band_structures/silicon_finite_differences/si.yaml"
+        d = yaml.safe_load(si_yaml.read_text())
         assert d["workflow"].get("block_wannierization_threshold") is None
         assert d["calculator_parameters"]["wannier90"]["projections"]
         # Substitute a fast offline cutoffs family for the shipped
