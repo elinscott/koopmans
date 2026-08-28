@@ -47,7 +47,7 @@ class ControlNamelist(Namelist):
 
     kcw_iverbosity: Literal[0, 1, 2] = Field(
         1,
-        description="Verbosity level of the KCW output.\n- '0': Minimal output.\n- '1': As above + performs additional checks.\n- '2': As above + additional infos on all the steps (any value > 1 selects this\n  verbosity tier).\n\nkoopmans seeds 1; kcw.x's own default is 1.",
+        description="Verbosity level of the KCW output.\n- '0': Minimal output.\n- '1': As above + performs additional checks.\n- '2': As above + additional infos on all the steps (any value > 1 selects this\n  verbosity tier).",
     )
 
     spread_thr: Annotated[float, Quantity(units="Ry", dimensionality="energy")] = Field(
@@ -85,7 +85,7 @@ class ControlNamelist(Namelist):
 
     lrpa: bool = Field(
         False,
-        description="If .true. the response function is computed neglecting xc effects both in the kernel\nand in the response function (RPA).\n\nkoopmans seeds False; kcw.x's own default is False.",
+        description='If .true. the response function is computed neglecting xc effects both in the kernel\nand in the response function (RPA).',
     )
 
     io_sp: bool = Field(
@@ -182,7 +182,7 @@ class ScreenNamelist(Namelist):
 
     nmix: int = Field(
         4,
-        description="Number of iterations used in potential mixing.\n\nkoopmans seeds 4; kcw.x's own default is 4.",
+        description='Number of iterations used in potential mixing.',
     )
 
     tr2: float = Field(
@@ -208,15 +208,15 @@ class HamNamelist(Namelist):
 
     use_ws_distance: bool = Field(
         True,
-        description="If .true. the position of the Wannier function inside the cell is used to set the\nproper distance and to have a smoother interpolation. Requires seedname_centres.xyz to\nbe printed by the previous Wannier90 run. If the file is not found it is automatically\nswitched to .FALSE. and only the distance between the cells is used (see also Wannier90\ndocumentation)\n\nkoopmans seeds True; kcw.x's own default is True.",
+        description='If .true. the position of the Wannier function inside the cell is used to set the\nproper distance and to have a smoother interpolation. Requires seedname_centres.xyz to\nbe printed by the previous Wannier90 run. If the file is not found it is automatically\nswitched to .FALSE. and only the distance between the cells is used (see also Wannier90\ndocumentation)',
     )
 
     write_hr: bool = Field(
         True,
-        description="If .true. the KCW hamiltonain in the Wannier basis and in real spase H(R)_m_n is\nprinted to file. Usefull for furhter post-processing.\n\nkoopmans seeds True; kcw.x's own default is True.",
+        description='If .true. the KCW hamiltonain in the Wannier basis and in real spase H(R)_m_n is\nprinted to file. Usefull for furhter post-processing.',
     )
 
     on_site_only: bool = Field(
         False,
-        description="If .true. only the on-site and diagonal elements of the KCW hamiltonain are computed\n(R=0 and n=m).\n\nkoopmans seeds False; kcw.x's own default is False.",
+        description='If .true. only the on-site and diagonal elements of the KCW hamiltonain are computed\n(R=0 and n=m).',
     )

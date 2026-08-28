@@ -646,6 +646,26 @@ def _description_text(value: ast.expr) -> str:
     raise ValueError("description is not a plain string or a dedent(...) call")
 
 
+def _field_extra(call: ast.Call) -> dict[str, Any]:
+    """Return a field's ``json_schema_extra`` dict, or ``{}`` if it has none."""
+    extra_keyword = next((kw for kw in call.keywords if kw.arg == "json_schema_extra"), None)
+    return ast.literal_eval(extra_keyword.value) if extra_keyword is not None else {}
+
+
+def _default_is_derived(call: ast.Call) -> bool:
+    """Return whether the field's stated default is a placeholder, not a literal.
+
+    True when pydantic-espresso could not fold the upstream
+    ``<default kind="ref"|"computed"|"expr">`` into a Python literal, so the
+    field states ``None`` rather than the value ``code`` actually falls back
+    to at runtime.
+    """
+    extra = _field_extra(call)
+    return bool(
+        extra.get("default_ref") or extra.get("default_expr") or extra.get("computed_default")
+    )
+
+
 def _own_default_phrase(call: ast.Call, code: str, qe_default: Any) -> str:
     """Return the clause naming what ``code``'s own default is.
 
@@ -657,8 +677,7 @@ def _own_default_phrase(call: ast.Call, code: str, qe_default: Any) -> str:
     would misstate a keyword ``code`` derives at runtime as one whose real
     default is the sentinel.
     """
-    extra_keyword = next((kw for kw in call.keywords if kw.arg == "json_schema_extra"), None)
-    extra = ast.literal_eval(extra_keyword.value) if extra_keyword is not None else {}
+    extra = _field_extra(call)
     for key in ("default_ref", "default_expr"):
         if key in extra:
             token = extra[key]
@@ -675,9 +694,12 @@ def _seed_field_segment(statement: ast.AnnAssign, name: str, seeded_value: Any, 
 
     The emitted field keeps its annotation and every ``Field(...)`` keyword
     but ``default``/the positional default and ``description``: the default
-    becomes ``seeded_value``, and the description gains a line stating the
+    becomes ``seeded_value``. The description gains a line stating the
     seeded value alongside the generic model's own default, read off the
-    field being replaced.
+    field being replaced — unless the roster value is exactly that own
+    default and the default is a literal (not a ``ref``/``expr``/computed
+    one), in which case the note would say nothing the reader doesn't
+    already see in the default, so the description is left untouched.
 
     Raises:
         ValueError: If the field is not declared with ``Field(...)``, states
@@ -701,11 +723,12 @@ def _seed_field_segment(statement: ast.AnnAssign, name: str, seeded_value: Any, 
     if description_keyword is None:
         raise ValueError(f"{name} declares no description; cannot append the seed note")
     description = _description_text(description_keyword.value)
-    code = _code_name(block)
-    description = (
-        f"{description}\n\nkoopmans seeds {seeded_value!r}; "
-        f"{_own_default_phrase(call, code, qe_default)}"
-    )
+    if seeded_value != qe_default or _default_is_derived(call):
+        code = _code_name(block)
+        description = (
+            f"{description}\n\nkoopmans seeds {seeded_value!r}; "
+            f"{_own_default_phrase(call, code, qe_default)}"
+        )
 
     other_keywords = [kw for kw in call.keywords if kw.arg not in ("default", "description")]
     annotation = ast.unparse(statement.annotation)

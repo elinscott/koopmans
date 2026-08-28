@@ -54,11 +54,19 @@ class TestSeededDefaultsMatchTheRoster:
 
     @pytest.mark.parametrize("module", MODULES, ids=lambda m: m.filename)
     def test_seeded_fields_carry_the_roster_value_as_their_default(self, module: Any) -> None:
-        """The generated field's default is the value SEEDED_VALUES pins."""
+        """The generated field's default is the value SEEDED_VALUES pins.
+
+        The description gains a seed note only when it says something the
+        default doesn't already: when the roster value matches the generic
+        model's own literal default, a note stating "koopmans seeds X;
+        code's own default is X" would be a redundant restatement, so the
+        description is left as the generic model's.
+        """
         for model in module.models:
             roster = SEEDED_VALUES.get(model.block, {})
             if not roster:
                 continue
+            generic = getattr(import_module(model.source), model.name)
             restricted = getattr(
                 import_module(f"koopmans.input_file._generated.{module.filename[:-3]}"),
                 model.emitted,
@@ -66,10 +74,25 @@ class TestSeededDefaultsMatchTheRoster:
             for keyword, value in roster.items():
                 field = restricted.model_fields[keyword]
                 assert field.default == value, (model.block, keyword)
-                assert f"koopmans seeds {value!r}" in (field.description or ""), (
-                    model.block,
-                    keyword,
+
+                generic_field = generic.model_fields[keyword]
+                extra = generic_field.json_schema_extra or {}
+                derived = bool(
+                    extra.get("default_ref")
+                    or extra.get("default_expr")
+                    or extra.get("computed_default")
                 )
+                if derived or generic_field.default != value:
+                    assert f"koopmans seeds {value!r}" in (field.description or ""), (
+                        model.block,
+                        keyword,
+                    )
+                else:
+                    assert f"koopmans seeds {value!r}" not in (field.description or ""), (
+                        model.block,
+                        keyword,
+                    )
+                    assert field.description == generic_field.description, (model.block, keyword)
 
     def test_a_ref_encoded_default_states_that_the_code_derives_its_own(self) -> None:
         """kcw.x's own default for niter is a QE-internal ref, not the literal None.

@@ -141,7 +141,7 @@ class _Wannier90Input(Wannier90InputTemplate):
 
     dis_conv_tol: float = Field(
         1e-10,
-        description="The convergence tolerance for finding $\\Omega_{\\mathrm{I}}$\n\nkoopmans seeds 1e-10; wannier90.x's own default is 1e-10.",
+        description='The convergence tolerance for finding $\\Omega_{\\mathrm{I}}$',
     )
 
     dis_conv_window: int = Field(
@@ -169,7 +169,7 @@ class _Wannier90Input(Wannier90InputTemplate):
 
     num_cg_steps: int = Field(
         5,
-        description="During the minimisation of $\\Omega$ the number of Conjugate Gradient steps before resetting to Steepest Descents\n\nkoopmans seeds 5; wannier90.x's own default is 5.",
+        description='During the minimisation of $\\Omega$ the number of Conjugate Gradient steps before resetting to Steepest Descents',
     )
 
     conv_window: int = Field(
@@ -179,7 +179,7 @@ class _Wannier90Input(Wannier90InputTemplate):
 
     conv_tol: float = Field(
         1e-10,
-        description="The convergence tolerance for finding $\\Omega$\n\nkoopmans seeds 1e-10; wannier90.x's own default is 1e-10.",
+        description='The convergence tolerance for finding $\\Omega$',
     )
 
     precond: bool = Field(False, description="Use preconditioning")
