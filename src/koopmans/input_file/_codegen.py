@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import ast
 import inspect
+import textwrap
 from collections import defaultdict
 from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
+from typing import Any
 
-from aiida_koopmans.owned_keywords import OWNED
+from aiida_koopmans.owned_keywords import OWNED, SEEDED_VALUES
 
 __all__ = ["MODULES", "REASONS", "UNREACHABLE", "generate", "render"]
 
@@ -506,8 +508,32 @@ def render(module: GeneratedModule) -> str:
             from_imports[where] |= names
         plain_imports |= model_plain
 
+        seeded_values = SEEDED_VALUES.get(model.block, {})
+        seeded_fields = {
+            statement.target.id
+            for statement in kept
+            if isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id in seeded_values
+        }
+        stale = sorted(seeded_values.keys() - seeded_fields)
+        if stale:
+            raise ValueError(
+                f"{model.name} declares no {', '.join(stale)}; "
+                f"aiida_koopmans.owned_keywords.SEEDED_VALUES is stale"
+            )
+
         lines = text.splitlines()
-        segments = [_segment(lines, statement, model.name) for statement in kept]
+        segments = [
+            _seed_field_segment(
+                statement, statement.target.id, seeded_values[statement.target.id], model.block
+            )
+            if isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id in seeded_values
+            else _segment(lines, statement, model.name)
+            for statement in kept
+        ]
         bases = ", ".join(ast.unparse(base) for base in node.bases)
         bodies.append(_render_class(model, bases, reasons, unreachable, segments))
 
@@ -589,6 +615,81 @@ def _render_validator(name: str, summary: str, helper: str, path: str, constant:
         f'        """{summary}"""\n'
         f"        return {helper}(data, {path!r}, {constant})\n\n"
     )
+
+
+def _code_name(block: str) -> str:
+    """Return the executable name whose keywords ``block`` declares."""
+    if block == "wannier90":
+        return "wannier90.x"
+    return f"{block.split('.')[0]}.x"
+
+
+def _description_text(value: ast.expr) -> str:
+    """Return the literal text a ``Field`` ``description=`` argument evaluates to.
+
+    Raises:
+        ValueError: If ``value`` is neither a plain string constant nor a
+            ``dedent(...)`` call wrapping one, the two shapes the generic
+            models use.
+    """
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "dedent"
+        and len(value.args) == 1
+        and isinstance(value.args[0], ast.Constant)
+        and isinstance(value.args[0].value, str)
+    ):
+        return textwrap.dedent(value.args[0].value)
+    raise ValueError("description is not a plain string or a dedent(...) call")
+
+
+def _seed_field_segment(statement: ast.AnnAssign, name: str, seeded_value: Any, block: str) -> str:
+    """Return a seeded field's source with the roster default and a seed note.
+
+    The emitted field keeps its annotation and every ``Field(...)`` keyword
+    but ``default``/the positional default and ``description``: the default
+    becomes ``seeded_value``, and the description gains a line stating the
+    seeded value alongside the generic model's own default, read off the
+    field being replaced.
+
+    Raises:
+        ValueError: If the field is not declared with ``Field(...)``, states
+            no default, or states no ``description``.
+    """
+    call = statement.value
+    if not (
+        isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "Field"
+    ):
+        raise ValueError(f"{name} is not declared with Field(...); cannot apply its seeded default")
+
+    if call.args:
+        qe_default = ast.literal_eval(call.args[0])
+    else:
+        default_keyword = next((kw for kw in call.keywords if kw.arg == "default"), None)
+        if default_keyword is None:
+            raise ValueError(f"{name} declares no default; cannot state kcw.x's own default")
+        qe_default = ast.literal_eval(default_keyword.value)
+
+    description_keyword = next((kw for kw in call.keywords if kw.arg == "description"), None)
+    if description_keyword is None:
+        raise ValueError(f"{name} declares no description; cannot append the seed note")
+    description = _description_text(description_keyword.value)
+    code = _code_name(block)
+    description = (
+        f"{description}\n\nkoopmans seeds {seeded_value!r}; {code}'s own default is {qe_default!r}."
+    )
+
+    other_keywords = [kw for kw in call.keywords if kw.arg not in ("default", "description")]
+    annotation = ast.unparse(statement.annotation)
+
+    lines = [f"    {name}: {annotation} = Field(", f"        {seeded_value!r},"]
+    lines.append(f"        description={description!r},")
+    lines += [f"        {kw.arg}={ast.unparse(kw.value)}," for kw in other_keywords]
+    lines.append("    )")
+    return "\n".join(lines)
 
 
 def _segment(lines: list[str], node: ast.stmt, name: str) -> str:

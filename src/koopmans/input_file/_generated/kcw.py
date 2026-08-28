@@ -47,14 +47,7 @@ class ControlNamelist(Namelist):
 
     kcw_iverbosity: Literal[0, 1, 2] = Field(
         1,
-        description=dedent(
-            """\
-            Verbosity level of the KCW output.
-            - '0': Minimal output.
-            - '1': As above + performs additional checks.
-            - '2': As above + additional infos on all the steps (any value > 1 selects this
-              verbosity tier)."""
-        ),
+        description="Verbosity level of the KCW output.\n- '0': Minimal output.\n- '1': As above + performs additional checks.\n- '2': As above + additional infos on all the steps (any value > 1 selects this\n  verbosity tier).\n\nkoopmans seeds 1; kcw.x's own default is 1.",
     )
 
     spread_thr: Annotated[float, Quantity(units="Ry", dimensionality="energy")] = Field(
@@ -92,11 +85,7 @@ class ControlNamelist(Namelist):
 
     lrpa: bool = Field(
         False,
-        description=dedent(
-            """\
-            If .true. the response function is computed neglecting xc effects both in the kernel
-            and in the response function (RPA)."""
-        ),
+        description="If .true. the response function is computed neglecting xc effects both in the kernel\nand in the response function (RPA).\n\nkoopmans seeds False; kcw.x's own default is False.",
     )
 
     io_sp: bool = Field(
@@ -163,12 +152,8 @@ class WannierNamelist(Namelist):
         return raise_for_unreachable_keywords(data, 'calculator_parameters.kcw.wannier', _KCW_WANNIER_UNREACHABLE)
 
     check_ks: bool = Field(
-        False,
-        description=dedent(
-            """\
-            Specify if a diagonalization of the KS matrix build using the wannier function in input
-            has to be performed. This is mainly for debugging purpose."""
-        ),
+        True,
+        description="Specify if a diagonalization of the KS matrix build using the wannier function in input\nhas to be performed. This is mainly for debugging purpose.\n\nkoopmans seeds True; kcw.x's own default is False.",
     )
 
 
@@ -190,18 +175,20 @@ class ScreenNamelist(Namelist):
         return raise_for_owned_keywords(data, 'calculator_parameters.kcw.screen', _KCW_SCREEN_OWNED)
 
     niter: int | None = Field(
-        None,
-        json_schema_extra={"default_ref": ""},
-        description=dedent(
-            """\
-            Maximum number of iterations in a scf step. If you want more than 100, edit variable
-            'maxter' in PH/phcom.f90"""
-        ),
+        33,
+        description="Maximum number of iterations in a scf step. If you want more than 100, edit variable\n'maxter' in PH/phcom.f90\n\nkoopmans seeds 33; kcw.x's own default is None.",
+        json_schema_extra={'default_ref': ''},
     )
 
-    nmix: int = Field(4, description="Number of iterations used in potential mixing.")
+    nmix: int = Field(
+        4,
+        description="Number of iterations used in potential mixing.\n\nkoopmans seeds 4; kcw.x's own default is 4.",
+    )
 
-    tr2: float = Field(1e-14, description="Threshold for self-consistency.")
+    tr2: float = Field(
+        1e-18,
+        description="Threshold for self-consistency.\n\nkoopmans seeds 1e-18; kcw.x's own default is 1e-14.",
+    )
 
 
 #: The keywords koopmans determines, and what to set instead.
@@ -221,30 +208,15 @@ class HamNamelist(Namelist):
 
     use_ws_distance: bool = Field(
         True,
-        description=dedent(
-            """\
-            If .true. the position of the Wannier function inside the cell is used to set the
-            proper distance and to have a smoother interpolation. Requires seedname_centres.xyz to
-            be printed by the previous Wannier90 run. If the file is not found it is automatically
-            switched to .FALSE. and only the distance between the cells is used (see also Wannier90
-            documentation)"""
-        ),
+        description="If .true. the position of the Wannier function inside the cell is used to set the\nproper distance and to have a smoother interpolation. Requires seedname_centres.xyz to\nbe printed by the previous Wannier90 run. If the file is not found it is automatically\nswitched to .FALSE. and only the distance between the cells is used (see also Wannier90\ndocumentation)\n\nkoopmans seeds True; kcw.x's own default is True.",
     )
 
     write_hr: bool = Field(
         True,
-        description=dedent(
-            """\
-            If .true. the KCW hamiltonain in the Wannier basis and in real spase H(R)_m_n is
-            printed to file. Usefull for furhter post-processing."""
-        ),
+        description="If .true. the KCW hamiltonain in the Wannier basis and in real spase H(R)_m_n is\nprinted to file. Usefull for furhter post-processing.\n\nkoopmans seeds True; kcw.x's own default is True.",
     )
 
     on_site_only: bool = Field(
         False,
-        description=dedent(
-            """\
-            If .true. only the on-site and diagonal elements of the KCW hamiltonain are computed
-            (R=0 and n=m)."""
-        ),
+        description="If .true. only the on-site and diagonal elements of the KCW hamiltonain are computed\n(R=0 and n=m).\n\nkoopmans seeds False; kcw.x's own default is False.",
     )

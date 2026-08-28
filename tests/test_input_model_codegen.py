@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from aiida_koopmans.owned_keywords import OWNED
+from aiida_koopmans.owned_keywords import OWNED, SEEDED_VALUES
 from pydantic import ValidationError
 
 import koopmans
@@ -47,6 +47,29 @@ class TestGeneratedFieldSets:
             dropped = generic.model_fields.keys() - restricted.model_fields.keys()
             claimed = set(OWNED[model.block]) | set(UNREACHABLE.get(model.block, {}))
             assert dropped == claimed, model.name
+
+
+class TestSeededDefaultsMatchTheRoster:
+    """A keyword a route seeds is the input file's default, and the schema says so."""
+
+    @pytest.mark.parametrize("module", MODULES, ids=lambda m: m.filename)
+    def test_seeded_fields_carry_the_roster_value_as_their_default(self, module: Any) -> None:
+        """The generated field's default is the value SEEDED_VALUES pins."""
+        for model in module.models:
+            roster = SEEDED_VALUES.get(model.block, {})
+            if not roster:
+                continue
+            restricted = getattr(
+                import_module(f"koopmans.input_file._generated.{module.filename[:-3]}"),
+                model.emitted,
+            )
+            for keyword, value in roster.items():
+                field = restricted.model_fields[keyword]
+                assert field.default == value, (model.block, keyword)
+                assert f"koopmans seeds {value!r}" in (field.description or ""), (
+                    model.block,
+                    keyword,
+                )
 
 
 class TestUnreachableKeywordsAreRefused:
@@ -184,4 +207,14 @@ class TestDriftAlarms:
         monkeypatch.setitem(OWNED, "ph.INPUTPH", OWNED["ph.INPUTPH"] | {"epsilon"})
         monkeypatch.setitem(REASONS, "ph.INPUTPH", {**REASONS["ph.INPUTPH"], "epsilon": "typo"})
         with pytest.raises(ValueError, match=r"declares no epsilon.*stale"):
+            generate(tmp_path)
+
+    def test_a_seeded_keyword_that_is_not_a_field_refuses_to_generate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A misspelt roster keyword would otherwise silently keep no default at all."""
+        monkeypatch.setitem(
+            SEEDED_VALUES, "kcw.SCREEN", {**SEEDED_VALUES["kcw.SCREEN"], "trr2": 1e-18}
+        )
+        with pytest.raises(ValueError, match=r"declares no trr2.*SEEDED_VALUES is stale"):
             generate(tmp_path)
