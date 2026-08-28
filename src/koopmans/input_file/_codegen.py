@@ -17,14 +17,16 @@ from __future__ import annotations
 
 import ast
 import inspect
+import textwrap
 from collections import defaultdict
 from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
+from typing import Any
 
-from aiida_koopmans.owned_keywords import OWNED
+from aiida_koopmans.owned_keywords import OWNED, SEEDED_VALUES
 
-__all__ = ["MODULES", "REASONS", "generate", "render"]
+__all__ = ["MODULES", "REASONS", "UNREACHABLE", "generate", "render"]
 
 _HEADER = '''\
 """{summary}
@@ -132,6 +134,44 @@ MODULES: list[GeneratedModule] = [
         ],
     ),
     GeneratedModule(
+        "kcw.py",
+        "Restricted ``kcw.x`` namelists.",
+        [
+            GeneratedModel(
+                "pydantic_espresso.models.kcw.develop",
+                "ControlNamelist",
+                "ControlNamelist",
+                "kcw.CONTROL",
+                "calculator_parameters.kcw.control",
+                "``CONTROL`` namelist for ``kcw.x`` calculations.",
+            ),
+            GeneratedModel(
+                "pydantic_espresso.models.kcw.develop",
+                "WannierNamelist",
+                "WannierNamelist",
+                "kcw.WANNIER",
+                "calculator_parameters.kcw.wannier",
+                "``WANNIER`` namelist for ``kcw.x`` calculations.",
+            ),
+            GeneratedModel(
+                "pydantic_espresso.models.kcw.develop",
+                "ScreenNamelist",
+                "ScreenNamelist",
+                "kcw.SCREEN",
+                "calculator_parameters.kcw.screen",
+                "``SCREEN`` namelist for ``kcw.x`` calculations.",
+            ),
+            GeneratedModel(
+                "pydantic_espresso.models.kcw.develop",
+                "HamNamelist",
+                "HamNamelist",
+                "kcw.HAM",
+                "calculator_parameters.kcw.ham",
+                "``HAM`` namelist for ``kcw.x`` calculations.",
+            ),
+        ],
+    ),
+    GeneratedModule(
         "wannier90.py",
         "Restricted ``wannier90.x`` input.",
         [
@@ -199,6 +239,54 @@ REASONS: dict[str, dict[str, str]] = {
         "seedname": _AIIDA,
         "spin_component": f"{_SPIN} koopmans runs one pw2wannier90.x per spin channel.",
     },
+    "kcw.CONTROL": {
+        "calculation": (
+            "koopmans runs the kcw.x chain itself: the Wannier gauge, the screening "
+            "and the Hamiltonian in turn."
+        ),
+        "prefix": _AIIDA,
+        "outdir": _AIIDA,
+        "mp1": "The k-point mesh comes from the `kpoints` block.",
+        "mp2": "The k-point mesh comes from the `kpoints` block.",
+        "mp3": "The k-point mesh comes from the `kpoints` block.",
+        "l_vcut": "Set `workflow.gb_correction`.",
+        "spin_component": f"{_SPIN} koopmans runs one kcw.x chain per spin channel.",
+        "kcw_at_ks": "koopmans screens Wannier functions, and always feeds kcw.x the matrices that define them.",
+        "read_unitary_matrix": "koopmans screens Wannier functions, and always feeds kcw.x the matrices that define them.",
+    },
+    "kcw.WANNIER": {
+        "seedname": (
+            "koopmans writes the wannier90 products under one seedname and points kcw.x at them."
+        ),
+        "num_wann_occ": (
+            "The manifold sizes follow from `calculator_parameters.wannier90.projections`."
+        ),
+        "num_wann_emp": (
+            "The manifold sizes follow from `calculator_parameters.wannier90.projections`."
+        ),
+        "have_empty": (
+            "Whether there is an empty manifold follows from "
+            "`calculator_parameters.wannier90.projections`."
+        ),
+        "has_disentangle": (
+            "Whether the empty manifold is disentangled follows from "
+            "`calculator_parameters.wannier90.projections` and the band count."
+        ),
+    },
+    "kcw.SCREEN": {
+        "i_orb": (
+            "koopmans screens every orbital at once, or one representative per group; "
+            "`workflow.group_orbitals_by` chooses which."
+        ),
+        "check_spread": (
+            "koopmans matches the kcw.x spread shortcut to how it screens; set "
+            "`workflow.group_orbitals_by` to group orbitals."
+        ),
+        "eps_inf": "Set `workflow.eps_inf`.",
+    },
+    "kcw.HAM": {
+        "do_bands": "An interpolated band structure runs whenever `kpoints.path` gives a path.",
+    },
     "wannier90": {
         "num_wann": "The band counts follow from `calculator_parameters.wannier90.projections`.",
         "num_bands": "The band counts follow from `calculator_parameters.wannier90.projections`.",
@@ -226,6 +314,24 @@ REASONS: dict[str, dict[str, str]] = {
         ),
         "spinors": _SPIN,
         "spin": _SPIN,
+    },
+}
+
+
+#: Keywords a generic model declares that koopmans cannot pass through at
+#: all, and why. Distinct from :data:`REASONS`, which covers the keywords a
+#: koopmans route determines for itself: nothing here is a route decision —
+#: each is a defect in the generic model, and the keyword becomes settable
+#: again once that model is fixed. Dropped from the schema like an owned
+#: keyword, so stating one is refused rather than silently written.
+UNREACHABLE: dict[str, dict[str, str]] = {
+    "kcw.WANNIER": {
+        "alpha_mix": (
+            "kcw.x reads `alpha_mix` from its `SCREEN` namelist, and the model this "
+            "block is generated from declares it under `WANNIER`, where kcw.x aborts "
+            "reading the namelist. koopmans cannot pass it through until that is fixed "
+            "upstream; the screening runs at the kcw.x default."
+        ),
     },
 }
 
@@ -258,11 +364,11 @@ def _validated_fields(node: ast.FunctionDef) -> set[str]:
     return names
 
 
-def _kept_statements(body: list[ast.stmt], owned: frozenset[str], name: str) -> list[ast.stmt]:
-    """Return the class-body statements that survive dropping ``owned``.
+def _kept_statements(body: list[ast.stmt], dropped: frozenset[str], name: str) -> list[ast.stmt]:
+    """Return the class-body statements that survive dropping ``dropped``.
 
     Raises:
-        ValueError: If an owned keyword is not a field of the class, or if a
+        ValueError: If a dropped keyword is not a field of the class, or if a
             validator covers both a dropped and a kept field.
     """
     declared = {
@@ -270,7 +376,7 @@ def _kept_statements(body: list[ast.stmt], owned: frozenset[str], name: str) -> 
         for statement in body
         if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name)
     }
-    missing = sorted(owned - declared)
+    missing = sorted(dropped - declared)
     if missing:
         raise ValueError(f"{name} declares no {', '.join(missing)}; the ownership data is stale")
 
@@ -279,14 +385,14 @@ def _kept_statements(body: list[ast.stmt], owned: frozenset[str], name: str) -> 
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
             continue  # the generic model's docstring; the emitted class has its own
         if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
-            if statement.target.id not in owned:
+            if statement.target.id not in dropped:
                 kept.append(statement)
             continue
         if isinstance(statement, ast.FunctionDef):
             covered = _validated_fields(statement)
-            if covered and covered <= owned:
+            if covered and covered <= dropped:
                 continue  # validates only keywords that no longer exist
-            if covered & owned:
+            if covered & dropped:
                 raise ValueError(
                     f"{name}.{statement.name} validates both dropped and kept keywords "
                     f"({', '.join(sorted(covered))}); split it upstream before generating"
@@ -357,6 +463,24 @@ def _reason_map(block: str) -> dict[str, str]:
     return {keyword: reasons[keyword] for keyword in sorted(owned)}
 
 
+def _unreachable_map(block: str) -> dict[str, str]:
+    """Return the unreachable keywords of ``block`` with their explanations.
+
+    Raises:
+        ValueError: If a keyword is owned as well, leaving two different
+            explanations for one removal.
+    """
+    unreachable = UNREACHABLE.get(block, {})
+    both = sorted(unreachable.keys() & OWNED.get(block, frozenset()))
+    if both:
+        raise ValueError(
+            f"{block}: {', '.join(both)} is both owned and unreachable. A keyword a route "
+            f"determines needs no second explanation; drop it from "
+            f"koopmans.input_file._codegen.UNREACHABLE."
+        )
+    return dict(sorted(unreachable.items()))
+
+
 def render(module: GeneratedModule) -> str:
     """Return the source of one generated module.
 
@@ -373,9 +497,10 @@ def render(module: GeneratedModule) -> str:
         tree = ast.parse(inspect.getsource(source))
         text = inspect.getsource(source)
         node = _class_node(tree, model.name)
-        owned = OWNED.get(model.block, frozenset())
         reasons = _reason_map(model.block)
-        kept = _kept_statements(node.body, owned, model.name)
+        unreachable = _unreachable_map(model.block)
+        dropped = frozenset(reasons) | frozenset(unreachable)
+        kept = _kept_statements(node.body, dropped, model.name)
 
         used = _used_names(kept) | {base.id for base in node.bases if isinstance(base, ast.Name)}
         model_from, model_plain = _imports(tree, used)
@@ -383,14 +508,40 @@ def render(module: GeneratedModule) -> str:
             from_imports[where] |= names
         plain_imports |= model_plain
 
+        seeded_values = SEEDED_VALUES.get(model.block, {})
+        seeded_fields = {
+            statement.target.id
+            for statement in kept
+            if isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id in seeded_values
+        }
+        stale = sorted(seeded_values.keys() - seeded_fields)
+        if stale:
+            raise ValueError(
+                f"{model.name} declares no {', '.join(stale)}; "
+                f"aiida_koopmans.owned_keywords.SEEDED_VALUES is stale"
+            )
+
         lines = text.splitlines()
-        segments = [_segment(lines, statement, model.name) for statement in kept]
+        segments = [
+            _seed_field_segment(
+                statement, statement.target.id, seeded_values[statement.target.id], model.block
+            )
+            if isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id in seeded_values
+            else _segment(lines, statement, model.name)
+            for statement in kept
+        ]
         bases = ", ".join(ast.unparse(base) for base in node.bases)
-        bodies.append(_render_class(model, bases, reasons, segments))
+        bodies.append(_render_class(model, bases, reasons, unreachable, segments))
 
     from_imports["pydantic"].add("model_validator")
     from_imports["typing"].add("Any")
     from_imports["koopmans.input_file._utils"].add("raise_for_owned_keywords")
+    if any(UNREACHABLE.get(model.block) for model in module.models):
+        from_imports["koopmans.input_file._utils"].add("raise_for_unreachable_keywords")
 
     sources = dict.fromkeys(model.source for model in module.models)
     lines = [
@@ -408,29 +559,185 @@ def render(module: GeneratedModule) -> str:
 
 
 def _render_class(
-    model: GeneratedModel, bases: str, reasons: dict[str, str], segments: list[str]
+    model: GeneratedModel,
+    bases: str,
+    reasons: dict[str, str],
+    unreachable: dict[str, str],
+    segments: list[str],
 ) -> str:
     """Return the source of one generated class."""
-    constant = "_" + model.block.replace(".", "_").upper() + "_OWNED"
-    entries = "\n".join(f"    {keyword!r}: {reason!r}," for keyword, reason in reasons.items())
-    owned_map = (
-        f"#: The keywords koopmans determines, and what to set instead.\n"
-        f"{constant}: dict[str, str] = {{\n{entries}\n}}\n\n\n"
-        if reasons
-        else ""
-    )
-    validator = (
-        f'    @model_validator(mode="before")\n'
-        f"    @classmethod\n"
-        f"    def reject_owned_keywords(cls, data: Any) -> Any:\n"
-        f'        """Refuse a keyword koopmans determines, naming what to set instead."""\n'
-        f"        return raise_for_owned_keywords(data, {model.path!r}, {constant})\n\n"
-        if reasons
-        else ""
-    )
+    prefix = "_" + model.block.replace(".", "_").upper()
+    maps = ""
+    validators = ""
+    if reasons:
+        maps += _render_map(
+            f"{prefix}_OWNED",
+            "The keywords koopmans determines, and what to set instead.",
+            reasons,
+        )
+        validators += _render_validator(
+            "reject_owned_keywords",
+            "Refuse a keyword koopmans determines, naming what to set instead.",
+            "raise_for_owned_keywords",
+            model.path,
+            f"{prefix}_OWNED",
+        )
+    if unreachable:
+        maps += _render_map(
+            f"{prefix}_UNREACHABLE",
+            "The keywords koopmans cannot pass through, and why.",
+            unreachable,
+        )
+        validators += _render_validator(
+            "reject_unreachable_keywords",
+            "Refuse a keyword koopmans cannot pass through, saying why.",
+            "raise_for_unreachable_keywords",
+            model.path,
+            f"{prefix}_UNREACHABLE",
+        )
     body = "\n\n".join(segments)
     declaration = f'class {model.emitted}({bases}):\n    """{model.summary}"""\n\n'
-    return f"{owned_map}{declaration}{validator}{body}\n"
+    return f"{maps}{declaration}{validators}{body}\n"
+
+
+def _render_map(constant: str, summary: str, entries: dict[str, str]) -> str:
+    """Return the source of one keyword-to-explanation constant."""
+    lines = "\n".join(f"    {keyword!r}: {reason!r}," for keyword, reason in entries.items())
+    return f"#: {summary}\n{constant}: dict[str, str] = {{\n{lines}\n}}\n\n\n"
+
+
+def _render_validator(name: str, summary: str, helper: str, path: str, constant: str) -> str:
+    """Return the source of one ``mode="before"`` refusal validator."""
+    return (
+        f'    @model_validator(mode="before")\n'
+        f"    @classmethod\n"
+        f"    def {name}(cls, data: Any) -> Any:\n"
+        f'        """{summary}"""\n'
+        f"        return {helper}(data, {path!r}, {constant})\n\n"
+    )
+
+
+def _code_name(block: str) -> str:
+    """Return the executable name whose keywords ``block`` declares."""
+    if block == "wannier90":
+        return "wannier90.x"
+    return f"{block.split('.')[0]}.x"
+
+
+def _description_text(value: ast.expr) -> str:
+    """Return the literal text a ``Field`` ``description=`` argument evaluates to.
+
+    Raises:
+        ValueError: If ``value`` is neither a plain string constant nor a
+            ``dedent(...)`` call wrapping one, the two shapes the generic
+            models use.
+    """
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "dedent"
+        and len(value.args) == 1
+        and isinstance(value.args[0], ast.Constant)
+        and isinstance(value.args[0].value, str)
+    ):
+        return textwrap.dedent(value.args[0].value)
+    raise ValueError("description is not a plain string or a dedent(...) call")
+
+
+def _field_extra(call: ast.Call) -> dict[str, Any]:
+    """Return a field's ``json_schema_extra`` dict, or ``{}`` if it has none."""
+    extra_keyword = next((kw for kw in call.keywords if kw.arg == "json_schema_extra"), None)
+    return ast.literal_eval(extra_keyword.value) if extra_keyword is not None else {}
+
+
+def _default_is_derived(call: ast.Call) -> bool:
+    """Return whether the field's stated default is a placeholder, not a literal.
+
+    True when pydantic-espresso could not fold the upstream
+    ``<default kind="ref"|"computed"|"expr">`` into a Python literal, so the
+    field states ``None`` rather than the value ``code`` actually falls back
+    to at runtime.
+    """
+    extra = _field_extra(call)
+    return bool(
+        extra.get("default_ref") or extra.get("default_expr") or extra.get("computed_default")
+    )
+
+
+def _own_default_phrase(call: ast.Call, code: str, qe_default: Any) -> str:
+    """Return the clause naming what ``code``'s own default is.
+
+    A field whose upstream ``<default kind="ref"|"computed"|"expr">``
+    pydantic-espresso could not fold into a Python literal states ``None``
+    as a placeholder default and carries the real story in
+    ``json_schema_extra`` instead (``default_ref``, ``computed_default``,
+    ``default_expr``). Reporting that placeholder as "own default is None"
+    would misstate a keyword ``code`` derives at runtime as one whose real
+    default is the sentinel.
+    """
+    extra = _field_extra(call)
+    for key in ("default_ref", "default_expr"):
+        if key in extra:
+            token = extra[key]
+            if token and len(token) <= 40:
+                return f"{code} derives its own default (`{token}`)."
+            return f"{code} derives its own default."
+    if extra.get("computed_default"):
+        return f"{code} derives its own default."
+    return f"{code}'s own default is {qe_default!r}."
+
+
+def _seed_field_segment(statement: ast.AnnAssign, name: str, seeded_value: Any, block: str) -> str:
+    """Return a seeded field's source with the roster default and a seed note.
+
+    The emitted field keeps its annotation and every ``Field(...)`` keyword
+    but ``default``/the positional default and ``description``: the default
+    becomes ``seeded_value``. The description gains a line stating the
+    seeded value alongside the generic model's own default, read off the
+    field being replaced — unless the roster value is exactly that own
+    default and the default is a literal (not a ``ref``/``expr``/computed
+    one), in which case the note would say nothing the reader doesn't
+    already see in the default, so the description is left untouched.
+
+    Raises:
+        ValueError: If the field is not declared with ``Field(...)``, states
+            no default, or states no ``description``.
+    """
+    call = statement.value
+    if not (
+        isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "Field"
+    ):
+        raise ValueError(f"{name} is not declared with Field(...); cannot apply its seeded default")
+
+    if call.args:
+        qe_default = ast.literal_eval(call.args[0])
+    else:
+        default_keyword = next((kw for kw in call.keywords if kw.arg == "default"), None)
+        if default_keyword is None:
+            raise ValueError(f"{name} declares no default; cannot state kcw.x's own default")
+        qe_default = ast.literal_eval(default_keyword.value)
+
+    description_keyword = next((kw for kw in call.keywords if kw.arg == "description"), None)
+    if description_keyword is None:
+        raise ValueError(f"{name} declares no description; cannot append the seed note")
+    description = _description_text(description_keyword.value)
+    if seeded_value != qe_default or _default_is_derived(call):
+        code = _code_name(block)
+        description = (
+            f"{description}\n\nkoopmans seeds {seeded_value!r}; "
+            f"{_own_default_phrase(call, code, qe_default)}"
+        )
+
+    other_keywords = [kw for kw in call.keywords if kw.arg not in ("default", "description")]
+    annotation = ast.unparse(statement.annotation)
+
+    lines = [f"    {name}: {annotation} = Field(", f"        {seeded_value!r},"]
+    lines.append(f"        description={description!r},")
+    lines += [f"        {kw.arg}={ast.unparse(kw.value)}," for kw in other_keywords]
+    lines.append("    )")
+    return "\n".join(lines)
 
 
 def _segment(lines: list[str], node: ast.stmt, name: str) -> str:
@@ -461,14 +768,14 @@ def generate(directory: Path | None = None) -> list[Path]:
     Returns:
         The paths written, in :data:`MODULES` order.
     """
-    ungenerated = sorted(
-        OWNED.keys() - {model.block for module in MODULES for model in module.models}
-    )
+    covered = {model.block for module in MODULES for model in module.models}
+    ungenerated = sorted((OWNED.keys() | UNREACHABLE.keys()) - covered)
     if ungenerated:
         raise ValueError(
-            f"aiida_koopmans.owned_keywords.OWNED claims {', '.join(ungenerated)}, which no "
-            f"generated model covers, so those keywords would stay in the input file. Add "
-            f"the block to koopmans.input_file._codegen.MODULES."
+            f"{', '.join(ungenerated)} is claimed in aiida_koopmans.owned_keywords.OWNED or "
+            f"in koopmans.input_file._codegen.UNREACHABLE, and no generated model covers it, "
+            f"so its keywords would stay in the input file. Add the block to "
+            f"koopmans.input_file._codegen.MODULES."
         )
     directory = directory or Path(__file__).parent / "_generated"
     directory.mkdir(exist_ok=True)

@@ -29,6 +29,7 @@ from koopmans.input_file.cell_parameters import (
     CellParametersViaVectors,
 )
 from koopmans.input_file.kcp import KCPInputParameters
+from koopmans.input_file.kcw import KCWInputParameters
 from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.parallelization import ParallelizationInput
 from koopmans.input_file.ph import PHInputParameters
@@ -53,6 +54,7 @@ __all__ = [
     "GridKpointsInput",
     "IntegerMagnetization",
     "KCPInputParameters",
+    "KCWInputParameters",
     "KoopmansInput",
     "KpointOffset",
     "KpointsOverridesInput",
@@ -412,6 +414,7 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: UnfoldAndInterpolateConfig()
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
+    kcw: KCWInputParameters = Field(default_factory=lambda: KCWInputParameters())
 
 
 class KoopmansInput(BaseModel):
@@ -517,6 +520,35 @@ class KoopmansInput(BaseModel):
                 "electrons. koopmans does not guess it for you: a spin-polarized run "
                 "at the wrong moment is a different calculation from the one you "
                 "asked for. Write 0 if the system is closed-shell."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_kcw_screen_has_a_step_to_reach(self) -> KoopmansInput:
+        """Reject ``kcw.screen`` keywords when no screening calculation runs.
+
+        ``workflow.calculate_alpha = False`` feeds ``workflow.alpha_guess``
+        straight to the Hamiltonian step, so kcw.x is never asked to solve
+        the linear-response problem the ``SCREEN`` namelist configures.
+
+        A keyword counts as stated when it carries a value of its own: one
+        written as ``null`` means the same as an omitted one.
+
+        Raises:
+            ValueError: If ``calculator_parameters.kcw.screen`` states a
+                keyword and ``workflow.calculate_alpha`` is false.
+        """
+        if self.workflow.calculate_alpha:
+            return self
+        stated = self.calculator_parameters.kcw.screen.model_dump(
+            exclude_unset=True, exclude_none=True
+        )
+        if stated:
+            raise ValueError(
+                "`calculator_parameters.kcw.screen` has no effect with "
+                "`workflow.calculate_alpha: false`: no screening step runs, so nothing "
+                "reads that namelist. Remove the block, or set "
+                "`workflow.calculate_alpha: true`."
             )
         return self
 

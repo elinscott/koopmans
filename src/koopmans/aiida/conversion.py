@@ -704,6 +704,31 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     return parameters
 
 
+def input_to_kcw_overrides(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
+    """Convert ``calculator_parameters.kcw`` into a kcw.x namelist-overrides dict.
+
+    One entry per namelist (``control``, ``wannier``, ``screen``, ``ham``),
+    present only when the user set at least one of its keywords: the DFPT
+    route's own values stand wherever the user is silent. A keyword written
+    as ``null`` means the same as one left out — kcw.x has no third state —
+    so it is dropped too rather than blanking the route's value.
+    Route-owned keys are refused at parse time
+    (``koopmans.input_file.kcw``) and never reach here.
+    """
+    kcw = koopmans_input.calculator_parameters.kcw
+    overrides: dict[str, dict[str, Any]] = {}
+    for name, namelist in (
+        ("control", kcw.control),
+        ("wannier", kcw.wannier),
+        ("screen", kcw.screen),
+        ("ham", kcw.ham),
+    ):
+        dumped = namelist.model_dump(exclude_unset=True, exclude_none=True)
+        if dumped:
+            overrides[name] = _convert_paths_to_strings(dumped)
+    return overrides
+
+
 def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
     """Convert ``calculator_parameters.ph`` into a ph.x ``INPUTPH`` namelist dict.
 
