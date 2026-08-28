@@ -316,6 +316,9 @@ aiida-wannierjl = { path = "../aiida-wannierjl", editable = true }
 aiida-quantumespresso = { path = "../aiida-quantumespresso", editable = true }
 aiida-workgraph = { path = "../aiida-workgraph", editable = true }
 node-graph = { path = "../node-graph", editable = true }
+# Fork carries keep_as_node (declared-node inputs stay orm.Data instead of
+# being unwrapped to their native value) ahead of upstream release.
+aiida-pythonjob = { path = "../aiida-pythonjob", editable = true }
 upf-tools = { path = "../upf-tools", editable = true }
 # Post-v2.8 aiida-core removed the Code.Model pydantic API (#6990); no
 # aiida-shell release is compatible yet, so pin the adapted git master.
