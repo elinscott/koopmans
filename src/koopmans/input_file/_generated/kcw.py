@@ -176,7 +176,7 @@ class ScreenNamelist(Namelist):
 
     niter: int | None = Field(
         33,
-        description="Maximum number of iterations in a scf step. If you want more than 100, edit variable\n'maxter' in PH/phcom.f90\n\nkoopmans seeds 33; kcw.x's own default is None.",
+        description="Maximum number of iterations in a scf step. If you want more than 100, edit variable\n'maxter' in PH/phcom.f90\n\nkoopmans seeds 33; kcw.x derives its own default.",
         json_schema_extra={'default_ref': ''},
     )
 

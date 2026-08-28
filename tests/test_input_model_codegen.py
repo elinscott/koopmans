@@ -71,6 +71,21 @@ class TestSeededDefaultsMatchTheRoster:
                     keyword,
                 )
 
+    def test_a_ref_encoded_default_states_that_the_code_derives_its_own(self) -> None:
+        """kcw.x's own default for niter is a QE-internal ref, not the literal None.
+
+        pydantic-espresso cannot fold ``<default kind="ref">`` into a Python
+        literal, so the generic model states ``None`` as a placeholder and
+        carries the real story in ``json_schema_extra["default_ref"]``.
+        Reporting that placeholder verbatim would tell the reader kcw.x's
+        own default for a required iteration count is "None".
+        """
+        from koopmans.input_file._generated.kcw import ScreenNamelist
+
+        description = ScreenNamelist.model_fields["niter"].description or ""
+        assert "kcw.x derives its own default" in description
+        assert "kcw.x's own default is None" not in description
+
 
 class TestUnreachableKeywordsAreRefused:
     """A keyword koopmans cannot pass through says why, rather than vanishing."""

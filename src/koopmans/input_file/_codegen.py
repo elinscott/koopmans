@@ -646,6 +646,30 @@ def _description_text(value: ast.expr) -> str:
     raise ValueError("description is not a plain string or a dedent(...) call")
 
 
+def _own_default_phrase(call: ast.Call, code: str, qe_default: Any) -> str:
+    """Return the clause naming what ``code``'s own default is.
+
+    A field whose upstream ``<default kind="ref"|"computed"|"expr">``
+    pydantic-espresso could not fold into a Python literal states ``None``
+    as a placeholder default and carries the real story in
+    ``json_schema_extra`` instead (``default_ref``, ``computed_default``,
+    ``default_expr``). Reporting that placeholder as "own default is None"
+    would misstate a keyword ``code`` derives at runtime as one whose real
+    default is the sentinel.
+    """
+    extra_keyword = next((kw for kw in call.keywords if kw.arg == "json_schema_extra"), None)
+    extra = ast.literal_eval(extra_keyword.value) if extra_keyword is not None else {}
+    for key in ("default_ref", "default_expr"):
+        if key in extra:
+            token = extra[key]
+            if token and len(token) <= 40:
+                return f"{code} derives its own default (`{token}`)."
+            return f"{code} derives its own default."
+    if extra.get("computed_default"):
+        return f"{code} derives its own default."
+    return f"{code}'s own default is {qe_default!r}."
+
+
 def _seed_field_segment(statement: ast.AnnAssign, name: str, seeded_value: Any, block: str) -> str:
     """Return a seeded field's source with the roster default and a seed note.
 
@@ -679,7 +703,8 @@ def _seed_field_segment(statement: ast.AnnAssign, name: str, seeded_value: Any, 
     description = _description_text(description_keyword.value)
     code = _code_name(block)
     description = (
-        f"{description}\n\nkoopmans seeds {seeded_value!r}; {code}'s own default is {qe_default!r}."
+        f"{description}\n\nkoopmans seeds {seeded_value!r}; "
+        f"{_own_default_phrase(call, code, qe_default)}"
     )
 
     other_keywords = [kw for kw in call.keywords if kw.arg not in ("default", "description")]

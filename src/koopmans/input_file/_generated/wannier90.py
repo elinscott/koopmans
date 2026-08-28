@@ -140,8 +140,7 @@ class _Wannier90Input(Wannier90InputTemplate):
     )
 
     dis_conv_tol: float = Field(
-        1e-10,
-        description="The convergence tolerance for finding $\\Omega_{\\mathrm{I}}$\n\nkoopmans seeds 1e-10; wannier90.x's own default is 1e-10.",
+        1e-10, description="The convergence tolerance for finding $\\Omega_{\\mathrm{I}}$"
     )
 
     dis_conv_window: int = Field(
@@ -162,25 +161,18 @@ class _Wannier90Input(Wannier90InputTemplate):
         description="List of centres and radii, for disentanglement only in spheres",
     )
 
-    num_iter: int = Field(
-        10000,
-        description="Number of iterations for the minimisation of $\\Omega$\n\nkoopmans seeds 10000; wannier90.x's own default is 100.",
-    )
+    num_iter: int = Field(100, description="Number of iterations for the minimisation of $\\Omega$")
 
     num_cg_steps: int = Field(
         5,
-        description="During the minimisation of $\\Omega$ the number of Conjugate Gradient steps before resetting to Steepest Descents\n\nkoopmans seeds 5; wannier90.x's own default is 5.",
+        description="During the minimisation of $\\Omega$ the number of Conjugate Gradient steps before resetting to Steepest Descents",
     )
 
     conv_window: int = Field(
-        5,
-        description="The number of iterations over which convergence of $\\Omega$ is assessed\n\nkoopmans seeds 5; wannier90.x's own default is 3.",
+        3, description="The number of iterations over which convergence of $\\Omega$ is assessed"
     )
 
-    conv_tol: float = Field(
-        1e-10,
-        description="The convergence tolerance for finding $\\Omega$\n\nkoopmans seeds 1e-10; wannier90.x's own default is 1e-10.",
-    )
+    conv_tol: float = Field(1e-10, description="The convergence tolerance for finding $\\Omega$")
 
     precond: bool = Field(False, description="Use preconditioning")
 
@@ -197,10 +189,7 @@ class _Wannier90Input(Wannier90InputTemplate):
 
     write_r2mn: bool = Field(False, description="Write matrix elements of $r^2$ between WF to file")
 
-    guiding_centres: bool = Field(
-        True,
-        description="Use guiding centres\n\nkoopmans seeds True; wannier90.x's own default is False.",
-    )
+    guiding_centres: bool = Field(False, description="Use guiding centres")
 
     num_guide_cycles: int = Field(1, description="Frequency of guiding centres")
 
