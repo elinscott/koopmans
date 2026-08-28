@@ -62,6 +62,11 @@ dependencies = [
     "aiida-koopmans",
     "aiida-hyperqueue~=0.3.0",
     "aiida-workgraph>=0.8.1",
+    # Direct dep: koopmans.aiida.dumping imports aiida_pythonjob.PythonJob
+    # directly to tell a PythonJob-wrapped helper apart from a domain
+    # CalcJob. Otherwise only pulled in transitively by aiida-workgraph,
+    # which pins the same bound.
+    "aiida-pythonjob~=0.5.2",
     # TEMPORARY: direct dep so [tool.uv.sources] node-graph override is
     # honoured. Drop this line once the upstream TaggedValue unwrap-at-
     # graph-body fix is merged in node-graph and released to PyPI.

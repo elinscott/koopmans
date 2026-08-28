@@ -1,10 +1,13 @@
 """Tests for input file parsing."""
 
 import json
+import re
+from importlib import import_module
 from pathlib import Path
 
 import pytest
 import yaml
+from aiida_koopmans.owned_keywords import OWNED
 
 from koopmans.input_file import (
     INPUT_FILE_FORMAT_VERSION,
@@ -12,6 +15,7 @@ from koopmans.input_file import (
     migrate_input_dict,
     read_input_file,
 )
+from koopmans.input_file._codegen import MODULES, REASONS, UNREACHABLE
 from koopmans.input_file.workflow import Task
 
 # The silicon tutorial input file, relative to the tutorials directory.
@@ -722,6 +726,274 @@ class TestPathDensityRename:
             _si_input_with_kpoints(grid=[2, 2, 2], path="GX", path_density=20.0)
         )
         assert inp.kpoints.path_density == 20.0
+
+
+# The kcw.x models the generator emits, each with the input-file path it is
+# mounted at.
+_KCW_MODELS = [
+    model for module in MODULES if module.filename == "kcw.py" for model in module.models
+]
+
+# (input-file path, ownership block, keyword). Read off the ownership roster
+# rather than restated here, so a keyword the DFPT route starts determining
+# is covered the moment ``aiida_koopmans`` declares it.
+_KCW_ROUTE_OWNED_KEYS = [
+    (model.path, model.block, keyword)
+    for model in _KCW_MODELS
+    for keyword in sorted(OWNED[model.block])
+]
+
+# (section, keyword, the value the DFPT route forces anyway).
+_KCW_ROUTE_FORCED_VALUES = [
+    ("calculator_parameters.kcw.control", "kcw_at_ks", False),
+    ("calculator_parameters.kcw.control", "read_unitary_matrix", True),
+    ("calculator_parameters.kcw.control", "l_vcut", True),
+    ("calculator_parameters.kcw.control", "spin_component", 1),
+    ("calculator_parameters.kcw.ham", "do_bands", False),
+]
+
+# (input-file section, block, keyword) for every unreachable kcw.x keyword.
+_KCW_UNREACHABLE_KEYS = [
+    (model.path, model.block, keyword)
+    for model in _KCW_MODELS
+    for keyword in sorted(UNREACHABLE.get(model.block, {}))
+]
+
+# Every keyword the kcw.x models still declare, with a non-default value.
+_KCW_PASSTHROUGH_KEYS = [
+    ("calculator_parameters.kcw.control", "kcw_iverbosity", 2),
+    ("calculator_parameters.kcw.control", "lrpa", True),
+    ("calculator_parameters.kcw.control", "assume_isolated", "martyna-tuckerman"),
+    ("calculator_parameters.kcw.control", "homo_only", True),
+    ("calculator_parameters.kcw.control", "spread_thr", 0.01),
+    ("calculator_parameters.kcw.control", "io_sp", True),
+    ("calculator_parameters.kcw.control", "io_real_space", True),
+    ("calculator_parameters.kcw.control", "irr_bz", True),
+    ("calculator_parameters.kcw.control", "use_wct", True),
+    ("calculator_parameters.kcw.wannier", "check_ks", False),
+    ("calculator_parameters.kcw.screen", "niter", 50),
+    ("calculator_parameters.kcw.screen", "nmix", 6),
+    ("calculator_parameters.kcw.screen", "tr2", 1.0e-16),
+    ("calculator_parameters.kcw.ham", "use_ws_distance", False),
+    ("calculator_parameters.kcw.ham", "write_hr", False),
+    ("calculator_parameters.kcw.ham", "on_site_only", True),
+]
+
+
+class TestKcwCalculatorParameters:
+    """``calculator_parameters.kcw`` mounts the kcw.x namelists (koopmans2#164)."""
+
+    @pytest.mark.parametrize(
+        ("section", "block", "keyword"),
+        _KCW_ROUTE_OWNED_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[2]}" for case in _KCW_ROUTE_OWNED_KEYS],
+    )
+    def test_route_owned_key_is_rejected(self, section: str, block: str, keyword: str) -> None:
+        """A key the DFPT route determines fails at parse, naming what to set instead."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, 1)
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}` is not a koopmans keyword" in message
+        assert REASONS[block][keyword] in message
+
+    @pytest.mark.parametrize(
+        ("section", "keyword", "value"),
+        _KCW_ROUTE_FORCED_VALUES,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[1]}" for case in _KCW_ROUTE_FORCED_VALUES],
+    )
+    def test_restating_the_forced_value_is_rejected_too(
+        self, section: str, keyword: str, value: object
+    ) -> None:
+        """The keyword is gone, so agreeing with the route is refused like disagreeing.
+
+        Accepting the agreeing spelling is what an earlier check did: it
+        compared the field against its declared default, so whichever value
+        that was passed and was then overwritten by the route anyway.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, value)
+
+        with pytest.raises(ValueError, match=rf"`{re.escape(section)}\.{keyword}`"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize(
+        ("section", "block", "keyword"),
+        _KCW_UNREACHABLE_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[2]}" for case in _KCW_UNREACHABLE_KEYS],
+    )
+    def test_unreachable_keyword_is_rejected(self, section: str, block: str, keyword: str) -> None:
+        """A keyword koopmans cannot pass through fails at parse, saying why.
+
+        Writing it would abort kcw.x at the namelist read, so accepting it
+        and forwarding it is worse than refusing it.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, [0.5, 0.5])
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}` cannot be set from a koopmans input file" in message
+        assert UNREACHABLE[block][keyword] in message
+
+    def test_dump_and_revalidate_roundtrips(self) -> None:
+        """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks.
+
+        ``model_dump()`` states every field explicitly, so a check keyed on
+        presence rather than on the keyword being gone from the schema would
+        refuse any input round-tripped this way — a pattern koopmans itself
+        uses to re-validate a modified input.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        KoopmansInput.model_validate(inp.model_dump())
+
+    @pytest.mark.parametrize(
+        ("section", "keyword", "value"),
+        _KCW_PASSTHROUGH_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[1]}" for case in _KCW_PASSTHROUGH_KEYS],
+    )
+    def test_pass_through_keyword_is_accepted_as_stated(
+        self, section: str, keyword: str, value: object
+    ) -> None:
+        """Every keyword the DFPT route does not determine is settable and comes back unchanged."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, value)
+
+        inp = KoopmansInput.model_validate(d)
+
+        namelist: object = inp.calculator_parameters.kcw
+        for part in section.split(".")[2:]:  # drop "calculator_parameters", "kcw"
+            namelist = getattr(namelist, part)
+        assert getattr(namelist, keyword) == value
+
+    def test_every_declared_keyword_is_exercised(self) -> None:
+        """No kcw.x keyword reaches the input file untested.
+
+        A pydantic-espresso model regenerated with a new keyword must land in
+        ``_KCW_PASSTHROUGH_KEYS`` — or in the ownership roster, which drops it
+        from the schema — before it can quietly become settable.
+        """
+        exercised: dict[str, set[str]] = {model.path: set() for model in _KCW_MODELS}
+        for section, keyword, _value in _KCW_PASSTHROUGH_KEYS:
+            exercised[section].add(keyword)
+
+        for model in _KCW_MODELS:
+            declared = set(
+                getattr(import_module("koopmans.input_file.kcw"), model.emitted).model_fields
+            )
+            assert exercised[model.path] == declared, model.path
+
+    def test_defaults_leave_every_namelist_unset(self) -> None:
+        """With no ``kcw`` block, every namelist states nothing explicitly."""
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        kcw = inp.calculator_parameters.kcw
+        assert kcw.control.model_fields_set == set()
+        assert kcw.wannier.model_fields_set == set()
+        assert kcw.screen.model_fields_set == set()
+        assert kcw.ham.model_fields_set == set()
+
+
+class TestKcwScreenNeedsAScreeningStep:
+    """``kcw.screen`` configures a calculation that ``calculate_alpha: false`` skips."""
+
+    def test_a_screen_block_without_a_screening_step_is_refused(self) -> None:
+        """The namelist would be assembled and never read; say so rather than drop it."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": 50}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcw.screen` has no effect" in message
+        assert "`workflow.calculate_alpha: false`" in message
+
+    def test_the_other_namelists_are_unaffected(self) -> None:
+        """``control`` / ``wannier`` / ``ham`` reach steps that still run."""
+        d = _si_input_with(
+            {"ecutwfc": 20.0, "kcw": {"control": {"lrpa": True}, "ham": {"write_hr": False}}}
+        )
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.calculator_parameters.kcw.control.lrpa is True
+
+    def test_a_null_keyword_is_not_a_stated_one(self) -> None:
+        """``null`` means the keyword was left out, here as in the overrides it builds."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": None}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.calculator_parameters.kcw.screen.niter is None
+
+    def test_an_empty_screen_block_is_accepted(self) -> None:
+        """A block stating no keyword asks for nothing, so there is nothing to refuse."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        KoopmansInput.model_validate(d)
+
+    def test_a_value_equal_to_the_schema_default_is_still_refused(self) -> None:
+        """Writing the default is still writing the keyword, so it is still refused.
+
+        ``nmix``'s pydantic default is 4: a user who writes ``nmix: 4`` is
+        stating a value the same as a user who writes ``nmix: 5``, and
+        ``input_to_kcw_overrides`` (``aiida/conversion.py``) emits it either
+        way.
+        """
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"nmix": 4}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcw.screen` has no effect" in message
+
+    def test_a_value_equal_to_the_seeded_default_is_still_refused(self) -> None:
+        """Writing the koopmans-seeded default is still writing the keyword.
+
+        ``tr2``'s generated field default is ``1e-18``, the value the DFPT
+        route seeds (not kcw.x's own ``1e-14``): a user who writes
+        ``tr2: 1.0e-18`` states the same value the route already uses, but
+        states it nonetheless, so it is still refused.
+        """
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"tr2": 1.0e-18}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcw.screen` has no effect" in message
+
+    def test_a_screen_block_is_fine_when_screening_runs(self) -> None:
+        """The default ``calculate_alpha: true`` runs the screen step that reads it."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": 50}}})
+        )
+
+        assert inp.calculator_parameters.kcw.screen.niter == 50
+
+    def test_the_zno_tutorial_still_parses(self, tutorials_dir: Path) -> None:
+        """The shipped ZnO input runs at ``calculate_alpha: false`` with no screen block."""
+        inp = read_input_file(tutorials_dir / "band_structures/zno/zno.json")
+
+        assert inp.workflow.calculate_alpha is False
+        assert inp.calculator_parameters.kcw.screen.model_fields_set == set()
 
 
 # (keyword, a substring of the explanation it is refused with).
