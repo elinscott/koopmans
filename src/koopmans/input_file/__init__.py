@@ -532,9 +532,7 @@ class KoopmansInput(BaseModel):
         the linear-response problem the ``SCREEN`` namelist configures.
 
         A keyword counts as stated when it carries a value of its own: one
-        written as ``null`` means the same as an omitted one, and a value
-        equal to the namelist default asks for nothing the default does not
-        already give.
+        written as ``null`` means the same as an omitted one.
 
         Raises:
             ValueError: If ``calculator_parameters.kcw.screen`` states a
@@ -543,7 +541,7 @@ class KoopmansInput(BaseModel):
         if self.workflow.calculate_alpha:
             return self
         stated = self.calculator_parameters.kcw.screen.model_dump(
-            exclude_unset=True, exclude_none=True, exclude_defaults=True
+            exclude_unset=True, exclude_none=True
         )
         if stated:
             raise ValueError(

@@ -943,19 +943,23 @@ class TestKcwScreenNeedsAScreeningStep:
 
         KoopmansInput.model_validate(d)
 
-    def test_dump_and_revalidate_roundtrips(self) -> None:
-        """``model_dump()`` -> ``model_validate()`` must not trip this check.
+    def test_a_value_equal_to_the_schema_default_is_still_refused(self) -> None:
+        """Writing the default is still writing the keyword, so it is still refused.
 
-        A dump states every field explicitly, defaults included, so a check
-        keyed on presence rather than on a value of the keyword's own would
-        refuse any ``calculate_alpha: false`` input round-tripped this way.
+        ``nmix``'s pydantic default is 4: a user who writes ``nmix: 4`` is
+        stating a value the same as a user who writes ``nmix: 5``, and
+        ``input_to_kcw_overrides`` (``aiida/conversion.py``) emits it either
+        way.
         """
-        d = _si_input_with({"ecutwfc": 20.0})
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"nmix": 4}}})
         d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
         d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
-        inp = KoopmansInput.model_validate(d)
 
-        KoopmansInput.model_validate(inp.model_dump())
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcw.screen` has no effect" in message
 
     def test_a_screen_block_is_fine_when_screening_runs(self) -> None:
         """The default ``calculate_alpha: true`` runs the screen step that reads it."""
