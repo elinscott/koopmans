@@ -430,6 +430,19 @@ def localhost_computer(aiida_computer_local: Any) -> Any:
 
 
 @pytest.fixture
+def mock_remote_computer(aiida_computer: Any) -> Any:
+    """Return an unconnected computer named ``mock-remote`` (SLURM over SSH).
+
+    Left unconfigured (no ``configuration_kwargs``): the remote-computer
+    tests exercise ``computer.name`` resolution and scheduler-type checks,
+    not an actual SSH connection.
+    """
+    return aiida_computer(
+        label="mock-remote", transport_type="core.ssh", scheduler_type="core.slurm"
+    )
+
+
+@pytest.fixture
 def localhost_code(localhost_computer: Any) -> Any:
     """Return a get-or-create factory for dummy codes on the literal ``localhost``.
 

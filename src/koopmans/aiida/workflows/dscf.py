@@ -142,8 +142,8 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # kcp eagerly (aiida-koopmans#90: a deliberate, permanent choice, not
     # a follow-up); the pre-flight catches a missing kcp before that bare
     # subscript can raise a bare KeyError.
-    codes = load_codes(DscfCodes)
-    require_configured_codes(DscfCodes, codes)
+    codes = load_codes(DscfCodes, koopmans_input.computer.name)
+    require_configured_codes(DscfCodes, codes, koopmans_input.computer.name)
 
     return name_run(
         KoopmansDSCFWorkflow.build(

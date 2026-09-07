@@ -6,7 +6,11 @@ creating circular dependencies.
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from datetime import timedelta
+from typing import Annotated, Any
+
+from pydantic import BeforeValidator
 
 
 def raise_for_owned_keywords(data: Any, block: str, owned: dict[str, str]) -> Any:
@@ -77,3 +81,31 @@ def tidy_units(value: str) -> str:
     value = value.lower()
     value = value.replace("angstrom", "ang")
     return value
+
+
+_SHORTHAND_DURATION = re.compile(
+    r"^(?:(?P<days>\d+)d)?(?:(?P<hours>\d+)h)?(?:(?P<minutes>\d+)m)?(?:(?P<seconds>\d+)s)?$",
+    re.IGNORECASE,
+)
+
+
+def parse_walltime_shorthand(value: Any) -> Any:
+    """Expand a compact duration string (``2h``, ``90m``, ``1d12h``) into a ``timedelta``.
+
+    Passes anything else through unchanged, so pydantic's own duration
+    parsing still handles ``HH:MM:SS``, an ISO 8601 duration, a plain count
+    of seconds, and ``timedelta`` instances directly.
+    """
+    if not isinstance(value, str):
+        return value
+    match = _SHORTHAND_DURATION.fullmatch(value.strip())
+    if match is None or not any(match.groups()):
+        return value
+    units = {unit: int(count) for unit, count in match.groupdict("0").items()}
+    return timedelta(**units)
+
+
+#: A duration field accepting shorthand (``2h``), ``HH:MM:SS``, an ISO 8601
+#: duration, a plain seconds count, or a ``timedelta``. Shared by
+#: ``ComputerInput.walltime`` and ``CodeParallelization.walltime``.
+Walltime = Annotated[timedelta | None, BeforeValidator(parse_walltime_shorthand)]

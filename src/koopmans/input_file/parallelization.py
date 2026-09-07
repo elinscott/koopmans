@@ -2,12 +2,13 @@
 
 The top-level ``parallelization`` block maps each code (``pw``, ``kcp``, …)
 to a small config of MPI-rank count (``ntasks``), k-point-pool count
-(``npool``), a pencil-decomposition switch (``pd``), and a per-rank
-OpenMP/BLAS thread count (``omp``). ``ntasks`` becomes the scheduler's
-``tot_num_mpiprocs``; ``npool`` becomes ``-npool`` and ``pd`` becomes
-``-pd true`` on the QE command line; ``omp`` sets the ``OMP_NUM_THREADS`` /
-``OPENBLAS_NUM_THREADS`` / ``MKL_NUM_THREADS`` per rank, defaulting to the
-localhost computer's pin of one thread. See
+(``npool``), a pencil-decomposition switch (``pd``), a per-rank OpenMP/BLAS
+thread count (``omp``), and a wallclock override (``walltime``). ``ntasks``
+becomes the scheduler's ``tot_num_mpiprocs``; ``npool`` becomes ``-npool``
+and ``pd`` becomes ``-pd true`` on the QE command line; ``omp`` sets the
+``OMP_NUM_THREADS`` / ``OPENBLAS_NUM_THREADS`` / ``MKL_NUM_THREADS`` per
+rank, defaulting to the localhost computer's pin of one thread; ``walltime``
+overrides the top-level ``computer.walltime`` default for one code. See
 :func:`koopmans.aiida.conversion.code_parallelization` for the translation
 into AiiDA ``metadata.options`` / ``settings.cmdline``.
 """
@@ -20,6 +21,7 @@ from aiida_koopmans.parallelization import CODE_NAMES, ParallelizationDict
 from pydantic import Field, model_validator
 
 from koopmans.base import BaseModel
+from koopmans.input_file._utils import Walltime
 
 # Every code the parallelization block recognises. Sourced from the single
 # ``aiida_koopmans.parallelization`` vocabulary (``CodeName``) rather than duplicated here.
@@ -34,6 +36,15 @@ ALL_CODES: tuple[str, ...] = CODE_NAMES
 # workgraph makes; at the schema level ``kcw`` counts as pool-supporting.
 POOL_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
 PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
+
+# Codes whose calculations actually receive a per-code ``walltime`` override
+# today: only ``pw``, via :func:`koopmans.aiida.conversion.code_parallelization`
+# (called once, on the shared scf/nscf/bands overrides). Every other code's
+# metadata is merged inside ``aiida-koopmans2``'s own ``resolve_parallelization``,
+# which reads ``ntasks``/``npool``/``pd``/``omp`` only — a ``walltime`` entry
+# there would be silently dropped, so this schema refuses it instead until
+# that plugin grows the same key.
+WALLTIME_SUPPORTING_CODES: frozenset[str] = frozenset({"pw"})
 
 
 __all__ = ["CodeParallelization", "ParallelizationInput"]
@@ -72,6 +83,13 @@ class CodeParallelization(BaseModel):
         "Valid for every code; the default is the localhost computer's pin of one thread "
         "per rank, which stops the threaded BLAS builds oversubscribing the allocation.",
     )
+    walltime: Walltime = Field(
+        default=None,
+        description="wallclock limit for this code's calculations, overriding the "
+        "top-level ``computer.walltime`` default (``2h``, ``90m``, ``1d12h``, "
+        "``HH:MM:SS``, or any pydantic-native duration). Only valid for pw; every other "
+        "code takes its wallclock limit from ``computer.walltime`` alone.",
+    )
 
 
 class ParallelizationInput(BaseModel):
@@ -105,6 +123,12 @@ class ParallelizationInput(BaseModel):
                 raise ValueError(
                     f"'pd' (pencil decomposition) is not valid for {code}; it is only "
                     f"supported by {sorted(PD_SUPPORTING_CODES)}."
+                )
+            if cfg.walltime is not None and code not in WALLTIME_SUPPORTING_CODES:
+                raise ValueError(
+                    f"'walltime' is not yet wired for {code}; only "
+                    f"{sorted(WALLTIME_SUPPORTING_CODES)} apply it today. Use the "
+                    "top-level `computer.walltime` default instead."
                 )
         return self
 

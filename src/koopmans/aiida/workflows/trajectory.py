@@ -115,11 +115,13 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # is eager (aiida-koopmans#90: a deliberate, permanent choice); the
     # pre-flight catches a missing kcp before that bare subscript can
     # raise a bare KeyError.
-    codes = load_codes(DscfCodes)
-    require_configured_codes(DscfCodes, codes)
+    codes = load_codes(DscfCodes, koopmans_input.computer.name)
+    require_configured_codes(DscfCodes, codes, koopmans_input.computer.name)
 
     if ml_mode != MLMode.NONE and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
-        extra_kwargs["pw2wannier90_code"] = load_code("pw2wannier90", "pw2wannier90.x")
+        extra_kwargs["pw2wannier90_code"] = load_code(
+            "pw2wannier90", "pw2wannier90.x", koopmans_input.computer.name
+        )
         extra_kwargs["decompose_parameters"] = _decompose_parameters(ml_config)
 
     return name_run(

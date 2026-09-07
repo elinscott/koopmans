@@ -152,7 +152,7 @@ def run(input_file: str) -> None:
                 wg, on_submitted=functools.partial(_anchor_run_submission, input_path)
             )
     except Exception as exc:
-        advice = advice_for(exc)
+        advice = advice_for(exc, koopmans_input.computer.name)
         if advice is not None:
             exc.add_note(advice)
         raise
@@ -198,7 +198,7 @@ def submit(input_file: str) -> None:
         with suppress_aiida_logging():
             node = launch(wg, blocking=False, wait=False)
     except Exception as exc:
-        advice = advice_for(exc)
+        advice = advice_for(exc, koopmans_input.computer.name)
         if advice is not None:
             exc.add_note(advice)
         raise

@@ -38,6 +38,7 @@ from tests.fixtures import (  # noqa: F401
     installed_wannier_codes,
     localhost_code,
     localhost_computer,
+    mock_remote_computer,
     offline_sg15_archive,
     read_input_dict,
     replay_probes,

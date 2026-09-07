@@ -35,7 +35,8 @@ if TYPE_CHECKING:
         CellParametersViaIbrav,
         CellParametersViaVectors,
     )
-    from koopmans.input_file.parallelization import CodeParallelization
+    from koopmans.input_file.computer import ComputerInput
+    from koopmans.input_file.parallelization import CodeParallelization, ParallelizationInput
 
 # Quantum ESPRESSO's own value, so that converted quantities match QE output
 BOHR_TO_ANGSTROM: float = CONSTANTS.bohr_to_ang
@@ -47,6 +48,7 @@ NORM_CONSERVING_DUAL: float = 4.0
 
 def code_parallelization(
     config: CodeParallelization | None,
+    computer: ComputerInput | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Translate a code's parallelization config into ``(options, settings)``.
 
@@ -66,26 +68,116 @@ def code_parallelization(
     ``prepend_text``, so emitting it here as well would duplicate it. omp
     therefore rides the threaded mapping alone (via ``as_mapping``).
 
+    ``computer`` supplies the run's scheduler options: its ``walltime``
+    becomes ``metadata.options.max_wallclock_seconds`` (whole seconds), and
+    its ``account`` / ``queue`` become ``metadata.options.account`` /
+    ``queue_name``. ``config.walltime`` overrides ``computer.walltime`` for
+    this one code; ``account`` and ``queue`` have no per-code override.
+
     Args:
         config: The per-code parallelization settings, or ``None``.
+        computer: The run's computer settings, or ``None``.
 
     Returns:
         A ``(options, settings)`` tuple of dicts, either of which may be empty.
     """
     options: dict[str, Any] = {}
     settings: dict[str, Any] = {}
-    if config is None:
-        return options, settings
-    if config.ntasks is not None:
-        options["resources"] = {"num_machines": 1, "num_mpiprocs_per_machine": config.ntasks}
-    cmdline: list[str] = []
-    if config.npool is not None:
-        cmdline += ["-npool", str(config.npool)]
-    if config.pd:
-        cmdline += ["-pd", "true"]
-    if cmdline:
-        settings["cmdline"] = cmdline
+    if config is not None:
+        if config.ntasks is not None:
+            options["resources"] = {
+                "num_machines": 1,
+                "num_mpiprocs_per_machine": config.ntasks,
+            }
+        cmdline: list[str] = []
+        if config.npool is not None:
+            cmdline += ["-npool", str(config.npool)]
+        if config.pd:
+            cmdline += ["-pd", "true"]
+        if cmdline:
+            settings["cmdline"] = cmdline
+
+    walltime = (config.walltime if config is not None else None) or (
+        computer.walltime if computer is not None else None
+    )
+    if walltime is not None:
+        options["max_wallclock_seconds"] = int(walltime.total_seconds())
+    if computer is not None and computer.account is not None:
+        options["account"] = computer.account
+    if computer is not None and computer.queue is not None:
+        options["queue_name"] = computer.queue
+
     return options, settings
+
+
+# Schedulers with no account/project concept: HyperQueue (the localhost
+# backend's own scheduler) and aiida-core's direct scheduler have neither
+# flag on their command line.
+_NO_ACCOUNT_QUEUE_SCHEDULERS: frozenset[str] = frozenset({"hyperqueue", "core.direct"})
+
+# Schedulers that ignore ``max_wallclock_seconds``. HyperQueue does honour it
+# (``--time-limit``/``--time-request``, source-verified in
+# ``aiida_hyperqueue.scheduler.HyperQueueScheduler._get_submit_script_header``);
+# aiida-core's direct scheduler carries the line that would emit a ``timeout``
+# wrapper, but it is commented out
+# (``aiida.schedulers.plugins.direct.DirectScheduler``), so a walltime set
+# there has no effect.
+_NO_WALLTIME_SCHEDULERS: frozenset[str] = frozenset({"core.direct"})
+
+
+def validate_computer_scheduler_support(
+    computer: ComputerInput, parallelization: ParallelizationInput
+) -> None:
+    """Reject a scheduler option the resolved computer's scheduler cannot honour.
+
+    A no-op if ``computer.name`` names no configured AiiDA computer: the
+    default ``localhost`` reaches here unchecked whenever the profile has no
+    ``localhost`` computer yet, and the missing-codes advice is the correct
+    diagnosis for that, not this function's. Call after the existence check
+    that produces a setup hint for a named remote computer
+    (:func:`~koopmans.aiida.workflows.require_computer_configured`).
+
+    Args:
+        computer: The run's computer settings.
+        parallelization: The run's per-code parallelization settings, whose
+            per-code ``walltime`` is checked against the same scheduler.
+
+    Raises:
+        ValueError: If ``account`` or ``queue`` is set against a scheduler
+            with no such concept, or if a ``walltime`` (computer-level or
+            per-code) is set against a scheduler that ignores it.
+    """
+    from aiida.common.exceptions import NotExistent
+
+    try:
+        scheduler_type = orm.load_computer(computer.name).scheduler_type
+    except NotExistent:
+        return
+
+    if scheduler_type in _NO_ACCOUNT_QUEUE_SCHEDULERS:
+        if computer.account is not None:
+            raise ValueError(
+                f"`computer.account` has no effect on '{computer.name}' "
+                f"({scheduler_type} has no account/project concept); remove it."
+            )
+        if computer.queue is not None:
+            raise ValueError(
+                f"`computer.queue` has no effect on '{computer.name}' "
+                f"({scheduler_type} has no queue concept); remove it."
+            )
+
+    if scheduler_type in _NO_WALLTIME_SCHEDULERS:
+        if computer.walltime is not None:
+            raise ValueError(
+                f"`computer.walltime` has no effect on '{computer.name}' "
+                f"({scheduler_type} does not enforce a wallclock limit); remove it."
+            )
+        for code, cfg in parallelization.as_dict().items():
+            if cfg.walltime is not None:
+                raise ValueError(
+                    f"`parallelization.{code}.walltime` has no effect on '{computer.name}' "
+                    f"({scheduler_type} does not enforce a wallclock limit); remove it."
+                )
 
 
 def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:

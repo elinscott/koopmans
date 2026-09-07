@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import timedelta
 from importlib import import_module
 from pathlib import Path
 
@@ -485,6 +486,86 @@ class TestParallelizationSchema:
         """Both integer fields reject zero and negative values."""
         with pytest.raises(ValueError):
             KoopmansInput.model_validate(_parallelization_input(parallelization={"pw": {field: 0}}))
+
+    def test_walltime_valid_for_pw(self) -> None:
+        """Pw is the one code koopmans2 wires a per-code walltime override for."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"pw": {"walltime": "2h"}})
+        )
+        pw = inp.parallelization.pw
+        assert pw is not None and pw.walltime == timedelta(hours=2)
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_walltime_rejected_for_other_codes(self, code: str) -> None:
+        """Every other code's walltime is not wired anywhere, so it is refused, not dropped."""
+        with pytest.raises(ValueError, match="'walltime' is not yet wired"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={code: {"walltime": "2h"}})
+            )
+
+
+def _si_input_with_computer(computer: object) -> dict[str, object]:
+    """Return a minimal silicon input dict naming a top-level ``computer`` block."""
+    d = _parallelization_input()
+    d["computer"] = computer
+    return d
+
+
+class TestComputerSchema:
+    """The top-level ``computer`` block: a bare label, or name/account/queue/walltime."""
+
+    def test_default_is_localhost(self) -> None:
+        """With no `computer` block, the run targets the bundled `localhost` computer."""
+        inp = KoopmansInput.model_validate(_parallelization_input())
+        assert inp.computer.name == "localhost"
+        assert (inp.computer.account, inp.computer.queue, inp.computer.walltime) == (
+            None,
+            None,
+            None,
+        )
+
+    def test_bare_label_and_block_form_are_equivalent(self) -> None:
+        """`computer: daint` is shorthand for `computer: {name: daint}`."""
+        bare = KoopmansInput.model_validate(_si_input_with_computer("daint"))
+        block = KoopmansInput.model_validate(_si_input_with_computer({"name": "daint"}))
+        assert bare.computer == block.computer
+        assert bare.computer.name == "daint"
+
+    def test_block_form_carries_account_queue_and_walltime(self) -> None:
+        """The block form's fields all round-trip."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_computer(
+                {"name": "daint", "account": "mr32", "queue": "normal", "walltime": "2h"}
+            )
+        )
+        assert inp.computer.name == "daint"
+        assert inp.computer.account == "mr32"
+        assert inp.computer.queue == "normal"
+        assert inp.computer.walltime == timedelta(hours=2)
+
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("2h", timedelta(hours=2)),
+            ("90m", timedelta(minutes=90)),
+            ("1d12h", timedelta(days=1, hours=12)),
+            ("30s", timedelta(seconds=30)),
+            ("02:30:00", timedelta(hours=2, minutes=30)),
+            (7200, timedelta(hours=2)),
+            (timedelta(hours=2), timedelta(hours=2)),
+        ],
+    )
+    def test_walltime_spellings(self, spelling: object, expected: timedelta) -> None:
+        """Shorthand, ``HH:MM:SS``, a plain seconds count, and a ``timedelta`` all parse."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_computer({"name": "daint", "walltime": spelling})
+        )
+        assert inp.computer.walltime == expected
+
+    def test_walltime_nonsense_string_rejected(self) -> None:
+        """A string matching neither the shorthand nor a pydantic-native duration is refused."""
+        with pytest.raises(ValueError):
+            KoopmansInput.model_validate(_si_input_with_computer({"walltime": "two hours"}))
 
 
 class TestKpointsOffset:

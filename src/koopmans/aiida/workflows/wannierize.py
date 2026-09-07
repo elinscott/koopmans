@@ -264,8 +264,8 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # get_builder_from_protocol call, which raises its own eager error on
     # a missing required member; the pre-flight gets there first with the
     # same install advice every other route gives.
-    codes = load_codes(WannierizeCodes)
-    require_configured_codes(WannierizeCodes, codes)
+    codes = load_codes(WannierizeCodes, koopmans_input.computer.name)
+    require_configured_codes(WannierizeCodes, codes, koopmans_input.computer.name)
 
     return name_run(
         Wannierize.build(
@@ -426,8 +426,8 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # binds pw eagerly (aiida-koopmans#97: not yet converted to
     # node_graph.reference); the pre-flight catches a missing required member
     # before that bare subscript can raise a bare KeyError.
-    codes = load_codes(WannierizeBlocksCodes)
-    require_configured_codes(WannierizeBlocksCodes, codes)
+    codes = load_codes(WannierizeBlocksCodes, koopmans_input.computer.name)
+    require_configured_codes(WannierizeBlocksCodes, codes, koopmans_input.computer.name)
 
     # split_threshold and num_occ_bands are split-only: without a threshold
     # the graph splits nothing, and WannierizeBlocks rejects them rather
