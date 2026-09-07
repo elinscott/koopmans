@@ -149,7 +149,8 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         KoopmansDSCFWorkflow.build(
             codes=codes,
             structure=structure,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
             **inputs,
             **extra_kwargs,
         ),

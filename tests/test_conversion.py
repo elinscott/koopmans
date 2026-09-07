@@ -708,10 +708,11 @@ class TestValidateComputerSchedulerSupport:
                 ParallelizationInput(),
             )
 
+    @pytest.mark.parametrize("code_name", ["pw", "kcw"])
     def test_direct_scheduler_refuses_per_code_walltime(
-        self, aiida_profile_clean: Any, aiida_computer: Any
+        self, aiida_profile_clean: Any, aiida_computer: Any, code_name: str
     ) -> None:
-        """A per-code ``pw.walltime`` is checked against the same scheduler."""
+        """A per-code walltime is checked against the same scheduler, for every code."""
         from datetime import timedelta
 
         from koopmans.aiida.conversion import validate_computer_scheduler_support
@@ -725,8 +726,8 @@ class TestValidateComputerSchedulerSupport:
             label="direct-host2", scheduler_type="core.direct", transport_type="core.local"
         )
         code = CodeParallelization(walltime=timedelta(minutes=30))
-        parallelization = ParallelizationInput(pw=code)
-        with pytest.raises(ValueError, match=r"`parallelization\.pw\.walltime`"):
+        parallelization = ParallelizationInput(**{code_name: code})
+        with pytest.raises(ValueError, match=rf"`parallelization\.{code_name}\.walltime`"):
             validate_computer_scheduler_support(ComputerInput(name="direct-host2"), parallelization)
 
     def test_slurm_allows_account_queue_and_walltime(
@@ -854,6 +855,39 @@ class TestDispatcherThreadsParallelization:
         )
         build_dft_bands_workgraph(inp)
         assert captured["parallelization"] == {"pw": {"npool": 4}, "kcw": {"ntasks": 8}}
+
+    def test_computer_walltime_reaches_a_non_pw_code(
+        self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
+    ) -> None:
+        """``computer.walltime`` defaults every code's mapping entry, not just pw's."""
+        import aiida_koopmans.workgraphs.pw as pw_module
+
+        from koopmans.aiida.workflows import dft as dft_module
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        captured: dict[str, Any] = {}
+
+        def fake_build(**kwargs: Any) -> SimpleNamespace:
+            """Capture the builder call's kwargs, standing in for the workgraph."""
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        monkeypatch.setattr(
+            dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+        )
+        monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                parallelization={"kcw": {"ntasks": 8}, "wannier90": {"walltime": "30m"}},
+                computer={"walltime": "2h"},
+            )
+        )
+        build_dft_bands_workgraph(inp)
+        # kcw picks up the computer default; wannier90's own walltime wins over it.
+        assert captured["parallelization"]["kcw"] == {"ntasks": 8, "max_wallclock_seconds": 7200}
+        assert captured["parallelization"]["wannier90"] == {"max_wallclock_seconds": 1800}
 
     def test_no_config_passes_none(
         self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any

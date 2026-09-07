@@ -97,9 +97,9 @@ def code_parallelization(
         if cmdline:
             settings["cmdline"] = cmdline
 
-    walltime = (config.walltime if config is not None else None) or (
-        computer.walltime if computer is not None else None
-    )
+    from koopmans.input_file.parallelization import resolve_effective_walltime
+
+    walltime = resolve_effective_walltime(config, computer)
     if walltime is not None:
         options["max_wallclock_seconds"] = int(walltime.total_seconds())
     if computer is not None and computer.account is not None:

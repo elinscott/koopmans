@@ -67,7 +67,8 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             codes=codes,
             structure=structure,
             overrides=overrides,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
             scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
             bands_kpoints=bands_kpoints,
             spin_type=spin,

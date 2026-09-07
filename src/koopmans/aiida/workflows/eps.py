@@ -77,7 +77,8 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             structure=structure,
             pseudo_family=pseudo_family,
             overrides=overrides,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
             scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
             spin_type=spin,
         ),

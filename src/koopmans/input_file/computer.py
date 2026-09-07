@@ -3,11 +3,16 @@
 The top-level ``computer`` block names the AiiDA computer label a run
 submits to. A bare string (``computer: daint``) is shorthand for the block
 form with only ``name`` set; the block additionally states a scheduler
-account, queue, and default walltime. ``account``/``queue``/``walltime``
-feed ``metadata.options`` via
-:func:`koopmans.aiida.conversion.code_parallelization`; a scheduler with no
-such concept (HyperQueue, the direct scheduler) refuses the ones it cannot
-honour — see :func:`koopmans.aiida.conversion.validate_computer_scheduler_support`.
+account, queue, and default walltime. ``account``/``queue`` feed pw's
+``metadata.options`` via
+:func:`koopmans.aiida.conversion.code_parallelization`; ``walltime`` reaches
+every code, either through that same function (pw) or as the fallback in
+:meth:`koopmans.input_file.parallelization.ParallelizationInput.as_mapping`
+(every other code) wherever the code's own
+``parallelization.<code>.walltime`` is unset. A scheduler with no
+account/queue concept (HyperQueue, the direct scheduler) refuses the ones it
+cannot honour — see
+:func:`koopmans.aiida.conversion.validate_computer_scheduler_support`.
 """
 
 from __future__ import annotations
@@ -45,8 +50,8 @@ class ComputerInput(BaseModel):
         default=None,
         description="default wallclock limit for every step (`2h`, `90m`, `1d12h`, "
         "`HH:MM:SS`, or any pydantic-native duration); `parallelization.<code>.walltime` "
-        "overrides it for one code. Has no effect on the direct scheduler, which enforces "
-        "no wallclock limit",
+        "overrides it for that one code. Has no effect on the direct scheduler, which "
+        "enforces no wallclock limit",
     )
 
 

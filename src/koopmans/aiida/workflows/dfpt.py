@@ -170,7 +170,8 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
             manifolds=manifolds,
             group_orbitals_tol=group_orbitals_tol,
             kcw_overrides=kcw_overrides or None,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
         ),
         "Koopmans DFPT",
     )

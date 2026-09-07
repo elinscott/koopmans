@@ -128,7 +128,8 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         TrajectoryWorkflow.build(
             codes=codes,
             snapshots=snapshots,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
             **inputs,
             **extra_kwargs,
             ml_mode=ml_mode,

@@ -274,7 +274,8 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             overrides=overrides,
             pseudo_family=pseudo_family,
             print_summary=False,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
             scf_kpoints=scf_kpoints,
             kpoints=kpoints,
             mp_grid=mp_grid,
@@ -453,7 +454,8 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
             interpolation_kpoints=interpolation_kpoints,
             pseudo_family=pseudo_family,
             overrides=wannier_overrides,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
             **external_kwargs,
         ),
         "Wannierization",

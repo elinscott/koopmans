@@ -362,7 +362,9 @@ class TestKcpMagnetizationRemoved:
         assert kcp_dscf_inputs(read_input_file(input_file))["tot_magnetization"] == 2
 
 
-def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
+def _parallelization_input(
+    *, parallelization: object | None = None, computer: object | None = None
+) -> dict[str, object]:
     """Return a minimal silicon input dict for parallelization-block tests."""
     d: dict[str, object] = {
         "workflow": {"task": "dft_bands", "pseudo_library": "X"},
@@ -378,6 +380,8 @@ def _parallelization_input(*, parallelization: object | None = None) -> dict[str
     }
     if parallelization is not None:
         d["parallelization"] = parallelization
+    if computer is not None:
+        d["computer"] = computer
     return d
 
 
@@ -488,7 +492,7 @@ class TestParallelizationSchema:
             KoopmansInput.model_validate(_parallelization_input(parallelization={"pw": {field: 0}}))
 
     def test_walltime_valid_for_pw(self) -> None:
-        """Pw is the one code koopmans2 wires a per-code walltime override for."""
+        """Pw accepts a per-code walltime override."""
         inp = KoopmansInput.model_validate(
             _parallelization_input(parallelization={"pw": {"walltime": "2h"}})
         )
@@ -496,12 +500,38 @@ class TestParallelizationSchema:
         assert pw is not None and pw.walltime == timedelta(hours=2)
 
     @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
-    def test_walltime_rejected_for_other_codes(self, code: str) -> None:
-        """Every other code's walltime is not wired anywhere, so it is refused, not dropped."""
-        with pytest.raises(ValueError, match="'walltime' is not yet wired"):
-            KoopmansInput.model_validate(
-                _parallelization_input(parallelization={code: {"walltime": "2h"}})
+    def test_walltime_valid_for_every_code(self, code: str) -> None:
+        """Every code accepts a walltime override and it lands in the mapping."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={code: {"walltime": "2h"}})
+        )
+        cfg = getattr(inp.parallelization, code)
+        assert cfg is not None and cfg.walltime == timedelta(hours=2)
+        assert inp.parallelization.as_mapping() == {code: {"max_wallclock_seconds": 7200}}
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_computer_default_reaches_every_code(self, code: str) -> None:
+        """A code with no walltime of its own falls back to ``computer.walltime``."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={code: {"ntasks": 2}},
+                computer={"name": "daint", "walltime": "1h"},
             )
+        )
+        mapping = inp.parallelization.as_mapping(inp.computer)
+        assert mapping[code] == {"ntasks": 2, "max_wallclock_seconds": 3600}
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_per_code_walltime_beats_computer_default(self, code: str) -> None:
+        """A code's own ``walltime`` wins over ``computer.walltime``, for every code."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={code: {"walltime": "30m"}},
+                computer={"name": "daint", "walltime": "2h"},
+            )
+        )
+        mapping = inp.parallelization.as_mapping(inp.computer)
+        assert mapping[code] == {"max_wallclock_seconds": 1800}
 
 
 def _si_input_with_computer(computer: object) -> dict[str, object]:

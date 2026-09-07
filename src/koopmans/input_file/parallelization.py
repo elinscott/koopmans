@@ -8,20 +8,25 @@ becomes the scheduler's ``tot_num_mpiprocs``; ``npool`` becomes ``-npool``
 and ``pd`` becomes ``-pd true`` on the QE command line; ``omp`` sets the
 ``OMP_NUM_THREADS`` / ``OPENBLAS_NUM_THREADS`` / ``MKL_NUM_THREADS`` per
 rank, defaulting to the localhost computer's pin of one thread; ``walltime``
-overrides the top-level ``computer.walltime`` default for one code. See
+overrides the top-level ``computer.walltime`` default for one code, for
+every code. See :func:`resolve_effective_walltime` for that precedence, and
 :func:`koopmans.aiida.conversion.code_parallelization` for the translation
 into AiiDA ``metadata.options`` / ``settings.cmdline``.
 """
 
 from __future__ import annotations
 
-from typing import Self, cast
+from datetime import timedelta
+from typing import TYPE_CHECKING, Self, cast
 
 from aiida_koopmans.parallelization import CODE_NAMES, ParallelizationDict
 from pydantic import Field, model_validator
 
 from koopmans.base import BaseModel
 from koopmans.input_file._utils import Walltime
+
+if TYPE_CHECKING:
+    from koopmans.input_file.computer import ComputerInput
 
 # Every code the parallelization block recognises. Sourced from the single
 # ``aiida_koopmans.parallelization`` vocabulary (``CodeName``) rather than duplicated here.
@@ -37,17 +42,8 @@ ALL_CODES: tuple[str, ...] = CODE_NAMES
 POOL_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
 PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
 
-# Codes whose calculations actually receive a per-code ``walltime`` override
-# today: only ``pw``, via :func:`koopmans.aiida.conversion.code_parallelization`
-# (called once, on the shared scf/nscf/bands overrides). Every other code's
-# metadata is merged inside ``aiida-koopmans2``'s own ``resolve_parallelization``,
-# which reads ``ntasks``/``npool``/``pd``/``omp`` only — a ``walltime`` entry
-# there would be silently dropped, so this schema refuses it instead until
-# that plugin grows the same key.
-WALLTIME_SUPPORTING_CODES: frozenset[str] = frozenset({"pw"})
 
-
-__all__ = ["CodeParallelization", "ParallelizationInput"]
+__all__ = ["CodeParallelization", "ParallelizationInput", "resolve_effective_walltime"]
 
 
 # NOTE: keep this Pydantic model (and the per-code fields it validates) in
@@ -87,8 +83,7 @@ class CodeParallelization(BaseModel):
         default=None,
         description="wallclock limit for this code's calculations, overriding the "
         "top-level ``computer.walltime`` default (``2h``, ``90m``, ``1d12h``, "
-        "``HH:MM:SS``, or any pydantic-native duration). Only valid for pw; every other "
-        "code takes its wallclock limit from ``computer.walltime`` alone.",
+        "``HH:MM:SS``, or any pydantic-native duration). Valid for every code.",
     )
 
 
@@ -124,28 +119,52 @@ class ParallelizationInput(BaseModel):
                     f"'pd' (pencil decomposition) is not valid for {code}; it is only "
                     f"supported by {sorted(PD_SUPPORTING_CODES)}."
                 )
-            if cfg.walltime is not None and code not in WALLTIME_SUPPORTING_CODES:
-                raise ValueError(
-                    f"'walltime' is not yet wired for {code}; only "
-                    f"{sorted(WALLTIME_SUPPORTING_CODES)} apply it today. Use the "
-                    "top-level `computer.walltime` default instead."
-                )
         return self
 
     def as_dict(self) -> dict[str, CodeParallelization]:
         """Return the configured (non-``None``) code entries as a plain dict."""
         return {code: cfg for code in ALL_CODES if (cfg := getattr(self, code)) is not None}
 
-    def as_mapping(self) -> ParallelizationDict:
+    def as_mapping(self, computer: ComputerInput | None = None) -> ParallelizationDict:
         """Return the per-code settings as the mapping the workgraphs consume.
 
         Each configured code maps to its set (non-``None``) fields via
-        pydantic's own dump; a code with no set field is omitted. This is the
-        ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
+        pydantic's own dump, with ``walltime`` folded into whole-second
+        ``max_wallclock_seconds`` — the key ``aiida-koopmans`` expects, and
+        the only field this mapping does not pass through verbatim. Passing
+        ``computer`` also gives every code its ``computer.walltime`` default
+        wherever the code's own ``walltime`` is unset
+        (:func:`resolve_effective_walltime`); this is the one place that
+        default reaches a code other than through the pw-specific seeding in
+        :func:`koopmans.aiida.conversion.code_parallelization`. Omitting
+        ``computer`` (the default) reproduces the old configured-codes-only
+        behaviour. A code with no fields set and no computer default is
+        omitted.
+
+        This is the ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
         """
-        mapping = {
-            code: fields
-            for code, cfg in self.as_dict().items()
-            if (fields := cfg.model_dump(exclude_none=True))
-        }
+        mapping: dict[str, dict[str, object]] = {}
+        for code in ALL_CODES:
+            cfg = getattr(self, code)
+            fields = cfg.model_dump(exclude_none=True, exclude={"walltime"}) if cfg else {}
+            walltime = resolve_effective_walltime(cfg, computer)
+            if walltime is not None:
+                fields = {**fields, "max_wallclock_seconds": int(walltime.total_seconds())}
+            if fields:
+                mapping[code] = fields
         return cast(ParallelizationDict, mapping)
+
+
+def resolve_effective_walltime(
+    config: CodeParallelization | None, computer: ComputerInput | None
+) -> timedelta | None:
+    """Return one code's effective walltime: its own override, else ``computer.walltime``.
+
+    The one place this precedence is decided; both
+    :meth:`ParallelizationInput.as_mapping` and
+    :func:`koopmans.aiida.conversion.code_parallelization` call it rather than
+    each repeating the fallback.
+    """
+    if config is not None and config.walltime is not None:
+        return config.walltime
+    return computer.walltime if computer is not None else None
