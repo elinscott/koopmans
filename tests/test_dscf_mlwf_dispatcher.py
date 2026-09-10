@@ -976,19 +976,23 @@ class TestSmoothInterpolation:
     def test_the_dense_mesh_is_wannierized_off_a_coarse_scf(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """A 2x2x2 grid at factor 4 Wannierizes 8x8x8 while the scf stays 2x2x2.
+        """A 2x2x2 grid at factor 4 Wannierizes 8x8x8, reusing the coarse route's own scf.
 
-        The scf assertion is the discriminating one: scaling both meshes
-        also produces a denser Hamiltonian, at the cost of re-converging
-        the same density on a mesh nothing needs.
+        The ``scf_remote_folder`` link is the discriminating check: it must
+        trace to the coarse wannier_initialization's own converged scf
+        rather than a fresh one, so no second scf on the same density ever
+        builds.
         """
         wg = _build(self._with_smooth())
         smooth = wg.tasks["wannierize_smooth"]
-        assert smooth.inputs["smooth_mp_grid"].value == [8, 8, 8]
-        assert smooth.inputs["scf_kpoints"].value.get_kpoints_mesh()[0] == [2, 2, 2]
+        assert smooth.inputs["mp_grid"].value == [8, 8, 8]
+        scf_links = smooth.inputs["scf_remote_folder"]._links
+        assert [link.from_task.name for link in scf_links] == ["wannier_initialization"]
+        assert [link.from_socket._name for link in scf_links] == ["scf_remote_folder"]
+        assert not smooth.inputs["scf_kpoints"]._links
         # wannier90 and pw2wannier90 read the full explicit list, which a
         # symmetry-reducing nscf would otherwise shrink.
-        assert len(smooth.inputs["smooth_kpoints"].value.get_kpoints()) == 8**3
+        assert len(smooth.inputs["kpoints"].value.get_kpoints()) == 8**3
 
     def test_the_same_blocks_are_wannierized_twice(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
@@ -1004,7 +1008,7 @@ class TestSmoothInterpolation:
     ) -> None:
         """A three-entry factor densifies the directions independently."""
         wg = _build(self._with_smooth(factor=[1, 2, 3]))
-        assert wg.tasks["wannierize_smooth"].inputs["smooth_mp_grid"].value == [2, 4, 6]
+        assert wg.tasks["wannierize_smooth"].inputs["mp_grid"].value == [2, 4, 6]
 
     def test_no_smooth_run_at_factor_one(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
