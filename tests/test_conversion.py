@@ -859,7 +859,7 @@ class TestDispatcherThreadsParallelization:
     def test_computer_walltime_reaches_a_non_pw_code(
         self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
     ) -> None:
-        """``computer.walltime`` defaults every code's mapping entry, not just pw's."""
+        """``computer.walltime``/``account``/``queue`` default every code's entry, not just pw's."""
         import aiida_koopmans.workgraphs.pw as pw_module
 
         from koopmans.aiida.workflows import dft as dft_module
@@ -881,13 +881,49 @@ class TestDispatcherThreadsParallelization:
         inp = KoopmansInput.model_validate(
             _pw_input(
                 parallelization={"kcw": {"ntasks": 8}, "wannier90": {"walltime": "30m"}},
-                computer={"walltime": "2h"},
+                computer={"walltime": "2h", "account": "mr32", "queue": "normal"},
             )
         )
         build_dft_bands_workgraph(inp)
-        # kcw picks up the computer default; wannier90's own walltime wins over it.
-        assert captured["parallelization"]["kcw"] == {"ntasks": 8, "max_wallclock_seconds": 7200}
-        assert captured["parallelization"]["wannier90"] == {"max_wallclock_seconds": 1800}
+        # kcw picks up the computer defaults; wannier90's own walltime wins over
+        # the computer's, but account/queue still reach it (no per-code override).
+        assert captured["parallelization"]["kcw"] == {
+            "ntasks": 8,
+            "max_wallclock_seconds": 7200,
+            "account": "mr32",
+            "queue_name": "normal",
+        }
+        assert captured["parallelization"]["wannier90"] == {
+            "max_wallclock_seconds": 1800,
+            "account": "mr32",
+            "queue_name": "normal",
+        }
+
+    def test_localhost_default_emits_neither_account_nor_queue(
+        self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
+    ) -> None:
+        """With no ``computer.account``/``queue`` set, a non-pw entry carries neither key."""
+        import aiida_koopmans.workgraphs.pw as pw_module
+
+        from koopmans.aiida.workflows import dft as dft_module
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        captured: dict[str, Any] = {}
+
+        def fake_build(**kwargs: Any) -> SimpleNamespace:
+            """Capture the builder call's kwargs, standing in for the workgraph."""
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        monkeypatch.setattr(
+            dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+        )
+        monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
+
+        inp = KoopmansInput.model_validate(_pw_input(parallelization={"kcw": {"ntasks": 8}}))
+        build_dft_bands_workgraph(inp)
+        assert captured["parallelization"]["kcw"] == {"ntasks": 8}
 
     def test_no_config_passes_none(
         self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any

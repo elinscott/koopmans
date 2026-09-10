@@ -11,7 +11,10 @@ rank, defaulting to the localhost computer's pin of one thread; ``walltime``
 overrides the top-level ``computer.walltime`` default for one code, for
 every code. See :func:`resolve_effective_walltime` for that precedence, and
 :func:`koopmans.aiida.conversion.code_parallelization` for the translation
-into AiiDA ``metadata.options`` / ``settings.cmdline``.
+into AiiDA ``metadata.options`` / ``settings.cmdline``. The top-level
+``computer.account`` and ``computer.queue`` are run-wide, with no per-code
+override; :meth:`ParallelizationInput.as_mapping` folds them into every
+code's entry alongside the walltime default.
 """
 
 from __future__ import annotations
@@ -132,14 +135,16 @@ class ParallelizationInput(BaseModel):
         pydantic's own dump, with ``walltime`` folded into whole-second
         ``max_wallclock_seconds`` — the key ``aiida-koopmans`` expects, and
         the only field this mapping does not pass through verbatim. Passing
-        ``computer`` also gives every code its ``computer.walltime`` default
-        wherever the code's own ``walltime`` is unset
-        (:func:`resolve_effective_walltime`); this is the one place that
-        default reaches a code other than through the pw-specific seeding in
-        :func:`koopmans.aiida.conversion.code_parallelization`. Omitting
-        ``computer`` (the default) reproduces the old configured-codes-only
-        behaviour. A code with no fields set and no computer default is
-        omitted.
+        ``computer`` also gives every code its ``computer.walltime``,
+        ``computer.account`` (as ``account``), and ``computer.queue`` (as
+        ``queue_name``) — run-wide settings with no per-code override, folded
+        into every code's entry the same way (:func:`resolve_effective_walltime`
+        for walltime's own-vs-computer precedence). This is the one place those
+        computer-level defaults reach a code other than through the
+        pw-specific seeding in :func:`koopmans.aiida.conversion.code_parallelization`.
+        Omitting ``computer`` (the default) reproduces the old
+        configured-codes-only behaviour. A code with no fields set and no
+        computer default is omitted.
 
         This is the ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
         """
@@ -150,6 +155,10 @@ class ParallelizationInput(BaseModel):
             walltime = resolve_effective_walltime(cfg, computer)
             if walltime is not None:
                 fields = {**fields, "max_wallclock_seconds": int(walltime.total_seconds())}
+            if computer is not None and computer.account is not None:
+                fields = {**fields, "account": computer.account}
+            if computer is not None and computer.queue is not None:
+                fields = {**fields, "queue_name": computer.queue}
             if fields:
                 mapping[code] = fields
         return cast(ParallelizationDict, mapping)

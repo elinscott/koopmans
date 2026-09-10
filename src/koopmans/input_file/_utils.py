@@ -94,7 +94,11 @@ def parse_walltime_shorthand(value: Any) -> Any:
 
     Passes anything else through unchanged, so pydantic's own duration
     parsing still handles ``HH:MM:SS``, an ISO 8601 duration, a plain count
-    of seconds, and ``timedelta`` instances directly.
+    of seconds, and ``timedelta`` instances directly. Two gotchas live in
+    that fallback, not this function: a bare colon-separated string like
+    ``"12:00"`` parses as ``HH:MM`` (12 hours), not ``MM:SS``; and a quoted
+    digit-only string (``"3600"``) is refused, where the same value unquoted
+    (``3600``) parses as a seconds count.
     """
     if not isinstance(value, str):
         return value
