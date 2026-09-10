@@ -85,8 +85,8 @@ class CodeParallelization(BaseModel):
     walltime: Walltime = Field(
         default=None,
         description="wallclock limit for this code's calculations, overriding the "
-        "top-level ``computer.walltime`` default (``2h``, ``90m``, ``1d12h``, "
-        "``HH:MM:SS``, or any pydantic-native duration). Valid for every code.",
+        "top-level ``computer.walltime`` default (``HH:MM:SS``, an ISO 8601 duration "
+        "such as ``PT2H``, or a plain seconds count). Valid for every code.",
     )
 
 

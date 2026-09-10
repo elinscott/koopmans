@@ -494,7 +494,7 @@ class TestParallelizationSchema:
     def test_walltime_valid_for_pw(self) -> None:
         """Pw accepts a per-code walltime override."""
         inp = KoopmansInput.model_validate(
-            _parallelization_input(parallelization={"pw": {"walltime": "2h"}})
+            _parallelization_input(parallelization={"pw": {"walltime": "PT2H"}})
         )
         pw = inp.parallelization.pw
         assert pw is not None and pw.walltime == timedelta(hours=2)
@@ -503,7 +503,7 @@ class TestParallelizationSchema:
     def test_walltime_valid_for_every_code(self, code: str) -> None:
         """Every code accepts a walltime override and it lands in the mapping."""
         inp = KoopmansInput.model_validate(
-            _parallelization_input(parallelization={code: {"walltime": "2h"}})
+            _parallelization_input(parallelization={code: {"walltime": "PT2H"}})
         )
         cfg = getattr(inp.parallelization, code)
         assert cfg is not None and cfg.walltime == timedelta(hours=2)
@@ -515,7 +515,7 @@ class TestParallelizationSchema:
         inp = KoopmansInput.model_validate(
             _parallelization_input(
                 parallelization={code: {"ntasks": 2}},
-                computer={"name": "daint", "walltime": "1h"},
+                computer={"name": "daint", "walltime": "PT1H"},
             )
         )
         mapping = inp.parallelization.as_mapping(inp.computer)
@@ -526,8 +526,8 @@ class TestParallelizationSchema:
         """A code's own ``walltime`` wins over ``computer.walltime``, for every code."""
         inp = KoopmansInput.model_validate(
             _parallelization_input(
-                parallelization={code: {"walltime": "30m"}},
-                computer={"name": "daint", "walltime": "2h"},
+                parallelization={code: {"walltime": "PT30M"}},
+                computer={"name": "daint", "walltime": "PT2H"},
             )
         )
         mapping = inp.parallelization.as_mapping(inp.computer)
@@ -542,7 +542,7 @@ def _si_input_with_computer(computer: object) -> dict[str, object]:
 
 
 class TestComputerSchema:
-    """The top-level ``computer`` block: a bare label, or name/account/queue/walltime."""
+    """The top-level ``computer`` block: name/account/queue/walltime."""
 
     def test_default_is_localhost(self) -> None:
         """With no `computer` block, the run targets the bundled `localhost` computer."""
@@ -554,18 +554,18 @@ class TestComputerSchema:
             None,
         )
 
-    def test_bare_label_and_block_form_are_equivalent(self) -> None:
-        """`computer: daint` is shorthand for `computer: {name: daint}`."""
-        bare = KoopmansInput.model_validate(_si_input_with_computer("daint"))
-        block = KoopmansInput.model_validate(_si_input_with_computer({"name": "daint"}))
-        assert bare.computer == block.computer
-        assert bare.computer.name == "daint"
+    def test_bare_label_is_rejected(self) -> None:
+        """`computer: daint` is refused; only the block form (`computer: {name: daint}`) parses."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="Input should be a valid dictionary"):
+            KoopmansInput.model_validate(_si_input_with_computer("daint"))
 
     def test_block_form_carries_account_queue_and_walltime(self) -> None:
         """The block form's fields all round-trip."""
         inp = KoopmansInput.model_validate(
             _si_input_with_computer(
-                {"name": "daint", "account": "mr32", "queue": "normal", "walltime": "2h"}
+                {"name": "daint", "account": "mr32", "queue": "normal", "walltime": "PT2H"}
             )
         )
         assert inp.computer.name == "daint"
@@ -576,26 +576,24 @@ class TestComputerSchema:
     @pytest.mark.parametrize(
         ("spelling", "expected"),
         [
-            ("2h", timedelta(hours=2)),
-            ("90m", timedelta(minutes=90)),
-            ("1d12h", timedelta(days=1, hours=12)),
-            ("30s", timedelta(seconds=30)),
             ("02:30:00", timedelta(hours=2, minutes=30)),
-            (7200, timedelta(hours=2)),
-            (timedelta(hours=2), timedelta(hours=2)),
+            ("PT2H30M", timedelta(hours=2, minutes=30)),
+            (9000, timedelta(hours=2, minutes=30)),
+            (timedelta(hours=2, minutes=30), timedelta(hours=2, minutes=30)),
         ],
     )
     def test_walltime_spellings(self, spelling: object, expected: timedelta) -> None:
-        """Shorthand, ``HH:MM:SS``, a plain seconds count, and a ``timedelta`` all parse."""
+        """``HH:MM:SS``, an ISO 8601 duration, a seconds count, and a ``timedelta`` all parse."""
         inp = KoopmansInput.model_validate(
             _si_input_with_computer({"name": "daint", "walltime": spelling})
         )
         assert inp.computer.walltime == expected
 
-    def test_walltime_nonsense_string_rejected(self) -> None:
-        """A string matching neither the shorthand nor a pydantic-native duration is refused."""
+    @pytest.mark.parametrize("spelling", ["2h", "90m", "1d12h", "30s", "two hours"])
+    def test_walltime_shorthand_and_nonsense_rejected(self, spelling: str) -> None:
+        """Pydantic's native timedelta parsing rejects the old compact shorthand too."""
         with pytest.raises(ValueError):
-            KoopmansInput.model_validate(_si_input_with_computer({"walltime": "two hours"}))
+            KoopmansInput.model_validate(_si_input_with_computer({"walltime": spelling}))
 
 
 class TestKpointsOffset:

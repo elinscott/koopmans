@@ -963,7 +963,7 @@ def silicon_pw_input(
     parallelization: dict[str, Any] | None = None,
     calculator_parameters: dict[str, Any] | None = None,
     kpoints: dict[str, Any] | None = None,
-    computer: dict[str, Any] | str | None = None,
+    computer: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a minimal silicon ``dft_bands`` input dict for the wiring tests.
 

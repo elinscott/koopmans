@@ -880,8 +880,8 @@ class TestDispatcherThreadsParallelization:
 
         inp = KoopmansInput.model_validate(
             _pw_input(
-                parallelization={"kcw": {"ntasks": 8}, "wannier90": {"walltime": "30m"}},
-                computer={"walltime": "2h", "account": "mr32", "queue": "normal"},
+                parallelization={"kcw": {"ntasks": 8}, "wannier90": {"walltime": "PT30M"}},
+                computer={"walltime": "PT2H", "account": "mr32", "queue": "normal"},
             )
         )
         build_dft_bands_workgraph(inp)

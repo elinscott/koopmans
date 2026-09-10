@@ -1,12 +1,11 @@
 """Which AiiDA computer a calculation runs on, and its scheduler options.
 
 The top-level ``computer`` block names the AiiDA computer label a run
-submits to. A bare string (``computer: daint``) is shorthand for the block
-form with only ``name`` set; the block additionally states a scheduler
-account, queue, and default walltime. ``account``, ``queue``, and
-``walltime`` all reach every code: pw's seeded overrides pick them up
-through :func:`koopmans.aiida.conversion.code_parallelization`, and every
-other code through the fallback in
+submits to, and additionally states a scheduler account, queue, and default
+walltime. ``account``, ``queue``, and ``walltime`` all reach every code: pw's
+seeded overrides pick them up through
+:func:`koopmans.aiida.conversion.code_parallelization`, and every other code
+through the fallback in
 :meth:`koopmans.input_file.parallelization.ParallelizationInput.as_mapping`.
 None of the three has a per-code override except ``walltime``, which
 ``parallelization.<code>.walltime`` can override for one code. A scheduler
@@ -17,14 +16,12 @@ ones it cannot honour — see
 
 from __future__ import annotations
 
-from typing import Annotated, Any
-
-from pydantic import BeforeValidator, Field
+from pydantic import Field
 
 from koopmans.base import BaseModel
 from koopmans.input_file._utils import Walltime
 
-__all__ = ["ComputerConfig", "ComputerInput"]
+__all__ = ["ComputerInput"]
 
 
 class ComputerInput(BaseModel):
@@ -48,18 +45,8 @@ class ComputerInput(BaseModel):
     )
     walltime: Walltime = Field(
         default=None,
-        description="default wallclock limit for every step (`2h`, `90m`, `1d12h`, "
-        "`HH:MM:SS`, or any pydantic-native duration); `parallelization.<code>.walltime` "
-        "overrides it for that one code. Refused at build time against the direct "
-        "scheduler, which enforces no wallclock limit",
+        description="default wallclock limit for every step (`HH:MM:SS`, an ISO 8601 "
+        "duration such as `PT2H`, or a plain seconds count); "
+        "`parallelization.<code>.walltime` overrides it for that one code. Refused at "
+        "build time against the direct scheduler, which enforces no wallclock limit",
     )
-
-
-def _coerce_bare_label(value: Any) -> Any:
-    """Accept a bare computer label (``daint``) in place of the block form."""
-    if isinstance(value, str):
-        return {"name": value}
-    return value
-
-
-ComputerConfig = Annotated[ComputerInput, BeforeValidator(_coerce_bare_label)]

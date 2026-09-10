@@ -429,7 +429,7 @@ class TestComputerLoading:
         ``localhost`` backend).
         """
         d = silicon_pw_input()
-        d["computer"] = "daint"
+        d["computer"] = {"name": "daint"}
         inp = KoopmansInput.model_validate(d)
         with pytest.raises(ValueError, match="computer 'daint' is not configured"):
             build_workgraph(inp)
@@ -439,7 +439,7 @@ class TestComputerLoading:
     ) -> None:
         """The pre-flight advice names ``pw@mock-remote``, not ``pw@localhost``."""
         d = silicon_pw_input()
-        d["computer"] = "mock-remote"
+        d["computer"] = {"name": "mock-remote"}
         inp = KoopmansInput.model_validate(d)
         with pytest.raises(ValueError, match=r"`pw@mock-remote`") as excinfo:
             build_workgraph(inp)
