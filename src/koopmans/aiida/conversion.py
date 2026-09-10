@@ -324,6 +324,34 @@ def kpoints_input_to_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData:
     return kpts
 
 
+def smooth_kpoints_mesh(kpoints: KpointsInput, factor: tuple[int, int, int]) -> orm.KpointsData:
+    """Expand the k-mesh by ``factor`` and return it as an explicit k-point list.
+
+    The smooth-interpolation method Wannierizes a mesh ``factor`` times
+    denser than ``kpoints.grid``. wannier90 and pw2wannier90 need that
+    mesh as the full explicit list in kmesh.pl order, not as a mesh a
+    symmetry-reducing nscf could shrink.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        factor: Per-direction densification, one entry per lattice vector.
+
+    Returns:
+        AiiDA KpointsData node holding the explicit denser k-point list.
+    """
+    from aiida_wannier90_workflows.utils.kpoints import get_explicit_kpoints
+
+    mesh = orm.KpointsData()
+    mesh.set_kpoints_mesh(smooth_grid(kpoints, factor))  # type: ignore[no-untyped-call]
+    explicit: orm.KpointsData = get_explicit_kpoints(mesh)
+    return explicit
+
+
+def smooth_grid(kpoints: KpointsInput, factor: tuple[int, int, int]) -> list[int]:
+    """Return the Monkhorst-Pack dimensions of the densified mesh."""
+    return [int(g) * int(f) for g, f in zip(kpoints.grid, factor, strict=True)]
+
+
 def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
     """Convert the mesh the named step samples to AiiDA KpointsData.
 
