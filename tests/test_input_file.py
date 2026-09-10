@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import timedelta
 from importlib import import_module
 from pathlib import Path
 
@@ -361,7 +362,9 @@ class TestKcpMagnetizationRemoved:
         assert kcp_dscf_inputs(read_input_file(input_file))["tot_magnetization"] == 2
 
 
-def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
+def _parallelization_input(
+    *, parallelization: object | None = None, computer: object | None = None
+) -> dict[str, object]:
     """Return a minimal silicon input dict for parallelization-block tests."""
     d: dict[str, object] = {
         "workflow": {"task": "dft_bands", "pseudo_library": "X"},
@@ -377,6 +380,8 @@ def _parallelization_input(*, parallelization: object | None = None) -> dict[str
     }
     if parallelization is not None:
         d["parallelization"] = parallelization
+    if computer is not None:
+        d["computer"] = computer
     return d
 
 
@@ -485,6 +490,110 @@ class TestParallelizationSchema:
         """Both integer fields reject zero and negative values."""
         with pytest.raises(ValueError):
             KoopmansInput.model_validate(_parallelization_input(parallelization={"pw": {field: 0}}))
+
+    def test_walltime_valid_for_pw(self) -> None:
+        """Pw accepts a per-code walltime override."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"pw": {"walltime": "PT2H"}})
+        )
+        pw = inp.parallelization.pw
+        assert pw is not None and pw.walltime == timedelta(hours=2)
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_walltime_valid_for_every_code(self, code: str) -> None:
+        """Every code accepts a walltime override and it lands in the mapping."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={code: {"walltime": "PT2H"}})
+        )
+        cfg = getattr(inp.parallelization, code)
+        assert cfg is not None and cfg.walltime == timedelta(hours=2)
+        assert inp.parallelization.as_mapping() == {code: {"max_wallclock_seconds": 7200}}
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_computer_default_reaches_every_code(self, code: str) -> None:
+        """A code with no walltime of its own falls back to ``computer.walltime``."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={code: {"ntasks": 2}},
+                computer={"name": "daint", "walltime": "PT1H"},
+            )
+        )
+        mapping = inp.parallelization.as_mapping(inp.computer)
+        assert mapping[code] == {"ntasks": 2, "max_wallclock_seconds": 3600}
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_per_code_walltime_beats_computer_default(self, code: str) -> None:
+        """A code's own ``walltime`` wins over ``computer.walltime``, for every code."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={code: {"walltime": "PT30M"}},
+                computer={"name": "daint", "walltime": "PT2H"},
+            )
+        )
+        mapping = inp.parallelization.as_mapping(inp.computer)
+        assert mapping[code] == {"max_wallclock_seconds": 1800}
+
+
+def _si_input_with_computer(computer: object) -> dict[str, object]:
+    """Return a minimal silicon input dict naming a top-level ``computer`` block."""
+    d = _parallelization_input()
+    d["computer"] = computer
+    return d
+
+
+class TestComputerSchema:
+    """The top-level ``computer`` block: name/account/queue/walltime."""
+
+    def test_default_is_localhost(self) -> None:
+        """With no `computer` block, the run targets the bundled `localhost` computer."""
+        inp = KoopmansInput.model_validate(_parallelization_input())
+        assert inp.computer.name == "localhost"
+        assert (inp.computer.account, inp.computer.queue, inp.computer.walltime) == (
+            None,
+            None,
+            None,
+        )
+
+    def test_bare_label_is_rejected(self) -> None:
+        """`computer: daint` is refused; only the block form (`computer: {name: daint}`) parses."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="Input should be a valid dictionary"):
+            KoopmansInput.model_validate(_si_input_with_computer("daint"))
+
+    def test_block_form_carries_account_queue_and_walltime(self) -> None:
+        """The block form's fields all round-trip."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_computer(
+                {"name": "daint", "account": "mr32", "queue": "normal", "walltime": "PT2H"}
+            )
+        )
+        assert inp.computer.name == "daint"
+        assert inp.computer.account == "mr32"
+        assert inp.computer.queue == "normal"
+        assert inp.computer.walltime == timedelta(hours=2)
+
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("02:30:00", timedelta(hours=2, minutes=30)),
+            ("PT2H30M", timedelta(hours=2, minutes=30)),
+            (9000, timedelta(hours=2, minutes=30)),
+            (timedelta(hours=2, minutes=30), timedelta(hours=2, minutes=30)),
+        ],
+    )
+    def test_walltime_spellings(self, spelling: object, expected: timedelta) -> None:
+        """``HH:MM:SS``, an ISO 8601 duration, a seconds count, and a ``timedelta`` all parse."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_computer({"name": "daint", "walltime": spelling})
+        )
+        assert inp.computer.walltime == expected
+
+    @pytest.mark.parametrize("spelling", ["2h", "90m", "1d12h", "30s", "two hours"])
+    def test_walltime_shorthand_and_nonsense_rejected(self, spelling: str) -> None:
+        """Pydantic's native timedelta parsing rejects the old compact shorthand too."""
+        with pytest.raises(ValueError):
+            KoopmansInput.model_validate(_si_input_with_computer({"walltime": spelling}))
 
 
 class TestKpointsOffset:

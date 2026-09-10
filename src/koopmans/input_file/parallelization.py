@@ -2,24 +2,34 @@
 
 The top-level ``parallelization`` block maps each code (``pw``, ``kcp``, …)
 to a small config of MPI-rank count (``ntasks``), k-point-pool count
-(``npool``), a pencil-decomposition switch (``pd``), and a per-rank
-OpenMP/BLAS thread count (``omp``). ``ntasks`` becomes the scheduler's
-``tot_num_mpiprocs``; ``npool`` becomes ``-npool`` and ``pd`` becomes
-``-pd true`` on the QE command line; ``omp`` sets the ``OMP_NUM_THREADS`` /
-``OPENBLAS_NUM_THREADS`` / ``MKL_NUM_THREADS`` per rank, defaulting to the
-localhost computer's pin of one thread. See
+(``npool``), a pencil-decomposition switch (``pd``), a per-rank OpenMP/BLAS
+thread count (``omp``), and a wallclock override (``walltime``). ``ntasks``
+becomes the scheduler's ``tot_num_mpiprocs``; ``npool`` becomes ``-npool``
+and ``pd`` becomes ``-pd true`` on the QE command line; ``omp`` sets the
+``OMP_NUM_THREADS`` / ``OPENBLAS_NUM_THREADS`` / ``MKL_NUM_THREADS`` per
+rank, defaulting to the localhost computer's pin of one thread; ``walltime``
+overrides the top-level ``computer.walltime`` default for one code, for
+every code. See :func:`resolve_effective_walltime` for that precedence, and
 :func:`koopmans.aiida.conversion.code_parallelization` for the translation
-into AiiDA ``metadata.options`` / ``settings.cmdline``.
+into AiiDA ``metadata.options`` / ``settings.cmdline``. The top-level
+``computer.account`` and ``computer.queue`` are run-wide, with no per-code
+override; :meth:`ParallelizationInput.as_mapping` folds them into every
+code's entry alongside the walltime default.
 """
 
 from __future__ import annotations
 
-from typing import Self, cast
+from datetime import timedelta
+from typing import TYPE_CHECKING, Self, cast
 
 from aiida_koopmans.parallelization import CODE_NAMES, ParallelizationDict
 from pydantic import Field, model_validator
 
 from koopmans.base import BaseModel
+from koopmans.input_file._utils import Walltime
+
+if TYPE_CHECKING:
+    from koopmans.input_file.computer import ComputerInput
 
 # Every code the parallelization block recognises. Sourced from the single
 # ``aiida_koopmans.parallelization`` vocabulary (``CodeName``) rather than duplicated here.
@@ -36,7 +46,7 @@ POOL_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wa
 PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
 
 
-__all__ = ["CodeParallelization", "ParallelizationInput"]
+__all__ = ["CodeParallelization", "ParallelizationInput", "resolve_effective_walltime"]
 
 
 # NOTE: keep this Pydantic model (and the per-code fields it validates) in
@@ -71,6 +81,12 @@ class CodeParallelization(BaseModel):
         "``OMP_NUM_THREADS`` / ``OPENBLAS_NUM_THREADS`` / ``MKL_NUM_THREADS`` per rank). "
         "Valid for every code; the default is the localhost computer's pin of one thread "
         "per rank, which stops the threaded BLAS builds oversubscribing the allocation.",
+    )
+    walltime: Walltime = Field(
+        default=None,
+        description="wallclock limit for this code's calculations, overriding the "
+        "top-level ``computer.walltime`` default (``HH:MM:SS``, an ISO 8601 duration "
+        "such as ``PT2H``, or a plain seconds count). Valid for every code.",
     )
 
 
@@ -112,16 +128,52 @@ class ParallelizationInput(BaseModel):
         """Return the configured (non-``None``) code entries as a plain dict."""
         return {code: cfg for code in ALL_CODES if (cfg := getattr(self, code)) is not None}
 
-    def as_mapping(self) -> ParallelizationDict:
+    def as_mapping(self, computer: ComputerInput | None = None) -> ParallelizationDict:
         """Return the per-code settings as the mapping the workgraphs consume.
 
         Each configured code maps to its set (non-``None``) fields via
-        pydantic's own dump; a code with no set field is omitted. This is the
-        ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
+        pydantic's own dump, with ``walltime`` folded into whole-second
+        ``max_wallclock_seconds`` — the key ``aiida-koopmans`` expects, and
+        the only field this mapping does not pass through verbatim. Passing
+        ``computer`` also gives every code its ``computer.walltime``,
+        ``computer.account`` (as ``account``), and ``computer.queue`` (as
+        ``queue_name``) — run-wide settings with no per-code override, folded
+        into every code's entry the same way (:func:`resolve_effective_walltime`
+        for walltime's own-vs-computer precedence). This is the one place those
+        computer-level defaults reach a code other than through the
+        pw-specific seeding in :func:`koopmans.aiida.conversion.code_parallelization`.
+        Omitting ``computer`` (the default) reproduces the old
+        configured-codes-only behaviour. A code with no fields set and no
+        computer default is omitted.
+
+        This is the ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
         """
-        mapping = {
-            code: fields
-            for code, cfg in self.as_dict().items()
-            if (fields := cfg.model_dump(exclude_none=True))
-        }
+        mapping: dict[str, dict[str, object]] = {}
+        for code in ALL_CODES:
+            cfg = getattr(self, code)
+            fields = cfg.model_dump(exclude_none=True, exclude={"walltime"}) if cfg else {}
+            walltime = resolve_effective_walltime(cfg, computer)
+            if walltime is not None:
+                fields = {**fields, "max_wallclock_seconds": int(walltime.total_seconds())}
+            if computer is not None and computer.account is not None:
+                fields = {**fields, "account": computer.account}
+            if computer is not None and computer.queue is not None:
+                fields = {**fields, "queue_name": computer.queue}
+            if fields:
+                mapping[code] = fields
         return cast(ParallelizationDict, mapping)
+
+
+def resolve_effective_walltime(
+    config: CodeParallelization | None, computer: ComputerInput | None
+) -> timedelta | None:
+    """Return one code's effective walltime: its own override, else ``computer.walltime``.
+
+    The one place this precedence is decided; both
+    :meth:`ParallelizationInput.as_mapping` and
+    :func:`koopmans.aiida.conversion.code_parallelization` call it rather than
+    each repeating the fallback.
+    """
+    if config is not None and config.walltime is not None:
+        return config.walltime
+    return computer.walltime if computer is not None else None

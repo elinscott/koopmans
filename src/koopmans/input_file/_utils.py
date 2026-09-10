@@ -6,6 +6,7 @@ creating circular dependencies.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 
@@ -77,3 +78,14 @@ def tidy_units(value: str) -> str:
     value = value.lower()
     value = value.replace("angstrom", "ang")
     return value
+
+
+#: A duration field, parsed by pydantic's native ``timedelta`` support:
+#: ``HH:MM:SS``, an ISO 8601 duration (``PT2H``), a plain count of seconds,
+#: or a ``timedelta`` instance. Shared by ``ComputerInput.walltime`` and
+#: ``CodeParallelization.walltime``. Two gotchas live in that parsing, not
+#: here: a bare colon-separated string like ``"12:00"`` parses as ``HH:MM``
+#: (12 hours), not ``MM:SS``; and a quoted digit-only string (``"3600"``) is
+#: refused, where the same value unquoted (``3600``) parses as a seconds
+#: count.
+Walltime = timedelta | None

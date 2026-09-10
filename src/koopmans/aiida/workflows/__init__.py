@@ -27,6 +27,7 @@ from koopmans.aiida.conversion import (
     input_to_pw_parameters,
     step_grid_spacing,
     step_kpoints_mesh,
+    validate_computer_scheduler_support,
 )
 from koopmans.input_file.workflow import Task
 
@@ -49,14 +50,57 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def load_code(name: str, executable: str) -> orm.AbstractCode:
-    """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
+def _install_advice_trailer(computer: str) -> str:
+    """Return the sentence telling the user how to configure codes on ``computer``.
+
+    ``koopmans install`` only sets up the bundled ``localhost`` backend; a
+    named remote computer's codes are registered by hand.
+    """
+    if computer == "localhost":
+        return "Please run 'koopmans install' to set up the AiiDA backend."
+    return (
+        f"Register them on the '{computer}' computer, e.g. with "
+        "`verdi code create core.code.installed`."
+    )
+
+
+def load_code(name: str, executable: str, computer: str = "localhost") -> orm.AbstractCode:
+    """Load the code labelled ``<name>@<computer>``, with a setup hint on failure."""
     try:
-        return orm.load_code(f"{name}@localhost")
+        return orm.load_code(f"{name}@{computer}")
     except Exception as exc:
         raise ValueError(
-            f"Could not load {executable} code: {exc}\n"
-            "Please run 'koopmans install' first to set up the AiiDA backend."
+            f"Could not load {executable} code: {exc}\n{_install_advice_trailer(computer)}"
+        ) from exc
+
+
+def require_computer_configured(name: str) -> None:
+    """Raise a setup hint if ``name`` names no AiiDA computer.
+
+    Skipped for the default ``localhost`` computer: a missing localhost
+    leaves every code lookup unresolvable too, and the resulting
+    missing-codes advice (``koopmans install``) is the correct fix there. A
+    named remote computer gets no such automatic recovery, so its absence is
+    diagnosed directly rather than surfacing as a misleading "install the
+    codes" message.
+
+    Args:
+        name: The AiiDA computer label the run's ``computer.name`` names.
+
+    Raises:
+        ValueError: If ``name`` is not ``"localhost"`` and names no
+            configured AiiDA computer.
+    """
+    if name == "localhost":
+        return
+    from aiida.common.exceptions import NotExistent
+
+    try:
+        orm.load_computer(name)
+    except NotExistent as exc:
+        raise ValueError(
+            f"computer '{name}' is not configured; run 'verdi computer setup' "
+            "(and 'verdi computer configure') to register it."
         ) from exc
 
 
@@ -90,14 +134,16 @@ def run_label(workgraph: WorkGraph) -> str:
     return str(getattr(workgraph, _RUN_LABEL, "") or "")
 
 
-def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
-    """Load every configured ``<member>@localhost`` code a codes TypedDict declares.
+def load_codes[CodesT: Mapping[str, Any]](
+    codes_spec: type[CodesT], computer: str = "localhost"
+) -> CodesT:
+    """Load every configured ``<member>@<computer>`` code a codes TypedDict declares.
 
     ``codes_spec`` is the workflow's graph-input TypedDict, declared beside
     the workflow entry point it feeds (e.g.
     ``aiida_koopmans.workgraphs.kcp.DscfCodes``) — the single declaration of
     which codes the workflow wires. Every member — required and
-    ``NotRequired`` alike — is loaded when a ``<member>@localhost`` code is
+    ``NotRequired`` alike — is loaded when a ``<member>@<computer>`` code is
     configured, and left out when it is not: which codes a run actually
     needs is now a structural property of the graph it builds (its
     TypedDict specs carry the requiredness), not a decision made here from
@@ -110,7 +156,7 @@ def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
     codes: dict[str, orm.AbstractCode] = {}
     for name in get_type_hints(codes_spec, include_extras=True):
         try:
-            codes[name] = orm.load_code(f"{name}@localhost")
+            codes[name] = orm.load_code(f"{name}@{computer}")
         except NotExistent:
             pass
     return cast("CodesT", codes)
@@ -127,7 +173,9 @@ def _socket_help(hint: Any) -> str | None:
     return None
 
 
-def _render_missing_codes_advice(help_by_name: Mapping[str, str | None]) -> str:
+def _render_missing_codes_advice(
+    help_by_name: Mapping[str, str | None], computer: str = "localhost"
+) -> str:
     """Render a ``name -> declared help`` mapping as the shared install-advice message.
 
     The one rendering both :func:`_missing_inputs_advice` (the submit-time
@@ -137,18 +185,19 @@ def _render_missing_codes_advice(help_by_name: Mapping[str, str | None]) -> str:
     fact.
     """
     lines = [
-        f"  - `{name}@localhost`" + (f" ({help_text})" if help_text else "")
+        f"  - `{name}@{computer}`" + (f" ({help_text})" if help_text else "")
         for name, help_text in sorted(help_by_name.items())
     ]
     return (
         "This calculation needs codes that are not configured:\n"
         + "\n".join(lines)
-        + "\nPlease run 'koopmans install' to set up the AiiDA backend."
+        + "\n"
+        + _install_advice_trailer(computer)
     )
 
 
 def require_configured_codes[CodesT: Mapping[str, Any]](
-    codes_spec: type[CodesT], codes: CodesT
+    codes_spec: type[CodesT], codes: CodesT, computer: str = "localhost"
 ) -> None:
     """Raise install advice for any of ``codes_spec``'s required members absent from ``codes``.
 
@@ -174,7 +223,7 @@ def require_configured_codes[CodesT: Mapping[str, Any]](
     required_keys: frozenset[str] = codes_spec.__required_keys__  # type: ignore[attr-defined]
     missing = {name: _socket_help(hints[name]) for name in required_keys if name not in codes}
     if missing:
-        raise ValueError(_render_missing_codes_advice(missing))
+        raise ValueError(_render_missing_codes_advice(missing, computer))
 
 
 def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -> None:
@@ -244,7 +293,9 @@ def prepare_common_inputs(
     # steps; the full per-code mapping is threaded to every graph builder too,
     # so pw.x steps assembled inside the graphs (e.g. the dielectric scf) pick
     # up the same directive.
-    options, settings = code_parallelization(koopmans_input.parallelization.pw)
+    options, settings = code_parallelization(
+        koopmans_input.parallelization.pw, koopmans_input.computer
+    )
     if settings:
         pw_overrides["settings"] = settings
     if options:
@@ -444,7 +495,9 @@ def _parallelization_advice(exc: ParallelizationError) -> str:
     )
 
 
-def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
+def _missing_inputs_advice(
+    exc: MissingRequiredInputsError, computer: str = "localhost"
+) -> str | None:
     """Phrase graph-level missing-code sockets as install advice.
 
     A workflow body that wires a code member it was not given surfaces as
@@ -477,7 +530,7 @@ def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
             help_by_name[name] = entry.help
     if not help_by_name:
         return None
-    return _render_missing_codes_advice(help_by_name)
+    return _render_missing_codes_advice(help_by_name, computer)
 
 
 def _model_mismatch_advice(exc: ModelMismatchError) -> str:
@@ -490,7 +543,9 @@ def _model_mismatch_advice(exc: ModelMismatchError) -> str:
     )
 
 
-def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str | None]], ...]:
+def _plugin_advice(
+    computer: str = "localhost",
+) -> tuple[tuple[type[ValueError], Callable[[Any], str | None]], ...]:
     """Return the advice table for the plugin's typed errors.
 
     One advice per class — the plugin defines each class for exactly one
@@ -526,7 +581,10 @@ def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str | None
     from aiida_workgraph.errors import MissingRequiredInputsError
 
     return (
-        (MissingRequiredInputsError, _missing_inputs_advice),
+        (
+            MissingRequiredInputsError,
+            lambda exc: _missing_inputs_advice(exc, computer),
+        ),
         (ProjectionSiteError, _projection_site_advice),
         (BlockBoundaryError, _block_boundary_advice),
         (OccupiedCoverageError, _occupied_coverage_advice),
@@ -538,7 +596,7 @@ def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str | None
     )
 
 
-def advice_for(exc: BaseException) -> str | None:
+def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
     """Return input-file advice for a typed plugin error, or None.
 
     Dispatches on the exception's type, so an untyped error — the
@@ -547,8 +605,13 @@ def advice_for(exc: BaseException) -> str | None:
     ``raise ... from exc`` is translated only if the replacement is
     itself a typed plugin error. A matching advisor may still decline
     with ``None`` for an instance its advice does not speak to.
+
+    Args:
+        exc: The exception to translate.
+        computer: The run's ``computer.name``, named in a missing-code
+            advice line as ``<code>@<computer>``.
     """
-    for exc_type, advise in _plugin_advice():
+    for exc_type, advise in _plugin_advice(computer):
         if isinstance(exc, exc_type):
             return advise(exc)
     return None
@@ -580,6 +643,10 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             f"`ml` is wired into the trajectory task only, not {task.value!r}; legacy "
             "permitted singlepoint prediction — not yet ported."
         )
+
+    computer_name = koopmans_input.computer.name
+    require_computer_configured(computer_name)
+    validate_computer_scheduler_support(koopmans_input.computer, koopmans_input.parallelization)
 
     # Build the workgraph based on task. Each route loads its workflow's
     # codes itself (:func:`load_codes`) once its input validation has passed.
@@ -614,7 +681,7 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
                 f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
             )
     except Exception as exc:
-        advice = advice_for(exc)
+        advice = advice_for(exc, computer_name)
         if advice is not None:
             # A PEP 678 note survives exception types whose constructors do
             # not take a single message, and keeps type, args and chaining

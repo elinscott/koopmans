@@ -68,8 +68,8 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # DielectricTask binds both codes eagerly (aiida-koopmans#97: not
     # yet converted to node_graph.reference); the pre-flight catches a missing
     # pw or ph before that bare subscript can raise a bare KeyError.
-    codes = load_codes(DielectricCodes)
-    require_configured_codes(DielectricCodes, codes)
+    codes = load_codes(DielectricCodes, koopmans_input.computer.name)
+    require_configured_codes(DielectricCodes, codes, koopmans_input.computer.name)
 
     return name_run(
         DielectricTask.build(
@@ -77,7 +77,8 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             structure=structure,
             pseudo_family=pseudo_family,
             overrides=overrides,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
             scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
             spin_type=spin,
         ),
