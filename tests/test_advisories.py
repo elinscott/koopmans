@@ -86,7 +86,7 @@ class TestSmoothInterpolationFactorAdvisory:
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
             "kpoints.smooth_interpolation_factor has no effect on task: singlepoint "
-            "(screening_method: dfpt) (it shapes the ΔSCF band-structure "
+            "(screening_method: dfpt; it shapes the ΔSCF band-structure "
             "interpolation); it is kept for when you switch screening_method to dscf."
         ]
 
@@ -112,22 +112,47 @@ class TestOrbitalGroupingAdvisory:
         inp = KoopmansInput.model_validate(_si_dict("wannierize"))
         assert advisories_for(inp) == []
 
+    def test_wannierize_with_mlwfs_alone_is_not_advised(self) -> None:
+        """Negative control: init_orbitals alone resolves group_orbitals_by on its own.
+
+        The resolution defaults ``group_orbitals_by`` to ``self_hartree`` for a
+        Wannier-initialized DSCF run — but the user typed neither grouping
+        keyword, so nothing is worth flagging.
+        """
+        inp = KoopmansInput.model_validate(_si_dict("wannierize", init_orbitals="mlwfs"))
+        assert inp.workflow.group_orbitals_by is not None
+        assert inp.workflow.group_orbitals_by.value == "self_hartree"
+        assert advisories_for(inp) == []
+
     def test_wannierize_with_a_tolerance_is_advised(self) -> None:
         """Wannierize never calls the grouping helpers at all."""
         d = _si_dict("wannierize")
         d["workflow"]["group_orbitals_tol"] = 0.05
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
-            "workflow.group_orbitals_by/group_orbitals_tol have no effect on task: "
-            "wannierize (they group orbitals to share a screening parameter, computed "
-            "only within a singlepoint or trajectory); they are kept for when you "
-            "switch task to singlepoint."
+            "workflow.group_orbitals_tol has no effect on task: wannierize (it "
+            "groups orbitals to share a screening parameter, computed only within a "
+            "singlepoint or trajectory); it is kept for when you switch task to "
+            "singlepoint."
         ]
 
     def test_dft_bands_with_an_explicit_criterion_is_advised(self) -> None:
         """A criterion alone (no tolerance) still signals intent to group."""
         d = _si_dict("dft_bands")
         d["workflow"]["group_orbitals_by"] = "self_hartree"
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == [
+            "workflow.group_orbitals_by has no effect on task: dft_bands (it groups "
+            "orbitals to share a screening parameter, computed only within a "
+            "singlepoint or trajectory); it is kept for when you switch task to "
+            "singlepoint."
+        ]
+
+    def test_dft_bands_with_both_keywords_is_advised_once_naming_both(self) -> None:
+        """Both keywords typed together name both, not one message per keyword."""
+        d = _si_dict("dft_bands")
+        d["workflow"]["group_orbitals_by"] = "self_hartree"
+        d["workflow"]["group_orbitals_tol"] = 0.05
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
             "workflow.group_orbitals_by/group_orbitals_tol have no effect on task: "
@@ -152,8 +177,8 @@ class TestOrbitalGroupingAdvisory:
             "workflow.group_orbitals_tol has no effect on task: singlepoint "
             "(group_orbitals_by resolved to 'none' for init_orbitals: pz, "
             "screening_method: dscf); it is kept for when you set group_orbitals_by "
-            "to a criterion this run implements (self_hartree for Wannier-initialised "
-            "DSCF, spread for DFPT)."
+            "to a criterion this run implements (self_hartree for DSCF, spread for "
+            "DFPT)."
         ]
 
     def test_dfpt_singlepoint_default_with_a_tolerance_is_advised(self) -> None:
@@ -172,11 +197,11 @@ class TestOrbitalGroupingAdvisory:
             "workflow.group_orbitals_tol has no effect on task: singlepoint "
             "(group_orbitals_by resolved to 'none' for init_orbitals: mlwfs, "
             "screening_method: dfpt); it is kept for when you set group_orbitals_by "
-            "to a criterion this run implements (self_hartree for Wannier-initialised "
-            "DSCF, spread for DFPT)."
+            "to a criterion this run implements (self_hartree for DSCF, spread for "
+            "DFPT)."
         ]
 
-    def test_wannier_initialised_dscf_default_is_not_advised(self) -> None:
+    def test_wannier_initialized_dscf_default_is_not_advised(self) -> None:
         """The route this criterion is wired for stays silent, even at its own default."""
         d = _si_dict(
             "singlepoint",

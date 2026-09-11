@@ -630,11 +630,16 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     these keywords are not contradictions — they are perfectly valid on
     another task or route, which the message names, and so are worth
     keeping in the input file rather than editing out and back in when the
-    task changes. Each check compares the resolved value against its
-    neutral default, so a keyword the schema itself defaulted away from
-    neutral (e.g. orbital grouping resolving to ``self_hartree`` for a
-    Wannier-initialised DSCF run) is flagged the same as one the user
-    typed directly.
+    task changes.
+
+    The smooth-interpolation check compares the resolved value against its
+    neutral default, since ``kpoints.smooth_interpolation_factor`` has no
+    "unset" state distinct from 1. The grouping check instead fires only on
+    a keyword the input file actually wrote (``WorkflowConfig.
+    user_set_group_orbitals_by``/``user_set_group_orbitals_tol``): the
+    schema itself resolves ``group_orbitals_by`` to ``self_hartree`` for a
+    Wannier-initialized DSCF run, and flagging that resolved value the same
+    as a user-typed one would warn about a keyword nobody wrote.
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -654,8 +659,8 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
             if task == Task.SINGLEPOINT:
                 advisories.append(
                     "kpoints.smooth_interpolation_factor has no effect on task: "
-                    f"singlepoint (screening_method: {workflow.screening_method.value}) "
-                    "(it shapes the ΔSCF band-structure interpolation); it is kept for "
+                    f"singlepoint (screening_method: {workflow.screening_method.value}; "
+                    "it shapes the ΔSCF band-structure interpolation); it is kept for "
                     "when you switch screening_method to dscf."
                 )
             else:
@@ -666,9 +671,23 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 )
 
     resolved_to_none = workflow.group_orbitals_by == GroupOrbitalsBy.NONE
-    grouping_requested = not resolved_to_none or workflow.group_orbitals_tol is not None
     if task in _TASKS_THAT_GROUP_NO_ORBITALS:
-        if grouping_requested:
+        user_set_keywords = [
+            f"workflow.{name}"
+            for name, is_set in (
+                ("group_orbitals_by", workflow.user_set_group_orbitals_by),
+                ("group_orbitals_tol", workflow.user_set_group_orbitals_tol),
+            )
+            if is_set
+        ]
+        if len(user_set_keywords) == 1:
+            advisories.append(
+                f"{user_set_keywords[0]} has no effect on task: {task.value} (it "
+                "groups orbitals to share a screening parameter, computed only "
+                "within a singlepoint or trajectory); it is kept for when you switch "
+                "task to singlepoint."
+            )
+        elif len(user_set_keywords) == 2:
             advisories.append(
                 "workflow.group_orbitals_by/group_orbitals_tol have no effect on task: "
                 f"{task.value} (they group orbitals to share a screening parameter, "
@@ -682,7 +701,7 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
             f"{workflow.init_orbitals.value}, screening_method: "
             f"{workflow.screening_method.value}); it is kept for when you set "
             "group_orbitals_by to a criterion this run implements (self_hartree for "
-            "Wannier-initialised DSCF, spread for DFPT)."
+            "DSCF, spread for DFPT)."
         )
 
     return advisories

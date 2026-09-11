@@ -73,7 +73,7 @@ def _run(
 
     monkeypatch.setattr(cli_mod, "run_with_progress", _fake_run_with_progress)
     monkeypatch.setattr(cli_mod, "dump_workgraph", _fake_dump)
-    result = CliRunner().invoke(cli, ["run", str(input_path)])
+    result = CliRunner(mix_stderr=False).invoke(cli, ["run", str(input_path)])
     return result, captured
 
 
@@ -245,11 +245,12 @@ class TestAdvisoryWarnings:
 
         result, _ = _run(monkeypatch, input_path, process)
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 0, result.output + result.stderr
         assert (
             "Warning: kpoints.smooth_interpolation_factor has no effect on task: "
-            "dft_bands" in result.output
+            "dft_bands" in result.stderr
         )
+        assert "Warning:" not in result.output
 
     def test_plain_input_gets_no_warning(
         self,
@@ -265,5 +266,6 @@ class TestAdvisoryWarnings:
 
         result, _ = _run(monkeypatch, input_path, process)
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 0, result.output + result.stderr
         assert "Warning:" not in result.output
+        assert "Warning:" not in result.stderr

@@ -142,7 +142,7 @@ class WorkflowConfig(BaseModel):
     )
     group_orbitals_by: GroupOrbitalsBy | None = Field(
         default=None,
-        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Left unset, resolves to "self_hartree" for Wannier-initialised DSCF runs (supercell images of one primitive orbital are physically equivalent) and "none" otherwise; the resolved value is recorded on the parsed input',
+        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Left unset, resolves to "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent) and "none" otherwise; the resolved value is recorded on the parsed input',
     )
     group_orbitals_tol: float | None = Field(
         default=None,
@@ -241,12 +241,29 @@ class WorkflowConfig(BaseModel):
     #: otherwise see its own assignment as user input.
     _resolving_orbital_grouping: bool = PrivateAttr(default=False)
 
+    #: Whether the user actually wrote ``group_orbitals_by``/``group_orbitals_tol``
+    #: in the input file, captured on first entry to ``resolve_orbital_grouping``
+    #: before its own assignments land in ``model_fields_set`` and make a
+    #: resolved (not typed) value look user-set.
+    _user_set_group_orbitals_by: bool = PrivateAttr(default=False)
+    _user_set_group_orbitals_tol: bool = PrivateAttr(default=False)
+
+    @property
+    def user_set_group_orbitals_by(self) -> bool:
+        """Whether the input file wrote ``group_orbitals_by`` rather than it resolving on its own."""
+        return self._user_set_group_orbitals_by
+
+    @property
+    def user_set_group_orbitals_tol(self) -> bool:
+        """Whether the input file wrote ``group_orbitals_tol`` rather than it resolving on its own."""
+        return self._user_set_group_orbitals_tol
+
     @model_validator(mode="after")
     def resolve_orbital_grouping(self) -> Self:
         """Resolve the orbital-grouping criterion and tolerance.
 
         Left unset, ``group_orbitals_by`` becomes ``self_hartree`` for
-        Wannier-initialised DSCF runs — supercell images of one primitive
+        Wannier-initialized DSCF runs — supercell images of one primitive
         orbital are physically equivalent and must share a screening
         parameter — and ``none`` otherwise (grouping is opt-in elsewhere).
         Tolerances default per criterion (``self_hartree``: 1e-4 eV;
@@ -265,9 +282,10 @@ class WorkflowConfig(BaseModel):
         """
         if self._resolving_orbital_grouping:
             return self
+        self._user_set_group_orbitals_by = "group_orbitals_by" in self.model_fields_set
+        self._user_set_group_orbitals_tol = "group_orbitals_tol" in self.model_fields_set
         user_set_none = (
-            "group_orbitals_by" in self.model_fields_set
-            and self.group_orbitals_by == GroupOrbitalsBy.NONE
+            self._user_set_group_orbitals_by and self.group_orbitals_by == GroupOrbitalsBy.NONE
         )
         self._resolving_orbital_grouping = True
         try:

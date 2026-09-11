@@ -63,7 +63,7 @@ class TestSubmit:
             return fake_node
 
         monkeypatch.setattr("koopmans.api.launch", _fake_launch)
-        result = CliRunner().invoke(cli, ["submit", str(input_path)])
+        result = CliRunner(mix_stderr=False).invoke(cli, ["submit", str(input_path)])
         return result, captured
 
     def test_a_successful_submission_hands_off_without_blocking(
@@ -198,11 +198,12 @@ class TestSubmit:
 
         result, _ = self._invoke(monkeypatch, input_path, fake_node)
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 0, result.output + result.stderr
         assert (
             "Warning: kpoints.smooth_interpolation_factor has no effect on task: "
-            "dft_bands" in result.output
+            "dft_bands" in result.stderr
         )
+        assert "Warning:" not in result.output
 
     def test_plain_input_gets_no_warning(
         self,
@@ -218,8 +219,9 @@ class TestSubmit:
 
         result, _ = self._invoke(monkeypatch, input_path, fake_node)
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 0, result.output + result.stderr
         assert "Warning:" not in result.output
+        assert "Warning:" not in result.stderr
 
 
 class TestStatus:

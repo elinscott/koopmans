@@ -347,7 +347,7 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
         advisories = advisories_for(inp)
         assert advisories == [
             "kpoints.smooth_interpolation_factor has no effect on task: singlepoint "
-            "(screening_method: dfpt) (it shapes the ΔSCF band-structure "
+            "(screening_method: dfpt; it shapes the ΔSCF band-structure "
             "interpolation); it is kept for when you switch screening_method to dscf."
         ]
 
