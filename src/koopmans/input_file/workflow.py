@@ -6,7 +6,7 @@ from typing import Annotated, Any, Self
 from aiida_koopmans.functionals import Correction
 from aiida_koopmans.variational_orbitals import VariationalOrbitalType
 from aiida_quantumespresso.common.types import SpinType
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 
 from koopmans.base import BaseModel
 
@@ -235,6 +235,12 @@ class WorkflowConfig(BaseModel):
                 raise ValueError(f"'orbital_groups' should be of length {target_length}")
         return self
 
+    #: Reentry guard for ``resolve_orbital_grouping``: assigning ``self.
+    #: group_orbitals_by``/``group_orbitals_tol`` inside it re-runs every
+    #: "after" model validator (``validate_assignment``), which would
+    #: otherwise see its own assignment as user input.
+    _resolving_orbital_grouping: bool = PrivateAttr(default=False)
+
     @model_validator(mode="after")
     def resolve_orbital_grouping(self) -> Self:
         """Resolve the orbital-grouping criterion and tolerance.
@@ -244,32 +250,47 @@ class WorkflowConfig(BaseModel):
         orbital are physically equivalent and must share a screening
         parameter — and ``none`` otherwise (grouping is opt-in elsewhere).
         Tolerances default per criterion (``self_hartree``: 1e-4 eV;
-        ``spread``: 0.05 Å²); a tolerance combined with ``none``, or without
-        a criterion, is an error. Resolving here keeps the effective values
+        ``spread``: 0.05 Å²). Resolving here keeps the effective values
         visible on the parsed input. The criterion is in principle
         independent of the screening method — the defaults simply reflect
         the combinations wired up today, and the dispatcher rejects the
         rest explicitly.
+
+        A tolerance alongside a criterion the user wrote as ``none`` is an
+        error: the two directly contradict each other. A tolerance
+        alongside a criterion that resolved to ``none`` on its own (no
+        criterion set, or a route that groups nothing) is left for
+        :func:`koopmans.aiida.workflows.advisories_for` to flag instead,
+        since only the dispatcher knows which routes group at all.
         """
-        if self.group_orbitals_by is None:
-            wannier_init = self.init_orbitals in (
-                VariationalOrbitalType.MLWFS,
-                VariationalOrbitalType.PROJWFS,
-            )
-            dscf = self.screening_method == CalculateScreeningMethod.DSCF
-            self.group_orbitals_by = (
-                GroupOrbitalsBy.SELF_HARTREE if (wannier_init and dscf) else GroupOrbitalsBy.NONE
-            )
-        if self.group_orbitals_by == GroupOrbitalsBy.NONE:
-            if self.group_orbitals_tol is not None:
-                raise ValueError("group_orbitals_tol requires group_orbitals_by != 'none'")
-        elif self.group_orbitals_tol is None:
-            default_tol = {
-                GroupOrbitalsBy.SELF_HARTREE: 1.0e-4,
-                GroupOrbitalsBy.SPREAD: 0.05,
-            }.get(self.group_orbitals_by)
-            # Assigning ``None`` back would re-trigger this validator forever
-            # (validate_assignment), so criteria without a default keep None.
-            if default_tol is not None:
+        if self._resolving_orbital_grouping:
+            return self
+        user_set_none = (
+            "group_orbitals_by" in self.model_fields_set
+            and self.group_orbitals_by == GroupOrbitalsBy.NONE
+        )
+        self._resolving_orbital_grouping = True
+        try:
+            if self.group_orbitals_by is None:
+                wannier_init = self.init_orbitals in (
+                    VariationalOrbitalType.MLWFS,
+                    VariationalOrbitalType.PROJWFS,
+                )
+                dscf = self.screening_method == CalculateScreeningMethod.DSCF
+                self.group_orbitals_by = (
+                    GroupOrbitalsBy.SELF_HARTREE
+                    if (wannier_init and dscf)
+                    else GroupOrbitalsBy.NONE
+                )
+            if self.group_orbitals_by == GroupOrbitalsBy.NONE:
+                if self.group_orbitals_tol is not None and user_set_none:
+                    raise ValueError("group_orbitals_tol requires group_orbitals_by != 'none'")
+            elif self.group_orbitals_tol is None:
+                default_tol = {
+                    GroupOrbitalsBy.SELF_HARTREE: 1.0e-4,
+                    GroupOrbitalsBy.SPREAD: 0.05,
+                }.get(self.group_orbitals_by)
                 self.group_orbitals_tol = default_tol
+        finally:
+            self._resolving_orbital_grouping = False
         return self

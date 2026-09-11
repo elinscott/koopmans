@@ -29,7 +29,7 @@ from koopmans.aiida.conversion import (
     step_kpoints_mesh,
     validate_computer_scheduler_support,
 )
-from koopmans.input_file.workflow import CalculateScreeningMethod, Task
+from koopmans.input_file.workflow import CalculateScreeningMethod, GroupOrbitalsBy, Task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -617,41 +617,75 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
     return None
 
 
-def reject_smooth_interpolation_off_dscf(koopmans_input: KoopmansInput) -> None:
-    """Refuse ``kpoints.smooth_interpolation_factor`` above 1 off the DSCF route.
+#: Tasks whose graphs never call :func:`koopmans.aiida.workflows.grouping.grouping_tol`
+#: or :func:`koopmans.aiida.workflows.grouping.dfpt_grouping_tol`, so ``workflow.
+#: group_orbitals_by``/``group_orbitals_tol`` reach no calculation at all.
+_TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
 
-    Only the kcp.x (DSCF) singlepoint stream Wannierizes a smooth-interpolation
-    mesh for its band structure
-    (:func:`koopmans.aiida.workflows.dscf.band_interpolation_inputs`); every
-    other task, and DFPT screening within a singlepoint, runs no band
-    interpolation and would otherwise drop the factor with no warning.
+
+def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
+    """Return non-fatal notices about keywords the parsed input sets to no effect.
+
+    Unlike the ``ValueError``/``NotImplementedError`` guards in this module,
+    these keywords are not contradictions — they are perfectly valid on
+    another task or route, which the message names, and so are worth
+    keeping in the input file rather than editing out and back in when the
+    task changes. Each check compares the resolved value against its
+    neutral default, so a keyword the schema itself defaulted away from
+    neutral (e.g. orbital grouping resolving to ``self_hartree`` for a
+    Wannier-initialised DSCF run) is flagged the same as one the user
+    typed directly.
 
     Args:
         koopmans_input: The parsed koopmans input.
 
-    Raises:
-        ValueError: If the factor is above 1 in any direction and the
-            task/screening_method combination performs no band interpolation.
+    Returns:
+        One message per keyword left with no effect; empty if none apply.
     """
-    if all(f <= 1 for f in koopmans_input.kpoints.smooth_interpolation_factor):
-        return
+    advisories: list[str] = []
+    workflow = koopmans_input.workflow
+    task = workflow.task
 
-    task = koopmans_input.workflow.task
-    performs_band_interpolation = (
-        task == Task.SINGLEPOINT
-        and koopmans_input.workflow.screening_method != CalculateScreeningMethod.DFPT
-    )
-    if performs_band_interpolation:
-        return
+    if any(f > 1 for f in koopmans_input.kpoints.smooth_interpolation_factor):
+        performs_band_interpolation = (
+            task == Task.SINGLEPOINT and workflow.screening_method != CalculateScreeningMethod.DFPT
+        )
+        if not performs_band_interpolation:
+            if task == Task.SINGLEPOINT:
+                advisories.append(
+                    "kpoints.smooth_interpolation_factor has no effect on task: "
+                    f"singlepoint (screening_method: {workflow.screening_method.value}) "
+                    "(it shapes the ΔSCF band-structure interpolation); it is kept for "
+                    "when you switch screening_method to dscf."
+                )
+            else:
+                advisories.append(
+                    "kpoints.smooth_interpolation_factor has no effect on task: "
+                    f"{task.value} (it shapes the ΔSCF band-structure interpolation); "
+                    "it is kept for when you switch task to singlepoint."
+                )
 
-    if task == Task.SINGLEPOINT:
-        detail = f"screening_method={koopmans_input.workflow.screening_method.value!r}"
-    else:
-        detail = f"task={task.value!r}"
-    raise ValueError(
-        "`kpoints.smooth_interpolation_factor` only affects the ΔSCF band structure "
-        f"interpolation; this run ({detail}) performs none. Set it to 1."
-    )
+    resolved_to_none = workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+    grouping_requested = not resolved_to_none or workflow.group_orbitals_tol is not None
+    if task in _TASKS_THAT_GROUP_NO_ORBITALS:
+        if grouping_requested:
+            advisories.append(
+                "workflow.group_orbitals_by/group_orbitals_tol have no effect on task: "
+                f"{task.value} (they group orbitals to share a screening parameter, "
+                "computed only within a singlepoint or trajectory); they are kept for "
+                "when you switch task to singlepoint."
+            )
+    elif resolved_to_none and workflow.group_orbitals_tol is not None:
+        advisories.append(
+            "workflow.group_orbitals_tol has no effect on task: "
+            f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
+            f"{workflow.init_orbitals.value}, screening_method: "
+            f"{workflow.screening_method.value}); it is kept for when you set "
+            "group_orbitals_by to a criterion this run implements (self_hartree for "
+            "Wannier-initialised DSCF, spread for DFPT)."
+        )
+
+    return advisories
 
 
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
@@ -667,8 +701,6 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         ValueError: If the task is not supported or required codes are missing.
     """
     task = koopmans_input.workflow.task
-
-    reject_smooth_interpolation_off_dscf(koopmans_input)
 
     if koopmans_input.workflow.auto_projections and task != Task.WANNIERIZE:
         raise NotImplementedError(

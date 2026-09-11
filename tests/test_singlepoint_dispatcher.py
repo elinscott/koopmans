@@ -244,13 +244,14 @@ class TestBuildSinglepointWorkgraphScopeGuards:
             build_workgraph(inp)
 
 
-class TestSmoothInterpolationFactorRejectedOffDscf:
+class TestSmoothInterpolationFactorAdvisedOffDscf:
     """``kpoints.smooth_interpolation_factor`` only shapes the DSCF band interpolation.
 
     Every other route — DFPT screening within a singlepoint included —
-    performs no band interpolation and would otherwise drop the factor with
-    no warning. The guard runs in ``build_workgraph`` before any route is
-    dispatched to, so it needs no AiiDA profile or codes.
+    performs no band interpolation, so the factor takes no effect there.
+    That used to be a build-time refusal; it is now a non-fatal advisory
+    (:func:`koopmans.aiida.workflows.advisories_for`), so the route builds
+    exactly as it would with the factor left at its default.
     """
 
     @staticmethod
@@ -274,39 +275,90 @@ class TestSmoothInterpolationFactorRejectedOffDscf:
         d["workflow"].update(workflow_updates)
         return d
 
-    @pytest.mark.parametrize(
-        "task,workflow_updates",
-        [
-            ("dft_bands", {}),
-            ("wannierize", {}),
-            (
-                "singlepoint",
-                {
-                    "screening_method": "dfpt",
-                    "correction": "ki",
-                    "init_orbitals": "mlwfs",
-                    "calculate_alpha": True,
-                },
-            ),
-        ],
-        ids=["dft_bands", "wannierize", "singlepoint_dfpt"],
-    )
-    def test_refused_off_the_dscf_route(self, task: str, workflow_updates: dict[str, Any]) -> None:
-        """None of these routes ever calls the interpolation code path."""
-        from koopmans.aiida.workflows import build_workgraph
+    def test_dft_bands_builds_and_is_advised(
+        self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """dft_bands builds normally; the factor is flagged, not refused."""
+        from koopmans.aiida.workflows import advisories_for, build_workgraph
 
-        inp = KoopmansInput.model_validate(self._si_dict(task, **workflow_updates))
-        with pytest.raises(ValueError, match="smooth_interpolation_factor"):
-            build_workgraph(inp)
+        inp = KoopmansInput.model_validate(self._si_dict("dft_bands"))
+        wg = build_workgraph(inp)
+        assert wg is not None
 
-    def test_a_factor_of_one_raises_nothing(self) -> None:
-        """Negative control: the guard itself is silent at the default factor."""
-        from koopmans.aiida.workflows import reject_smooth_interpolation_off_dscf
+        advisories = advisories_for(inp)
+        assert advisories == [
+            "kpoints.smooth_interpolation_factor has no effect on task: dft_bands "
+            "(it shapes the ΔSCF band-structure interpolation); it is kept for when "
+            "you switch task to singlepoint."
+        ]
+
+    def test_wannierize_builds_and_is_advised(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_cutoffs_family: Any,
+    ) -> None:
+        """Wannierize builds normally; the factor is flagged, not refused."""
+        from koopmans.aiida.workflows import advisories_for, build_workgraph
+
+        d = self._si_dict("wannierize")
+        d["calculator_parameters"]["wannier90"] = {
+            "projections": [[{"site": "Si", "ang_mtm": "sp3"}]]
+        }
+        inp = KoopmansInput.model_validate(d)
+        wg = build_workgraph(inp)
+        assert wg is not None
+        assert "wannierize_smooth" not in wg.get_task_names()
+
+        advisories = advisories_for(inp)
+        assert advisories == [
+            "kpoints.smooth_interpolation_factor has no effect on task: wannierize "
+            "(it shapes the ΔSCF band-structure interpolation); it is kept for when "
+            "you switch task to singlepoint."
+        ]
+
+    def test_singlepoint_dfpt_builds_and_is_advised(
+        self,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_kcw_code: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """DFPT screening within a singlepoint builds normally too."""
+        from koopmans.aiida.workflows import advisories_for, build_workgraph
+
+        d = self._si_dict(
+            "singlepoint",
+            screening_method="dfpt",
+            correction="ki",
+            init_orbitals="mlwfs",
+            calculate_alpha=True,
+        )
+        d["calculator_parameters"]["wannier90"] = {
+            "projections": [[{"site": "Si", "ang_mtm": "sp"}]]
+        }
+        inp = KoopmansInput.model_validate(d)
+        wg = build_workgraph(inp)
+        assert wg is not None
+        assert "interpolate_band_structure" not in wg.get_task_names()
+
+        advisories = advisories_for(inp)
+        assert advisories == [
+            "kpoints.smooth_interpolation_factor has no effect on task: singlepoint "
+            "(screening_method: dfpt) (it shapes the ΔSCF band-structure "
+            "interpolation); it is kept for when you switch screening_method to dscf."
+        ]
+
+    def test_a_factor_of_one_is_not_advised(self) -> None:
+        """Negative control: the advisory itself is silent at the default factor."""
+        from koopmans.aiida.workflows import advisories_for
 
         d = self._si_dict("dft_bands")
         d["kpoints"]["smooth_interpolation_factor"] = 1
         inp = KoopmansInput.model_validate(d)
-        reject_smooth_interpolation_off_dscf(inp)  # must not raise
+        assert advisories_for(inp) == []
 
     def test_gamma_only_dscf_route_reaches_the_no_path_refusal(
         self, ozone_input: KoopmansInput, aiida_profile: Any, fake_sg15_pseudo_family: Any

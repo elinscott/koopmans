@@ -29,7 +29,12 @@ import koopmans.cli as cli_mod
 from koopmans.aiida.anchor import read_anchor_entries
 from koopmans.aiida.setup.profile import PROFILE_NAME
 from koopmans.cli import cli
-from tests.fixtures import make_process, skip_profile_loading, write_koopmans_input
+from tests.fixtures import (
+    make_process,
+    silicon_pw_input,
+    skip_profile_loading,
+    write_koopmans_input,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -215,3 +220,50 @@ class TestRunAnchor:
         assert result.exit_code == 0, result.output
         assert f"koopmans status --uuid {node.uuid}" in result.output
         assert not (tmp_path / "si.run.yaml").exists()
+
+
+class TestAdvisoryWarnings:
+    """`run` prints one `Warning:` line per keyword `advisories_for` flags."""
+
+    def test_smooth_interpolation_factor_on_dft_bands_is_warned(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """dft_bands never interpolates bands: a Warning line, not a build refusal."""
+        import yaml
+
+        input_path = tmp_path / "si.yaml"
+        d = silicon_pw_input(
+            kpoints={"grid": [2, 2, 2], "offset": [0, 0, 0], "smooth_interpolation_factor": 4}
+        )
+        input_path.write_text(yaml.safe_dump(d))
+        process = _process_with_model_output(None)
+
+        result, _ = _run(monkeypatch, input_path, process)
+
+        assert result.exit_code == 0, result.output
+        assert (
+            "Warning: kpoints.smooth_interpolation_factor has no effect on task: "
+            "dft_bands" in result.output
+        )
+
+    def test_plain_input_gets_no_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """Negative control: an input touching neither advisory keyword prints nothing."""
+        input_path = write_koopmans_input(tmp_path)
+        process = _process_with_model_output(None)
+
+        result, _ = _run(monkeypatch, input_path, process)
+
+        assert result.exit_code == 0, result.output
+        assert "Warning:" not in result.output
