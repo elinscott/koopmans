@@ -29,7 +29,7 @@ from koopmans.aiida.conversion import (
     step_kpoints_mesh,
     validate_computer_scheduler_support,
 )
-from koopmans.input_file.workflow import Task
+from koopmans.input_file.workflow import CalculateScreeningMethod, Task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -617,6 +617,43 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
     return None
 
 
+def reject_smooth_interpolation_off_dscf(koopmans_input: KoopmansInput) -> None:
+    """Refuse ``kpoints.smooth_interpolation_factor`` above 1 off the DSCF route.
+
+    Only the kcp.x (DSCF) singlepoint stream Wannierizes a smooth-interpolation
+    mesh for its band structure
+    (:func:`koopmans.aiida.workflows.dscf.band_interpolation_inputs`); every
+    other task, and DFPT screening within a singlepoint, runs no band
+    interpolation and would otherwise drop the factor with no warning.
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+
+    Raises:
+        ValueError: If the factor is above 1 in any direction and the
+            task/screening_method combination performs no band interpolation.
+    """
+    if all(f <= 1 for f in koopmans_input.kpoints.smooth_interpolation_factor):
+        return
+
+    task = koopmans_input.workflow.task
+    performs_band_interpolation = (
+        task == Task.SINGLEPOINT
+        and koopmans_input.workflow.screening_method != CalculateScreeningMethod.DFPT
+    )
+    if performs_band_interpolation:
+        return
+
+    if task == Task.SINGLEPOINT:
+        detail = f"screening_method={koopmans_input.workflow.screening_method.value!r}"
+    else:
+        detail = f"task={task.value!r}"
+    raise ValueError(
+        "`kpoints.smooth_interpolation_factor` only affects the ΔSCF band structure "
+        f"interpolation; this run ({detail}) performs none. Set it to 1."
+    )
+
+
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build the appropriate workgraph for a KoopmansInput.
 
@@ -630,6 +667,8 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         ValueError: If the task is not supported or required codes are missing.
     """
     task = koopmans_input.workflow.task
+
+    reject_smooth_interpolation_off_dscf(koopmans_input)
 
     if koopmans_input.workflow.auto_projections and task != Task.WANNIERIZE:
         raise NotImplementedError(

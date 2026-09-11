@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 from aiida_quantumespresso.common.types import SpinType
 from pydantic import (
     AfterValidator,
+    BeforeValidator,
     Field,
     ValidationError,
     ValidationInfo,
@@ -36,7 +37,6 @@ from koopmans.input_file.parallelization import ParallelizationInput
 from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
-from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
 from koopmans.input_file.workflow import WorkflowConfig
 
@@ -52,6 +52,7 @@ __all__ = [
     "CellParametersViaIbrav",
     "CellParametersViaVectors",
     "ComputerInput",
+    "DensificationFactor",
     "GammaOnlyKpointsInput",
     "GridKpointsInput",
     "IntegerMagnetization",
@@ -70,7 +71,6 @@ __all__ = [
     "RestrictedWannier90InputParameters",
     "SpinSpecificWannierInput",
     "StepKpointsOverridesInput",
-    "UnfoldAndInterpolateConfig",
     "Wannier90InputParametersWithUpDown",
     "WannierKpointsOverridesInput",
     "WorkflowConfig",
@@ -204,6 +204,26 @@ def _no_shift(value: float) -> float:
 NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
+def _broadcast_smooth_interpolation_factor(v: Any) -> Any:
+    """Convert a bare integer or list to the per-direction tuple.
+
+    A bare integer or list broadcasts or reshapes into the triple that then
+    runs through the strict, ``>= 1`` per-axis check below — a bool included,
+    since Python's ``int`` accepts ``True``/``False`` and gets no special
+    case here.
+    """
+    if isinstance(v, list):
+        return tuple(v)
+    if isinstance(v, int):
+        return (v, v, v)
+    return v
+
+
+#: A per-direction densification factor: a strict integer (never a bool,
+#: which Python's own ``int`` would otherwise accept) of at least 1.
+DensificationFactor = Annotated[int, Field(strict=True, ge=1)]
+
+
 class StepKpointsOverridesInput(BaseModel):
     """K-point sampling for one step, in place of the top-level values.
 
@@ -321,6 +341,17 @@ class GammaOnlyKpointsInput(BaseModel):
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, which a gamma-only calculation cannot have."""
 
+    smooth_interpolation_factor: Annotated[
+        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
+        BeforeValidator(_broadcast_smooth_interpolation_factor),
+    ] = (1, 1, 1)
+    """Per-direction densification for the smooth-interpolation method.
+
+    A gamma-only calculation names no path to interpolate a band structure
+    along, so this must be left at its default; see ``GridKpointsInput``'s
+    field of the same name.
+    """
+
     @field_validator("overrides")
     @classmethod
     def check_no_step_is_given_a_mesh(
@@ -360,6 +391,19 @@ class GridKpointsInput(BaseModel):
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, in place of ``grid`` and ``offset``."""
+
+    smooth_interpolation_factor: Annotated[
+        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
+        BeforeValidator(_broadcast_smooth_interpolation_factor),
+    ] = (1, 1, 1)
+    """Per-direction densification of ``grid`` for the smooth-interpolation method.
+
+    Above 1 (in any direction), a ΔSCF band-structure interpolation swaps
+    the DFT part of the Koopmans Hamiltonian for one Wannierized on a mesh
+    this many times denser than ``grid``: ``[a, b, c]`` densifies each
+    direction independently, and a bare integer ``a`` is shorthand for
+    ``[a, a, a]``. Needs ``path`` to interpolate along.
+    """
 
 
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput
@@ -412,9 +456,6 @@ class CalculatorParametersInput(BaseModel):
     wannier90: Wannier90InputParametersWithUpDown = Field(
         default_factory=lambda: Wannier90InputParametersWithUpDown()
     )
-    unfold_and_interpolate: UnfoldAndInterpolateConfig = Field(
-        default_factory=lambda: UnfoldAndInterpolateConfig()
-    )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
     kcw: KCWInputParameters = Field(default_factory=lambda: KCWInputParameters())
 
@@ -451,6 +492,26 @@ class KoopmansInput(BaseModel):
         description="the AiiDA computer the calculation runs on: a block naming "
         "``name``, ``account``, ``queue``, and a default ``walltime``",
     )
+
+    @field_validator("calculator_parameters", mode="before")
+    @classmethod
+    def check_unfold_and_interpolate_was_replaced(cls, calculator_parameters: Any) -> Any:
+        """Reject the former ``unfold_and_interpolate`` block outright.
+
+        Its one user-facing keyword, ``smooth_int_factor``, moved to
+        ``kpoints.smooth_interpolation_factor``; the other two
+        (``use_ws_distance``, ``do_dos``) were never a user's to set.
+        """
+        if (
+            isinstance(calculator_parameters, dict)
+            and "unfold_and_interpolate" in calculator_parameters
+        ):
+            raise ValueError(
+                "`calculator_parameters.unfold_and_interpolate` was replaced by "
+                "`kpoints.smooth_interpolation_factor`; move `smooth_int_factor` there "
+                "and drop the block."
+            )
+        return calculator_parameters
 
     @field_validator("kpoints", mode="before")
     @classmethod

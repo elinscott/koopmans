@@ -234,6 +234,35 @@ class TestCalculateBandsRemoved:
             KoopmansInput.model_validate(d)
 
 
+class TestUnfoldAndInterpolateBlockRemoved:
+    """The band-structure densification factor moved to ``kpoints``."""
+
+    def test_the_block_names_its_replacement(self, tmp_path: Path) -> None:
+        """The message points the reader at the new field, not at ``extra_forbidden``."""
+        d = _minimal_si_input()
+        _set_keyword(d, "calculator_parameters", "unfold_and_interpolate", {"smooth_int_factor": 4})
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.unfold_and_interpolate` was replaced" in message
+        assert "`kpoints.smooth_interpolation_factor`" in message
+        assert "is not a valid keyword" not in message
+
+    def test_the_block_is_rejected_however_it_is_set(self) -> None:
+        """An empty block is refused too: the block itself is gone, not just its keywords."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "calculator_parameters", "unfold_and_interpolate", {})
+
+        with pytest.raises(ValidationError, match="was replaced"):
+            KoopmansInput.model_validate(d)
+
+
 class TestPeriodicIsOnePerCellVector:
     """``periodic`` is canonical after validation, whichever way it was written."""
 
@@ -634,6 +663,63 @@ class TestKpointsOffset:
 
         with pytest.raises(ValueError, match="samples Gamma itself"):
             GammaOnlyKpointsInput(offset=(0.5, 0.0, 0.0))
+
+
+class TestSmoothInterpolationFactor:
+    """``smooth_interpolation_factor`` multiplies ``grid`` for the smooth-interpolation method."""
+
+    def test_default_is_one_in_every_direction(self) -> None:
+        """Leaving the keyword out asks for no densification."""
+        from koopmans.input_file import GridKpointsInput
+
+        assert GridKpointsInput(grid=(2, 2, 2)).smooth_interpolation_factor == (1, 1, 1)
+
+    def test_a_bare_integer_broadcasts_to_every_direction(self) -> None:
+        """A scalar factor is shorthand for the same factor on every axis."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=4)
+        assert inp.smooth_interpolation_factor == (4, 4, 4)
+
+    def test_a_triple_scales_each_direction_independently(self) -> None:
+        """A three-entry factor densifies the directions independently."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 2, 3])
+        assert inp.smooth_interpolation_factor == (1, 2, 3)
+
+    def test_a_factor_below_one_is_rejected(self) -> None:
+        """The factor multiplies the grid, so it cannot coarsen it."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=0)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 0, 1])
+
+    def test_a_boolean_is_rejected(self) -> None:
+        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1).
+
+        The strict per-axis type check rejects it as not a valid integer,
+        rather than accepting it as a factor of 1.
+        """
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="valid integer"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=True)
+
+    def test_gamma_only_carries_the_same_field(self) -> None:
+        """Gamma-only kpoints carry the field too, at the same default.
+
+        A gamma-only run has no path to interpolate a band structure along,
+        so a factor above 1 is refused downstream (by the "no path" rule),
+        not by this field being absent from the model.
+        """
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        assert GammaOnlyKpointsInput().smooth_interpolation_factor == (1, 1, 1)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GammaOnlyKpointsInput(smooth_interpolation_factor=0)
 
 
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:

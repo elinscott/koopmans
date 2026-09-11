@@ -31,7 +31,6 @@ from koopmans.aiida.workflows.blocks import (
 from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
 from koopmans.aiida.workflows.grouping import grouping_tol
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
-from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
@@ -378,11 +377,13 @@ def band_interpolation_inputs(
     to be recovered by unfolding the Koopmans Hamiltonian in the Wannier
     basis and interpolating it along ``kpoints.path``. An input naming no
     path asks for no band structure, and must then leave
-    ``unfold_and_interpolate`` at its defaults.
+    ``kpoints.smooth_interpolation_factor`` at its default.
 
-    A ``smooth_int_factor`` above 1 adds the denser mesh the
-    smooth-interpolation method Wannierizes: the explicit k-point list and
-    its Monkhorst-Pack dimensions, both derived from ``kpoints.grid``.
+    A factor above 1 adds the denser mesh the smooth-interpolation method
+    Wannierizes: the explicit k-point list and its Monkhorst-Pack
+    dimensions, both derived from ``kpoints.grid``. ``use_ws_distance`` and
+    ``do_dos`` are not exposed to the input file; the aiida-koopmans graph
+    runs them at its own defaults (both ``True``).
 
     Raises:
         ValueError: If the input shapes an interpolation it does not ask for.
@@ -392,29 +393,36 @@ def band_interpolation_inputs(
     from koopmans.aiida.conversion import smooth_grid, smooth_kpoints_mesh
 
     kpath = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
-    settings = koopmans_input.calculator_parameters.unfold_and_interpolate
+    factor = koopmans_input.kpoints.smooth_interpolation_factor
+    do_smooth = any(f > 1 for f in factor)
     if kpath is None:
-        if settings.model_dump() != UnfoldAndInterpolateConfig().model_dump():
+        if do_smooth:
             raise ValueError(
-                "`calculator_parameters.unfold_and_interpolate` shapes the band "
-                "structure interpolation, and this input asks for none. Add the path "
-                "to interpolate along as `kpoints: {path: ...}`, or restore the "
-                "block's defaults."
+                "`kpoints.smooth_interpolation_factor` shapes the band structure "
+                "interpolation, and this input asks for none. Add the path to "
+                "interpolate along as `kpoints: {path: ...}`, or restore the "
+                "default `[1, 1, 1]`."
             )
         return {}
     # The DOS keeps the interpolation's own smearing and window: the input
     # file has no block naming them.
-    inputs: dict[str, Any] = {"kpath": kpath, "unfold_and_interpolate": settings.model_dump()}
-    if settings.do_smooth_interpolation:
+    inputs: dict[str, Any] = {
+        "kpath": kpath,
+        "unfold_and_interpolate": {
+            "use_ws_distance": True,
+            "do_dos": True,
+            "smooth_int_factor": list(factor),
+        },
+    }
+    if do_smooth:
         init_orbitals = koopmans_input.workflow.init_orbitals
         if init_orbitals not in (VariationalOrbitalType.MLWFS, VariationalOrbitalType.PROJWFS):
             raise NotImplementedError(
                 f"init_orbitals={init_orbitals.value!r} builds no Wannier functions, and "
                 "the smooth-interpolation method swaps one Wannier-gauge DFT Hamiltonian "
                 "for another. Set init_orbitals to 'mlwfs' or 'projwfs', or set "
-                "`calculator_parameters.unfold_and_interpolate.smooth_int_factor` to 1."
+                "`kpoints.smooth_interpolation_factor` to 1."
             )
-        factor = settings.smooth_int_factor
         inputs["smooth_kpoints"] = smooth_kpoints_mesh(koopmans_input.kpoints, factor)
         inputs["smooth_mp_grid"] = smooth_grid(koopmans_input.kpoints, factor)
     return inputs
