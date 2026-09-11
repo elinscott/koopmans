@@ -6,7 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -50,18 +50,51 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def _install_advice_trailer(computer: str) -> str:
-    """Return the sentence telling the user how to configure codes on ``computer``.
+def _install_advice_trailer(computer: str, names: Iterable[str] = ()) -> str:
+    """Return the sentence(s) telling the user how to configure codes on ``computer``.
 
-    ``koopmans install`` only sets up the bundled ``localhost`` backend; a
-    named remote computer's codes are registered by hand.
+    ``koopmans install`` only registers the executables
+    :func:`~koopmans.aiida.setup.codes.code_specs` knows about — the bundled
+    QE/Wannier90 backend. A code outside that set (yambo's ``p2y``/``yambo``
+    included) is never touched by it, on ``localhost`` or anywhere else, so
+    it earns its own ``verdi code create core.code.installed`` line naming
+    it, the same wording already used for a named remote computer.
+
+    Args:
+        computer: The run's ``computer.name``.
+        names: The missing codes this trailer is advising about. Empty
+            (the default) renders the plain per-computer sentence, for
+            callers with no code name to check against
+            :func:`~koopmans.aiida.setup.codes.code_specs`.
     """
+    from koopmans.aiida.setup.codes import code_specs
+
+    names = list(names)
+    known = code_specs()
+    unregistrable = sorted(name for name in names if name not in known)
+    registrable = [name for name in names if name in known]
+
+    if unregistrable and not registrable:
+        return (
+            f"Register {', '.join(f'`{name}`' for name in unregistrable)} on the "
+            f"'{computer}' computer, e.g. with `verdi code create core.code.installed`."
+        )
+
     if computer == "localhost":
-        return "Please run 'koopmans install' to set up the AiiDA backend."
-    return (
-        f"Register them on the '{computer}' computer, e.g. with "
-        "`verdi code create core.code.installed`."
-    )
+        sentence = "Please run 'koopmans install' to set up the AiiDA backend."
+    else:
+        sentence = (
+            f"Register them on the '{computer}' computer, e.g. with "
+            "`verdi code create core.code.installed`."
+        )
+    if unregistrable:
+        codes = ", ".join(f"`{name}`" for name in unregistrable)
+        verb, pronoun = ("is", "it") if len(unregistrable) == 1 else ("are", "them")
+        sentence += (
+            f" {codes} {verb} not one 'koopmans install' sets up: create {pronoun} on "
+            f"the '{computer}' computer, e.g. with `verdi code create core.code.installed`."
+        )
+    return sentence
 
 
 def load_code(name: str, executable: str, computer: str = "localhost") -> orm.AbstractCode:
@@ -70,7 +103,7 @@ def load_code(name: str, executable: str, computer: str = "localhost") -> orm.Ab
         return orm.load_code(f"{name}@{computer}")
     except Exception as exc:
         raise ValueError(
-            f"Could not load {executable} code: {exc}\n{_install_advice_trailer(computer)}"
+            f"Could not load {executable} code: {exc}\n{_install_advice_trailer(computer, [name])}"
         ) from exc
 
 
@@ -192,7 +225,7 @@ def _render_missing_codes_advice(
         "This calculation needs codes that are not configured:\n"
         + "\n".join(lines)
         + "\n"
-        + _install_advice_trailer(computer)
+        + _install_advice_trailer(computer, help_by_name.keys())
     )
 
 
@@ -620,7 +653,14 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 #: Tasks whose graphs never call :func:`koopmans.aiida.workflows.grouping.grouping_tol`
 #: or :func:`koopmans.aiida.workflows.grouping.dfpt_grouping_tol`, so ``workflow.
 #: group_orbitals_by``/``group_orbitals_tol`` reach no calculation at all.
-_TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
+#: ``Task.BSE`` composes the DFPT chain but runs no workflow-level orbital
+#: grouping over it: the composed
+#: ``aiida_koopmans.workgraphs.bethe_salpeter.SinglepointBetheSalpeterWorkflow``
+#: forwards no ``group_orbitals_tol`` into its internal DFPT call, so the
+#: tolerance never reaches a calculation whatever criterion it names —
+#: unlike the "switch to a criterion this run implements" branch below, no
+#: criterion is implemented here yet to switch to.
+_TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS, Task.BSE})
 
 
 def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
@@ -694,6 +734,48 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     return advisories
 
 
+def _build_route(task: Task, koopmans_input: KoopmansInput) -> WorkGraph:
+    """Dispatch to one task's route builder, importing its module lazily.
+
+    Split out of :func:`build_workgraph` so that function's own advice
+    boundary carries none of this dispatch's branching.
+
+    Raises:
+        ValueError: If ``task`` names no implemented route.
+    """
+    if task == Task.DFT_BANDS:
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
+
+        return build_dft_bands_workgraph(koopmans_input)
+    elif task == Task.WANNIERIZE:
+        from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
+
+        return build_wannierize_workgraph(koopmans_input)
+    elif task == Task.SINGLEPOINT:
+        from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
+
+        return build_singlepoint_workgraph(koopmans_input)
+    elif task == Task.TRAJECTORY:
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        return build_trajectory_workgraph(koopmans_input)
+    elif task == Task.DFT_EPS:
+        from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
+
+        return build_dft_eps_workgraph(koopmans_input)
+    elif task == Task.BSE:
+        from koopmans.aiida.workflows.bse import build_bse_workgraph
+
+        return build_bse_workgraph(koopmans_input)
+    else:
+        raise ValueError(
+            f"Task '{task.value}' is not yet implemented. "
+            f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
+            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}, "
+            f"{Task.BSE.value}"
+        )
+
+
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build the appropriate workgraph for a KoopmansInput.
 
@@ -725,38 +807,12 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     require_computer_configured(computer_name)
     validate_computer_scheduler_support(koopmans_input.computer, koopmans_input.parallelization)
 
-    # Build the workgraph based on task. Each route loads its workflow's
-    # codes itself (:func:`load_codes`) once its input validation has passed.
-    # An error raised inside the plugin speaks its vocabulary (derived
-    # blocks, `num_bands`), which the user never wrote; attach the
-    # input-file advice at this boundary.
+    # Each route loads its workflow's codes itself (:func:`load_codes`) once
+    # its input validation has passed. An error raised inside the plugin
+    # speaks its vocabulary (derived blocks, `num_bands`), which the user
+    # never wrote; attach the input-file advice at this boundary.
     try:
-        if task == Task.DFT_BANDS:
-            from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
-
-            return build_dft_bands_workgraph(koopmans_input)
-        elif task == Task.WANNIERIZE:
-            from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
-
-            return build_wannierize_workgraph(koopmans_input)
-        elif task == Task.SINGLEPOINT:
-            from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
-
-            return build_singlepoint_workgraph(koopmans_input)
-        elif task == Task.TRAJECTORY:
-            from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
-
-            return build_trajectory_workgraph(koopmans_input)
-        elif task == Task.DFT_EPS:
-            from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
-
-            return build_dft_eps_workgraph(koopmans_input)
-        else:
-            raise ValueError(
-                f"Task '{task.value}' is not yet implemented. "
-                f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-                f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
-            )
+        return _build_route(task, koopmans_input)
     except Exception as exc:
         advice = advice_for(exc, computer_name)
         if advice is not None:

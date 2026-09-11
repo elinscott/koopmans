@@ -80,6 +80,30 @@ def pseudo_family_has_cutoffs(pseudo_family: str) -> bool:
     return stringencies is not None and bool(stringencies())
 
 
+def get_recommended_cutoffs(
+    pseudo_family: str, structure: orm.StructureData
+) -> tuple[float, float]:
+    """Return the family's own recommended ``(ecutwfc, ecutrho)``, in Ry, for ``structure``.
+
+    The same call ``PwBaseWorkChain.get_builder_from_protocol`` makes when
+    an override states neither cutoff (its own family's default
+    stringency, ``unit='Ry'``): calling it here lets a caller read the
+    numeric value back before any protocol build runs, for a step that
+    needs the literal cutoff rather than a builder override.
+
+    Raises:
+        NotExistent: If the family is not installed.
+        ValueError: If the family recommends no cutoffs (check
+            :func:`pseudo_family_has_cutoffs` first) or has none for one of
+            ``structure``'s elements.
+    """
+    from aiida_pseudo.groups.family import PseudoPotentialFamily
+
+    family = PseudoPotentialFamily.collection.get(label=pseudo_family)
+    ecutwfc, ecutrho = family.get_recommended_cutoffs(structure=structure, unit="Ry")
+    return float(ecutwfc), float(ecutrho)
+
+
 def require_norm_conserving_family(pseudo_family: str, structure: orm.StructureData) -> None:
     """Reject a family whose pseudopotentials are not norm-conserving.
 

@@ -51,6 +51,7 @@ class Task(Enum):
     DFT_BANDS = "dft_bands"
     DFT_EPS = "dft_eps"
     TRAJECTORY = "trajectory"
+    BSE = "bse"
 
 
 class CalculateScreeningMethod(Enum):

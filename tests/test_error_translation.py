@@ -83,7 +83,16 @@ class TestAdviceFor:
         assert advice_for(excinfo.value) is None
 
     def test_missing_code_socket_earns_install_advice(self) -> None:
-        """A missing ``workgraph.code`` socket is translated with its help text."""
+        """A missing ``workgraph.code`` socket is translated with its help text.
+
+        ``wannierjl`` is a julia code CLAUDE.md documents as installed by
+        hand, not one of :func:`~koopmans.aiida.setup.codes.code_specs`'s
+        ``koopmans install`` executables, so the fix named is
+        ``verdi code create``, not ``koopmans install`` (see
+        ``TestPreFlightAdvice`` in ``test_code_loading.py`` for the mixed
+        case, where a ``koopmans install``-registrable code is also
+        missing).
+        """
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
 
         exc = MissingRequiredInputsError(
@@ -99,13 +108,16 @@ class TestAdviceFor:
         assert advice is not None
         assert "`wannierjl@localhost`" in advice
         assert "Needed for threshold-based splitting of bands into blocks." in advice
-        assert "koopmans install" in advice
+        assert "verdi code create" in advice
+        assert "koopmans install" not in advice
 
     def test_bare_code_entry_stays_generic(self) -> None:
         """A help-less code entry is named with the install pointer and no purpose.
 
         Every codes-TypedDict member is annotated, so a real entry carries its
         purpose in ``help``; the advice must still not die on a bare one.
+        ``epw`` names no ``code_specs()`` executable either, so the pointer
+        is ``verdi code create``, same reasoning as ``wannierjl`` above.
         """
         from aiida_workgraph.errors import MissingInput, MissingRequiredInputsError
 
@@ -116,7 +128,7 @@ class TestAdviceFor:
         assert advice is not None
         assert "`epw@localhost`" in advice
         assert "(" not in advice.splitlines()[1]
-        assert "koopmans install" in advice
+        assert "verdi code create" in advice
 
     def test_missing_non_code_sockets_earn_no_advice(self) -> None:
         """An error naming only non-code sockets is not an installation problem."""

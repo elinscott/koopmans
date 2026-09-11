@@ -16,6 +16,7 @@ from koopmans.aiida.conversion import (
     input_to_kcw_overrides,
     input_to_ph_parameters,
     input_to_pw_parameters,
+    yambo_input_to_bse_parameters,
 )
 from koopmans.input_file import AtomsInput
 from tests.fixtures import path_labels
@@ -446,6 +447,111 @@ class TestInputToKcwOverrides:
         )
         overrides = input_to_kcw_overrides(inp)
         assert set(overrides) == {"control"}
+
+
+def _bse_pw_input(**yambo_updates: Any) -> dict[str, Any]:
+    """Return a minimal ``task: bse`` input dict with the given ``calculator_parameters.yambo``."""
+    d = _pw_input(calculator_parameters={"ecutwfc": 20.0})
+    d["workflow"]["task"] = "bse"
+    d["calculator_parameters"]["yambo"] = {
+        "BndsRnXs": [1, 100],
+        "NGsBlkXs": 2,
+        "BSEBands": [4, 5],
+        "BEnRange": [0, 10],
+        **yambo_updates,
+    }
+    return d
+
+
+class TestYamboInputToBseParameters:
+    """``calculator_parameters.yambo`` maps onto the yambo BSE runcard's own arguments/variables."""
+
+    def test_full_mapping(self, aiida_profile: Any) -> None:
+        """Every field lands under its own yambo variable name, matching the k2y BSE example.
+
+        Values are the k2y example's own literal runcard
+        (``k2y/examples/silicon_aiida_bse/03_bse_submit.py``), so this pins
+        the whole conversion dict against the real numbers a user runs with,
+        not placeholders that happen to satisfy the field types.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _bse_pw_input(LongDrXs=[1.0, 1.0, 1.0], BLongDir=[1.0, 1.0, 1.0])
+        )
+        parameters = yambo_input_to_bse_parameters(inp)
+
+        assert parameters == {
+            "arguments": ["rim_cut", "WRbsWF", "NLCC"],
+            "variables": {
+                "BndsRnXs": [[1, 100], ""],
+                "NGsBlkXs": [2, "Ry"],
+                "BSENGBlk": [2, "Ry"],
+                "BSEBands": [[4, 5], ""],
+                "LongDrXs": [[1.0, 1.0, 1.0], ""],
+                "BLongDir": [[1.0, 1.0, 1.0], ""],
+                "BEnRange": [[0, 10], "eV"],
+                "BEnSteps": [1000, ""],
+                "BDmRange": [[0.1, 0.1], "eV"],
+            },
+        }
+
+    def test_defaults(self, aiida_profile: Any) -> None:
+        """``BEnSteps``, ``BDmRange`` and ``BSENGBlk`` take their documented defaults."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input())
+        parameters = yambo_input_to_bse_parameters(inp)
+
+        assert parameters["variables"]["BEnSteps"] == [1000, ""]
+        assert parameters["variables"]["BDmRange"] == [[0.1, 0.1], "eV"]
+        assert parameters["variables"]["BSENGBlk"] == [2, "Ry"]
+
+    def test_bsengblk_survives_when_stated_apart_from_ngsblkxs(self, aiida_profile: Any) -> None:
+        """A caller-stated ``BSENGBlk`` overrides the ``NGsBlkXs`` default."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input(BSENGBlk=5))
+        parameters = yambo_input_to_bse_parameters(inp)
+
+        assert parameters["variables"]["BSENGBlk"] == [5, "Ry"]
+
+    def test_asymmetric_broadening_survives_unbroadcast(self, aiida_profile: Any) -> None:
+        """A [min, max] ``BDmRange`` reaches the runcard unbroadcast."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input(BDmRange=[0.05, 0.3]))
+        parameters = yambo_input_to_bse_parameters(inp)
+
+        assert parameters["variables"]["BDmRange"] == [[0.05, 0.3], "eV"]
+
+    def test_no_owned_keyword_is_emitted(self, aiida_profile: Any) -> None:
+        """The route-owned keywords never appear: this conversion never invents them.
+
+        ``RunBetheSalpeter`` sets ``KfnQPdb``/``BSEQptR``/``BS_CPU``/``BS_ROLEs``
+        itself and refuses a caller that states them (see
+        ``aiida_koopmans.owned_keywords.OWNED["yambo"]``).
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input())
+        variables = yambo_input_to_bse_parameters(inp)["variables"]
+        for keyword in ("KfnQPdb", "BSEQptR", "BS_CPU", "BS_ROLEs"):
+            assert keyword not in variables
+
+    def test_unset_light_polarization_is_not_emitted(self, aiida_profile: Any) -> None:
+        """``LongDrXs``/``BLongDir`` are ordinary optional fields, left out when unset.
+
+        Unlike the route-owned keywords above, a caller may set these; the
+        input file default is simply unset, leaving yambo's own compiled-in
+        (x-polarized) default to apply.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input())
+        variables = yambo_input_to_bse_parameters(inp)["variables"]
+        assert "LongDrXs" not in variables
+        assert "BLongDir" not in variables
 
 
 class TestPwNamelistDumpSurvivesDefaultValues:

@@ -26,7 +26,7 @@ from typing import Any
 
 from aiida_koopmans.owned_keywords import OWNED, SEEDED_VALUES
 
-__all__ = ["MODULES", "REASONS", "UNREACHABLE", "generate", "render"]
+__all__ = ["HAND_WRITTEN", "MODULES", "REASONS", "UNREACHABLE", "generate", "render"]
 
 _HEADER = '''\
 """{summary}
@@ -186,6 +186,18 @@ MODULES: list[GeneratedModule] = [
         ],
     ),
 ]
+
+#: Blocks claimed in :data:`~aiida_koopmans.owned_keywords.OWNED` whose model
+#: is hand-written rather than restricted from an upstream package that
+#: enumerates the calculator's full keyword set: there is no such package for
+#: yambo to restrict a model from (see ``koopmans.input_file.yambo``), so it
+#: is not a :data:`MODULES` entry and :func:`generate` never touches it.
+#: Counted alongside :data:`MODULES` in :func:`generate`'s check that every
+#: ``OWNED``/``UNREACHABLE`` block is covered by some model, generated or
+#: not — each hand-written model rejects its own ``OWNED`` keywords directly,
+#: and a test pins its reasons map against the roster (see
+#: ``tests/test_input_model_codegen.py``).
+HAND_WRITTEN: frozenset[str] = frozenset({"yambo"})
 
 _AIIDA = "AiiDA writes it for every calculation it runs."
 _SPIN = "Set `workflow.spin`."
@@ -768,7 +780,7 @@ def generate(directory: Path | None = None) -> list[Path]:
     Returns:
         The paths written, in :data:`MODULES` order.
     """
-    covered = {model.block for module in MODULES for model in module.models}
+    covered = {model.block for module in MODULES for model in module.models} | HAND_WRITTEN
     ungenerated = sorted((OWNED.keys() | UNREACHABLE.keys()) - covered)
     if ungenerated:
         raise ValueError(

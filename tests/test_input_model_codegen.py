@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from aiida_koopmans.owned_keywords import OWNED, SEEDED_VALUES
@@ -13,7 +13,15 @@ from pydantic import ValidationError
 
 import koopmans
 from koopmans.input_file import CalculatorParametersInput
-from koopmans.input_file._codegen import MODULES, REASONS, UNREACHABLE, generate, render
+from koopmans.input_file._codegen import (
+    HAND_WRITTEN,
+    MODULES,
+    REASONS,
+    UNREACHABLE,
+    generate,
+    render,
+)
+from koopmans.input_file.yambo import _YAMBO_REASONS, YamboBseParameters
 
 _GENERATED = Path(koopmans.__file__ or "").parent / "input_file" / "_generated"
 
@@ -47,6 +55,38 @@ class TestGeneratedFieldSets:
             dropped = generic.model_fields.keys() - restricted.model_fields.keys()
             claimed = set(OWNED[model.block]) | set(UNREACHABLE.get(model.block, {}))
             assert dropped == claimed, model.name
+
+
+class TestHandWrittenFieldSets:
+    """A hand-written block has no generic model to diff against, but must still agree.
+
+    A :data:`~koopmans.input_file._codegen.HAND_WRITTEN` block (yambo today)
+    is not code-generated, so ``TestGeneratedFieldSets`` cannot check it by
+    ast-diffing a generic model. This registers each such block's own
+    reasons map and model class instead, and checks every ``HAND_WRITTEN``
+    entry the same way, generically: a second hand-written block earns this
+    coverage by being added to :data:`_REGISTRY`, not by a new test class.
+    """
+
+    _REGISTRY: ClassVar[dict[str, tuple[dict[str, str], type[Any]]]] = {
+        "yambo": (_YAMBO_REASONS, YamboBseParameters),
+    }
+
+    def test_every_hand_written_block_is_registered(self) -> None:
+        """Every :data:`HAND_WRITTEN` block has a reasons map and model here to check."""
+        assert set(HAND_WRITTEN) == set(self._REGISTRY)
+
+    @pytest.mark.parametrize("block", sorted(HAND_WRITTEN))
+    def test_reasons_match_the_shared_roster(self, block: str) -> None:
+        """The block's own reasons map claims exactly ``OWNED[block]``."""
+        reasons, _ = self._REGISTRY[block]
+        assert set(reasons) == OWNED[block]
+
+    @pytest.mark.parametrize("block", sorted(HAND_WRITTEN))
+    def test_fields_never_overlap_owned_keywords(self, block: str) -> None:
+        """None of ``OWNED[block]`` ever became a settable field."""
+        _, model = self._REGISTRY[block]
+        assert set(model.model_fields) & OWNED[block] == set()
 
 
 class TestSeededDefaultsMatchTheRoster:
@@ -137,6 +177,8 @@ class TestOwnedKeywordsAreRefused:
             ("pw2wannier90", "spin_component", "workflow.spin"),
             ("wannier90", "num_wann", "projections"),
             ("wannier90", "write_u_matrices", "gauge products"),
+            ("yambo", "KfnQPdb", "quasiparticle database"),
+            ("yambo", "BS_CPU", "parallelization.yambo"),
         ],
     )
     def test_the_message_names_what_to_set_instead(
