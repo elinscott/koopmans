@@ -1276,43 +1276,44 @@ class TestPhCalculatorParameters:
         assert inp.calculator_parameters.ph.model_fields_set == set()
 
 
-def _bse_input(**bse_updates: object) -> dict[str, object]:
-    """Return the minimal silicon input at ``task: bse`` with a valid ``bse`` block."""
+def _bse_input(**yambo_updates: object) -> dict[str, object]:
+    """Return the minimal silicon input at ``task: bse`` with a valid ``yambo`` block."""
     d = _si_input_with({"ecutwfc": 20.0})
     d["workflow"]["task"] = "bse"  # type: ignore[index]
-    d["bse"] = {
-        "screening_bands": 100,
-        "g_cutoff": 2,
-        "bands": [4, 5],
-        "energy_range": [0, 10],
-        **bse_updates,
+    d["calculator_parameters"]["yambo"] = {  # type: ignore[index]
+        "BndsRnXs": [1, 100],
+        "NGsBlkXs": 2,
+        "BSEBands": [4, 5],
+        "BEnRange": [0, 10],
+        **yambo_updates,
     }
     return d
 
 
-class TestBSESchema:
-    """The ``bse`` block: yambo BSE runcard parameters for ``task: bse``."""
+class TestYamboSchema:
+    """``calculator_parameters.yambo``: the yambo BSE runcard parameters for ``task: bse``."""
 
     def test_minimal_block_parses(self) -> None:
         """The four required fields alone parse, with documented defaults filled in."""
         inp = KoopmansInput.model_validate(_bse_input())
-        assert inp.bse is not None
-        assert inp.bse.energy_steps == 1000
-        assert inp.bse.broadening == 0.1
-        assert inp.bse.eigenvalues == "ki"
+        yambo = inp.calculator_parameters.yambo
+        assert yambo is not None
+        assert yambo.BEnSteps == 1000
+        assert yambo.BDmRange == (0.1, 0.1)
+        assert yambo.BSENGBlk == yambo.NGsBlkXs
 
-    def test_task_bse_needs_a_bse_block(self) -> None:
-        """``task: bse`` with no ``bse`` block is refused, naming the required fields."""
+    def test_task_bse_needs_a_yambo_block(self) -> None:
+        """``task: bse`` with no ``yambo`` block is refused, naming the required fields."""
         d = _si_input_with({"ecutwfc": 20.0})
         d["workflow"]["task"] = "bse"  # type: ignore[index]
-        with pytest.raises(ValueError, match=r"needs a `bse` input block"):
+        with pytest.raises(ValueError, match=r"needs a `calculator_parameters\.yambo` input block"):
             KoopmansInput.model_validate(d)
 
-    def test_bse_block_needs_task_bse(self) -> None:
-        """A ``bse`` block stated under another task would go unread, and is refused."""
+    def test_yambo_block_needs_task_bse(self) -> None:
+        """A ``yambo`` block stated under another task would go unread, and is refused."""
         d = _bse_input()
         d["workflow"]["task"] = "singlepoint"  # type: ignore[index]
-        with pytest.raises(ValueError, match=r"`bse` has no effect"):
+        with pytest.raises(ValueError, match=r"`calculator_parameters\.yambo` has no effect"):
             KoopmansInput.model_validate(d)
 
     def test_kpoints_path_is_refused(self) -> None:
@@ -1323,35 +1324,44 @@ class TestBSESchema:
             KoopmansInput.model_validate(d)
 
     @pytest.mark.parametrize("bands", [[0, 5], [5, 4]])
-    def test_bands_must_be_positive_and_ascending(self, bands: list[int]) -> None:
+    def test_bsebands_must_be_positive_and_ascending(self, bands: list[int]) -> None:
         """A zero/negative first band, or a descending range, is refused."""
         with pytest.raises(ValueError, match=r"ascending"):
-            KoopmansInput.model_validate(_bse_input(bands=bands))
+            KoopmansInput.model_validate(_bse_input(BSEBands=bands))
 
-    def test_energy_range_must_be_ascending(self) -> None:
-        """A descending ``energy_range`` is refused."""
+    def test_benrange_must_be_ascending(self) -> None:
+        """A descending ``BEnRange`` is refused."""
         with pytest.raises(ValueError, match=r"ascending"):
-            KoopmansInput.model_validate(_bse_input(energy_range=[10, 0]))
+            KoopmansInput.model_validate(_bse_input(BEnRange=[10, 0]))
 
-    def test_broadening_scalar_must_be_positive(self) -> None:
-        """A non-positive scalar broadening is refused."""
-        with pytest.raises(ValueError, match=r"broadening"):
-            KoopmansInput.model_validate(_bse_input(broadening=0.0))
+    def test_bdmrange_must_be_positive(self) -> None:
+        """A non-positive ``BDmRange`` value is refused."""
+        with pytest.raises(ValueError, match=r"BDmRange"):
+            KoopmansInput.model_validate(_bse_input(BDmRange=[0.1, -0.1]))
 
-    def test_broadening_range_must_be_positive(self) -> None:
-        """Every value of a [min, max] broadening must be positive."""
-        with pytest.raises(ValueError, match=r"broadening"):
-            KoopmansInput.model_validate(_bse_input(broadening=[0.1, -0.1]))
-
-    def test_eigenvalues_rejects_unknown_flavour(self) -> None:
-        """Only ``ki`` / ``pki`` name a kcw.x ``ham`` eigenvalue grid."""
-        with pytest.raises(ValueError):
-            KoopmansInput.model_validate(_bse_input(eigenvalues="pz"))
+    @pytest.mark.parametrize(
+        ("keyword", "reason_snippet"),
+        [
+            ("KfnQPdb", "quasiparticle database"),
+            ("BSEQptR", "optical"),
+            ("BS_CPU", "parallelization.yambo"),
+            ("BS_ROLEs", "parallelization.yambo"),
+            ("rim_cut", "Coulomb-divergence"),
+            ("WRbsWF", "excitonic wavefunctions"),
+            ("NLCC", "non-linear core correction"),
+        ],
+    )
+    def test_owned_keyword_is_rejected(self, keyword: str, reason_snippet: str) -> None:
+        """A yambo runcard variable the route determines is not a ``yambo`` field."""
+        pattern = rf"`calculator_parameters\.yambo\.{keyword}`"
+        with pytest.raises(ValueError, match=pattern) as excinfo:
+            KoopmansInput.model_validate(_bse_input(**{keyword: "nonsense"}))
+        assert reason_snippet in str(excinfo.value)
 
     def test_unknown_keyword_is_rejected(self) -> None:
-        """A yambo runcard variable name is not a ``bse`` field; only the mapped keyword is."""
+        """A typo is refused generically, unlike a keyword the route owns."""
         with pytest.raises(ValueError, match=r"extra_forbidden|Extra inputs"):
-            KoopmansInput.model_validate(_bse_input(KfnQPdb="E < ./ndb.QP"))
+            KoopmansInput.model_validate(_bse_input(NGsBlkXd=2))
 
 
 def _collinear_input(**calculator_parameters: object) -> dict[str, object]:

@@ -13,7 +13,15 @@ from pydantic import ValidationError
 
 import koopmans
 from koopmans.input_file import CalculatorParametersInput
-from koopmans.input_file._codegen import MODULES, REASONS, UNREACHABLE, generate, render
+from koopmans.input_file._codegen import (
+    HAND_WRITTEN,
+    MODULES,
+    REASONS,
+    UNREACHABLE,
+    generate,
+    render,
+)
+from koopmans.input_file.yambo import _YAMBO_REASONS
 
 _GENERATED = Path(koopmans.__file__ or "").parent / "input_file" / "_generated"
 
@@ -47,6 +55,31 @@ class TestGeneratedFieldSets:
             dropped = generic.model_fields.keys() - restricted.model_fields.keys()
             claimed = set(OWNED[model.block]) | set(UNREACHABLE.get(model.block, {}))
             assert dropped == claimed, model.name
+
+
+class TestHandWrittenFieldSets:
+    """A hand-written block has no generic model to diff against, but must still agree.
+
+    ``calculator_parameters.yambo`` is not code-generated (see
+    :data:`~koopmans.input_file._codegen.HAND_WRITTEN`), so
+    ``TestGeneratedFieldSets`` cannot check it by ast-diffing a generic
+    model. Its own reasons map (``koopmans.input_file.yambo._YAMBO_REASONS``)
+    plays that role instead.
+    """
+
+    def test_yambo_is_declared_hand_written(self) -> None:
+        """``yambo`` is covered by :data:`HAND_WRITTEN`, or ``generate()`` would refuse."""
+        assert "yambo" in HAND_WRITTEN
+
+    def test_yambo_reasons_match_the_shared_roster(self) -> None:
+        """The block's own reasons map claims exactly ``OWNED["yambo"]``."""
+        assert set(_YAMBO_REASONS) == OWNED["yambo"]
+
+    def test_yambo_fields_never_overlap_owned_keywords(self) -> None:
+        """None of ``OWNED["yambo"]`` ever became a settable field."""
+        from koopmans.input_file.yambo import YamboBseParameters
+
+        assert set(YamboBseParameters.model_fields) & OWNED["yambo"] == set()
 
 
 class TestSeededDefaultsMatchTheRoster:
@@ -137,6 +170,8 @@ class TestOwnedKeywordsAreRefused:
             ("pw2wannier90", "spin_component", "workflow.spin"),
             ("wannier90", "num_wann", "projections"),
             ("wannier90", "write_u_matrices", "gauge products"),
+            ("yambo", "KfnQPdb", "quasiparticle database"),
+            ("yambo", "BS_CPU", "parallelization.yambo"),
         ],
     )
     def test_the_message_names_what_to_set_instead(

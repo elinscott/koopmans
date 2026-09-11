@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
 
     from koopmans.input_file import KoopmansInput
-    from koopmans.input_file.bse import BSEInput
+    from koopmans.input_file.yambo import YamboBseParameters
 
 
 def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
@@ -44,9 +44,10 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         A WorkGraph chaining the DFPT singlepoint into the yambo BSE run.
 
     Raises:
-        ValueError: If `koopmans_input.bse` is unset (guarded at parse
-            time already), `calculator_parameters.ecutwfc` is unset, or
-            `bse.bands` reaches past the Wannierized manifold.
+        ValueError: If `koopmans_input.calculator_parameters.yambo` is unset
+            (guarded at parse time already), `calculator_parameters.ecutwfc`
+            is unset, or `yambo.BSEBands` reaches past the Wannierized
+            manifold.
         NotImplementedError: If the input asks for a `bse`-incompatible
             `screening_method`, `spin`, `eps_inf`, `gb_correction`,
             orbital grouping, or `kcw` override.
@@ -56,15 +57,15 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         SinglepointBetheSalpeterWorkflow,
     )
 
-    from koopmans.aiida.conversion import input_to_bse_parameters
+    from koopmans.aiida.conversion import yambo_input_to_bse_parameters
 
     workflow = koopmans_input.workflow
-    bse: BSEInput | None = koopmans_input.bse
-    if bse is None:
-        # Already guarded by KoopmansInput.check_bse_block_matches_task; a
+    yambo: YamboBseParameters | None = koopmans_input.calculator_parameters.yambo
+    if yambo is None:
+        # Already guarded by KoopmansInput.check_yambo_block_matches_task; a
         # narrowing re-check so the type checker (and any future caller that
-        # skips parsing) sees a validated BSEInput below.
-        raise ValueError("`workflow.task: bse` needs a `bse` input block.")
+        # skips parsing) sees a validated YamboBseParameters below.
+        raise ValueError("`workflow.task: bse` needs a `calculator_parameters.yambo` input block.")
 
     if workflow.screening_method != CalculateScreeningMethod.DFPT:
         raise NotImplementedError(
@@ -116,13 +117,14 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         )
 
     n_orbitals = chain_inputs["manifold_band_counts"]["none"]
-    first, last = bse.bands
+    first, last = yambo.BSEBands
     if last > n_orbitals:
         raise ValueError(
-            f"`bse.bands` = [{first}, {last}] reaches past the Wannierized manifold, "
-            f"which the DFPT chain builds for bands 1..{n_orbitals}: Koopmans "
-            "quasiparticle corrections exist only there. Lower `bse.bands`, or widen "
-            "the manifold (`calculator_parameters.nbnd` / the empty projections)."
+            f"`calculator_parameters.yambo.BSEBands` = [{first}, {last}] reaches past "
+            f"the Wannierized manifold, which the DFPT chain builds for bands "
+            f"1..{n_orbitals}: Koopmans quasiparticle corrections exist only there. "
+            "Lower `BSEBands`, or widen the manifold (`calculator_parameters.nbnd` / "
+            "the empty projections)."
         )
 
     codes = load_codes(SinglepointBetheSalpeterCodes, koopmans_input.computer.name)
@@ -134,11 +136,14 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             structure=chain_inputs["structure"],
             manifolds=chain_inputs["manifolds"],
             kpoints=chain_inputs["kpoints"],
-            bse_parameters=input_to_bse_parameters(koopmans_input),
+            bse_parameters=yambo_input_to_bse_parameters(koopmans_input),
             scf_kpoints=chain_inputs["scf_kpoints"],
             pseudo_family=chain_inputs["pseudo_family"],
             overrides=chain_inputs["overrides"],
-            eigenvalues=bse.eigenvalues,
+            # aiida-koopmans#134: no ak2 kcw.x `ham` parser emits `pki_eigenvalues_on_grid`
+            # yet, so `pki` has no producer; the `eigenvalues` flavour knob returns once it
+            # does.
+            eigenvalues="ki",
             parallelization=chain_inputs["parallelization"],
         ),
         "Koopmans BSE",

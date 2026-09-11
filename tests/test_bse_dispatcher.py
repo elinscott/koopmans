@@ -5,10 +5,11 @@ throwaway profile (dummy codes, fake pseudos; nothing runs). The route
 composes the same ground-state/wannierization/screening chain the DFPT
 singlepoint route tests in ``test_dfpt_dispatcher.py`` exercise directly, so
 this file borrows its silicon input dict (``_si_dfpt_dict``) rather than
-duplicating it, and focuses on what the BSE route adds: the ``bse`` block's
-mapping onto the yambo runcard, and the scope guards the composed workflow's
-missing sockets (eps_inf, gb_correction, orbital grouping, kcw overrides,
-band interpolation) make necessary.
+duplicating it, and focuses on what the BSE route adds: the
+``calculator_parameters.yambo`` block's mapping onto the yambo runcard, and
+the scope guards the composed workflow's missing sockets (eps_inf,
+gb_correction, orbital grouping, kcw overrides, band interpolation) make
+necessary.
 """
 
 from __future__ import annotations
@@ -22,22 +23,22 @@ from koopmans.input_file import KoopmansInput
 from tests.test_dfpt_dispatcher import _si_dfpt_dict
 
 
-def _si_bse_dict(**bse_updates: Any) -> dict[str, Any]:
-    """Return ``_si_dfpt_dict()`` routed through ``task: bse``, with a ``bse`` block.
+def _si_bse_dict(**yambo_updates: Any) -> dict[str, Any]:
+    """Return ``_si_dfpt_dict()`` routed through ``task: bse``, with a ``yambo`` block.
 
-    ``bands=[1, 4]`` matches ``_si_dfpt_dict``'s own manifold: one occupied
+    ``BSEBands=[1, 4]`` matches ``_si_dfpt_dict``'s own manifold: one occupied
     block (sp hybrids on 2 Si sites, 4 Wannier functions) and no empty
     block, so the Wannierized range this route reads kcw.x eigenvalues from
     is exactly bands 1-4.
     """
     d = _si_dfpt_dict()
     d["workflow"]["task"] = "bse"
-    d["bse"] = {
-        "screening_bands": 100,
-        "g_cutoff": 2,
-        "bands": [1, 4],
-        "energy_range": [0, 10],
-        **bse_updates,
+    d["calculator_parameters"]["yambo"] = {
+        "BndsRnXs": [1, 100],
+        "NGsBlkXs": 2,
+        "BSEBands": [1, 4],
+        "BEnRange": [0, 10],
+        **yambo_updates,
     }
     return d
 
@@ -92,7 +93,7 @@ class TestBuild:
         The discriminating check for the conversion wiring: every keyword
         the schema maps, and nothing this route owns for itself.
         """
-        wg = _build(_si_bse_dict(g_cutoff=3, screening_bands=80, energy_steps=200))
+        wg = _build(_si_bse_dict(NGsBlkXs=3, BndsRnXs=[1, 80], BEnSteps=200))
         bse_parameters = wg.tasks["bse"].inputs["bse_parameters"].value
         assert bse_parameters == {
             "arguments": ["rim_cut", "WRbsWF", "NLCC"],
@@ -110,7 +111,12 @@ class TestBuild:
     def test_eigenvalues_reaches_the_graph(
         self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """``bse.eigenvalues`` reaches ``RunBetheSalpeter``'s own socket of the same name."""
+        """``build_bse_workgraph`` always passes ``eigenvalues='ki'`` to ``RunBetheSalpeter``.
+
+        The flavour knob returns once a producer exists (aiida-koopmans#134);
+        for now the route hardcodes it rather than exposing a keyword nothing
+        can act on.
+        """
         wg = _build(_si_bse_dict())
         assert wg.tasks["bse"].inputs["eigenvalues"].value == "ki"
 
@@ -210,8 +216,8 @@ class TestRouteRefusals:
     def test_bands_reaching_past_the_manifold_is_refused(
         self, aiida_profile: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """``bse.bands`` past the Wannierized range (4 orbitals here) is refused with the count."""
-        d = _si_bse_dict(bands=[1, 5])
+        """``yambo.BSEBands`` past the Wannierized range (4 orbitals) is refused with the count."""
+        d = _si_bse_dict(BSEBands=[1, 5])
         with pytest.raises(ValueError, match=r"Wannierized manifold.*1\.\.4"):
             _build(d)
 
@@ -219,5 +225,5 @@ class TestRouteRefusals:
         self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """Negative control: the same manifold with a range that fits builds cleanly."""
-        wg = _build(_si_bse_dict(bands=[1, 4]))
+        wg = _build(_si_bse_dict(BSEBands=[1, 4]))
         assert "bse" in wg.get_task_names()

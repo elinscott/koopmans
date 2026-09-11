@@ -24,7 +24,6 @@ from yaml import safe_load
 from koopmans.base import BaseModel
 from koopmans.input_file._band_path import band_path_refusal
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
-from koopmans.input_file.bse import BSEInput
 from koopmans.input_file.cell_parameters import (
     CellParametersViaAlat,
     CellParametersViaIbrav,
@@ -40,6 +39,7 @@ from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
 from koopmans.input_file.workflow import Task, WorkflowConfig
+from koopmans.input_file.yambo import YamboBseParameters
 
 # The public schema surface. The documentation renders this list, so a name
 # absent from it is undocumented however it reaches the module namespace;
@@ -48,7 +48,6 @@ __all__ = [
     "INPUT_FILE_FORMAT_VERSION",
     "AtomicPositionsInput",
     "AtomsInput",
-    "BSEInput",
     "CalculatorParametersInput",
     "CellParametersViaAlat",
     "CellParametersViaIbrav",
@@ -76,6 +75,7 @@ __all__ = [
     "Wannier90InputParametersWithUpDown",
     "WannierKpointsOverridesInput",
     "WorkflowConfig",
+    "YamboBseParameters",
     "migrate_input_dict",
     "read_input_file",
 ]
@@ -460,6 +460,11 @@ class CalculatorParametersInput(BaseModel):
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
     kcw: KCWInputParameters = Field(default_factory=lambda: KCWInputParameters())
+    yambo: YamboBseParameters | None = Field(
+        default=None,
+        description="the yambo BSE runcard parameters for a ``task: bse`` calculation; "
+        "required by that task alone",
+    )
 
 
 class KoopmansInput(BaseModel):
@@ -493,11 +498,6 @@ class KoopmansInput(BaseModel):
         default_factory=ComputerInput,
         description="the AiiDA computer the calculation runs on: a block naming "
         "``name``, ``account``, ``queue``, and a default ``walltime``",
-    )
-    bse: BSEInput | None = Field(
-        default=None,
-        description="the yambo BSE runcard parameters for a ``task: bse`` calculation; "
-        "required by that task alone",
     )
 
     @field_validator("calculator_parameters", mode="before")
@@ -628,23 +628,25 @@ class KoopmansInput(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def check_bse_block_matches_task(self) -> KoopmansInput:
-        """Require the ``bse`` block exactly when the task reads it.
+    def check_yambo_block_matches_task(self) -> KoopmansInput:
+        """Require ``calculator_parameters.yambo`` exactly when the task reads it.
 
         Raises:
-            ValueError: If ``task: bse`` states no ``bse`` block, or a
-                non-``bse`` task states one that would go unread.
+            ValueError: If ``task: bse`` states no ``calculator_parameters.yambo``
+                block, or a non-``bse`` task states one that would go unread.
         """
-        if self.workflow.task == Task.BSE and self.bse is None:
+        yambo = self.calculator_parameters.yambo
+        if self.workflow.task == Task.BSE and yambo is None:
             raise ValueError(
-                "`workflow.task: bse` needs a `bse` input block naming the yambo BSE "
-                "runcard parameters (`screening_bands`, `g_cutoff`, `bands`, "
-                "`energy_range`)."
+                "`workflow.task: bse` needs a `calculator_parameters.yambo` input block "
+                "naming the yambo BSE runcard parameters (`BndsRnXs`, `NGsBlkXs`, "
+                "`BSEBands`, `BEnRange`)."
             )
-        if self.workflow.task != Task.BSE and self.bse is not None:
+        if self.workflow.task != Task.BSE and yambo is not None:
             raise ValueError(
-                f"`bse` has no effect with `workflow.task: {self.workflow.task.value}`: "
-                "only `task: bse` reads it. Remove the block, or set `workflow.task: bse`."
+                f"`calculator_parameters.yambo` has no effect with `workflow.task: "
+                f"{self.workflow.task.value}`: only `task: bse` reads it. Remove the "
+                "block, or set `workflow.task: bse`."
             )
         return self
 
