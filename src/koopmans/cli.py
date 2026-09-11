@@ -127,7 +127,7 @@ def run(input_file: str) -> None:
     (e.g. Ctrl-C) after submission can still be found with `koopmans
     status` or `koopmans attach`.
     """
-    from koopmans.aiida.workflows import advice_for, build_workgraph
+    from koopmans.aiida.workflows import advice_for, advisories_for, build_workgraph
 
     input_path = Path(input_file)
 
@@ -142,6 +142,9 @@ def run(input_file: str) -> None:
 
     # Build the appropriate workgraph based on task
     wg = build_workgraph(koopmans_input)
+
+    for advisory in advisories_for(koopmans_input):
+        click.echo(f"Warning: {advisory}", err=True)
 
     # Graph validation runs when the engine takes the graph, past the build
     # boundary where `build_workgraph` attaches advice — a missing
@@ -183,7 +186,7 @@ def submit(input_file: str) -> None:
     calculation again.
     """
     from koopmans.aiida.anchor import anchor_path_for_input, record_submission
-    from koopmans.aiida.workflows import advice_for, build_workgraph
+    from koopmans.aiida.workflows import advice_for, advisories_for, build_workgraph
     from koopmans.api import launch
 
     input_path = Path(input_file)
@@ -191,6 +194,9 @@ def submit(input_file: str) -> None:
 
     load_koopmans_profile()
     wg = build_workgraph(koopmans_input)
+
+    for advisory in advisories_for(koopmans_input):
+        click.echo(f"Warning: {advisory}", err=True)
 
     # Graph validation runs when the engine takes the graph, past the build
     # boundary where `build_workgraph` attaches advice — translate here too.
