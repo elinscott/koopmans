@@ -31,6 +31,7 @@ from koopmans.aiida.workflows.blocks import (
 from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
 from koopmans.aiida.workflows.grouping import grouping_tol
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
+from koopmans.input_file import GridKpointsInput
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
@@ -393,8 +394,11 @@ def band_interpolation_inputs(
     from koopmans.aiida.conversion import smooth_grid, smooth_kpoints_mesh
 
     kpath = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
-    factor: tuple[int, int, int] = getattr(
-        koopmans_input.kpoints, "smooth_interpolation_factor", (1, 1, 1)
+    kpoints_input = koopmans_input.kpoints
+    factor: tuple[int, int, int] = (
+        kpoints_input.smooth_interpolation_factor
+        if isinstance(kpoints_input, GridKpointsInput)
+        else (1, 1, 1)
     )
     do_smooth = any(f > 1 for f in factor)
     if kpath is None:

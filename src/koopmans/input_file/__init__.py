@@ -373,6 +373,12 @@ class GridKpointsInput(BaseModel):
     @classmethod
     def _coerce_smooth_interpolation_factor(cls, v: Any) -> Any:
         """Convert a bare integer or list to the per-direction tuple."""
+        if isinstance(v, bool):
+            raise ValueError(
+                f"smooth_interpolation_factor={v!r} must be an integer densification "
+                "factor (or a [a, b, c] triple), not a boolean. Give the factor itself, "
+                "e.g. 2 or [2, 2, 2]."
+            )
         if isinstance(v, int):
             v = (v, v, v)
         elif isinstance(v, list):

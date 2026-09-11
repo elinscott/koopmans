@@ -697,6 +697,13 @@ class TestSmoothInterpolationFactor:
         with pytest.raises(ValueError, match="at least 1"):
             GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 0, 1])
 
+    def test_a_boolean_is_rejected(self) -> None:
+        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1)."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="not a boolean"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=True)
+
 
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:
     """Return the minimal silicon input with its ``kpoints`` block replaced."""

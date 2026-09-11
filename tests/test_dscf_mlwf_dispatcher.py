@@ -1037,3 +1037,13 @@ class TestSmoothInterpolation:
         """The factor multiplies the grid, so it cannot coarsen it."""
         with pytest.raises(ValueError, match="at least 1"):
             KoopmansInput.model_validate(self._with_smooth(factor=0))
+
+    def test_the_top_level_dispatcher_still_accepts_it(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The route-scoped refusal off DSCF must not catch the DSCF route itself."""
+        from koopmans.aiida.workflows import build_workgraph
+
+        inp = KoopmansInput.model_validate(self._with_smooth())
+        wg = build_workgraph(inp)
+        assert "wannierize_smooth" in wg.get_task_names()

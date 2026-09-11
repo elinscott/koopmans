@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -241,6 +242,71 @@ class TestBuildSinglepointWorkgraphScopeGuards:
 
         with pytest.raises(NotImplementedError, match=f"not wired into the {task} route"):
             build_workgraph(inp)
+
+
+class TestSmoothInterpolationFactorRejectedOffDscf:
+    """``kpoints.smooth_interpolation_factor`` only shapes the DSCF band interpolation.
+
+    Every other route — DFPT screening within a singlepoint included —
+    performs no band interpolation and would otherwise drop the factor with
+    no warning. The guard runs in ``build_workgraph`` before any route is
+    dispatched to, so it needs no AiiDA profile or codes.
+    """
+
+    @staticmethod
+    def _si_dict(task: str, **workflow_updates: Any) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "workflow": {"task": task, "pseudo_library": "SG15/1.2/PBE/SR"},
+            "atoms": {
+                "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
+                "atomic_positions": {
+                    "units": "crystal",
+                    "positions": [["Si", 0.0, 0.0, 0.0], ["Si", 0.25, 0.25, 0.25]],
+                },
+            },
+            "kpoints": {
+                "grid": [2, 2, 2],
+                "offset": [0, 0, 0],
+                "smooth_interpolation_factor": 2,
+            },
+            "calculator_parameters": {"ecutwfc": 20.0},
+        }
+        d["workflow"].update(workflow_updates)
+        return d
+
+    @pytest.mark.parametrize(
+        "task,workflow_updates",
+        [
+            ("dft_bands", {}),
+            ("wannierize", {}),
+            (
+                "singlepoint",
+                {
+                    "screening_method": "dfpt",
+                    "correction": "ki",
+                    "init_orbitals": "mlwfs",
+                    "calculate_alpha": True,
+                },
+            ),
+        ],
+        ids=["dft_bands", "wannierize", "singlepoint_dfpt"],
+    )
+    def test_refused_off_the_dscf_route(self, task: str, workflow_updates: dict[str, Any]) -> None:
+        """None of these routes ever calls the interpolation code path."""
+        from koopmans.aiida.workflows import build_workgraph
+
+        inp = KoopmansInput.model_validate(self._si_dict(task, **workflow_updates))
+        with pytest.raises(ValueError, match="smooth_interpolation_factor"):
+            build_workgraph(inp)
+
+    def test_a_factor_of_one_raises_nothing(self) -> None:
+        """Negative control: the guard itself is silent at the default factor."""
+        from koopmans.aiida.workflows import reject_smooth_interpolation_off_dscf
+
+        d = self._si_dict("dft_bands")
+        d["kpoints"]["smooth_interpolation_factor"] = 1
+        inp = KoopmansInput.model_validate(d)
+        reject_smooth_interpolation_off_dscf(inp)  # must not raise
 
 
 class TestExplicitOrbitalGroupsRejected:
