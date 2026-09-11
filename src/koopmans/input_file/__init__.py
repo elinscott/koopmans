@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 from aiida_quantumespresso.common.types import SpinType
 from pydantic import (
     AfterValidator,
+    BeforeValidator,
     Field,
     ValidationError,
     ValidationInfo,
@@ -51,6 +52,7 @@ __all__ = [
     "CellParametersViaIbrav",
     "CellParametersViaVectors",
     "ComputerInput",
+    "DensificationFactor",
     "GammaOnlyKpointsInput",
     "GridKpointsInput",
     "IntegerMagnetization",
@@ -202,6 +204,26 @@ def _no_shift(value: float) -> float:
 NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
+def _broadcast_smooth_interpolation_factor(v: Any) -> Any:
+    """Convert a bare integer or list to the per-direction tuple.
+
+    A bare integer or list broadcasts or reshapes into the triple that then
+    runs through the strict, ``>= 1`` per-axis check below — a bool included,
+    since Python's ``int`` accepts ``True``/``False`` and gets no special
+    case here.
+    """
+    if isinstance(v, list):
+        return tuple(v)
+    if isinstance(v, int):
+        return (v, v, v)
+    return v
+
+
+#: A per-direction densification factor: a strict integer (never a bool,
+#: which Python's own ``int`` would otherwise accept) of at least 1.
+DensificationFactor = Annotated[int, Field(strict=True, ge=1)]
+
+
 class StepKpointsOverridesInput(BaseModel):
     """K-point sampling for one step, in place of the top-level values.
 
@@ -319,6 +341,17 @@ class GammaOnlyKpointsInput(BaseModel):
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, which a gamma-only calculation cannot have."""
 
+    smooth_interpolation_factor: Annotated[
+        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
+        BeforeValidator(_broadcast_smooth_interpolation_factor),
+    ] = (1, 1, 1)
+    """Per-direction densification for the smooth-interpolation method.
+
+    A gamma-only calculation names no path to interpolate a band structure
+    along, so this must be left at its default; see ``GridKpointsInput``'s
+    field of the same name.
+    """
+
     @field_validator("overrides")
     @classmethod
     def check_no_step_is_given_a_mesh(
@@ -359,7 +392,10 @@ class GridKpointsInput(BaseModel):
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, in place of ``grid`` and ``offset``."""
 
-    smooth_interpolation_factor: tuple[int, int, int] = (1, 1, 1)
+    smooth_interpolation_factor: Annotated[
+        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
+        BeforeValidator(_broadcast_smooth_interpolation_factor),
+    ] = (1, 1, 1)
     """Per-direction densification of ``grid`` for the smooth-interpolation method.
 
     Above 1 (in any direction), a ΔSCF band-structure interpolation swaps
@@ -368,33 +404,6 @@ class GridKpointsInput(BaseModel):
     direction independently, and a bare integer ``a`` is shorthand for
     ``[a, a, a]``. Needs ``path`` to interpolate along.
     """
-
-    @field_validator("smooth_interpolation_factor", mode="before")
-    @classmethod
-    def _coerce_smooth_interpolation_factor(cls, v: Any) -> Any:
-        """Convert a bare integer or list to the per-direction tuple."""
-        if isinstance(v, bool):
-            raise ValueError(
-                f"smooth_interpolation_factor={v!r} must be an integer densification "
-                "factor (or a [a, b, c] triple), not a boolean. Give the factor itself, "
-                "e.g. 2 or [2, 2, 2]."
-            )
-        if isinstance(v, int):
-            v = (v, v, v)
-        elif isinstance(v, list):
-            v = tuple(v)
-        return v
-
-    @field_validator("smooth_interpolation_factor", mode="after")
-    @classmethod
-    def _reject_a_factor_below_one(cls, v: tuple[int, int, int]) -> tuple[int, int, int]:
-        """Reject a factor that would ask for a mesh coarser than ``grid``."""
-        if any(f < 1 for f in v):
-            raise ValueError(
-                f"smooth_interpolation_factor={list(v)} multiplies the `grid`, so every "
-                "entry must be at least 1. Use 1 to leave a direction as it is."
-            )
-        return v
 
 
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput

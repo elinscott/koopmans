@@ -308,6 +308,25 @@ class TestSmoothInterpolationFactorRejectedOffDscf:
         inp = KoopmansInput.model_validate(d)
         reject_smooth_interpolation_off_dscf(inp)  # must not raise
 
+    def test_gamma_only_dscf_route_reaches_the_no_path_refusal(
+        self, ozone_input: KoopmansInput, aiida_profile: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A gamma-only run carries the field too, and gets no free pass from it.
+
+        Ozone's own kpoints are gamma-only, so the field must be present
+        there for a factor above 1 to reach ``band_interpolation_inputs``'s
+        own "no path" refusal, rather than the dispatcher-level guard above
+        (task/screening_method here is singlepoint/DSCF, which does perform
+        band interpolation) or a missing-attribute error.
+        """
+        d = ozone_input.model_dump()
+        d["kpoints"]["smooth_interpolation_factor"] = 2
+        inp = KoopmansInput.model_validate(d)
+        assert inp.kpoints.gamma_only
+
+        with pytest.raises(ValueError, match=r"kpoints: \{path"):
+            build_singlepoint_workgraph(inp)
+
 
 class TestExplicitOrbitalGroupsRejected:
     """An explicit ``orbital_groups`` list is not wired into the screening fan-out.

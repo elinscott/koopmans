@@ -29,7 +29,6 @@ from koopmans.aiida.conversion import (
     step_kpoints_mesh,
     validate_computer_scheduler_support,
 )
-from koopmans.input_file import GridKpointsInput
 from koopmans.input_file.workflow import CalculateScreeningMethod, Task
 
 if TYPE_CHECKING:
@@ -634,10 +633,7 @@ def reject_smooth_interpolation_off_dscf(koopmans_input: KoopmansInput) -> None:
         ValueError: If the factor is above 1 in any direction and the
             task/screening_method combination performs no band interpolation.
     """
-    kpoints = koopmans_input.kpoints
-    if not isinstance(kpoints, GridKpointsInput):
-        return
-    if all(f <= 1 for f in kpoints.smooth_interpolation_factor):
+    if all(f <= 1 for f in koopmans_input.kpoints.smooth_interpolation_factor):
         return
 
     task = koopmans_input.workflow.task

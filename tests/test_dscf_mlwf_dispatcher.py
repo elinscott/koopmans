@@ -1035,7 +1035,7 @@ class TestSmoothInterpolation:
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """The factor multiplies the grid, so it cannot coarsen it."""
-        with pytest.raises(ValueError, match="at least 1"):
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
             KoopmansInput.model_validate(self._with_smooth(factor=0))
 
     def test_the_top_level_dispatcher_still_accepts_it(

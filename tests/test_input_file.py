@@ -692,17 +692,34 @@ class TestSmoothInterpolationFactor:
         """The factor multiplies the grid, so it cannot coarsen it."""
         from koopmans.input_file import GridKpointsInput
 
-        with pytest.raises(ValueError, match="at least 1"):
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
             GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=0)
-        with pytest.raises(ValueError, match="at least 1"):
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
             GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 0, 1])
 
     def test_a_boolean_is_rejected(self) -> None:
-        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1)."""
+        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1).
+
+        The strict per-axis type check rejects it as not a valid integer,
+        rather than accepting it as a factor of 1.
+        """
         from koopmans.input_file import GridKpointsInput
 
-        with pytest.raises(ValueError, match="not a boolean"):
+        with pytest.raises(ValueError, match="valid integer"):
             GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=True)
+
+    def test_gamma_only_carries_the_same_field(self) -> None:
+        """Gamma-only kpoints carry the field too, at the same default.
+
+        A gamma-only run has no path to interpolate a band structure along,
+        so a factor above 1 is refused downstream (by the "no path" rule),
+        not by this field being absent from the model.
+        """
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        assert GammaOnlyKpointsInput().smooth_interpolation_factor == (1, 1, 1)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GammaOnlyKpointsInput(smooth_interpolation_factor=0)
 
 
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:
