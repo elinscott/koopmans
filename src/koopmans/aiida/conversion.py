@@ -869,15 +869,16 @@ def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, An
     ``bse_parameters``. Call only where ``koopmans_input.calculator_parameters.yambo``
     is set (``workflow.task == 'bse'``, enforced at parse time).
 
-    Every yambo runcard variable this route sets is either read straight off
-    a ``YamboBseParameters`` field, under its own name, or fixed here:
-    ``KfnQPdb`` (the Koopmans quasiparticle database), the BSE momentum-transfer
-    range and the MPI role split are the composed graph's own, and refused if
-    stated here (they are not — no field maps to them). The light-polarisation
-    direction (``LongDrXs`` / ``BLongDir``) is emitted only when the input
-    states it; left unset, yambo's own compiled-in default (x-polarized)
-    applies — the `bse` protocol sets neither, so there is no protocol
-    default to fall back to.
+    Every yambo runcard variable this route sets either comes straight off a
+    ``YamboBseParameters`` field, via its own ``to_runcard_variables`` (each
+    field's unit travels on the field itself, so nothing is hand-listed
+    here), or is fixed here: ``KfnQPdb`` (the Koopmans quasiparticle
+    database), the BSE momentum-transfer range and the MPI role split are
+    the composed graph's own, and refused if stated here (they are not — no
+    field maps to them). The light-polarisation direction (``LongDrXs`` /
+    ``BLongDir``) is emitted only when the input states it; left unset,
+    yambo's own compiled-in default (x-polarized) applies — the `bse`
+    protocol sets neither, so there is no protocol default to fall back to.
     """
     yambo = koopmans_input.calculator_parameters.yambo
     if yambo is None:
@@ -885,20 +886,7 @@ def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, An
             "`yambo_input_to_bse_parameters` needs `koopmans_input.calculator_parameters.yambo` "
             "set; only a `workflow.task: bse` input reaches here."
         )
-    variables: dict[str, Any] = {
-        "BndsRnXs": [list(yambo.BndsRnXs), ""],
-        "NGsBlkXs": [yambo.NGsBlkXs, "Ry"],
-        "BSENGBlk": [yambo.BSENGBlk, "Ry"],
-        "BSEBands": [list(yambo.BSEBands), ""],
-        "BEnRange": [list(yambo.BEnRange), "eV"],
-        "BEnSteps": [yambo.BEnSteps, ""],
-        "BDmRange": [list(yambo.BDmRange), "eV"],
-    }
-    if yambo.LongDrXs is not None:
-        variables["LongDrXs"] = [list(yambo.LongDrXs), ""]
-    if yambo.BLongDir is not None:
-        variables["BLongDir"] = [list(yambo.BLongDir), ""]
-    return {"arguments": list(_BSE_ARGUMENTS), "variables": variables}
+    return {"arguments": list(_BSE_ARGUMENTS), "variables": yambo.to_runcard_variables()}
 
 
 def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:

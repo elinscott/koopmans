@@ -289,9 +289,9 @@ class TestOrbitalGroupingAdvisory:
     def test_bse_with_a_tolerance_is_advised_to_switch_task_not_criterion(self) -> None:
         """The `bse` task composes DFPT but runs no workflow-level grouping over it.
 
-        Discriminates against advising a criterion the ``bse`` route then
-        refuses outright (``build_bse_workgraph`` raises
-        ``NotImplementedError`` for any resolved ``group_orbitals_by``): the
+        Discriminates against advising a criterion the composed
+        ``SinglepointBetheSalpeterWorkflow`` still could not act on (it
+        forwards no ``group_orbitals_tol`` into its internal DFPT call): the
         fix is switching task, the same message ``wannierize``/``dft_bands``/
         ``dft_eps`` already get, not "set group_orbitals_by".
         """

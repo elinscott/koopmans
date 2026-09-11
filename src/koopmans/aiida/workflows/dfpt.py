@@ -28,12 +28,15 @@ if TYPE_CHECKING:
 
 
 class DfptChainInputs(TypedDict):
-    """Every ``SinglepointDFPTWorkflow.build`` input except ``codes``.
+    """Every ``SinglepointDFPTWorkflow.build`` keyword argument except ``codes``.
 
-    Returned by :func:`assemble_dfpt_chain_inputs`, shared by the plain
-    DFPT singlepoint route and the BSE route, which composes the same
-    ground-state/wannierization/screening chain in front of its own yambo
-    steps.
+    Returned by :func:`assemble_dfpt_chain_inputs` alongside each spin
+    channel's total Wannierized orbital count (which only the BSE route
+    needs), shared by the plain DFPT singlepoint route and the BSE route,
+    which composes the same ground-state/wannierization/screening chain in
+    front of its own yambo steps. Named exactly after
+    ``SinglepointDFPTWorkflow.build``'s own parameters so a caller building
+    the plain DFPT chain can unpack it directly as ``**chain_inputs``.
     """
 
     structure: orm.StructureData
@@ -46,22 +49,28 @@ class DfptChainInputs(TypedDict):
     l_vcut: bool | None
     spin: SpinType
     manifolds: dict[str, Any]
-    #: Total Wannierized orbital count per spin channel key (``"none"`` /
-    #: ``"up"`` / ``"down"``): the highest kcw.x ``ham`` band a route reading
-    #: this channel's eigenvalues may ask for.
-    manifold_band_counts: dict[str, int]
     group_orbitals_tol: float | None
     kcw_overrides: dict[str, Any] | None
     parallelization: dict[str, Any] | None
 
 
-def assemble_dfpt_chain_inputs(koopmans_input: KoopmansInput) -> DfptChainInputs:
+def assemble_dfpt_chain_inputs(
+    koopmans_input: KoopmansInput,
+) -> tuple[DfptChainInputs, dict[str, int]]:
     """Validate and assemble every ``SinglepointDFPTWorkflow`` input except ``codes``.
 
     Shared by :func:`build_singlepoint_dfpt_workgraph` and the BSE route
     (:mod:`koopmans.aiida.workflows.bse`), which composes the same chain in
     front of its own yambo steps: both need the same ground-state,
     wannierization and screening inputs, validated the same way.
+
+    Returns:
+        The ``SinglepointDFPTWorkflow.build`` keyword arguments, and each
+        spin channel's total Wannierized orbital count (``"none"`` /
+        ``"up"`` / ``"down"``) — the highest kcw.x ``ham`` band a route
+        reading that channel's eigenvalues may ask for. The plain DFPT
+        route has no use for the counts; the BSE route bounds
+        ``yambo.BSEBands`` against them.
     """
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
@@ -160,24 +169,28 @@ def assemble_dfpt_chain_inputs(koopmans_input: KoopmansInput) -> DfptChainInputs
 
     kcw_overrides = input_to_kcw_overrides(koopmans_input)
 
-    return DfptChainInputs(
-        structure=structure,
-        kpoints=nscf_mesh,
-        scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
-        bands_kpoints=bands_kpoints,
-        pseudo_family=pseudo_family,
-        overrides=overrides,
-        # 'auto' prepends the scf + ph.x dielectric steps inside
-        # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
-        # periodic default, on).
-        eps_inf=eps_inf,
-        l_vcut=workflow.gb_correction,
-        spin=spin,
-        manifolds=manifolds,
-        manifold_band_counts=manifold_band_counts,
-        group_orbitals_tol=group_orbitals_tol,
-        kcw_overrides=kcw_overrides or None,
-        parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer) or None,
+    return (
+        DfptChainInputs(
+            structure=structure,
+            kpoints=nscf_mesh,
+            scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
+            bands_kpoints=bands_kpoints,
+            pseudo_family=pseudo_family,
+            overrides=overrides,
+            # 'auto' prepends the scf + ph.x dielectric steps inside
+            # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
+            # periodic default, on).
+            eps_inf=eps_inf,
+            l_vcut=workflow.gb_correction,
+            spin=spin,
+            manifolds=manifolds,
+            group_orbitals_tol=group_orbitals_tol,
+            kcw_overrides=kcw_overrides or None,
+            parallelization=(
+                koopmans_input.parallelization.as_mapping(koopmans_input.computer) or None
+            ),
+        ),
+        manifold_band_counts,
     )
 
 
@@ -204,7 +217,7 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     """
     from aiida_koopmans.workgraphs.dfpt import DfptCodes, SinglepointDFPTWorkflow
 
-    chain_inputs = assemble_dfpt_chain_inputs(koopmans_input)
+    chain_inputs, _manifold_band_counts = assemble_dfpt_chain_inputs(koopmans_input)
 
     # load_codes loads every configured member of DfptCodes. ph.x is only
     # actually needed for the `eps_inf: auto` dielectric pre-computation,
@@ -218,22 +231,7 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     require_configured_codes(DfptCodes, codes, koopmans_input.computer.name)
 
     return name_run(
-        SinglepointDFPTWorkflow.build(
-            codes=codes,
-            structure=chain_inputs["structure"],
-            kpoints=chain_inputs["kpoints"],
-            scf_kpoints=chain_inputs["scf_kpoints"],
-            bands_kpoints=chain_inputs["bands_kpoints"],
-            pseudo_family=chain_inputs["pseudo_family"],
-            overrides=chain_inputs["overrides"],
-            eps_inf=chain_inputs["eps_inf"],
-            l_vcut=chain_inputs["l_vcut"],
-            spin=chain_inputs["spin"],
-            manifolds=chain_inputs["manifolds"],
-            group_orbitals_tol=chain_inputs["group_orbitals_tol"],
-            kcw_overrides=chain_inputs["kcw_overrides"],
-            parallelization=chain_inputs["parallelization"],
-        ),
+        SinglepointDFPTWorkflow.build(codes=codes, **chain_inputs),
         "Koopmans DFPT",
     )
 

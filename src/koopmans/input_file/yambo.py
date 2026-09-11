@@ -57,30 +57,36 @@ class YamboBseParameters(BaseModel):
     BndsRnXs: tuple[int, int] = Field(
         description="[first, last] band range (1-indexed, inclusive) included in the "
         "screening function W. A convergence parameter: tune it against the BSE "
-        "spectrum, the way you would converge a plane-wave cutoff."
+        "spectrum, the way you would converge a plane-wave cutoff.",
+        json_schema_extra={"unit": ""},
     )
     NGsBlkXs: float = Field(
         gt=0.0,
         description="G-vector cutoff, in Ry, for the screening function W. A convergence parameter.",
+        json_schema_extra={"unit": "Ry"},
     )
     BSENGBlk: float | None = Field(
         default=None,
         gt=0.0,
         description="G-vector cutoff, in Ry, for the BSE kernel. Defaults to `NGsBlkXs`.",
+        json_schema_extra={"unit": "Ry"},
     )
     BSEBands: tuple[int, int] = Field(
         description="[first, last] band range (1-indexed, inclusive) the BSE kernel is "
         "built over. Koopmans quasiparticle corrections exist only for the bands the "
-        "DFPT chain Wannierizes, so this range must lie inside it."
+        "DFPT chain Wannierizes, so this range must lie inside it.",
+        json_schema_extra={"unit": ""},
     )
     BEnRange: tuple[float, float] = Field(
-        description="[min, max] absorption energy window, in eV, the spectrum is computed over."
+        description="[min, max] absorption energy window, in eV, the spectrum is computed over.",
+        json_schema_extra={"unit": "eV"},
     )
     BEnSteps: int = Field(
         default=1000,
         gt=0,
         description="number of energy points sampling `BEnRange`. A numerical resolution, "
         "not a physical property of the system.",
+        json_schema_extra={"unit": ""},
     )
     BDmRange: tuple[float, float] = Field(
         default=(0.1, 0.1),
@@ -88,18 +94,21 @@ class YamboBseParameters(BaseModel):
         "[value at `BEnRange[0]`, value at `BEnRange[1]`], varied linearly across the "
         "window (equal values broaden uniformly). A numerical smoothing parameter, not "
         "a physical property of the system.",
+        json_schema_extra={"unit": "eV"},
     )
     LongDrXs: tuple[float, float, float] | None = Field(
         default=None,
         description="direction of the light polarization for the screening function W, "
         "as a vector in Cartesian components. Left unset, yambo's own default "
         "(x-polarized) applies.",
+        json_schema_extra={"unit": ""},
     )
     BLongDir: tuple[float, float, float] | None = Field(
         default=None,
         description="direction of the light polarization for the BSE spectrum, as a "
         "vector in Cartesian components. Left unset, yambo's own default (x-polarized) "
         "applies.",
+        json_schema_extra={"unit": ""},
     )
 
     @model_validator(mode="after")
@@ -139,3 +148,23 @@ class YamboBseParameters(BaseModel):
                 f"`calculator_parameters.yambo.BDmRange` = {list(self.BDmRange)} must be positive."
             )
         return self
+
+    def to_runcard_variables(self) -> dict[str, list[Any]]:
+        """Return this block's own fields as a yambo runcard ``variables`` mapping.
+
+        Each field's unit travels on its own ``Field(json_schema_extra={"unit": ...})``,
+        so this reads generically off every field rather than hand-listing them: a
+        tuple field becomes ``[list(value), unit]``, a scalar ``[value, unit]``. A
+        field left at its ``None`` default (the optional light-polarization
+        directions) is skipped, matching yambo's own compiled-in default.
+        """
+        variables: dict[str, list[Any]] = {}
+        for name, field in type(self).model_fields.items():
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, tuple):
+                value = list(value)
+            unit = field.json_schema_extra["unit"]  # type: ignore[index]
+            variables[name] = [value, unit]
+        return variables

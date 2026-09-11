@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import load_codes, name_run, require_configured_codes
-from koopmans.aiida.workflows.dfpt import assemble_dfpt_chain_inputs
-from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
+from koopmans.aiida.workflows.dfpt import DfptChainInputs, assemble_dfpt_chain_inputs
 from koopmans.input_file.workflow import CalculateScreeningMethod
 
 if TYPE_CHECKING:
@@ -32,10 +31,22 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     Phase-1 scope, refused explicitly because the composed workflow does not
     expose a socket for them: ``screening_method`` must be ``'dfpt'``,
     ``spin`` must be ``'none'`` (a single DFPT channel to read), and
-    ``workflow.eps_inf``, ``workflow.gb_correction``, workflow-level orbital
-    grouping (``group_orbitals_by`` other than ``'none'``), and
+    ``workflow.eps_inf``, ``workflow.gb_correction``, and
     ``calculator_parameters.kcw`` overrides all take no effect — the
     composed DFPT step always runs with their defaults.
+
+    Left unrefused, by contrast: ``calculator_parameters.ecutwfc``, if
+    unset, is derived from the pseudopotential family's own recommendation
+    (the same call ``PwBaseWorkChain.get_builder_from_protocol`` makes), so
+    both this route's fresh yambo ground state and the composed DFPT
+    chain's own run on the identical cutoff without the user typing it.
+    Workflow-level orbital grouping (``group_orbitals_by`` /
+    ``group_orbitals_tol``) also reaches no calculation here — the composed
+    workflow forwards no grouping tolerance into its DFPT chain — but is
+    not refused either: grouping only changes how the screening parameters
+    are *computed* (sharing one value across orbitals presumed equivalent),
+    never what they converge to, so running the full, ungrouped DFPT chain
+    underneath is a strictly more faithful, only slower, substitute.
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -45,12 +56,13 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     Raises:
         ValueError: If `koopmans_input.calculator_parameters.yambo` is unset
-            (guarded at parse time already), `calculator_parameters.ecutwfc`
-            is unset, or `yambo.BSEBands` reaches past the Wannierized
+            (guarded at parse time already), the pseudopotential family
+            recommends no cutoffs and `calculator_parameters.ecutwfc` is
+            also unset, or `yambo.BSEBands` reaches past the Wannierized
             manifold.
         NotImplementedError: If the input asks for a `bse`-incompatible
-            `screening_method`, `spin`, `eps_inf`, `gb_correction`,
-            orbital grouping, or `kcw` override.
+            `screening_method`, `spin`, `eps_inf`, `gb_correction`, or
+            `kcw` override.
     """
     from aiida_koopmans.workgraphs.bethe_salpeter import (
         SinglepointBetheSalpeterCodes,
@@ -82,41 +94,32 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         )
     if workflow.eps_inf is not None:
         raise NotImplementedError(
-            "`workflow.eps_inf` is not yet wired into the `bse` task: its composed DFPT "
-            "screening step always runs kcw.x's own default dielectric constant. Leave "
-            "it unset."
+            "`workflow.eps_inf` is not yet wired into the `bse` task: "
+            "`SinglepointBetheSalpeterWorkflow` takes no `eps_inf` of its own — its "
+            "composed DFPT screening step always runs kcw.x's own default dielectric "
+            "constant. Leave it unset."
         )
     if workflow.gb_correction is not None:
         raise NotImplementedError(
-            "`workflow.gb_correction` is not yet wired into the `bse` task: its "
+            "`workflow.gb_correction` is not yet wired into the `bse` task: "
+            "`SinglepointBetheSalpeterWorkflow` takes no `l_vcut` of its own — its "
             "composed DFPT screening step always applies the Gygi-Baldereschi scheme. "
             "Leave it unset."
         )
-    if dfpt_grouping_tol(workflow) is not None:
-        raise NotImplementedError(
-            "`workflow.group_orbitals_by` is not yet wired into the `bse` task: its "
-            "composed DFPT screening step runs no workflow-level orbital grouping. "
-            "Leave it unset (or 'none')."
-        )
-    if koopmans_input.calculator_parameters.ecutwfc is None:
-        raise ValueError(
-            "the `bse` task needs `calculator_parameters.ecutwfc` set explicitly: the "
-            "yambo BSE chain reruns its own scf/nscf/p2y ground state and must match "
-            "the DFPT chain's cutoff exactly, which a pseudopotential family's "
-            "recommended cutoff cannot guarantee."
-        )
 
-    chain_inputs = assemble_dfpt_chain_inputs(koopmans_input)
+    chain_inputs, manifold_band_counts = assemble_dfpt_chain_inputs(koopmans_input)
+    _ensure_explicit_pw_cutoffs(chain_inputs)
 
     kcw_stated = chain_inputs["kcw_overrides"]
     if kcw_stated:
         raise NotImplementedError(
-            "`calculator_parameters.kcw` is not yet wired into the `bse` task: its "
-            f"composed DFPT screening step takes no kcw.x namelist overrides. Stated: "
-            f"{sorted(kcw_stated)}. Remove them."
+            "`calculator_parameters.kcw` is not yet wired into the `bse` task: "
+            "`SinglepointBetheSalpeterWorkflow` takes no `kcw_overrides` of its own — "
+            f"its composed DFPT screening step takes no kcw.x namelist overrides. "
+            f"Stated: {sorted(kcw_stated)}. Remove them."
         )
 
-    n_orbitals = chain_inputs["manifold_band_counts"]["none"]
+    n_orbitals = manifold_band_counts["none"]
     first, last = yambo.BSEBands
     if last > n_orbitals:
         raise ValueError(
@@ -148,3 +151,32 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         ),
         "Koopmans BSE",
     )
+
+
+def _ensure_explicit_pw_cutoffs(chain_inputs: DfptChainInputs) -> None:
+    """Backfill a literal ``ecutwfc``/``ecutrho`` into the shared scf overrides, in place.
+
+    ``RunBetheSalpeter``'s own fresh scf/nscf reads both cutoffs straight
+    out of ``overrides['scf']['pw']['parameters']['SYSTEM']`` rather than
+    through a protocol build (see
+    ``aiida_koopmans.workgraphs.bethe_salpeter._pw_cutoffs_from``), so a
+    caller who left ``calculator_parameters.ecutwfc`` unset needs the
+    numeric value here too. ``assemble_dfpt_chain_inputs`` already
+    guarantees the pseudo family recommends one whenever the input states
+    none (:func:`koopmans.aiida.workflows.require_cutoffs_for_family`);
+    deriving it the same way ``PwBaseWorkChain.get_builder_from_protocol``
+    would keeps this route's fresh ground state on the same cutoff as the
+    composed DFPT chain's own, which reaches its cutoff through that same
+    protocol machinery rather than this literal.
+    """
+    system: dict[str, Any] = chain_inputs["overrides"]["scf"]["pw"]["parameters"]["SYSTEM"]
+    if "ecutwfc" in system:
+        return
+
+    from koopmans.aiida.setup.pseudos import get_recommended_cutoffs
+
+    ecutwfc, ecutrho = get_recommended_cutoffs(
+        chain_inputs["pseudo_family"], chain_inputs["structure"]
+    )
+    system["ecutwfc"] = ecutwfc
+    system["ecutrho"] = ecutrho

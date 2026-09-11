@@ -6,10 +6,10 @@ composes the same ground-state/wannierization/screening chain the DFPT
 singlepoint route tests in ``test_dfpt_dispatcher.py`` exercise directly, so
 this file borrows its silicon input dict (``_si_dfpt_dict``) rather than
 duplicating it, and focuses on what the BSE route adds: the
-``calculator_parameters.yambo`` block's mapping onto the yambo runcard, and
-the scope guards the composed workflow's missing sockets (eps_inf,
-gb_correction, orbital grouping, kcw overrides, band interpolation) make
-necessary.
+``calculator_parameters.yambo`` block's mapping onto the yambo runcard, the
+scope guards the composed workflow's missing sockets (eps_inf,
+gb_correction, kcw overrides, band interpolation) make necessary, and the
+derived ``ecutwfc``/``ecutrho`` a caller who states neither still gets.
 """
 
 from __future__ import annotations
@@ -137,12 +137,58 @@ class TestBuild:
         assert len(manifolds["none"]["occ"]) == 1
         assert "emp" not in manifolds["none"]
 
+    def test_missing_ecutwfc_derives_from_the_pseudo_family(
+        self, aiida_profile: Any, bse_codes: Any, fake_sg15_cutoffs_family: Any
+    ) -> None:
+        """Left unset, ecutwfc/ecutrho come from the family's own recommendation.
+
+        Checked against the family's own ``get_recommended_cutoffs`` call
+        directly (same elements, same ``unit='Ry'``) rather than a
+        hardcoded converted constant: ``fake_sg15_cutoffs_family`` stores
+        30.0/240.0 in aiida-pseudo's own default unit, eV, not Ry, so the
+        Ry value this route needs is neither of those literals. The
+        discriminating check against
+        ``test_missing_ecutwfc_is_refused_against_a_cutoff_less_family``,
+        which uses a family with no recommendation to derive from instead.
+        ``RunBetheSalpeter``'s own fresh scf/nscf reads the literal value
+        straight off the shared overrides ``assemble_dfpt_chain_inputs``
+        builds (see ``bse._ensure_explicit_pw_cutoffs``).
+        """
+        d = _si_bse_dict()
+        d["workflow"]["pseudo_library"] = "SG15/1.0/PBE/SR"
+        del d["calculator_parameters"]["ecutwfc"]
+        wg = _build(d)
+        expected_ecutwfc, expected_ecutrho = fake_sg15_cutoffs_family.get_recommended_cutoffs(
+            elements=("Si",), unit="Ry"
+        )
+        assert wg.tasks["bse"].inputs["ecutwfc"].value == pytest.approx(expected_ecutwfc)
+        assert wg.tasks["bse"].inputs["ecutrho"].value == pytest.approx(expected_ecutrho)
+
+    def test_orbital_grouping_is_accepted_without_effect(
+        self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A resolved grouping criterion no longer blocks the build.
+
+        Grouping only changes how the composed DFPT chain's screening
+        parameters are computed, never what they converge to (unlike
+        eps_inf/gb_correction/kcw, whose composed graph gap is a genuine
+        physics gap and stays a hard refusal): the graph still builds, its
+        DFPT chain running fully ungrouped underneath.
+        """
+        d = _si_bse_dict()
+        d["workflow"]["group_orbitals_by"] = "spread"
+        d["workflow"]["group_orbitals_tol"] = 0.05
+        wg = _build(d)
+        assert "bse" in wg.get_task_names()
+
 
 class TestRouteRefusals:
     """Scope guards for inputs the composed ``SinglepointBetheSalpeterWorkflow`` has no socket for.
 
-    Each of these is a pure-Python check on the parsed input and needs no
-    profile, codes, or pseudopotentials — it fires before anything is built.
+    Most of these are pure-Python checks on the parsed input needing no
+    profile, codes, or pseudopotentials, firing before anything is built;
+    the ones that resolve a pseudo family or the Wannierized manifold say
+    so in their own docstring.
     """
 
     def test_dscf_screening_method_is_refused(self) -> None:
@@ -184,16 +230,17 @@ class TestRouteRefusals:
         with pytest.raises(NotImplementedError, match="gb_correction"):
             _build(d)
 
-    def test_orbital_grouping_is_refused(self) -> None:
-        """Workflow-level orbital grouping has no socket on the composed graph."""
-        d = _si_bse_dict()
-        d["workflow"]["group_orbitals_by"] = "spread"
-        d["workflow"]["group_orbitals_tol"] = 0.05
-        with pytest.raises(NotImplementedError, match="group_orbitals_by"):
-            _build(d)
+    def test_missing_ecutwfc_is_refused_against_a_cutoff_less_family(
+        self, aiida_profile: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """No literal cutoff, and no family recommendation to derive one from, is fatal.
 
-    def test_missing_ecutwfc_is_refused(self) -> None:
-        """The fresh yambo scf/nscf must match the DFPT chain's cutoff exactly."""
+        Needs a profile and pseudos: this guard runs after
+        ``assemble_dfpt_chain_inputs``, whose own
+        ``require_cutoffs_for_family`` check raises first for
+        ``fake_sg15_pseudo_family`` (no recommended cutoffs) once
+        ``calculator_parameters.ecutwfc`` is gone too.
+        """
         d = _si_bse_dict()
         del d["calculator_parameters"]["ecutwfc"]
         with pytest.raises(ValueError, match="ecutwfc"):

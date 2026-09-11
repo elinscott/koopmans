@@ -654,9 +654,12 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 #: or :func:`koopmans.aiida.workflows.grouping.dfpt_grouping_tol`, so ``workflow.
 #: group_orbitals_by``/``group_orbitals_tol`` reach no calculation at all.
 #: ``Task.BSE`` composes the DFPT chain but runs no workflow-level orbital
-#: grouping over it (:func:`koopmans.aiida.workflows.bse.build_bse_workgraph`
-#: refuses a resolved criterion outright), so it belongs here rather than in
-#: the "switch to a criterion this run implements" branch below.
+#: grouping over it: the composed
+#: ``aiida_koopmans.workgraphs.bethe_salpeter.SinglepointBetheSalpeterWorkflow``
+#: forwards no ``group_orbitals_tol`` into its internal DFPT call, so the
+#: tolerance never reaches a calculation whatever criterion it names —
+#: unlike the "switch to a criterion this run implements" branch below, no
+#: criterion is implemented here yet to switch to.
 _TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS, Task.BSE})
 
 
