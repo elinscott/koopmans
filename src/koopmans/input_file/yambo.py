@@ -89,6 +89,18 @@ class YamboBseParameters(BaseModel):
         "window (equal values broaden uniformly). A numerical smoothing parameter, not "
         "a physical property of the system.",
     )
+    LongDrXs: tuple[float, float, float] | None = Field(
+        default=None,
+        description="direction of the light polarization for the screening function W, "
+        "as a vector in Cartesian components. Left unset, yambo's own default "
+        "(x-polarized) applies.",
+    )
+    BLongDir: tuple[float, float, float] | None = Field(
+        default=None,
+        description="direction of the light polarization for the BSE spectrum, as a "
+        "vector in Cartesian components. Left unset, yambo's own default (x-polarized) "
+        "applies.",
+    )
 
     @model_validator(mode="after")
     def default_bsengblk_to_ngsblkxs(self) -> Self:

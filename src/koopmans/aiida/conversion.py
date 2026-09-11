@@ -874,8 +874,10 @@ def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, An
     ``KfnQPdb`` (the Koopmans quasiparticle database), the BSE momentum-transfer
     range and the MPI role split are the composed graph's own, and refused if
     stated here (they are not — no field maps to them). The light-polarisation
-    direction (``LongDrXs`` / ``BLongDir``) is left unset, taking yambo's own
-    protocol default.
+    direction (``LongDrXs`` / ``BLongDir``) is emitted only when the input
+    states it; left unset, yambo's own compiled-in default (x-polarized)
+    applies — the `bse` protocol sets neither, so there is no protocol
+    default to fall back to.
     """
     yambo = koopmans_input.calculator_parameters.yambo
     if yambo is None:
@@ -883,18 +885,20 @@ def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, An
             "`yambo_input_to_bse_parameters` needs `koopmans_input.calculator_parameters.yambo` "
             "set; only a `workflow.task: bse` input reaches here."
         )
-    return {
-        "arguments": list(_BSE_ARGUMENTS),
-        "variables": {
-            "BndsRnXs": [list(yambo.BndsRnXs), ""],
-            "NGsBlkXs": [yambo.NGsBlkXs, "Ry"],
-            "BSENGBlk": [yambo.BSENGBlk, "Ry"],
-            "BSEBands": [list(yambo.BSEBands), ""],
-            "BEnRange": [list(yambo.BEnRange), "eV"],
-            "BEnSteps": [yambo.BEnSteps, ""],
-            "BDmRange": [list(yambo.BDmRange), "eV"],
-        },
+    variables: dict[str, Any] = {
+        "BndsRnXs": [list(yambo.BndsRnXs), ""],
+        "NGsBlkXs": [yambo.NGsBlkXs, "Ry"],
+        "BSENGBlk": [yambo.BSENGBlk, "Ry"],
+        "BSEBands": [list(yambo.BSEBands), ""],
+        "BEnRange": [list(yambo.BEnRange), "eV"],
+        "BEnSteps": [yambo.BEnSteps, ""],
+        "BDmRange": [list(yambo.BDmRange), "eV"],
     }
+    if yambo.LongDrXs is not None:
+        variables["LongDrXs"] = [list(yambo.LongDrXs), ""]
+    if yambo.BLongDir is not None:
+        variables["BLongDir"] = [list(yambo.BLongDir), ""]
+    return {"arguments": list(_BSE_ARGUMENTS), "variables": variables}
 
 
 def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:

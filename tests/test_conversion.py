@@ -467,10 +467,18 @@ class TestYamboInputToBseParameters:
     """``calculator_parameters.yambo`` maps onto the yambo BSE runcard's own arguments/variables."""
 
     def test_full_mapping(self, aiida_profile: Any) -> None:
-        """Every field lands under its own yambo variable name, unit included."""
+        """Every field lands under its own yambo variable name, matching the k2y BSE example.
+
+        Values are the k2y example's own literal runcard
+        (``k2y/examples/silicon_aiida_bse/03_bse_submit.py``), so this pins
+        the whole conversion dict against the real numbers a user runs with,
+        not placeholders that happen to satisfy the field types.
+        """
         from koopmans.input_file import KoopmansInput
 
-        inp = KoopmansInput.model_validate(_bse_pw_input(BEnSteps=500, BDmRange=[0.2, 0.2]))
+        inp = KoopmansInput.model_validate(
+            _bse_pw_input(LongDrXs=[1.0, 1.0, 1.0], BLongDir=[1.0, 1.0, 1.0])
+        )
         parameters = yambo_input_to_bse_parameters(inp)
 
         assert parameters == {
@@ -480,9 +488,11 @@ class TestYamboInputToBseParameters:
                 "NGsBlkXs": [2, "Ry"],
                 "BSENGBlk": [2, "Ry"],
                 "BSEBands": [[4, 5], ""],
+                "LongDrXs": [[1.0, 1.0, 1.0], ""],
+                "BLongDir": [[1.0, 1.0, 1.0], ""],
                 "BEnRange": [[0, 10], "eV"],
-                "BEnSteps": [500, ""],
-                "BDmRange": [[0.2, 0.2], "eV"],
+                "BEnSteps": [1000, ""],
+                "BDmRange": [[0.1, 0.1], "eV"],
             },
         }
 
@@ -520,16 +530,28 @@ class TestYamboInputToBseParameters:
 
         ``RunBetheSalpeter`` sets ``KfnQPdb``/``BSEQptR``/``BS_CPU``/``BS_ROLEs``
         itself and refuses a caller that states them (see
-        ``aiida_koopmans.owned_keywords.OWNED["yambo"]``); the light-polarisation
-        direction (``LongDrXs``/``BLongDir``) is left unset, taking yambo's own
-        protocol default.
+        ``aiida_koopmans.owned_keywords.OWNED["yambo"]``).
         """
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_bse_pw_input())
         variables = yambo_input_to_bse_parameters(inp)["variables"]
-        for keyword in ("KfnQPdb", "BSEQptR", "BS_CPU", "BS_ROLEs", "LongDrXs", "BLongDir"):
+        for keyword in ("KfnQPdb", "BSEQptR", "BS_CPU", "BS_ROLEs"):
             assert keyword not in variables
+
+    def test_unset_light_polarization_is_not_emitted(self, aiida_profile: Any) -> None:
+        """``LongDrXs``/``BLongDir`` are ordinary optional fields, left out when unset.
+
+        Unlike the route-owned keywords above, a caller may set these; the
+        input file default is simply unset, leaving yambo's own compiled-in
+        (x-polarized) default to apply.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input())
+        variables = yambo_input_to_bse_parameters(inp)["variables"]
+        assert "LongDrXs" not in variables
+        assert "BLongDir" not in variables
 
 
 class TestPwNamelistDumpSurvivesDefaultValues:

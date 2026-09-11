@@ -37,6 +37,18 @@ def _si_dict(task: str, **workflow_updates: Any) -> dict[str, Any]:
     return d
 
 
+def _bse_dict(**workflow_updates: Any) -> dict[str, Any]:
+    """Return a minimal ``task: bse`` input, with its own ``calculator_parameters.yambo`` block."""
+    d = _si_dict("bse", **workflow_updates)
+    d["calculator_parameters"]["yambo"] = {
+        "BndsRnXs": [1, 100],
+        "NGsBlkXs": 2,
+        "BSEBands": [1, 4],
+        "BEnRange": [0, 10],
+    }
+    return d
+
+
 class TestSmoothInterpolationFactorAdvisory:
     """``kpoints.smooth_interpolation_factor`` only shapes the DSCF band interpolation."""
 
@@ -273,6 +285,26 @@ class TestOrbitalGroupingAdvisory:
         assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
         assert inp.workflow.group_orbitals_tol == pytest.approx(1.0e-4)
         assert advisories_for(inp) == []
+
+    def test_bse_with_a_tolerance_is_advised_to_switch_task_not_criterion(self) -> None:
+        """The `bse` task composes DFPT but runs no workflow-level grouping over it.
+
+        Discriminates against advising a criterion the ``bse`` route then
+        refuses outright (``build_bse_workgraph`` raises
+        ``NotImplementedError`` for any resolved ``group_orbitals_by``): the
+        fix is switching task, the same message ``wannierize``/``dft_bands``/
+        ``dft_eps`` already get, not "set group_orbitals_by".
+        """
+        d = _bse_dict()
+        d["workflow"]["group_orbitals_tol"] = 0.05
+        inp = KoopmansInput.model_validate(d)
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+        assert advisories_for(inp) == [
+            "workflow.group_orbitals_tol has no effect on task: bse (it "
+            "groups orbitals to share a screening parameter, computed only within a "
+            "singlepoint or trajectory); it is kept for when you switch task to "
+            "singlepoint."
+        ]
 
 
 class TestResolveGroupOrbitalsByDoesNotMutateCaller:

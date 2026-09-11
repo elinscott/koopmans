@@ -6,7 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -50,18 +50,51 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def _install_advice_trailer(computer: str) -> str:
-    """Return the sentence telling the user how to configure codes on ``computer``.
+def _install_advice_trailer(computer: str, names: Iterable[str] = ()) -> str:
+    """Return the sentence(s) telling the user how to configure codes on ``computer``.
 
-    ``koopmans install`` only sets up the bundled ``localhost`` backend; a
-    named remote computer's codes are registered by hand.
+    ``koopmans install`` only registers the executables
+    :func:`~koopmans.aiida.setup.codes.code_specs` knows about — the bundled
+    QE/Wannier90 backend. A code outside that set (yambo's ``p2y``/``yambo``
+    included) is never touched by it, on ``localhost`` or anywhere else, so
+    it earns its own ``verdi code create core.code.installed`` line naming
+    it, the same wording already used for a named remote computer.
+
+    Args:
+        computer: The run's ``computer.name``.
+        names: The missing codes this trailer is advising about. Empty
+            (the default) renders the plain per-computer sentence, for
+            callers with no code name to check against
+            :func:`~koopmans.aiida.setup.codes.code_specs`.
     """
+    from koopmans.aiida.setup.codes import code_specs
+
+    names = list(names)
+    known = code_specs()
+    unregistrable = sorted(name for name in names if name not in known)
+    registrable = [name for name in names if name in known]
+
+    if unregistrable and not registrable:
+        return (
+            f"Register {', '.join(f'`{name}`' for name in unregistrable)} on the "
+            f"'{computer}' computer, e.g. with `verdi code create core.code.installed`."
+        )
+
     if computer == "localhost":
-        return "Please run 'koopmans install' to set up the AiiDA backend."
-    return (
-        f"Register them on the '{computer}' computer, e.g. with "
-        "`verdi code create core.code.installed`."
-    )
+        sentence = "Please run 'koopmans install' to set up the AiiDA backend."
+    else:
+        sentence = (
+            f"Register them on the '{computer}' computer, e.g. with "
+            "`verdi code create core.code.installed`."
+        )
+    if unregistrable:
+        codes = ", ".join(f"`{name}`" for name in unregistrable)
+        verb, pronoun = ("is", "it") if len(unregistrable) == 1 else ("are", "them")
+        sentence += (
+            f" {codes} {verb} not one 'koopmans install' sets up: create {pronoun} on "
+            f"the '{computer}' computer, e.g. with `verdi code create core.code.installed`."
+        )
+    return sentence
 
 
 def load_code(name: str, executable: str, computer: str = "localhost") -> orm.AbstractCode:
@@ -70,7 +103,7 @@ def load_code(name: str, executable: str, computer: str = "localhost") -> orm.Ab
         return orm.load_code(f"{name}@{computer}")
     except Exception as exc:
         raise ValueError(
-            f"Could not load {executable} code: {exc}\n{_install_advice_trailer(computer)}"
+            f"Could not load {executable} code: {exc}\n{_install_advice_trailer(computer, [name])}"
         ) from exc
 
 
@@ -192,7 +225,7 @@ def _render_missing_codes_advice(
         "This calculation needs codes that are not configured:\n"
         + "\n".join(lines)
         + "\n"
-        + _install_advice_trailer(computer)
+        + _install_advice_trailer(computer, help_by_name.keys())
     )
 
 
@@ -620,7 +653,11 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 #: Tasks whose graphs never call :func:`koopmans.aiida.workflows.grouping.grouping_tol`
 #: or :func:`koopmans.aiida.workflows.grouping.dfpt_grouping_tol`, so ``workflow.
 #: group_orbitals_by``/``group_orbitals_tol`` reach no calculation at all.
-_TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
+#: ``Task.BSE`` composes the DFPT chain but runs no workflow-level orbital
+#: grouping over it (:func:`koopmans.aiida.workflows.bse.build_bse_workgraph`
+#: refuses a resolved criterion outright), so it belongs here rather than in
+#: the "switch to a criterion this run implements" branch below.
+_TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS, Task.BSE})
 
 
 def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
