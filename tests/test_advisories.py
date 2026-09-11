@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from koopmans.aiida.workflows import advisories_for
+from koopmans.aiida.workflows.grouping import resolve_orbital_grouping
 from koopmans.input_file import KoopmansInput
 
 _SI_ATOMS: dict[str, Any] = {
@@ -115,13 +116,15 @@ class TestOrbitalGroupingAdvisory:
     def test_wannierize_with_mlwfs_alone_is_not_advised(self) -> None:
         """Negative control: init_orbitals alone resolves group_orbitals_by on its own.
 
-        The resolution defaults ``group_orbitals_by`` to ``self_hartree`` for a
-        Wannier-initialized DSCF run — but the user typed neither grouping
-        keyword, so nothing is worth flagging.
+        Resolution (via ``resolve_orbital_grouping``) defaults the criterion
+        to ``self_hartree`` for a Wannier-initialized DSCF run — but the
+        user typed neither grouping keyword, so the field stays unset on
+        the parsed model and nothing is worth flagging.
         """
         inp = KoopmansInput.model_validate(_si_dict("wannierize", init_orbitals="mlwfs"))
-        assert inp.workflow.group_orbitals_by is not None
-        assert inp.workflow.group_orbitals_by.value == "self_hartree"
+        assert inp.workflow.group_orbitals_by is None
+        criterion, _ = resolve_orbital_grouping(inp.workflow)
+        assert criterion.value == "self_hartree"
         assert advisories_for(inp) == []
 
     def test_wannierize_with_a_tolerance_is_advised(self) -> None:
@@ -171,8 +174,9 @@ class TestOrbitalGroupingAdvisory:
             group_orbitals_tol=0.05,
         )
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is not None
-        assert inp.workflow.group_orbitals_by.value == "none"
+        assert inp.workflow.group_orbitals_by is None
+        criterion, _ = resolve_orbital_grouping(inp.workflow)
+        assert criterion.value == "none"
         assert advisories_for(inp) == [
             "workflow.group_orbitals_tol has no effect on task: singlepoint "
             "(group_orbitals_by resolved to 'none' for init_orbitals: pz, "
@@ -191,8 +195,9 @@ class TestOrbitalGroupingAdvisory:
             group_orbitals_tol=0.05,
         )
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is not None
-        assert inp.workflow.group_orbitals_by.value == "none"
+        assert inp.workflow.group_orbitals_by is None
+        criterion, _ = resolve_orbital_grouping(inp.workflow)
+        assert criterion.value == "none"
         assert advisories_for(inp) == [
             "workflow.group_orbitals_tol has no effect on task: singlepoint "
             "(group_orbitals_by resolved to 'none' for init_orbitals: mlwfs, "
@@ -210,8 +215,9 @@ class TestOrbitalGroupingAdvisory:
             init_orbitals="mlwfs",
         )
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is not None
-        assert inp.workflow.group_orbitals_by.value == "self_hartree"
+        assert inp.workflow.group_orbitals_by is None
+        criterion, _ = resolve_orbital_grouping(inp.workflow)
+        assert criterion.value == "self_hartree"
         assert advisories_for(inp) == []
 
 

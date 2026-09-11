@@ -29,6 +29,7 @@ from koopmans.aiida.conversion import (
     step_kpoints_mesh,
     validate_computer_scheduler_support,
 )
+from koopmans.aiida.workflows.grouping import resolve_orbital_grouping
 from koopmans.input_file.workflow import CalculateScreeningMethod, GroupOrbitalsBy, Task
 
 if TYPE_CHECKING:
@@ -635,11 +636,14 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     The smooth-interpolation check compares the resolved value against its
     neutral default, since ``kpoints.smooth_interpolation_factor`` has no
     "unset" state distinct from 1. The grouping check instead fires only on
-    a keyword the input file actually wrote (``WorkflowConfig.
-    user_set_group_orbitals_by``/``user_set_group_orbitals_tol``): the
-    schema itself resolves ``group_orbitals_by`` to ``self_hartree`` for a
-    Wannier-initialized DSCF run, and flagging that resolved value the same
-    as a user-typed one would warn about a keyword nobody wrote.
+    a keyword the input file actually wrote (``group_orbitals_by``/
+    ``group_orbitals_tol`` is not ``None`` on the parsed model): the schema
+    leaves both fields unset when the input file does not type them, and
+    :func:`koopmans.aiida.workflows.grouping.resolve_orbital_grouping`
+    resolves ``group_orbitals_by`` to ``self_hartree`` for a
+    Wannier-initialized DSCF run only at build time, so flagging that
+    resolved value the same as a user-typed one would warn about a keyword
+    nobody wrote.
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -670,13 +674,12 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                     "it is kept for when you switch task to singlepoint."
                 )
 
-    resolved_to_none = workflow.group_orbitals_by == GroupOrbitalsBy.NONE
     if task in _TASKS_THAT_GROUP_NO_ORBITALS:
         user_set_keywords = [
             f"workflow.{name}"
             for name, is_set in (
-                ("group_orbitals_by", workflow.user_set_group_orbitals_by),
-                ("group_orbitals_tol", workflow.user_set_group_orbitals_tol),
+                ("group_orbitals_by", workflow.group_orbitals_by is not None),
+                ("group_orbitals_tol", workflow.group_orbitals_tol is not None),
             )
             if is_set
         ]
@@ -694,15 +697,17 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 "computed only within a singlepoint or trajectory); they are kept for "
                 "when you switch task to singlepoint."
             )
-    elif resolved_to_none and workflow.group_orbitals_tol is not None:
-        advisories.append(
-            "workflow.group_orbitals_tol has no effect on task: "
-            f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
-            f"{workflow.init_orbitals.value}, screening_method: "
-            f"{workflow.screening_method.value}); it is kept for when you set "
-            "group_orbitals_by to a criterion this run implements (self_hartree for "
-            "DSCF, spread for DFPT)."
-        )
+    else:
+        resolved_criterion, _ = resolve_orbital_grouping(workflow)
+        if resolved_criterion == GroupOrbitalsBy.NONE and workflow.group_orbitals_tol is not None:
+            advisories.append(
+                "workflow.group_orbitals_tol has no effect on task: "
+                f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
+                f"{workflow.init_orbitals.value}, screening_method: "
+                f"{workflow.screening_method.value}); it is kept for when you set "
+                "group_orbitals_by to a criterion this run implements (self_hartree for "
+                "DSCF, spread for DFPT)."
+            )
 
     return advisories
 
