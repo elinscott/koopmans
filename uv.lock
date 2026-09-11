@@ -183,6 +183,7 @@ dependencies = [
     { name = "aiida-wannier90-workflows", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-wannierjl", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "aiida-workgraph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "aiida-yambo", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "k2y", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "node-graph", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -200,6 +201,7 @@ requires-dist = [
     { name = "aiida-wannier90-workflows", editable = "../aiida-wannier90-workflows" },
     { name = "aiida-wannierjl", editable = "../aiida-wannierjl" },
     { name = "aiida-workgraph", editable = "../aiida-workgraph" },
+    { name = "aiida-yambo", git = "https://github.com/mikibonacci/aiida-yambo?rev=a95794c55802d174207c69e957aaf958040342ee" },
     { name = "furo", marker = "extra == 'docs'" },
     { name = "k2y", git = "https://github.com/elinscott/k2y?rev=1c28647c9af21832751983a2abcf5d0b39f3a384" },
     { name = "markupsafe", marker = "extra == 'docs'", specifier = "<2.1" },
@@ -431,6 +433,22 @@ requires-dist = [
     { name = "types-tabulate", marker = "extra == 'pre-commit'", specifier = "~=0.9.0" },
 ]
 provides-extras = ["docs", "pre-commit", "tests"]
+
+[[package]]
+name = "aiida-yambo"
+version = "3.0.0"
+source = { git = "https://github.com/mikibonacci/aiida-yambo?rev=a95794c55802d174207c69e957aaf958040342ee#a95794c55802d174207c69e957aaf958040342ee" }
+dependencies = [
+    { name = "aiida-core", extra = ["atomic-tools"], marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "aiida-quantumespresso", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "h5py", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "netcdf4", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "numpy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pandas", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pyyaml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "xarray", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "yambopy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+]
 
 [[package]]
 name = "aio-pika"
@@ -4090,7 +4108,7 @@ wheels = [
 [[package]]
 name = "yambopy"
 version = "0.7.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/mikibonacci/yambopy?rev=aiida-parsing#ccbd7cbafa3e1b61786d1842663106fc0b1b9b0d" }
 dependencies = [
     { name = "h5py", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "lxml", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -4106,10 +4124,6 @@ dependencies = [
     { name = "spglib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "spgrep", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "tqdm", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/45/d6f8305b0a5119e4c592b7e9ad11fb971781e093657fac74d1f2d870e4cc/yambopy-0.7.1.tar.gz", hash = "sha256:c9a003192aef8c95e62c872f05aa43d78b208a8292a0542768e1d2954b7539fb", size = 6766509, upload-time = "2026-03-13T14:20:06.403Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/9c/2e03dd6f48c986fccff7a8b779d027906b11bea3ab2a9dd3148fee54e0b4/yambopy-0.7.1-py3-none-any.whl", hash = "sha256:48e47c13985037411eecf7a168e1fcf8d0719b99ed0acb6133ce69c41b829afb", size = 5992063, upload-time = "2026-03-13T14:20:03.97Z" },
 ]
 
 [[package]]
