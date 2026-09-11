@@ -1538,7 +1538,6 @@ dependencies = [
     { name = "ase", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "ipdb", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "k2y", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "matplotlib", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "more-click", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "more-itertools", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -1554,7 +1553,6 @@ dependencies = [
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "upf-tools", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "wannier90-input", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
-    { name = "yambopy", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
 ]
 
 [package.dev-dependencies]
@@ -1632,7 +1630,6 @@ requires-dist = [
     { name = "ase", specifier = ">=3.23" },
     { name = "click" },
     { name = "ipdb", specifier = ">=0.13.13" },
-    { name = "k2y", git = "https://github.com/elinscott/k2y?rev=eb67d2ab5669bc7e351f3821ea0f6ac437b49d11" },
     { name = "matplotlib", specifier = ">=3.10" },
     { name = "more-click" },
     { name = "more-itertools" },
@@ -1648,7 +1645,6 @@ requires-dist = [
     { name = "typing-extensions" },
     { name = "upf-tools", editable = "../upf-tools" },
     { name = "wannier90-input", specifier = ">=0.0.2" },
-    { name = "yambopy", specifier = ">=0.7.1" },
 ]
 
 [package.metadata.requires-dev]
