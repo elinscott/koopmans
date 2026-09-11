@@ -654,6 +654,48 @@ def reject_smooth_interpolation_off_dscf(koopmans_input: KoopmansInput) -> None:
     )
 
 
+def _build_route(task: Task, koopmans_input: KoopmansInput) -> WorkGraph:
+    """Dispatch to one task's route builder, importing its module lazily.
+
+    Split out of :func:`build_workgraph` so that function's own advice
+    boundary carries none of this dispatch's branching.
+
+    Raises:
+        ValueError: If ``task`` names no implemented route.
+    """
+    if task == Task.DFT_BANDS:
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
+
+        return build_dft_bands_workgraph(koopmans_input)
+    elif task == Task.WANNIERIZE:
+        from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
+
+        return build_wannierize_workgraph(koopmans_input)
+    elif task == Task.SINGLEPOINT:
+        from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
+
+        return build_singlepoint_workgraph(koopmans_input)
+    elif task == Task.TRAJECTORY:
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        return build_trajectory_workgraph(koopmans_input)
+    elif task == Task.DFT_EPS:
+        from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
+
+        return build_dft_eps_workgraph(koopmans_input)
+    elif task == Task.BSE:
+        from koopmans.aiida.workflows.bse import build_bse_workgraph
+
+        return build_bse_workgraph(koopmans_input)
+    else:
+        raise ValueError(
+            f"Task '{task.value}' is not yet implemented. "
+            f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
+            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}, "
+            f"{Task.BSE.value}"
+        )
+
+
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build the appropriate workgraph for a KoopmansInput.
 
@@ -687,38 +729,12 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     require_computer_configured(computer_name)
     validate_computer_scheduler_support(koopmans_input.computer, koopmans_input.parallelization)
 
-    # Build the workgraph based on task. Each route loads its workflow's
-    # codes itself (:func:`load_codes`) once its input validation has passed.
-    # An error raised inside the plugin speaks its vocabulary (derived
-    # blocks, `num_bands`), which the user never wrote; attach the
-    # input-file advice at this boundary.
+    # Each route loads its workflow's codes itself (:func:`load_codes`) once
+    # its input validation has passed. An error raised inside the plugin
+    # speaks its vocabulary (derived blocks, `num_bands`), which the user
+    # never wrote; attach the input-file advice at this boundary.
     try:
-        if task == Task.DFT_BANDS:
-            from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
-
-            return build_dft_bands_workgraph(koopmans_input)
-        elif task == Task.WANNIERIZE:
-            from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
-
-            return build_wannierize_workgraph(koopmans_input)
-        elif task == Task.SINGLEPOINT:
-            from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
-
-            return build_singlepoint_workgraph(koopmans_input)
-        elif task == Task.TRAJECTORY:
-            from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
-
-            return build_trajectory_workgraph(koopmans_input)
-        elif task == Task.DFT_EPS:
-            from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
-
-            return build_dft_eps_workgraph(koopmans_input)
-        else:
-            raise ValueError(
-                f"Task '{task.value}' is not yet implemented. "
-                f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-                f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
-            )
+        return _build_route(task, koopmans_input)
     except Exception as exc:
         advice = advice_for(exc, computer_name)
         if advice is not None:

@@ -849,6 +849,52 @@ def input_to_kcw_overrides(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     return overrides
 
 
+#: Yambo BSE runcard arguments the workflow always turns on: ``rim_cut``
+#: (random-integration-method Coulomb-divergence treatment, needed for any
+#: periodic BSE), ``WRbsWF`` (write the excitonic wavefunctions the
+#: additional-parsing quantities read) and ``NLCC`` (harmless for a
+#: pseudopotential family with no non-linear core correction; needed for one
+#: that has it, as koopmans2's own PseudoDojo/SG15 defaults do). Mirrors the
+#: k2y BSE example (``examples/silicon_aiida_bse/03_bse_submit.py``).
+_BSE_ARGUMENTS: tuple[str, ...] = ("rim_cut", "WRbsWF", "NLCC")
+
+
+def input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, Any]:
+    """Convert ``bse`` into the ``{"arguments": [...], "variables": {...}}`` dict.
+
+    ``aiida_koopmans.workgraphs.bethe_salpeter.RunBetheSalpeter`` takes this
+    verbatim as its own ``bse_parameters``. Call only where
+    ``koopmans_input.bse`` is set (``workflow.task == 'bse'``, enforced at
+    parse time).
+
+    Every yambo runcard variable this route sets is either read straight off
+    a ``BSEInput`` field or fixed here: ``KfnQPdb`` (the Koopmans
+    quasiparticle database) and the MPI role split are the composed graph's
+    own, and refused if stated here (they are not — no field maps to them).
+    The light-polarisation direction (``LongDrXs`` / ``BLongDir``) is left
+    unset, taking yambo's own protocol default.
+    """
+    bse = koopmans_input.bse
+    if bse is None:
+        raise ValueError(
+            "`input_to_bse_parameters` needs `koopmans_input.bse` set; only a "
+            "`workflow.task: bse` input reaches here."
+        )
+    broadening = bse.broadening if isinstance(bse.broadening, tuple) else (bse.broadening,) * 2
+    return {
+        "arguments": list(_BSE_ARGUMENTS),
+        "variables": {
+            "BndsRnXs": [[1, bse.screening_bands], ""],
+            "NGsBlkXs": [bse.g_cutoff, "Ry"],
+            "BSENGBlk": [bse.g_cutoff, "Ry"],
+            "BSEBands": [list(bse.bands), ""],
+            "BEnRange": [list(bse.energy_range), "eV"],
+            "BEnSteps": [bse.energy_steps, ""],
+            "BDmRange": [list(broadening), "eV"],
+        },
+    }
+
+
 def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
     """Convert ``calculator_parameters.ph`` into a ph.x ``INPUTPH`` namelist dict.
 

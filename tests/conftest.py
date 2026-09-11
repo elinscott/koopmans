@@ -29,6 +29,7 @@ from tests.fixtures import (  # noqa: F401
     fake_sg15_pseudo_family,
     fake_ultrasoft_family,
     fake_user_built_family,
+    installed_bse_codes,
     installed_decompose_code,
     installed_fold_codes,
     installed_kcp_code,

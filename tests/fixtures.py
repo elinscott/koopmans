@@ -504,6 +504,20 @@ def installed_wannier_codes(localhost_code: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
+def installed_bse_codes(localhost_code: Any) -> dict[str, Any]:
+    """Register dummy ``p2y`` / ``yambo`` codes for the BSE route.
+
+    Both run through the same ``YamboCalculation`` plugin (``yambo.yambo``)
+    as different executables (p2y is yambo's own preprocessing step); a
+    dummy code carries no executable behaviour either way.
+    """
+    return {
+        "p2y": localhost_code("p2y", "yambo.yambo"),
+        "yambo": localhost_code("yambo", "yambo.yambo"),
+    }
+
+
+@pytest.fixture
 def installed_fold_codes(localhost_code: Any) -> dict[str, Any]:
     """Register dummy ``wann2kcp`` / ``merge_evc`` codes for the fold path."""
     return {
