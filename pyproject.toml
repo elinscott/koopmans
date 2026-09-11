@@ -91,6 +91,12 @@ dependencies = [
     # [tool.uv.sources] GitHub override is honored; its PyPI releases are
     # quarantined. Drop both once they reappear.
     "aiida-wannier90",
+    # Direct deps: imported only by aiida-koopmans (workgraphs/bse.py), but
+    # uv ignores a dependency's own [tool.uv.sources] for transitive
+    # dependencies, so aiida-koopmans's k2y/yambopy pins below would
+    # otherwise lose to whatever k2y's own metadata resolves to.
+    "k2y",
+    "yambopy>=0.7.1",
 ]
 
 # see https://peps.python.org/pep-0735/ and https://docs.astral.sh/uv/concepts/dependencies/#dependency-groups
@@ -307,6 +313,15 @@ environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'darwin'",
 ]
+# k2y's own metadata still direct-URL-pins a different yambopy fork
+# (mikibonacci/yambopy@aiida-parsing) as of the rev pinned below;
+# [tool.uv.sources] alone cannot rewrite a URL another package already
+# pins, so force our own choice -- PyPI's release, source-identical to
+# the yambo-code/yambopy commit this project used to pin -- with an
+# override.
+override-dependencies = [
+    "yambopy>=0.7.1",
+]
 
 [tool.uv.sources]
 pydantic-espresso = { path = "../pydantic_espresso" }
@@ -324,3 +339,6 @@ aiida-shell = { git = "https://github.com/sphuber/aiida-shell", rev = "e2f4ff1c9
 # install the v2.2.0 release from GitHub, pinned to the immutable sha that
 # matches a pre-quarantine local clone, until the releases reappear.
 aiida-wannier90 = { git = "https://github.com/aiidateam/aiida-wannier90", rev = "5b9436943fa04643ed44c7f6fd48b361e5470ef4" }
+# k2y is not on PyPI; pin the same commit aiida-koopmans pins (expands
+# QP_kpts to the full BZ; see aiida-koopmans's workgraphs/bse.py).
+k2y = { git = "https://github.com/elinscott/k2y", rev = "eb67d2ab5669bc7e351f3821ea0f6ac437b49d11" }
