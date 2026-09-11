@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from koopmans.aiida.workflows import advisories_for
-from koopmans.aiida.workflows.grouping import resolve_orbital_grouping
 from koopmans.input_file import KoopmansInput
+from koopmans.input_file.workflow import GroupOrbitalsBy
 
 _SI_ATOMS: dict[str, Any] = {
     "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.2622}},
@@ -106,32 +108,49 @@ class TestSmoothInterpolationFactorAdvisory:
 
 
 class TestOrbitalGroupingAdvisory:
-    """``group_orbitals_by``/``group_orbitals_tol`` only apply to singlepoint/trajectory."""
+    """``group_orbitals_by``/``group_orbitals_tol`` only apply to singlepoint/trajectory.
+
+    ``group_orbitals_by`` is resolved at parse time (never ``None`` on the
+    parsed model — see ``WorkflowConfig.resolve_group_orbitals_by``), so
+    these tests exercise the schema resolution and the advisory together:
+    the only state the advisory can still detect without extra bookkeeping
+    is a criterion that *resolved* to ``'none'`` next to a typed tolerance
+    (an explicit ``group_orbitals_by: 'none'`` with a tolerance is rejected
+    at parse time, before ``advisories_for`` ever runs).
+    """
 
     def test_defaults_are_silent(self) -> None:
         """Negative control: an input touching neither field names nothing."""
         inp = KoopmansInput.model_validate(_si_dict("wannierize"))
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+        assert inp.workflow.group_orbitals_tol is None
         assert advisories_for(inp) == []
 
     def test_wannierize_with_mlwfs_alone_is_not_advised(self) -> None:
         """Negative control: init_orbitals alone resolves group_orbitals_by on its own.
 
-        Resolution (via ``resolve_orbital_grouping``) defaults the criterion
-        to ``self_hartree`` for a Wannier-initialized DSCF run — but the
-        user typed neither grouping keyword, so the field stays unset on
-        the parsed model and nothing is worth flagging.
+        The criterion resolves to ``self_hartree`` for a Wannier-initialized
+        DSCF run (the default screening method) with the tolerance defaulted
+        alongside it, even though the user typed neither grouping keyword —
+        but the resolved criterion is not ``'none'``, so nothing is flagged.
         """
         inp = KoopmansInput.model_validate(_si_dict("wannierize", init_orbitals="mlwfs"))
-        assert inp.workflow.group_orbitals_by is None
-        criterion, _ = resolve_orbital_grouping(inp.workflow)
-        assert criterion.value == "self_hartree"
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
+        assert inp.workflow.group_orbitals_tol == pytest.approx(1.0e-4)
         assert advisories_for(inp) == []
 
     def test_wannierize_with_a_tolerance_is_advised(self) -> None:
-        """Wannierize never calls the grouping helpers at all."""
+        """Wannierize never calls the grouping helpers at all.
+
+        ``init_orbitals`` stays at its ``pz`` default here, so the criterion
+        resolves to ``'none'`` and the typed tolerance is the only signal
+        left to flag.
+        """
         d = _si_dict("wannierize")
         d["workflow"]["group_orbitals_tol"] = 0.05
         inp = KoopmansInput.model_validate(d)
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+        assert inp.workflow.group_orbitals_tol == 0.05
         assert advisories_for(inp) == [
             "workflow.group_orbitals_tol has no effect on task: wannierize (it "
             "groups orbitals to share a screening parameter, computed only within a "
@@ -139,30 +158,27 @@ class TestOrbitalGroupingAdvisory:
             "singlepoint."
         ]
 
-    def test_dft_bands_with_an_explicit_criterion_is_advised(self) -> None:
-        """A criterion alone (no tolerance) still signals intent to group."""
-        d = _si_dict("dft_bands")
-        d["workflow"]["group_orbitals_by"] = "self_hartree"
-        inp = KoopmansInput.model_validate(d)
-        assert advisories_for(inp) == [
-            "workflow.group_orbitals_by has no effect on task: dft_bands (it groups "
-            "orbitals to share a screening parameter, computed only within a "
-            "singlepoint or trajectory); it is kept for when you switch task to "
-            "singlepoint."
-        ]
+    def test_dft_bands_with_an_explicit_criterion_is_silent(self) -> None:
+        """A resolved (non-'none') criterion on a non-grouping task is not flagged.
 
-    def test_dft_bands_with_both_keywords_is_advised_once_naming_both(self) -> None:
-        """Both keywords typed together name both, not one message per keyword."""
+        Whether ``group_orbitals_by: self_hartree`` here was typed or
+        resolved on its own is no longer distinguishable on the parsed
+        model — only a criterion that resolved to ``'none'`` is detectable
+        without reintroducing per-field "was this typed" bookkeeping.
+        """
         d = _si_dict("dft_bands")
         d["workflow"]["group_orbitals_by"] = "self_hartree"
-        d["workflow"]["group_orbitals_tol"] = 0.05
         inp = KoopmansInput.model_validate(d)
-        assert advisories_for(inp) == [
-            "workflow.group_orbitals_by/group_orbitals_tol have no effect on task: "
-            "dft_bands (they group orbitals to share a screening parameter, computed "
-            "only within a singlepoint or trajectory); they are kept for when you "
-            "switch task to singlepoint."
-        ]
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
+        assert advisories_for(inp) == []
+
+    def test_explicit_none_with_a_tolerance_is_rejected_at_parse_time(self) -> None:
+        """An explicit ``group_orbitals_by: 'none'`` next to a tolerance is a contradiction."""
+        d = _si_dict("wannierize")
+        d["workflow"]["group_orbitals_by"] = "none"
+        d["workflow"]["group_orbitals_tol"] = 0.05
+        with pytest.raises(ValueError, match="group_orbitals_tol"):
+            KoopmansInput.model_validate(d)
 
     def test_dscf_singlepoint_resolved_to_none_with_a_tolerance_is_advised(self) -> None:
         """``init_orbitals: pz`` resolves grouping to 'none'; the tolerance is orphaned."""
@@ -174,9 +190,7 @@ class TestOrbitalGroupingAdvisory:
             group_orbitals_tol=0.05,
         )
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is None
-        criterion, _ = resolve_orbital_grouping(inp.workflow)
-        assert criterion.value == "none"
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
         assert advisories_for(inp) == [
             "workflow.group_orbitals_tol has no effect on task: singlepoint "
             "(group_orbitals_by resolved to 'none' for init_orbitals: pz, "
@@ -195,9 +209,7 @@ class TestOrbitalGroupingAdvisory:
             group_orbitals_tol=0.05,
         )
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is None
-        criterion, _ = resolve_orbital_grouping(inp.workflow)
-        assert criterion.value == "none"
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
         assert advisories_for(inp) == [
             "workflow.group_orbitals_tol has no effect on task: singlepoint "
             "(group_orbitals_by resolved to 'none' for init_orbitals: mlwfs, "
@@ -205,6 +217,33 @@ class TestOrbitalGroupingAdvisory:
             "to a criterion this run implements (self_hartree for DSCF, spread for "
             "DFPT)."
         ]
+
+    @pytest.mark.parametrize(
+        ("task", "workflow_updates"),
+        [
+            ("wannierize", {}),
+            ("wannierize", {"init_orbitals": "mlwfs"}),
+            ("wannierize", {"init_orbitals": "mlwfs", "screening_method": "dscf"}),
+            ("wannierize", {"init_orbitals": "projwfs"}),
+            ("dft_bands", {"init_orbitals": "mlwfs"}),
+            ("dft_eps", {"init_orbitals": "mlwfs"}),
+            ("wannierize", {"init_orbitals": "mlwfs", "group_orbitals_by": "none"}),
+        ],
+    )
+    def test_typing_init_orbitals_alone_never_advises(
+        self, task: str, workflow_updates: dict[str, Any]
+    ) -> None:
+        """``init_orbitals`` alone, on any non-grouping task, resolves silently.
+
+        Regression for a spurious advisory the previous design (a
+        point-of-use resolution helper called from ``advisories_for``
+        itself) emitted for the last case: writing ``group_orbitals_by:
+        'none'`` — the same value the criterion already resolves to —
+        should not be treated differently from leaving it unset.
+        """
+        inp = KoopmansInput.model_validate(_si_dict(task, **workflow_updates))
+        assert isinstance(inp.workflow.group_orbitals_by, GroupOrbitalsBy)
+        assert advisories_for(inp) == []
 
     def test_wannier_initialized_dscf_default_is_not_advised(self) -> None:
         """The route this criterion is wired for stays silent, even at its own default."""
@@ -215,9 +254,8 @@ class TestOrbitalGroupingAdvisory:
             init_orbitals="mlwfs",
         )
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is None
-        criterion, _ = resolve_orbital_grouping(inp.workflow)
-        assert criterion.value == "self_hartree"
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
+        assert inp.workflow.group_orbitals_tol == pytest.approx(1.0e-4)
         assert advisories_for(inp) == []
 
 

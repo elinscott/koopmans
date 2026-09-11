@@ -33,6 +33,14 @@ _REMOVED_WORKFLOW_KEYWORDS: dict[str, str] = {
     ),
 }
 
+#: Default tolerance per grouping criterion, applied when
+#: ``group_orbitals_by`` is active (explicit or resolved) but
+#: ``group_orbitals_tol`` is unset.
+_ORBITAL_GROUPING_DEFAULT_TOLERANCE: dict[str, float] = {
+    "self_hartree": 1.0e-4,
+    "spread": 0.05,
+}
+
 
 class Task(Enum):
     """Valid tasks that ``koopmans`` can perform."""
@@ -140,13 +148,12 @@ class WorkflowConfig(BaseModel):
         default=None,
         description="a list of integers the same length as the total number of bands, denoting which bands to assign the same screening parameter to",
     )
-    group_orbitals_by: GroupOrbitalsBy | None = Field(
-        default=None,
-        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Left unset, the route resolves it at build time to "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent) and "none" otherwise',
+    group_orbitals_by: GroupOrbitalsBy = Field(
+        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Resolved at parse time from init_orbitals/screening_method when unset: "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent), "none" otherwise; the parsed input always carries the resolved value',
     )
     group_orbitals_tol: float | None = Field(
         default=None,
-        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree, Angstrom^2 for spread). Left unset, the route resolves it at build time to the criterion's default (1e-4 for self_hartree, 0.05 for spread)",
+        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree, Angstrom^2 for spread). Left unset, resolved at parse time to the criterion's default (1e-4 for self_hartree, 0.05 for spread) whenever group_orbitals_by is active; stays unset when group_orbitals_by resolves to 'none'",
     )
     dfpt_coarse_grid: tuple[int, int, int] | None = Field(
         default=None,
@@ -235,22 +242,64 @@ class WorkflowConfig(BaseModel):
                 raise ValueError(f"'orbital_groups' should be of length {target_length}")
         return self
 
-    @model_validator(mode="after")
-    def reject_orbital_tolerance_without_grouping(self) -> Self:
-        """Reject a tolerance next to an explicit ``group_orbitals_by: none``.
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_group_orbitals_by(cls, data: Any) -> Any:
+        """Resolve ``group_orbitals_by``/``group_orbitals_tol`` on the raw input.
 
-        The two directly contradict each other. ``group_orbitals_by`` left
-        unset is a different case — a route may still resolve it to a
-        criterion at build time (see
-        :func:`koopmans.aiida.workflows.grouping.resolve_orbital_grouping`),
-        so a tolerance next to it is not a contradiction, only possibly
-        inert; :func:`koopmans.aiida.workflows.advisories_for` flags that
-        case instead, since only the dispatcher knows which routes group
-        orbitals at all.
+        An explicit ``group_orbitals_by: 'none'`` next to
+        ``group_orbitals_tol`` directly contradicts it and is rejected here,
+        on the raw dict, before either field is validated. Left unset,
+        ``group_orbitals_by`` resolves to ``self_hartree`` for
+        Wannier-initialized DSCF runs — supercell images of one primitive
+        orbital are physically equivalent and must share a screening
+        parameter — and ``none`` otherwise (grouping is opt-in elsewhere);
+        an explicit criterion passes through unchanged. Once a criterion is
+        active (explicit or resolved), an unset tolerance takes the
+        criterion's default; ``none`` never defaults a tolerance, so a
+        tolerance next to a criterion that *resolved* to (rather than was
+        typed as) ``none`` survives for
+        :func:`koopmans.aiida.workflows.advisories_for` to flag instead,
+        since only the dispatcher knows which routes group orbitals at all.
+
+        Args:
+            data: The raw value pydantic is validating — a dict for a
+                normal parse, but possibly something else on re-validation;
+                returned untouched when it is not a dict.
 
         Raises:
-            ValueError: If group_orbitals_tol accompanies group_orbitals_by == 'none'.
+            ValueError: If an explicit group_orbitals_by == 'none' accompanies group_orbitals_tol.
         """
-        if self.group_orbitals_by == GroupOrbitalsBy.NONE and self.group_orbitals_tol is not None:
-            raise ValueError("group_orbitals_tol requires group_orbitals_by != 'none'")
-        return self
+        if not isinstance(data, dict):
+            return data
+
+        def _value(v: Any, default: str) -> str:
+            if v is None:
+                return default
+            return v.value if isinstance(v, Enum) else str(v).lower()
+
+        raw_tol = data.get("group_orbitals_tol")
+        raw_criterion = data.get("group_orbitals_by")
+        if raw_criterion is not None:
+            criterion = _value(raw_criterion, GroupOrbitalsBy.NONE.value)
+            if criterion == GroupOrbitalsBy.NONE.value and raw_tol is not None:
+                raise ValueError("group_orbitals_tol requires group_orbitals_by != 'none'")
+        else:
+            wannier_init = _value(data.get("init_orbitals"), VariationalOrbitalType.PZ.value) in (
+                VariationalOrbitalType.MLWFS.value,
+                VariationalOrbitalType.PROJWFS.value,
+            )
+            dscf = (
+                _value(data.get("screening_method"), CalculateScreeningMethod.DSCF.value)
+                == CalculateScreeningMethod.DSCF.value
+            )
+            criterion = (
+                GroupOrbitalsBy.SELF_HARTREE.value
+                if (wannier_init and dscf)
+                else GroupOrbitalsBy.NONE.value
+            )
+            data["group_orbitals_by"] = criterion
+
+        if raw_tol is None and criterion != GroupOrbitalsBy.NONE.value:
+            data["group_orbitals_tol"] = _ORBITAL_GROUPING_DEFAULT_TOLERANCE[criterion]
+        return data

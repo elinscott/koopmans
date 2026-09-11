@@ -13,7 +13,6 @@ from typing import Any
 import pytest
 
 from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
-from koopmans.aiida.workflows.grouping import resolve_orbital_grouping
 from koopmans.input_file import KoopmansInput
 
 
@@ -369,9 +368,7 @@ class TestOrbitalGrouping:
         """
         d = _si_dfpt_dict()
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is None
-        criterion, _ = resolve_orbital_grouping(inp.workflow)
-        assert criterion.value == "none"
+        assert inp.workflow.group_orbitals_by.value == "none"
         wg = _build(d)
         assert "dfpt" in wg.get_task_names()
         assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value is None
@@ -389,9 +386,7 @@ class TestOrbitalGrouping:
         """Choosing the criterion suffices: the schema default tol reaches the chain."""
         d = _si_dfpt_dict(group_orbitals_by="spread")
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_tol is None
-        _, tol = resolve_orbital_grouping(inp.workflow)
-        assert tol == 0.05
+        assert inp.workflow.group_orbitals_tol == 0.05
         wg = _build(d)
         assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.05
 
