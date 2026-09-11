@@ -430,6 +430,19 @@ def localhost_computer(aiida_computer_local: Any) -> Any:
 
 
 @pytest.fixture
+def mock_remote_computer(aiida_computer: Any) -> Any:
+    """Return an unconnected computer named ``mock-remote`` (SLURM over SSH).
+
+    Left unconfigured (no ``configuration_kwargs``): the remote-computer
+    tests exercise ``computer.name`` resolution and scheduler-type checks,
+    not an actual SSH connection.
+    """
+    return aiida_computer(
+        label="mock-remote", transport_type="core.ssh", scheduler_type="core.slurm"
+    )
+
+
+@pytest.fixture
 def localhost_code(localhost_computer: Any) -> Any:
     """Return a get-or-create factory for dummy codes on the literal ``localhost``.
 
@@ -950,6 +963,7 @@ def silicon_pw_input(
     parallelization: dict[str, Any] | None = None,
     calculator_parameters: dict[str, Any] | None = None,
     kpoints: dict[str, Any] | None = None,
+    computer: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a minimal silicon ``dft_bands`` input dict for the wiring tests.
 
@@ -972,6 +986,8 @@ def silicon_pw_input(
     }
     if parallelization is not None:
         d["parallelization"] = parallelization
+    if computer is not None:
+        d["computer"] = computer
     return d
 
 

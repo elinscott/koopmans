@@ -405,7 +405,9 @@ class TestDispatchTranslation:
         from koopmans.input_file.parallelization import ParallelizationInput
 
         monkeypatch.setattr(
-            ParallelizationInput, "as_mapping", lambda self: {"bogus": {"ntasks": 2}}
+            ParallelizationInput,
+            "as_mapping",
+            lambda self, computer=None: {"bogus": {"ntasks": 2}},
         )
         excinfo = _build_expecting(
             _pw_input(), ParallelizationError, "unknown parallelization code"

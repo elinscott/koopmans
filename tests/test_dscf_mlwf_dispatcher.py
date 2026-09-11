@@ -957,11 +957,88 @@ class TestBandPathBuildsTheInterpolation:
         with pytest.raises(ValueError, match=r"kpoints: \{path"):
             _build(d)
 
-    def test_smooth_interpolation_is_refused_by_name(
+
+class TestSmoothInterpolation:
+    """``smooth_int_factor`` above 1 adds a second, denser wannierization.
+
+    The smooth-interpolation method swaps each manifold's coarse DFT
+    Hamiltonian for one Wannierized on a denser mesh, so the dispatcher
+    has to hand over that mesh alongside the coarse one.
+    """
+
+    @staticmethod
+    def _with_smooth(factor: Any = 4, **workflow_updates: Any) -> dict[str, Any]:
+        d = _si_dscf_dict(**workflow_updates)
+        d["kpoints"]["path"] = "GXG"
+        d["calculator_parameters"]["unfold_and_interpolate"] = {"smooth_int_factor": factor}
+        return d
+
+    def test_the_dense_mesh_is_wannierized_off_a_coarse_scf(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """An input that cannot take effect raises rather than being dropped."""
-        d = self._with_bands()
-        d["calculator_parameters"]["unfold_and_interpolate"] = {"smooth_int_factor": 2}
-        with pytest.raises(NotImplementedError, match="smooth_int_factor"):
+        """A 2x2x2 grid at factor 4 Wannierizes 8x8x8, reusing the coarse route's own scf.
+
+        The ``scf_remote_folder`` link is the discriminating check: it must
+        trace to the coarse wannier_initialization's own converged scf
+        rather than a fresh one, so no second scf on the same density ever
+        builds.
+        """
+        wg = _build(self._with_smooth())
+        smooth = wg.tasks["wannierize_smooth"]
+        assert smooth.inputs["mp_grid"].value == [8, 8, 8]
+        scf_links = smooth.inputs["scf_remote_folder"]._links
+        assert [link.from_task.name for link in scf_links] == ["wannier_initialization"]
+        assert [link.from_socket._name for link in scf_links] == ["scf_remote_folder"]
+        assert not smooth.inputs["scf_kpoints"]._links
+        # wannier90 and pw2wannier90 read the full explicit list, which a
+        # symmetry-reducing nscf would otherwise shrink.
+        assert len(smooth.inputs["kpoints"].value.get_kpoints()) == 8**3
+
+    def test_the_same_blocks_are_wannierized_twice(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Both Hamiltonians must be in one Wannier gauge, so the blocks must match."""
+        wg = _build(self._with_smooth())
+        smooth = [dict(b) for b in wg.tasks["wannierize_smooth"].inputs["blocks"].value]
+        coarse = [dict(b) for b in wg.tasks["wannier_initialization"].inputs["blocks"].value]
+        assert smooth == coarse
+
+    def test_a_per_direction_factor_scales_each_direction(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A three-entry factor densifies the directions independently."""
+        wg = _build(self._with_smooth(factor=[1, 2, 3]))
+        assert wg.tasks["wannierize_smooth"].inputs["mp_grid"].value == [2, 4, 6]
+
+    def test_no_smooth_run_at_factor_one(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: the interpolation still runs, the second wannierization does not."""
+        wg = _build(self._with_smooth(factor=1))
+        names = wg.get_task_names()
+        assert "interpolate_band_structure" in names
+        assert "wannierize_smooth" not in names
+
+    def test_smooth_without_a_path_is_refused(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """No path means no interpolation, so a denser mesh would take no effect."""
+        d = _si_dscf_dict()
+        d["calculator_parameters"]["unfold_and_interpolate"] = {"smooth_int_factor": 4}
+        with pytest.raises(ValueError, match=r"kpoints: \{path"):
             _build(d)
+
+    def test_smooth_on_a_kohn_sham_route_names_init_orbitals(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Without Wannier functions there is no gauge to swap Hamiltonians in."""
+        d = self._with_smooth(init_orbitals="kohn-sham")
+        with pytest.raises(NotImplementedError, match="init_orbitals"):
+            _build(d)
+
+    def test_a_factor_below_one_is_rejected_at_parse(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The factor multiplies the grid, so it cannot coarsen it."""
+        with pytest.raises(ValueError, match="at least 1"):
+            KoopmansInput.model_validate(self._with_smooth(factor=0))

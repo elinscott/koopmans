@@ -51,6 +51,17 @@ class UnfoldAndInterpolateConfig(BaseModel):
             v = tuple(v)
         return v
 
+    @field_validator("smooth_int_factor", mode="after")
+    @classmethod
+    def reject_a_factor_below_one(cls, v: tuple[int, int, int]) -> tuple[int, int, int]:
+        """Reject a factor that would ask for a mesh coarser than the k-grid."""
+        if any(f < 1 for f in v):
+            raise ValueError(
+                f"smooth_int_factor={list(v)} multiplies the `kpoints` grid, so every entry "
+                "must be at least 1. Use 1 to leave a direction as it is."
+            )
+        return v
+
     @property
     def do_smooth_interpolation(self) -> bool:
         """Return True if the smooth interpolation is used."""

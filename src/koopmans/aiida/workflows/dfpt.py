@@ -143,8 +143,8 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     # not here. require_configured_codes only ever looks at pw/kcw (the
     # required members): it has no notion of eps_inf, so ph never gets
     # demanded here.
-    codes = load_codes(DfptCodes)
-    require_configured_codes(DfptCodes, codes)
+    codes = load_codes(DfptCodes, koopmans_input.computer.name)
+    require_configured_codes(DfptCodes, codes, koopmans_input.computer.name)
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
@@ -170,7 +170,8 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
             manifolds=manifolds,
             group_orbitals_tol=group_orbitals_tol,
             kcw_overrides=kcw_overrides or None,
-            parallelization=koopmans_input.parallelization.as_mapping() or None,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
         ),
         "Koopmans DFPT",
     )

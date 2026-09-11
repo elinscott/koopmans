@@ -28,6 +28,7 @@ from koopmans.input_file.cell_parameters import (
     CellParametersViaIbrav,
     CellParametersViaVectors,
 )
+from koopmans.input_file.computer import ComputerInput
 from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.kcw import KCWInputParameters
 from koopmans.input_file.ml import MLConfig
@@ -50,6 +51,7 @@ __all__ = [
     "CellParametersViaAlat",
     "CellParametersViaIbrav",
     "CellParametersViaVectors",
+    "ComputerInput",
     "GammaOnlyKpointsInput",
     "GridKpointsInput",
     "IntegerMagnetization",
@@ -443,6 +445,11 @@ class KoopmansInput(BaseModel):
     parallelization: ParallelizationInput = Field(
         default_factory=ParallelizationInput,
         description="Per-code parallelization settings (MPI ranks and k-point pools)",
+    )
+    computer: ComputerInput = Field(
+        default_factory=ComputerInput,
+        description="the AiiDA computer the calculation runs on: a block naming "
+        "``name``, ``account``, ``queue``, and a default ``walltime``",
     )
 
     @field_validator("kpoints", mode="before")
