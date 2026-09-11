@@ -106,6 +106,7 @@ class ParallelizationInput(BaseModel):
     pw2wannier90: CodeParallelization | None = None
     wann2kcp: CodeParallelization | None = None
     wannier90: CodeParallelization | None = None
+    yambo: CodeParallelization | None = None
 
     @model_validator(mode="after")
     def reject_unsupported_flags(self) -> Self:

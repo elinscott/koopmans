@@ -507,6 +507,30 @@ class TestParallelizationSchema:
         assert wannier90 is not None
         assert wannier90.ntasks == 4
 
+    def test_yambo_accepts_ntasks_and_omp(self) -> None:
+        """Yambo parallelizes over its own k/eh/t roles, not pools, but takes ntasks/omp."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"yambo": {"ntasks": 4, "omp": 2}})
+        )
+        yambo = inp.parallelization.yambo
+        assert yambo is not None
+        assert (yambo.ntasks, yambo.omp) == (4, 2)
+        assert inp.parallelization.as_mapping() == {"yambo": {"ntasks": 4, "omp": 2}}
+
+    def test_npool_rejected_for_yambo(self) -> None:
+        """Yambo has no ``-npool`` concept; it parallelizes over its own runcard roles."""
+        with pytest.raises(ValueError, match=r"'npool' is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={"yambo": {"npool": 2}})
+            )
+
+    def test_pd_rejected_for_yambo(self) -> None:
+        """Yambo has no pencil-decomposition concept."""
+        with pytest.raises(ValueError, match=r"'pd' \(pencil decomposition\) is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={"yambo": {"pd": True}})
+            )
+
     def test_unknown_code_rejected(self) -> None:
         """An unrecognised code name is not a valid parallelization key."""
         with pytest.raises(ValueError):
