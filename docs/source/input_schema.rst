@@ -5,8 +5,8 @@ Input format
 Koopmans input files define the structure, workflow settings, k-points, and calculator
 parameters for a calculation. They can be written in either ``json`` or ``yaml`` format as per the following example:
 
-.. literalinclude:: tutorials/band_structures/silicon_finite_differences/si.json
-   :language: json
+.. literalinclude:: tutorials/band_structures/silicon_finite_differences/si.yaml
+   :language: yaml
    :caption: Silicon tutorial input file
 
 
