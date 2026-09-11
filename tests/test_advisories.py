@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from koopmans.aiida.workflows import advisories_for
 from koopmans.input_file import KoopmansInput
@@ -180,6 +181,21 @@ class TestOrbitalGroupingAdvisory:
         with pytest.raises(ValueError, match="group_orbitals_tol"):
             KoopmansInput.model_validate(d)
 
+    @pytest.mark.parametrize("with_tolerance", [False, True])
+    def test_unknown_criterion_reaches_the_enum_field_error(self, with_tolerance: bool) -> None:
+        """An unrecognized ``group_orbitals_by`` string surfaces the enum's own error.
+
+        Regression: the default-tolerance lookup used to index the raw
+        string before the ``group_orbitals_by`` field validated it,
+        raising a bare ``KeyError`` instead of pydantic's enum message.
+        """
+        d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
+        d["workflow"]["group_orbitals_by"] = "self-hartree"
+        if with_tolerance:
+            d["workflow"]["group_orbitals_tol"] = 0.05
+        with pytest.raises(ValidationError, match=r"self_hartree.*spread.*none"):
+            KoopmansInput.model_validate(d)
+
     def test_dscf_singlepoint_resolved_to_none_with_a_tolerance_is_advised(self) -> None:
         """``init_orbitals: pz`` resolves grouping to 'none'; the tolerance is orphaned."""
         d = _si_dict(
@@ -257,6 +273,58 @@ class TestOrbitalGroupingAdvisory:
         assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
         assert inp.workflow.group_orbitals_tol == pytest.approx(1.0e-4)
         assert advisories_for(inp) == []
+
+
+class TestResolveGroupOrbitalsByDoesNotMutateCaller:
+    """``resolve_group_orbitals_by`` must not write resolved fields back onto the caller's dict.
+
+    Regression: the before-validator used to write ``group_orbitals_by``/
+    ``group_orbitals_tol`` directly into the dict passed to
+    ``model_validate``, so re-validating the same dict after editing it saw
+    the previous parse's resolved values as if the user had typed them.
+    """
+
+    def test_callers_dict_is_untouched(self) -> None:
+        """A resolved criterion and tolerance never land back in the caller's dict."""
+        d = _si_dict("wannierize", init_orbitals="mlwfs")
+        inp = KoopmansInput.model_validate(d)
+        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
+        assert "group_orbitals_by" not in d["workflow"]
+        assert "group_orbitals_tol" not in d["workflow"]
+
+    def test_editing_and_revalidating_resolves_afresh(self) -> None:
+        """Flipping ``init_orbitals`` and re-validating must not inherit the earlier resolution."""
+        d = _si_dict("wannierize", init_orbitals="mlwfs")
+        first = KoopmansInput.model_validate(d)
+        assert first.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
+
+        d["workflow"]["init_orbitals"] = "pz"
+        second = KoopmansInput.model_validate(d)
+        assert second.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+        assert second.workflow.group_orbitals_tol is None
+
+    def test_adding_a_tolerance_after_a_silent_first_parse_is_advised(self) -> None:
+        """A tolerance added between two parses reads as freshly typed, not a contradiction.
+
+        The first parse resolves ``group_orbitals_by`` to ``'none'`` without
+        writing it into the caller's dict, so a tolerance added afterwards
+        is indistinguishable from one typed alongside an unset criterion —
+        it is orphaned and advised, not rejected as an explicit-none
+        contradiction.
+        """
+        d = _si_dict("wannierize")
+        first = KoopmansInput.model_validate(d)
+        assert first.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+
+        d["workflow"]["group_orbitals_tol"] = 0.05
+        second = KoopmansInput.model_validate(d)
+        assert second.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+        assert advisories_for(second) == [
+            "workflow.group_orbitals_tol has no effect on task: wannierize (it "
+            "groups orbitals to share a screening parameter, computed only within a "
+            "singlepoint or trajectory); it is kept for when you switch task to "
+            "singlepoint."
+        ]
 
 
 class TestBothAdvisoriesTogether:

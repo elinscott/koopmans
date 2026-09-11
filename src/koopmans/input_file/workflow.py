@@ -272,6 +272,7 @@ class WorkflowConfig(BaseModel):
         """
         if not isinstance(data, dict):
             return data
+        data = dict(data)
 
         def _value(v: Any, default: str) -> str:
             if v is None:
@@ -300,6 +301,6 @@ class WorkflowConfig(BaseModel):
             )
             data["group_orbitals_by"] = criterion
 
-        if raw_tol is None and criterion != GroupOrbitalsBy.NONE.value:
+        if raw_tol is None and criterion in _ORBITAL_GROUPING_DEFAULT_TOLERANCE:
             data["group_orbitals_tol"] = _ORBITAL_GROUPING_DEFAULT_TOLERANCE[criterion]
         return data
