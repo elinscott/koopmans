@@ -37,6 +37,18 @@ def _si_dict(task: str, **workflow_updates: Any) -> dict[str, Any]:
     return d
 
 
+def _bse_dict(**workflow_updates: Any) -> dict[str, Any]:
+    """Return a minimal ``task: bse`` input, with its own ``calculator_parameters.yambo`` block."""
+    d = _si_dict("bse", **workflow_updates)
+    d["calculator_parameters"]["yambo"] = {
+        "BndsRnXs": [1, 100],
+        "NGsBlkXs": 2,
+        "BSEBands": [1, 4],
+        "BEnRange": [0, 10],
+    }
+    return d
+
+
 class TestSmoothInterpolationFactorAdvisory:
     """``kpoints.smooth_interpolation_factor`` only shapes the DSCF band interpolation."""
 
@@ -273,6 +285,32 @@ class TestOrbitalGroupingAdvisory:
         assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
         assert inp.workflow.group_orbitals_tol == pytest.approx(1.0e-4)
         assert advisories_for(inp) == []
+
+    def test_bse_advisory_matches_the_equivalent_dfpt_singlepoint(self) -> None:
+        """`bse` now shares the DFPT route's own tolerance advisory, task name aside.
+
+        ``group_orbitals_tol`` reaches `bse`'s composed DFPT chain
+        unchanged (aiida-koopmans#137), so an orphaned tolerance is advised
+        exactly as it would be under ``task: singlepoint`` with the same
+        ``screening_method``/``init_orbitals`` — not the "switch task"
+        message ``wannierize``/``dft_bands``/``dft_eps`` get, since those
+        compose no DFPT chain at all.
+        """
+        common = {
+            "screening_method": "dfpt",
+            "correction": "ki",
+            "init_orbitals": "mlwfs",
+            "group_orbitals_tol": 0.05,
+        }
+        bse_input = KoopmansInput.model_validate(_bse_dict(**common))
+        singlepoint_input = KoopmansInput.model_validate(_si_dict("singlepoint", **common))
+        assert bse_input.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+        bse_advisories = advisories_for(bse_input)
+        singlepoint_advisories = advisories_for(singlepoint_input)
+        assert bse_advisories == [
+            message.replace("task: singlepoint", "task: bse") for message in singlepoint_advisories
+        ]
+        assert bse_advisories != []
 
 
 class TestResolveGroupOrbitalsByDoesNotMutateCaller:

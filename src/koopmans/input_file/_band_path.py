@@ -38,6 +38,15 @@ NO_BAND_PATH_ON_TRAJECTORY = (
     "structure you want."
 )
 
+#: What to write instead of a k-path on the bse task.
+NO_BAND_PATH_ON_BSE = (
+    "`kpoints.path` cannot take effect in a `bse` calculation: the composed DFPT "
+    "screening step runs no Koopmans band-structure interpolation, and the yambo BSE "
+    "step reports an exciton spectrum, not a band structure. Remove `kpoints.path`, or "
+    "run `task: singlepoint` with `screening_method: dfpt` to get the interpolated "
+    "band structure."
+)
+
 
 def dscf_initialization_is_supported(init_orbitals: VariationalOrbitalType, periodic: bool) -> bool:
     """Report whether the kcp.x singlepoint runs this initialisation route.
@@ -87,5 +96,8 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool) -> str | None:
             # has to hear about the method they asked for first.
             return None
         return NO_BAND_PATH_ON_TRAJECTORY
+
+    if workflow.task == Task.BSE:
+        return NO_BAND_PATH_ON_BSE
 
     return None

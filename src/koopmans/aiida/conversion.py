@@ -849,6 +849,46 @@ def input_to_kcw_overrides(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     return overrides
 
 
+#: Yambo BSE runcard arguments the workflow always turns on: ``rim_cut``
+#: (random-integration-method Coulomb-divergence treatment, needed for any
+#: periodic BSE), ``WRbsWF`` (write the excitonic wavefunctions the
+#: additional-parsing quantities read) and ``NLCC`` (harmless for a
+#: pseudopotential family with no non-linear core correction; needed for one
+#: that has it, as koopmans2's own PseudoDojo/SG15 defaults do). Mirrors the
+#: k2y BSE example (``examples/silicon_aiida_bse/03_bse_submit.py``). Kept in
+#: step with ``aiida_koopmans.owned_keywords.OWNED["yambo"]``, which also
+#: claims these three as workflow-owned.
+_BSE_ARGUMENTS: tuple[str, ...] = ("rim_cut", "WRbsWF", "NLCC")
+
+
+def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, Any]:
+    """Convert ``calculator_parameters.yambo`` into the yambo BSE runcard dict.
+
+    ``aiida_koopmans.workgraphs.bethe_salpeter.RunBetheSalpeter`` takes the
+    ``{"arguments": [...], "variables": {...}}`` result verbatim as its own
+    ``bse_parameters``. Call only where ``koopmans_input.calculator_parameters.yambo``
+    is set (``workflow.task == 'bse'``, enforced at parse time).
+
+    Every yambo runcard variable this route sets either comes straight off a
+    ``YamboBseParameters`` field, via its own ``to_runcard_variables`` (each
+    field's unit travels on the field itself, so nothing is hand-listed
+    here), or is fixed here: ``KfnQPdb`` (the Koopmans quasiparticle
+    database), the BSE momentum-transfer range and the MPI role split are
+    the composed graph's own, and refused if stated here (they are not — no
+    field maps to them). The light-polarisation direction (``LongDrXs`` /
+    ``BLongDir``) is emitted only when the input states it; left unset,
+    yambo's own compiled-in default (x-polarized) applies — the `bse`
+    protocol sets neither, so there is no protocol default to fall back to.
+    """
+    yambo = koopmans_input.calculator_parameters.yambo
+    if yambo is None:
+        raise ValueError(
+            "`yambo_input_to_bse_parameters` needs `koopmans_input.calculator_parameters.yambo` "
+            "set; only a `workflow.task: bse` input reaches here."
+        )
+    return {"arguments": list(_BSE_ARGUMENTS), "variables": yambo.to_runcard_variables()}
+
+
 def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
     """Convert ``calculator_parameters.ph`` into a ph.x ``INPUTPH`` namelist dict.
 

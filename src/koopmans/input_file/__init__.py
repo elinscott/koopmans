@@ -38,7 +38,8 @@ from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
-from koopmans.input_file.workflow import WorkflowConfig
+from koopmans.input_file.workflow import Task, WorkflowConfig
+from koopmans.input_file.yambo import YamboBseParameters
 
 # The public schema surface. The documentation renders this list, so a name
 # absent from it is undocumented however it reaches the module namespace;
@@ -74,6 +75,7 @@ __all__ = [
     "Wannier90InputParametersWithUpDown",
     "WannierKpointsOverridesInput",
     "WorkflowConfig",
+    "YamboBseParameters",
     "migrate_input_dict",
     "read_input_file",
 ]
@@ -458,6 +460,11 @@ class CalculatorParametersInput(BaseModel):
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
     kcw: KCWInputParameters = Field(default_factory=lambda: KCWInputParameters())
+    yambo: YamboBseParameters | None = Field(
+        default=None,
+        description="the yambo BSE runcard parameters for a ``task: bse`` calculation; "
+        "required by that task alone",
+    )
 
 
 class KoopmansInput(BaseModel):
@@ -617,6 +624,29 @@ class KoopmansInput(BaseModel):
                 "`workflow.calculate_alpha: false`: no screening step runs, so nothing "
                 "reads that namelist. Remove the block, or set "
                 "`workflow.calculate_alpha: true`."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_yambo_block_matches_task(self) -> KoopmansInput:
+        """Require ``calculator_parameters.yambo`` exactly when the task reads it.
+
+        Raises:
+            ValueError: If ``task: bse`` states no ``calculator_parameters.yambo``
+                block, or a non-``bse`` task states one that would go unread.
+        """
+        yambo = self.calculator_parameters.yambo
+        if self.workflow.task == Task.BSE and yambo is None:
+            raise ValueError(
+                "`workflow.task: bse` needs a `calculator_parameters.yambo` input block "
+                "naming the yambo BSE runcard parameters (`BndsRnXs`, `NGsBlkXs`, "
+                "`BSEBands`, `BEnRange`)."
+            )
+        if self.workflow.task != Task.BSE and yambo is not None:
+            raise ValueError(
+                f"`calculator_parameters.yambo` has no effect with `workflow.task: "
+                f"{self.workflow.task.value}`: only `task: bse` reads it. Remove the "
+                "block, or set `workflow.task: bse`."
             )
         return self
 

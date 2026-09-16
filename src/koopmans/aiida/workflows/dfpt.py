@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
+from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
@@ -26,29 +27,51 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
-    """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
+class DfptChainInputs(TypedDict):
+    """Every ``SinglepointDFPTWorkflow.build`` keyword argument except ``codes``.
 
-    Assembles the full sequence (scf + nscf → per-manifold wannierization →
-    wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPTWorkflow``.
-
-    Spin regimes (``workflow.spin``): ``none`` runs the closed-shell
-    sequence; ``collinear`` fans the wannierization and the kcw.x steps out
-    per spin channel (needs per-spin projections in ``w90.up`` / ``w90.down``
-    and a ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the
-    spinor variant (all bands singly occupied, ``num_wann`` doubled).
-
-    A ``kpoints.path`` in the input reaches the kcw.x ham step as its bands
-    path, so the run also emits the Koopmans band structure interpolated
-    along it.
-
-    Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
-    periodic, MLWF/projwf variational orbitals, and explicit projections.
-    A manifold may span several projection blocks; their Wannier products
-    are merged back into one file set before kcw.x consumes them.
+    Returned by :func:`assemble_dfpt_chain_inputs` alongside each spin
+    channel's total Wannierized orbital count (which only the BSE route
+    needs), shared by the plain DFPT singlepoint route and the BSE route,
+    which composes the same ground-state/wannierization/screening chain in
+    front of its own yambo steps. Named exactly after
+    ``SinglepointDFPTWorkflow.build``'s own parameters so a caller building
+    the plain DFPT chain can unpack it directly as ``**chain_inputs``.
     """
-    from aiida_koopmans.workgraphs.dfpt import DfptCodes, SinglepointDFPTWorkflow
 
+    structure: orm.StructureData
+    kpoints: orm.KpointsData
+    scf_kpoints: orm.KpointsData | None
+    bands_kpoints: orm.KpointsData | None
+    pseudo_family: str
+    overrides: dict[str, Any]
+    eps_inf: float | str | None
+    l_vcut: bool | None
+    spin: SpinType
+    manifolds: dict[str, Any]
+    group_orbitals_tol: float | None
+    kcw_overrides: dict[str, Any] | None
+    parallelization: dict[str, Any] | None
+
+
+def assemble_dfpt_chain_inputs(
+    koopmans_input: KoopmansInput,
+) -> tuple[DfptChainInputs, dict[str, int]]:
+    """Validate and assemble every ``SinglepointDFPTWorkflow`` input except ``codes``.
+
+    Shared by :func:`build_singlepoint_dfpt_workgraph` and the BSE route
+    (:mod:`koopmans.aiida.workflows.bse`), which composes the same chain in
+    front of its own yambo steps: both need the same ground-state,
+    wannierization and screening inputs, validated the same way.
+
+    Returns:
+        The ``SinglepointDFPTWorkflow.build`` keyword arguments, and each
+        spin channel's total Wannierized orbital count (``"none"`` /
+        ``"up"`` / ``"down"``) — the highest kcw.x ``ham`` band a route
+        reading that channel's eigenvalues may ask for. The plain DFPT
+        route has no use for the counts; the BSE route bounds
+        ``yambo.BSEBands`` against them.
+    """
     from koopmans.aiida.conversion import (
         get_pseudos_from_family,
         input_to_kcw_overrides,
@@ -129,22 +152,16 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     nbnd = int(nbnd) if nbnd is not None else None
 
     if spin == SpinType.COLLINEAR:
-        manifolds = _collinear_dfpt_manifolds(koopmans_input, structure, overrides, nelec, nbnd)
+        manifolds, manifold_band_counts = _collinear_dfpt_manifolds(
+            koopmans_input, structure, overrides, nelec, nbnd
+        )
     else:
-        manifolds = _single_channel_dfpt_manifolds(koopmans_input, structure, nelec, nbnd, spin)
+        manifolds, n_orbitals = _single_channel_dfpt_manifolds(
+            koopmans_input, structure, nelec, nbnd, spin
+        )
+        manifold_band_counts = {SpinChannel.NONE.value: n_orbitals}
 
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
-
-    # load_codes loads every configured member of DfptCodes. ph.x is only
-    # actually needed for the `eps_inf: auto` dielectric pre-computation,
-    # and projwfc only for the quality-check projected DOS; whether either
-    # runs, and whether a missing code the run does need is fatal, is now
-    # the graph's own structural requirement — checked at graph validation,
-    # not here. require_configured_codes only ever looks at pw/kcw (the
-    # required members): it has no notion of eps_inf, so ph never gets
-    # demanded here.
-    codes = load_codes(DfptCodes, koopmans_input.computer.name)
-    require_configured_codes(DfptCodes, codes, koopmans_input.computer.name)
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
@@ -152,9 +169,8 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
 
     kcw_overrides = input_to_kcw_overrides(koopmans_input)
 
-    return name_run(
-        SinglepointDFPTWorkflow.build(
-            codes=codes,
+    return (
+        DfptChainInputs(
             structure=structure,
             kpoints=nscf_mesh,
             scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
@@ -170,9 +186,52 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
             manifolds=manifolds,
             group_orbitals_tol=group_orbitals_tol,
             kcw_overrides=kcw_overrides or None,
-            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
-            or None,
+            parallelization=(
+                koopmans_input.parallelization.as_mapping(koopmans_input.computer) or None
+            ),
         ),
+        manifold_band_counts,
+    )
+
+
+def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
+    """Build a workgraph for a singlepoint Koopmans calculation with DFPT screening.
+
+    Assembles the full sequence (scf + nscf → per-manifold wannierization →
+    wann2kc → screen → ham) via ``aiida_koopmans.workgraphs.dfpt.SinglepointDFPTWorkflow``.
+
+    Spin regimes (``workflow.spin``): ``none`` runs the closed-shell
+    sequence; ``collinear`` fans the wannierization and the kcw.x steps out
+    per spin channel (needs per-spin projections in ``w90.up`` / ``w90.down``
+    and a ``tot_magnetization``); ``non_collinear`` / ``spin_orbit`` run the
+    spinor variant (all bands singly occupied, ``num_wann`` doubled).
+
+    A ``kpoints.path`` in the input reaches the kcw.x ham step as its bands
+    path, so the run also emits the Koopmans band structure interpolated
+    along it.
+
+    Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
+    periodic, MLWF/projwf variational orbitals, and explicit projections.
+    A manifold may span several projection blocks; their Wannier products
+    are merged back into one file set before kcw.x consumes them.
+    """
+    from aiida_koopmans.workgraphs.dfpt import DfptCodes, SinglepointDFPTWorkflow
+
+    chain_inputs, _manifold_band_counts = assemble_dfpt_chain_inputs(koopmans_input)
+
+    # load_codes loads every configured member of DfptCodes. ph.x is only
+    # actually needed for the `eps_inf: auto` dielectric pre-computation,
+    # and projwfc only for the quality-check projected DOS; whether either
+    # runs, and whether a missing code the run does need is fatal, is now
+    # the graph's own structural requirement — checked at graph validation,
+    # not here. require_configured_codes only ever looks at pw/kcw (the
+    # required members): it has no notion of eps_inf, so ph never gets
+    # demanded here.
+    codes = load_codes(DfptCodes, koopmans_input.computer.name)
+    require_configured_codes(DfptCodes, codes, koopmans_input.computer.name)
+
+    return name_run(
+        SinglepointDFPTWorkflow.build(codes=codes, **chain_inputs),
         "Koopmans DFPT",
     )
 
@@ -193,15 +252,16 @@ def _single_channel_dfpt_manifolds(
     nelec: int,
     nbnd: int | None,
     spin: SpinType,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], int]:
     """Derive the single-channel ``manifolds`` input for an unpolarized or spinor DFPT run.
 
     Both regimes run one kcw.x sequence keyed ``"none"``; the spinor case
     differs only in the manifold derivation (all bands singly occupied,
-    ``num_wann`` doubled).
+    ``num_wann`` doubled). Returns the manifold dict alongside its total
+    Wannierized orbital count (occupied plus empty, if any) — the highest
+    kcw.x ``ham`` band this channel's eigenvalues carry.
     """
     from aiida_koopmans.projections import ProjectionBlock, derive_dfpt_manifolds
-    from aiida_koopmans.spin import SpinChannel
     from aiida_koopmans.workgraphs.dfpt import ManifoldBlocks, normalize_alpha_guess
 
     workflow = koopmans_input.workflow
@@ -220,7 +280,7 @@ def _single_channel_dfpt_manifolds(
         manifold["emp"] = cast(list[ProjectionBlock], emp_blocks)
     if not workflow.calculate_alpha:
         manifold["alpha_guess"] = normalize_alpha_guess(workflow.alpha_guess, n_orbitals)
-    return {SpinChannel.NONE.value: manifold}
+    return {SpinChannel.NONE.value: manifold}, n_orbitals
 
 
 def _collinear_dfpt_manifolds(
@@ -229,19 +289,19 @@ def _collinear_dfpt_manifolds(
     overrides: dict[str, Any],
     nelec: int,
     nbnd: int | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, int]]:
     """Derive the per-spin-channel ``manifolds`` input for a collinear DFPT run.
 
     Returns the ``SinglepointDFPTWorkflow`` ``manifolds`` dict — one
     ``ManifoldBlocks`` per spin channel, keyed ``"up"`` / ``"down"`` — from
     the per-spin projections in ``w90.up`` / ``w90.down`` and the
-    per-channel occupations fixed by ``tot_magnetization``. Also forwards
-    the magnetization into the scf / nscf PW SYSTEM overrides (mutated in
+    per-channel occupations fixed by ``tot_magnetization``, alongside each
+    channel's total Wannierized orbital count. Also forwards the
+    magnetization into the scf / nscf PW SYSTEM overrides (mutated in
     place): the PW runs must see the physical magnetization —
     ``SinglepointDFPTWorkflow`` only forces ``nspin=2`` in this regime.
     """
     from aiida_koopmans.projections import ProjectionBlock, derive_dfpt_manifolds
-    from aiida_koopmans.spin import SpinChannel
     from aiida_koopmans.workgraphs.dfpt import ManifoldBlocks, normalize_alpha_guess
 
     workflow = koopmans_input.workflow
@@ -265,6 +325,7 @@ def _collinear_dfpt_manifolds(
         )
 
     manifolds: dict[str, Any] = {}
+    band_counts: dict[str, int] = {}
     for channel, w90_channel in ((SpinChannel.UP, w90.up), (SpinChannel.DOWN, w90.down)):
         sign = 1 if channel == SpinChannel.UP else -1
         occ_blocks, emp_blocks, _has_disentangle, n_orbitals = derive_dfpt_manifolds(
@@ -283,4 +344,5 @@ def _collinear_dfpt_manifolds(
                 workflow.alpha_guess, n_orbitals, channel
             )
         manifolds[channel.value] = manifold
-    return manifolds
+        band_counts[channel.value] = n_orbitals
+    return manifolds, band_counts
