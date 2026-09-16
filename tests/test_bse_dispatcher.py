@@ -7,8 +7,9 @@ singlepoint route tests in ``test_dfpt_dispatcher.py`` exercise directly, so
 this file borrows its silicon input dict (``_si_dfpt_dict``) rather than
 duplicating it, and focuses on what the BSE route adds: the
 ``calculator_parameters.yambo`` block's mapping onto the yambo runcard, the
-scope guards the composed workflow's missing sockets (eps_inf,
-gb_correction, kcw overrides, band interpolation) make necessary, and the
+remaining scope guards (``screening_method``, ``spin``, manifold-reaching
+``BSEBands``), that ``eps_inf``/``gb_correction``/``kcw`` overrides and
+orbital grouping pass straight through to the composed DFPT chain, and the
 derived ``ecutwfc``/``ecutrho`` a caller who states neither still gets.
 """
 
@@ -164,22 +165,60 @@ class TestBuild:
         assert wg.tasks["bse"].inputs["ecutwfc"].value == pytest.approx(expected_ecutwfc)
         assert wg.tasks["bse"].inputs["ecutrho"].value == pytest.approx(expected_ecutrho)
 
-    def test_orbital_grouping_is_accepted_without_effect(
+    def test_orbital_grouping_reaches_the_composed_dfpt_chain(
         self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """A resolved grouping criterion no longer blocks the build.
+        """A resolved grouping criterion threads into the composed DFPT chain's own input.
 
-        Grouping only changes how the composed DFPT chain's screening
-        parameters are computed, never what they converge to (unlike
-        eps_inf/gb_correction/kcw, whose composed graph gap is a genuine
-        physics gap and stays a hard refusal): the graph still builds, its
-        DFPT chain running fully ungrouped underneath.
+        Mirrors ``TestOrbitalGrouping.test_spread_honours_an_explicit_tolerance``
+        in ``test_dfpt_dispatcher.py``: the ``bse`` route shares
+        ``assemble_dfpt_chain_inputs`` with the plain DFPT route, and now
+        forwards ``group_orbitals_tol`` into ``SinglepointBetheSalpeterWorkflow``
+        unchanged, so a spread-grouped BSE run groups exactly as the same
+        input would under ``task: singlepoint``.
         """
         d = _si_bse_dict()
         d["workflow"]["group_orbitals_by"] = "spread"
         d["workflow"]["group_orbitals_tol"] = 0.05
         wg = _build(d)
-        assert "bse" in wg.get_task_names()
+        assert wg.tasks["dfpt"].inputs["group_orbitals_tol"].value == 0.05
+
+    def test_eps_inf_reaches_the_composed_dfpt_chain(
+        self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """``workflow.eps_inf`` lands on the composed ``dfpt`` task's own input, unchanged."""
+        d = _si_bse_dict()
+        d["workflow"]["eps_inf"] = 5.3
+        wg = _build(d)
+        assert wg.tasks["dfpt"].inputs["eps_inf"].value == pytest.approx(5.3)
+
+    def test_gb_correction_reaches_the_composed_dfpt_chain(
+        self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """``workflow.gb_correction`` lands on the composed ``dfpt`` task's ``l_vcut`` input."""
+        d = _si_bse_dict()
+        d["workflow"]["gb_correction"] = True
+        wg = _build(d)
+        assert bool(wg.tasks["dfpt"].inputs["l_vcut"].value)
+
+    def test_kcw_overrides_reach_the_composed_dfpt_chain(
+        self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """``calculator_parameters.kcw`` lands on the composed ``dfpt`` task, split per namelist.
+
+        Mirrors ``TestKcwOverrides.test_keywords_reach_dfpt_split_per_namelist``
+        in ``test_dfpt_dispatcher.py``.
+        """
+        d = _si_bse_dict()
+        d["calculator_parameters"]["kcw"] = {
+            "control": {"lrpa": True},
+            "screen": {"tr2": 1.0e-16},
+        }
+        wg = _build(d)
+        overrides = wg.tasks["dfpt"].inputs["kcw_overrides"]
+        assert overrides["control"].value == {"lrpa": True}
+        assert overrides["screen"].value == {"tr2": pytest.approx(1.0e-16)}
+        assert not overrides["ham"]._links
 
 
 class TestRouteRefusals:
@@ -216,20 +255,6 @@ class TestRouteRefusals:
             _build(d)
         assert "per-spin projections" not in str(excinfo.value)
 
-    def test_eps_inf_is_refused(self) -> None:
-        """``eps_inf`` has no socket on the composed graph."""
-        d = _si_bse_dict()
-        d["workflow"]["eps_inf"] = 5.3
-        with pytest.raises(NotImplementedError, match="eps_inf"):
-            _build(d)
-
-    def test_gb_correction_is_refused(self) -> None:
-        """``gb_correction`` has no socket on the composed graph, whichever value it names."""
-        d = _si_bse_dict()
-        d["workflow"]["gb_correction"] = True
-        with pytest.raises(NotImplementedError, match="gb_correction"):
-            _build(d)
-
     def test_missing_ecutwfc_is_refused_against_a_cutoff_less_family(
         self, aiida_profile: Any, fake_sg15_pseudo_family: Any
     ) -> None:
@@ -244,20 +269,6 @@ class TestRouteRefusals:
         d = _si_bse_dict()
         del d["calculator_parameters"]["ecutwfc"]
         with pytest.raises(ValueError, match="ecutwfc"):
-            _build(d)
-
-    def test_kcw_overrides_are_refused(
-        self, aiida_profile: Any, fake_sg15_pseudo_family: Any
-    ) -> None:
-        """``calculator_parameters.kcw`` has no socket on the composed graph.
-
-        Needs a profile and pseudos: this guard runs after
-        ``assemble_dfpt_chain_inputs``, which resolves the pseudopotential
-        family to derive the manifold before this check ever looks at it.
-        """
-        d = _si_bse_dict()
-        d["calculator_parameters"]["kcw"] = {"control": {"lrpa": True}}
-        with pytest.raises(NotImplementedError, match=r"calculator_parameters\.kcw"):
             _build(d)
 
     def test_bands_reaching_past_the_manifold_is_refused(

@@ -29,24 +29,19 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     so every restriction that route documents applies here too.
 
     Phase-1 scope, refused explicitly because the composed workflow does not
-    expose a socket for them: ``screening_method`` must be ``'dfpt'``,
-    ``spin`` must be ``'none'`` (a single DFPT channel to read), and
-    ``workflow.eps_inf``, ``workflow.gb_correction``, and
-    ``calculator_parameters.kcw`` overrides all take no effect — the
-    composed DFPT step always runs with their defaults.
+    expose a socket for them: ``screening_method`` must be ``'dfpt'``, and
+    ``spin`` must be ``'none'`` (a single DFPT channel to read).
 
-    Left unrefused, by contrast: ``calculator_parameters.ecutwfc``, if
-    unset, is derived from the pseudopotential family's own recommendation
-    (the same call ``PwBaseWorkChain.get_builder_from_protocol`` makes), so
-    both this route's fresh yambo ground state and the composed DFPT
-    chain's own run on the identical cutoff without the user typing it.
-    Workflow-level orbital grouping (``group_orbitals_by`` /
-    ``group_orbitals_tol``) also reaches no calculation here — the composed
-    workflow forwards no grouping tolerance into its DFPT chain — but is
-    not refused either: grouping only changes how the screening parameters
-    are *computed* (sharing one value across orbitals presumed equivalent),
-    never what they converge to, so running the full, ungrouped DFPT chain
-    underneath is a strictly more faithful, only slower, substitute.
+    Left unrefused: ``calculator_parameters.ecutwfc``, if unset, is derived
+    from the pseudopotential family's own recommendation (the same call
+    ``PwBaseWorkChain.get_builder_from_protocol`` makes), so both this
+    route's fresh yambo ground state and the composed DFPT chain's own run
+    on the identical cutoff without the user typing it. ``workflow.eps_inf``,
+    ``workflow.gb_correction``, ``calculator_parameters.kcw`` overrides, and
+    workflow-level orbital grouping (``group_orbitals_by`` /
+    ``group_orbitals_tol``) all pass straight into the composed DFPT chain,
+    exactly as the plain DFPT singlepoint route passes them
+    (:func:`koopmans.aiida.workflows.dfpt.build_singlepoint_dfpt_workgraph`).
 
     Args:
         koopmans_input: The parsed koopmans input.
@@ -61,8 +56,7 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             also unset, or `yambo.BSEBands` reaches past the Wannierized
             manifold.
         NotImplementedError: If the input asks for a `bse`-incompatible
-            `screening_method`, `spin`, `eps_inf`, `gb_correction`, or
-            `kcw` override.
+            `screening_method` or `spin`.
     """
     from aiida_koopmans.workgraphs.bethe_salpeter import (
         SinglepointBetheSalpeterCodes,
@@ -92,32 +86,8 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             f"collinear or spinor run has none; got spin={workflow.spin.value!r}. Run "
             "`task: singlepoint` and a standalone BSE workflow separately for those."
         )
-    if workflow.eps_inf is not None:
-        raise NotImplementedError(
-            "`workflow.eps_inf` is not yet wired into the `bse` task: "
-            "`SinglepointBetheSalpeterWorkflow` takes no `eps_inf` of its own — its "
-            "composed DFPT screening step always runs kcw.x's own default dielectric "
-            "constant. Leave it unset."
-        )
-    if workflow.gb_correction is not None:
-        raise NotImplementedError(
-            "`workflow.gb_correction` is not yet wired into the `bse` task: "
-            "`SinglepointBetheSalpeterWorkflow` takes no `l_vcut` of its own — its "
-            "composed DFPT screening step always applies the Gygi-Baldereschi scheme. "
-            "Leave it unset."
-        )
-
     chain_inputs, manifold_band_counts = assemble_dfpt_chain_inputs(koopmans_input)
     _ensure_explicit_pw_cutoffs(chain_inputs)
-
-    kcw_stated = chain_inputs["kcw_overrides"]
-    if kcw_stated:
-        raise NotImplementedError(
-            "`calculator_parameters.kcw` is not yet wired into the `bse` task: "
-            "`SinglepointBetheSalpeterWorkflow` takes no `kcw_overrides` of its own — "
-            f"its composed DFPT screening step takes no kcw.x namelist overrides. "
-            f"Stated: {sorted(kcw_stated)}. Remove them."
-        )
 
     n_orbitals = manifold_band_counts["none"]
     first, last = yambo.BSEBands
@@ -147,6 +117,10 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             # yet, so `pki` has no producer; the `eigenvalues` flavour knob returns once it
             # does.
             eigenvalues="ki",
+            eps_inf=chain_inputs["eps_inf"],
+            l_vcut=chain_inputs["l_vcut"],
+            group_orbitals_tol=chain_inputs["group_orbitals_tol"],
+            kcw_overrides=chain_inputs["kcw_overrides"],
             parallelization=chain_inputs["parallelization"],
         ),
         "Koopmans BSE",

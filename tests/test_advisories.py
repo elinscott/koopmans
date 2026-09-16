@@ -286,25 +286,31 @@ class TestOrbitalGroupingAdvisory:
         assert inp.workflow.group_orbitals_tol == pytest.approx(1.0e-4)
         assert advisories_for(inp) == []
 
-    def test_bse_with_a_tolerance_is_advised_to_switch_task_not_criterion(self) -> None:
-        """The `bse` task composes DFPT but runs no workflow-level grouping over it.
+    def test_bse_advisory_matches_the_equivalent_dfpt_singlepoint(self) -> None:
+        """`bse` now shares the DFPT route's own tolerance advisory, task name aside.
 
-        Discriminates against advising a criterion the composed
-        ``SinglepointBetheSalpeterWorkflow`` still could not act on (it
-        forwards no ``group_orbitals_tol`` into its internal DFPT call): the
-        fix is switching task, the same message ``wannierize``/``dft_bands``/
-        ``dft_eps`` already get, not "set group_orbitals_by".
+        ``group_orbitals_tol`` reaches `bse`'s composed DFPT chain
+        unchanged (aiida-koopmans#137), so an orphaned tolerance is advised
+        exactly as it would be under ``task: singlepoint`` with the same
+        ``screening_method``/``init_orbitals`` — not the "switch task"
+        message ``wannierize``/``dft_bands``/``dft_eps`` get, since those
+        compose no DFPT chain at all.
         """
-        d = _bse_dict()
-        d["workflow"]["group_orbitals_tol"] = 0.05
-        inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
-        assert advisories_for(inp) == [
-            "workflow.group_orbitals_tol has no effect on task: bse (it "
-            "groups orbitals to share a screening parameter, computed only within a "
-            "singlepoint or trajectory); it is kept for when you switch task to "
-            "singlepoint."
+        common = {
+            "screening_method": "dfpt",
+            "correction": "ki",
+            "init_orbitals": "mlwfs",
+            "group_orbitals_tol": 0.05,
+        }
+        bse_input = KoopmansInput.model_validate(_bse_dict(**common))
+        singlepoint_input = KoopmansInput.model_validate(_si_dict("singlepoint", **common))
+        assert bse_input.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+        bse_advisories = advisories_for(bse_input)
+        singlepoint_advisories = advisories_for(singlepoint_input)
+        assert bse_advisories == [
+            message.replace("task: singlepoint", "task: bse") for message in singlepoint_advisories
         ]
+        assert bse_advisories != []
 
 
 class TestResolveGroupOrbitalsByDoesNotMutateCaller:
