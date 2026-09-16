@@ -15,6 +15,21 @@ into AiiDA ``metadata.options`` / ``settings.cmdline``. The top-level
 ``computer.account`` and ``computer.queue`` are run-wide, with no per-code
 override; :meth:`ParallelizationInput.as_mapping` folds them into every
 code's entry alongside the walltime default.
+
+``yambo`` additionally takes a per-driver MPI role split
+(:class:`YamboParallelization`), since yambo parallelizes over named roles
+(``k``, ``eh``, ``q``, …) baked into its own runcard rather than over
+``-npool``/``-pd``::
+
+    parallelization:
+      yambo:
+        ntasks: 4
+        omp: 1
+        bethe_salpeter:   {k: 2, eh: 2}     # becomes BS_CPU = "2 2", BS_ROLEs = "k eh"
+        static_screening: {k: 4}            # becomes X_and_IO_CPU / X_and_IO_ROLEs
+        dipoles:          {k: 4}            # becomes DIP_CPU / DIP_ROLEs
+
+See :class:`YamboParallelization` for the role vocabulary and validation.
 """
 
 from __future__ import annotations
@@ -46,7 +61,27 @@ POOL_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wa
 PD_SUPPORTING_CODES: frozenset[str] = frozenset({"pw", "ph", "projwfc", "pw2wannier90", "kcw"})
 
 
-__all__ = ["CodeParallelization", "ParallelizationInput", "resolve_effective_walltime"]
+__all__ = [
+    "CodeParallelization",
+    "ParallelizationInput",
+    "YamboParallelization",
+    "resolve_effective_walltime",
+]
+
+# yambo's own role vocabulary per parallel driver (yambo 5.3
+# ``src/interface/INIT_load.F``, ``CPU_structure_load``: DIP = (k,c,v),
+# X_and_IO = (q,g,k,c,v), BS = (k,eh,t)), and each driver's runcard variable
+# prefix (``src/modules/mod_parallel.F``, ``CPU_str_reset``).
+_YAMBO_ROLE_VOCAB: dict[str, frozenset[str]] = {
+    "bethe_salpeter": frozenset({"k", "eh", "t"}),
+    "static_screening": frozenset({"q", "g", "k", "c", "v"}),
+    "dipoles": frozenset({"k", "c", "v"}),
+}
+_YAMBO_RUNCARD_PREFIX: dict[str, str] = {
+    "bethe_salpeter": "BS",
+    "static_screening": "X_and_IO",
+    "dipoles": "DIP",
+}
 
 
 # NOTE: keep this Pydantic model (and the per-code fields it validates) in
@@ -90,12 +125,103 @@ class CodeParallelization(BaseModel):
     )
 
 
+class YamboParallelization(CodeParallelization):
+    """Parallelization settings for yambo: rank count plus per-driver MPI role splits.
+
+    yambo has no ``-npool``/``-pd`` concept (rejected for it like every
+    other field on :class:`CodeParallelization`); instead each parallel
+    driver distributes its own work over the run's MPI ranks along named
+    roles, in a runcard ``<DRIVER>_ROLEs``/``<DRIVER>_CPU`` pair of strings.
+    ``bethe_salpeter``, ``static_screening`` and ``dipoles`` name one split
+    each, as an ordered mapping of role name to rank count. yambo takes the
+    role order as the nesting order of its own parallel structure (yambo 5.3
+    ``src/parallel/PARALLEL_get_user_structure.F`` parses the ``_CPU``/
+    ``_ROLEs`` strings positionally, and
+    ``src/parallel/PARALLEL_assign_chains_and_COMMs.F`` builds nested
+    communicators in that same position order, outermost first) — so the
+    mapping's insertion order is passed straight through.
+
+    A driver's role counts must multiply to ``ntasks``: yambo aborts at
+    startup otherwise, so a driver named without ``ntasks`` set is rejected
+    here instead. A driver left unset means yambo distributes that work over
+    the ranks itself.
+    """
+
+    bethe_salpeter: dict[str, int] | None = Field(
+        default=None,
+        description="MPI role split for the Bethe-Salpeter kernel (yambo's ``BS_CPU``/"
+        "``BS_ROLEs``), as an ordered {role: rank count} mapping. Valid roles: "
+        "``k`` (k-points), ``eh`` (electron-hole pairs), ``t`` (transitions).",
+    )
+    static_screening: dict[str, int] | None = Field(
+        default=None,
+        description="MPI role split for the static screening / response function "
+        "(yambo's ``X_and_IO_CPU``/``X_and_IO_ROLEs``), as an ordered {role: rank count} "
+        "mapping. Valid roles: ``q`` (q-points), ``g`` (G-vectors), ``k`` (k-points), "
+        "``c`` (conduction bands), ``v`` (valence bands).",
+    )
+    dipoles: dict[str, int] | None = Field(
+        default=None,
+        description="MPI role split for the dipole matrix elements (yambo's ``DIP_CPU``/"
+        "``DIP_ROLEs``), as an ordered {role: rank count} mapping. Valid roles: "
+        "``k`` (k-points), ``c`` (conduction bands), ``v`` (valence bands).",
+    )
+
+    @model_validator(mode="after")
+    def check_role_splits(self) -> Self:
+        """Validate each named driver's roles, counts, and product against ``ntasks``."""
+        for driver, vocab in _YAMBO_ROLE_VOCAB.items():
+            roles: dict[str, int] | None = getattr(self, driver)
+            if roles is None:
+                continue
+            if self.ntasks is None:
+                raise ValueError(
+                    f"'parallelization.yambo.{driver}' needs 'parallelization.yambo.ntasks' "
+                    "set: yambo's role split must multiply out to the total rank count."
+                )
+            unknown = sorted(role for role in roles if role not in vocab)
+            if unknown:
+                raise ValueError(
+                    f"'parallelization.yambo.{driver}' names unknown role(s) {unknown}; "
+                    f"valid roles for {driver} are {sorted(vocab)}."
+                )
+            non_positive = sorted(role for role, count in roles.items() if count < 1)
+            if non_positive:
+                raise ValueError(
+                    f"'parallelization.yambo.{driver}' role(s) {non_positive} must have a "
+                    "positive rank count."
+                )
+            product = 1
+            for count in roles.values():
+                product *= count
+            if product != self.ntasks:
+                raise ValueError(
+                    f"'parallelization.yambo.{driver}' role counts {dict(roles)} multiply "
+                    f"to {product}, not 'parallelization.yambo.ntasks' = {self.ntasks}; "
+                    "yambo aborts unless the two agree."
+                )
+        return self
+
+    def to_runcard_dict(self) -> dict[str, str]:
+        """Return the named drivers' splits as yambo's own ``*_CPU``/``*_ROLEs`` strings."""
+        runcard: dict[str, str] = {}
+        for driver, prefix in _YAMBO_RUNCARD_PREFIX.items():
+            roles: dict[str, int] | None = getattr(self, driver)
+            if not roles:
+                continue
+            runcard[f"{prefix}_CPU"] = " ".join(str(count) for count in roles.values())
+            runcard[f"{prefix}_ROLEs"] = " ".join(roles)
+        return runcard
+
+
 class ParallelizationInput(BaseModel):
     """Per-code parallelization settings.
 
     A mapping of code name to :class:`CodeParallelization`. Only the codes
     listed here are recognised; any other key is rejected. Codes left unset
-    inherit the QE/AiiDA defaults (a single MPI rank, no pools).
+    inherit the QE/AiiDA defaults (a single MPI rank, no pools). ``yambo``'s
+    entry is a :class:`YamboParallelization`, adding the per-driver MPI role
+    splits.
     """
 
     pw: CodeParallelization | None = None
@@ -106,7 +232,7 @@ class ParallelizationInput(BaseModel):
     pw2wannier90: CodeParallelization | None = None
     wann2kcp: CodeParallelization | None = None
     wannier90: CodeParallelization | None = None
-    yambo: CodeParallelization | None = None
+    yambo: YamboParallelization | None = None
 
     @model_validator(mode="after")
     def reject_unsupported_flags(self) -> Self:
@@ -147,12 +273,24 @@ class ParallelizationInput(BaseModel):
         configured-codes-only behaviour. A code with no fields set and no
         computer default is omitted.
 
+        ``yambo``'s ``bethe_salpeter``/``static_screening``/``dipoles`` role
+        splits do not pass through as their own keys: they are replaced by a
+        single ``runcard`` key holding their serialized ``*_CPU``/``*_ROLEs``
+        strings (:meth:`YamboParallelization.to_runcard_dict`), the shape
+        ``aiida-koopmans``'s ``CodeParallelization`` TypedDict declares.
+
         This is the ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
         """
         mapping: dict[str, dict[str, object]] = {}
         for code in ALL_CODES:
             cfg = getattr(self, code)
             fields = cfg.model_dump(exclude_none=True, exclude={"walltime"}) if cfg else {}
+            if isinstance(cfg, YamboParallelization):
+                for driver in _YAMBO_ROLE_VOCAB:
+                    fields.pop(driver, None)
+                runcard = cfg.to_runcard_dict()
+                if runcard:
+                    fields["runcard"] = runcard
             walltime = resolve_effective_walltime(cfg, computer)
             if walltime is not None:
                 fields = {**fields, "max_wallclock_seconds": int(walltime.total_seconds())}

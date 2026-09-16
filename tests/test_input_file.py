@@ -538,6 +538,132 @@ class TestParallelizationSchema:
                 _parallelization_input(parallelization={"foo": {"npool": 2}})
             )
 
+    def test_yambo_role_split_maps_to_runcard_strings(self) -> None:
+        """A single named driver becomes one ``*_CPU``/``*_ROLEs`` pair under ``runcard``."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={
+                    "yambo": {"ntasks": 4, "bethe_salpeter": {"k": 2, "eh": 2}},
+                }
+            )
+        )
+        yambo = inp.parallelization.yambo
+        assert yambo is not None
+        assert yambo.bethe_salpeter == {"k": 2, "eh": 2}
+        assert inp.parallelization.as_mapping() == {
+            "yambo": {
+                "ntasks": 4,
+                "runcard": {"BS_CPU": "2 2", "BS_ROLEs": "k eh"},
+            }
+        }
+
+    def test_yambo_all_three_drivers_map_independently(self) -> None:
+        """The worked example: three drivers each produce their own runcard pair."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={
+                    "yambo": {
+                        "ntasks": 4,
+                        "omp": 1,
+                        "bethe_salpeter": {"k": 2, "eh": 2},
+                        "static_screening": {"k": 4},
+                        "dipoles": {"k": 4},
+                    },
+                }
+            )
+        )
+        assert inp.parallelization.as_mapping() == {
+            "yambo": {
+                "ntasks": 4,
+                "omp": 1,
+                "runcard": {
+                    "BS_CPU": "2 2",
+                    "BS_ROLEs": "k eh",
+                    "X_and_IO_CPU": "4",
+                    "X_and_IO_ROLEs": "k",
+                    "DIP_CPU": "4",
+                    "DIP_ROLEs": "k",
+                },
+            }
+        }
+
+    def test_yambo_role_split_preserves_insertion_order(self) -> None:
+        """The mapping's own order becomes the ``*_CPU``/``*_ROLEs`` string order.
+
+        yambo takes the role order as the nesting order of its own parallel
+        structure (``PARALLEL_get_user_structure.F`` /
+        ``PARALLEL_assign_chains_and_COMMs.F`` in the yambo 5.3 source), so
+        the split must be passed through exactly as written, not sorted.
+        """
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={"yambo": {"ntasks": 4, "bethe_salpeter": {"eh": 2, "k": 2}}}
+            )
+        )
+        assert inp.parallelization.as_mapping()["yambo"]["runcard"] == {
+            "BS_CPU": "2 2",
+            "BS_ROLEs": "eh k",
+        }
+
+    def test_yambo_omitted_driver_has_no_runcard_key(self) -> None:
+        """No driver named means ``as_mapping`` emits no ``runcard`` key at all."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"yambo": {"ntasks": 4}})
+        )
+        assert inp.parallelization.as_mapping() == {"yambo": {"ntasks": 4}}
+
+    @pytest.mark.parametrize(
+        ("driver", "roles"),
+        [
+            ("bethe_salpeter", {"q": 2, "eh": 2}),
+            ("static_screening", {"eh": 4}),
+            ("dipoles", {"t": 4}),
+        ],
+    )
+    def test_yambo_role_split_rejects_unknown_role(
+        self, driver: str, roles: dict[str, int]
+    ) -> None:
+        """A role outside the driver's own vocabulary is refused by name."""
+        with pytest.raises(ValueError, match=r"unknown role"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={"yambo": {"ntasks": sum(roles.values()), driver: roles}}
+                )
+            )
+
+    def test_yambo_role_split_rejects_non_positive_count(self) -> None:
+        """A zero or negative rank count is refused by name."""
+        with pytest.raises(ValueError, match=r"positive rank count"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={
+                        "yambo": {"ntasks": 2, "bethe_salpeter": {"k": 2, "eh": 0}},
+                    }
+                )
+            )
+
+    def test_yambo_role_split_without_ntasks_rejected(self) -> None:
+        """A driver named without ``ntasks`` cannot be checked against the rank count."""
+        with pytest.raises(ValueError, match=r"needs 'parallelization.yambo.ntasks' set"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={"yambo": {"bethe_salpeter": {"k": 2, "eh": 2}}}
+                )
+            )
+
+    def test_yambo_role_split_product_must_equal_ntasks(self) -> None:
+        """The role counts must multiply to ``ntasks``: yambo aborts otherwise."""
+        with pytest.raises(
+            ValueError, match=r"multiply.*to 4.*not 'parallelization.yambo.ntasks' = 8"
+        ):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={
+                        "yambo": {"ntasks": 8, "bethe_salpeter": {"k": 2, "eh": 2}},
+                    }
+                )
+            )
+
     @pytest.mark.parametrize("field", ["ntasks", "npool"])
     def test_positive_ints_only(self, field: str) -> None:
         """Both integer fields reject zero and negative values."""

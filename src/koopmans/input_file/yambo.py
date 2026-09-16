@@ -9,10 +9,12 @@ its own name, read by the ``bse`` task alone (see
 ``aiida_koopmans.workgraphs.bethe_salpeter``, which composes a DFPT singlepoint
 with a yambo BSE run seeded by its kcw.x eigenvalues in place of a GW quasiparticle
 correction). Keywords the route computes or fixes for itself (``KfnQPdb``, the
-BSE momentum-transfer range, the MPI role split, the arguments it always turns on)
+BSE momentum-transfer range, the MPI role splits, the arguments it always turns on)
 have no field here and cannot be set; :data:`_YAMBO_REASONS` names each one and
 must agree with ``aiida_koopmans.owned_keywords.OWNED["yambo"]`` (see
-``tests/test_input_model_codegen.py``).
+``tests/test_input_model_codegen.py``). The MPI role splits (``BS_CPU``/``BS_ROLEs``,
+``X_and_IO_CPU``/``X_and_IO_ROLEs``, ``DIP_CPU``/``DIP_ROLEs``) are set instead through
+``parallelization.yambo`` (see :class:`~koopmans.input_file.parallelization.YamboParallelization`).
 """
 
 from typing import Any, Self
@@ -37,8 +39,30 @@ _YAMBO_REASONS: dict[str, str] = {
         "koopmans always computes an optical (momentum-transfer q = 0) spectrum; the "
         "BSE momentum range follows from that."
     ),
-    "BS_CPU": "Set `parallelization.yambo`; the BSE step's own MPI role split follows from its rank count.",
-    "BS_ROLEs": "Set `parallelization.yambo`; the BSE step's own MPI role split follows from its rank count.",
+    "BS_CPU": (
+        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
+        "/ `dipoles`)."
+    ),
+    "BS_ROLEs": (
+        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
+        "/ `dipoles`)."
+    ),
+    "X_and_IO_CPU": (
+        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
+        "/ `dipoles`)."
+    ),
+    "X_and_IO_ROLEs": (
+        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
+        "/ `dipoles`)."
+    ),
+    "DIP_CPU": (
+        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
+        "/ `dipoles`)."
+    ),
+    "DIP_ROLEs": (
+        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
+        "/ `dipoles`)."
+    ),
     "rim_cut": "koopmans always turns on yambo's random-integration-method Coulomb-divergence treatment.",
     "WRbsWF": "koopmans always asks yambo to write the excitonic wavefunctions the exciton-brightness output reads.",
     "NLCC": "koopmans always turns on yambo's non-linear core correction support.",

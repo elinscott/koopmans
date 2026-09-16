@@ -179,6 +179,11 @@ class TestOwnedKeywordsAreRefused:
             ("wannier90", "write_u_matrices", "gauge products"),
             ("yambo", "KfnQPdb", "quasiparticle database"),
             ("yambo", "BS_CPU", "parallelization.yambo"),
+            ("yambo", "BS_ROLEs", "parallelization.yambo"),
+            ("yambo", "X_and_IO_CPU", "parallelization.yambo"),
+            ("yambo", "X_and_IO_ROLEs", "parallelization.yambo"),
+            ("yambo", "DIP_CPU", "parallelization.yambo"),
+            ("yambo", "DIP_ROLEs", "parallelization.yambo"),
         ],
     )
     def test_the_message_names_what_to_set_instead(
