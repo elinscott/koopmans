@@ -590,19 +590,21 @@ class TestParallelizationSchema:
     def test_yambo_role_split_preserves_insertion_order(self) -> None:
         """The mapping's own order becomes the ``*_CPU``/``*_ROLEs`` string order.
 
-        yambo takes the role order as the nesting order of its own parallel
-        structure (``PARALLEL_get_user_structure.F`` /
-        ``PARALLEL_assign_chains_and_COMMs.F`` in the yambo 5.3 source), so
-        the split must be passed through exactly as written, not sorted.
+        Each count must pair with its own role by position
+        (``PARALLEL_get_user_structure.F`` in the yambo 5.3 source parses
+        the two strings positionally), so the split must be passed through
+        exactly as written, not sorted. The fixture below is not
+        alphabetical (``k`` before ``eh``), so a sorting bug would produce
+        ``"eh k"`` and this test would catch it.
         """
         inp = KoopmansInput.model_validate(
             _parallelization_input(
-                parallelization={"yambo": {"ntasks": 4, "bethe_salpeter": {"eh": 2, "k": 2}}}
+                parallelization={"yambo": {"ntasks": 4, "bethe_salpeter": {"k": 2, "eh": 2}}}
             )
         )
         assert inp.parallelization.as_mapping()["yambo"]["runcard"] == {
             "BS_CPU": "2 2",
-            "BS_ROLEs": "eh k",
+            "BS_ROLEs": "k eh",
         }
 
     def test_yambo_omitted_driver_has_no_runcard_key(self) -> None:
@@ -652,7 +654,7 @@ class TestParallelizationSchema:
             )
 
     def test_yambo_role_split_product_must_equal_ntasks(self) -> None:
-        """The role counts must multiply to ``ntasks``: yambo aborts otherwise."""
+        """The role counts must multiply to ``ntasks``, or yambo silently drops the split."""
         with pytest.raises(
             ValueError, match=r"multiply.*to 4.*not 'parallelization.yambo.ntasks' = 8"
         ):

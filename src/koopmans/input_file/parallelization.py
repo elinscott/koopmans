@@ -24,10 +24,13 @@ code's entry alongside the walltime default.
     parallelization:
       yambo:
         ntasks: 4
-        omp: 1
-        bethe_salpeter:   {k: 2, eh: 2}     # becomes BS_CPU = "2 2", BS_ROLEs = "k eh"
-        static_screening: {k: 4}            # becomes X_and_IO_CPU / X_and_IO_ROLEs
-        dipoles:          {k: 4}            # becomes DIP_CPU / DIP_ROLEs
+        bethe_salpeter: {k: 2, eh: 2}   # becomes BS_CPU = "2 2", BS_ROLEs = "k eh"
+
+``static_screening`` (``X_and_IO_CPU``/``X_and_IO_ROLEs``, roles ``q``/``g``/
+``k``/``c``/``v``) and ``dipoles`` (``DIP_CPU``/``DIP_ROLEs``, roles ``k``/
+``c``/``v``) take the same shape. Each role's count must fit the system's
+own phase space (a ``k`` count no larger than the number of irreducible
+k-points, and so on) — a constraint this schema cannot check.
 
 See :class:`YamboParallelization` for the role vocabulary and validation.
 """
@@ -133,18 +136,36 @@ class YamboParallelization(CodeParallelization):
     driver distributes its own work over the run's MPI ranks along named
     roles, in a runcard ``<DRIVER>_ROLEs``/``<DRIVER>_CPU`` pair of strings.
     ``bethe_salpeter``, ``static_screening`` and ``dipoles`` name one split
-    each, as an ordered mapping of role name to rank count. yambo takes the
-    role order as the nesting order of its own parallel structure (yambo 5.3
+    each, as an ordered mapping of role name to rank count. The two runcard
+    strings are emitted in the same order as the mapping, so each count
+    pairs with its own role by position (yambo 5.3
     ``src/parallel/PARALLEL_get_user_structure.F`` parses the ``_CPU``/
-    ``_ROLEs`` strings positionally, and
-    ``src/parallel/PARALLEL_assign_chains_and_COMMs.F`` builds nested
-    communicators in that same position order, outermost first) — so the
-    mapping's insertion order is passed straight through.
+    ``_ROLEs`` strings positionally); the mapping's insertion order is
+    passed straight through. The communicator nesting itself is fixed per
+    driver in yambo's own source, independent of this order.
 
-    A driver's role counts must multiply to ``ntasks``: yambo aborts at
-    startup otherwise, so a driver named without ``ntasks`` set is rejected
-    here instead. A driver left unset means yambo distributes that work over
-    the ranks itself.
+    A driver's role counts must multiply to ``ntasks``. yambo does not
+    abort on a mismatch: it logs a warning and silently discards the named
+    split, falling back to its own automatic distribution instead (yambo
+    5.3 ``src/parallel/PARALLEL_global_defaults.F``). That silent fallback
+    is rejected here instead, at parse time, so a mismatched split is never
+    passed through unnoticed. A driver named without ``ntasks`` set cannot
+    be checked this way, so it is rejected too. A driver left unset means
+    yambo distributes that work over the ranks itself; a driver whose
+    mapping omits a role in its vocabulary is also fine — yambo appends any
+    missing ``q``/``k`` role as 1 itself (``PARALLEL_get_user_structure.F``).
+
+    Example::
+
+        parallelization:
+          yambo:
+            ntasks: 4
+            bethe_salpeter: {k: 2, eh: 2}   # becomes BS_CPU = "2 2", BS_ROLEs = "k eh"
+
+    ``static_screening`` and ``dipoles`` take the same shape, over their own
+    vocabularies. Each role's count must also fit the system's own phase
+    space (a ``k`` count no larger than the number of irreducible k-points,
+    and so on) — a constraint this schema cannot check.
     """
 
     bethe_salpeter: dict[str, int] | None = Field(
@@ -198,7 +219,8 @@ class YamboParallelization(CodeParallelization):
                 raise ValueError(
                     f"'parallelization.yambo.{driver}' role counts {dict(roles)} multiply "
                     f"to {product}, not 'parallelization.yambo.ntasks' = {self.ntasks}; "
-                    "yambo aborts unless the two agree."
+                    "yambo would silently discard this split and fall back to its own "
+                    "distribution rather than use it."
                 )
         return self
 
