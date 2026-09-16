@@ -33,7 +33,11 @@ from koopmans.input_file.computer import ComputerInput
 from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.kcw import KCWInputParameters
 from koopmans.input_file.ml import MLConfig
-from koopmans.input_file.parallelization import ParallelizationInput
+from koopmans.input_file.parallelization import (
+    CodeParallelization,
+    ParallelizationInput,
+    YamboParallelization,
+)
 from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
@@ -52,6 +56,7 @@ __all__ = [
     "CellParametersViaAlat",
     "CellParametersViaIbrav",
     "CellParametersViaVectors",
+    "CodeParallelization",
     "ComputerInput",
     "DensificationFactor",
     "GammaOnlyKpointsInput",
@@ -76,6 +81,7 @@ __all__ = [
     "WannierKpointsOverridesInput",
     "WorkflowConfig",
     "YamboBseParameters",
+    "YamboParallelization",
     "migrate_input_dict",
     "read_input_file",
 ]
@@ -492,7 +498,8 @@ class KoopmansInput(BaseModel):
     )
     parallelization: ParallelizationInput = Field(
         default_factory=ParallelizationInput,
-        description="Per-code parallelization settings (MPI ranks and k-point pools)",
+        description="Per-code parallelization settings (MPI ranks, k-point pools, and, "
+        "for yambo, per-driver MPI role splits)",
     )
     computer: ComputerInput = Field(
         default_factory=ComputerInput,
