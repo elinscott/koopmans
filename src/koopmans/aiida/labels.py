@@ -48,6 +48,7 @@ _TRANSPARENT: frozenset[str | tuple[str, str]] = frozenset(
         "PwBandsWorkChain",
         "Wannier90WorkChain",
         "refine_screening_parameters",
+        "select_channel",
         ("wannier90", "Wannier90WorkChain"),
     }
 )

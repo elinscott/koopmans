@@ -177,9 +177,6 @@ def assemble_dfpt_chain_inputs(
             bands_kpoints=bands_kpoints,
             pseudo_family=pseudo_family,
             overrides=overrides,
-            # 'auto' prepends the scf + ph.x dielectric steps inside
-            # SinglepointDFPT; l_vcut is the Gygi-Baldereschi flag (None -> the
-            # periodic default, on).
             eps_inf=eps_inf,
             l_vcut=workflow.gb_correction,
             spin=spin,

@@ -113,11 +113,31 @@ def _is_process_function_node(node: ProcessNode) -> bool:
     generation, Map source builders, gather steps — and add visual noise
     to the koopmans progress table. The koopmans flow's *user-meaningful*
     rows are CalcJobs (kcp.x / pw.x) and the WorkGraph/sub-WorkGraph
-    branches; this predicate is the filter for everything else.
+    branches; this predicate is the filter for everything else, except
+    for a PyFunction carrying an explicit ``label`` of its own — see
+    :func:`_has_explicit_label` and the exemption in
+    :func:`_ordered_children`.
     """
     from aiida.orm import CalcFunctionNode, WorkFunctionNode
 
     return isinstance(node, (CalcFunctionNode, WorkFunctionNode))
+
+
+def _has_explicit_label(node: ProcessNode, call_link_label: str) -> bool:
+    """Return whether a PyFunction's ``label`` names a fact rather than an echo.
+
+    Many callers stamp ``metadata.label`` on a PyFunction with a copy of
+    its own ``process_label`` or of the call link label it ran under —
+    that value describes how the node was invoked, not something the
+    plugin chose to tell the reader. Only a ``label`` that differs from
+    both means it names a fact worth a row (a database assembled, a
+    channel picked).
+    """
+    label = (getattr(node, "label", "") or "").strip()
+    if not label:
+        return False
+    process_label = getattr(node, "process_label", None) or ""
+    return label != process_label and label != call_link_label
 
 
 class ProcessRow(NamedTuple):
@@ -177,7 +197,9 @@ def _promoted_state(state: str) -> str:
     return "running" if state in _TERMINAL_STATES else state
 
 
-def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelDisplay:
+def describe_process(
+    process_node: ProcessNode, is_root: bool = False, raw: str | None = None
+) -> LabelDisplay:
     """Return how one process is shown: its name, its executable, its role.
 
     The name is the process's own ``label``, which ``aiida-koopmans``
@@ -197,12 +219,16 @@ def describe_process(process_node: ProcessNode, is_root: bool = False) -> LabelD
         process_node: The process to describe.
         is_root: Whether this is the root of the whole display, which is
             named by the workflow it runs rather than by a call link.
+        raw: The process's call link label, when the caller has already
+            read it (see :func:`_ordered_children`) — avoids reading it
+            from the database a second time. Ignored when ``is_root``.
     """
     if is_root:
         raw = getattr(process_node, "process_label", None) or "WorkGraph"
         role = describe_label(raw)
     else:
-        raw = get_node_label(process_node, include_code=False)
+        if raw is None:
+            raw = get_node_label(process_node, include_code=False)
         role = describe_label(raw, getattr(process_node, "process_label", None) or "")
     name = (getattr(process_node, "label", "") or "").strip()
     return role._replace(text=name or role.text, code=executable_of(process_node))
@@ -235,7 +261,14 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[LabelDisplay, Pro
 
     ``@calcfunction`` / ``@workfunction`` / ``@task`` PyFunctions are
     dropped here, along with their descendants (see
-    :func:`_is_process_function_node`).
+    :func:`_is_process_function_node`) — unless the node carries an
+    explicit ``label`` of its own (see :func:`_has_explicit_label`),
+    which means it stands for a fact the user should see (a database
+    assembled, a channel picked) rather than plumbing. Such a node keeps
+    its row, named by that label. A ``label`` that only repeats the
+    node's ``process_label`` or the call link label it ran under is not
+    explicit: several unlabeled helpers are stamped that way by whatever
+    launched them, and stay hidden.
     """
     try:
         called_pks = [n.pk for n in process_node.called]
@@ -250,9 +283,12 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[LabelDisplay, Pro
             child = _reload(pk)
         except Exception:  # noqa: S112 - skip unreadable children
             continue
+        raw: str | None = None
         if _is_process_function_node(child):
-            continue
-        entries.append((describe_process(child), child))
+            raw = get_node_label(child, include_code=False)
+            if not _has_explicit_label(child, raw):
+                continue
+        entries.append((describe_process(child, raw=raw), child))
 
     entries.sort(key=lambda entry: (entry[1].ctime, entry[1].pk or 0))
 
