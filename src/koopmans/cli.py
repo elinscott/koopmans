@@ -1169,14 +1169,6 @@ def bandstructure(
     help="Overlay each run's independent-particle spectrum as a lighter dashed curve.",
 )
 @click.option(
-    "--excitons/--no-excitons",
-    "excitons",
-    default=True,
-    show_default=True,
-    help="Draw each run's excitonic states as vertical stems from zero, scaled to "
-    "the spectrum's own maximum.",
-)
-@click.option(
     "--label",
     "labels",
     cls=_PositionalAwareOption,
@@ -1206,7 +1198,6 @@ def spectrum(
     data_path: Path | None,
     real: bool,
     ip: bool,
-    excitons: bool,
     labels: tuple[str | None, ...],
     styles: tuple[str | None, ...],
 ) -> None:
@@ -1224,11 +1215,7 @@ def spectrum(
     Im ε is drawn against energy in eV; --real draws Re ε instead. The
     independent-particle spectrum the same run reports is overlaid as a
     lighter dashed curve labelled "independent particle" unless --no-ip is
-    given, and the excitonic states are drawn as vertical stems from zero,
-    labelled "excitons", their height proportional to oscillator strength and
-    normalized so the strongest reaches the spectrum's own maximum; a dark
-    exciton (negligible strength) is still drawn, faintly, rather than
-    vanishing. --no-excitons leaves them out.
+    given.
 
     Each run is named after the route that produced it unless --label names
     it, and --style says how it is drawn, following the same pairing rules as
@@ -1273,7 +1260,6 @@ def spectrum(
         show=show,
         real=real,
         ip=ip,
-        excitons=excitons,
         legend=True if labels else None,
     )
     if target is not None:

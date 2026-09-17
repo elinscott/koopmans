@@ -901,20 +901,16 @@ def resolve_band_series(
     return series, warnings
 
 
-def _bse_arrays(node: orm.ProcessNode) -> tuple[orm.ArrayData, orm.ArrayData] | None:
-    """Return a run's BSE spectrum and excitonic-state arrays, or ``None``.
+def _bse_spectrum_array(node: orm.ProcessNode) -> orm.ArrayData | None:
+    """Return a run's BSE spectrum array, or ``None``.
 
-    A `bse` run publishes both under its ``bse`` output namespace; anything
-    else publishes neither.
+    A `bse` run publishes it under its ``bse`` output namespace; anything
+    else publishes none.
     """
     bse = getattr(node.outputs, "bse", None)
     if bse is None:
         return None
-    eps = getattr(bse, "array_eps", None)
-    excitons = getattr(bse, "array_excitonic_states", None)
-    if eps is None or excitons is None:
-        return None
-    return eps, excitons
+    return getattr(bse, "array_eps", None)
 
 
 def _not_a_bse_run(folder: Path, node: orm.ProcessNode) -> PlottingError:
@@ -926,10 +922,8 @@ def _not_a_bse_run(folder: Path, node: orm.ProcessNode) -> PlottingError:
     )
 
 
-def _spectrum_from_node(
-    node: orm.ProcessNode, eps: orm.ArrayData, excitons: orm.ArrayData, label: str
-) -> SpectrumSeries:
-    """Return the spectrum ``eps``/``excitons`` publish, under the given label."""
+def _spectrum_from_array(eps: orm.ArrayData, label: str) -> SpectrumSeries:
+    """Return the spectrum ``eps`` publishes, under the given label."""
     names = eps.get_arraynames()
     return SpectrumSeries(
         label=label,
@@ -938,8 +932,6 @@ def _spectrum_from_node(
         re_eps=eps.get_array("Re_eps").tolist(),
         im_eps_o=eps.get_array("Im_eps_o").tolist() if "Im_eps_o" in names else None,
         re_eps_o=eps.get_array("Re_eps_o").tolist() if "Re_eps_o" in names else None,
-        exciton_energies=excitons.get_array("energies").tolist(),
-        exciton_intensities=excitons.get_array("intensities").tolist(),
     )
 
 
@@ -951,10 +943,10 @@ def resolve_spectrum_series(
     """Return the BSE optical spectra of the given runs, and any warnings.
 
     Each folder contributes exactly one spectrum: a `bse` run publishes its
-    absorption spectrum and excitonic states once, on the run itself, so
-    unlike :func:`resolve_band_series` there is no per-step search or
-    per-spin fan-out to resolve. A run is named after the route that produced
-    it (its own label, or its process label) unless ``labels`` names it, and
+    absorption spectrum once, on the run itself, so unlike
+    :func:`resolve_band_series` there is no per-step search or per-spin
+    fan-out to resolve. A run is named after the route that produced it (its
+    own label, or its process label) unless ``labels`` names it, and
     prefixed by its folder name when more than one folder is on the axes.
     ``None`` in ``labels``/``styles`` leaves that folder's own name or
     appearance as if the option had not been given for it at all — the same
@@ -977,10 +969,9 @@ def resolve_spectrum_series(
         if warning is not None:
             warnings.append(warning)
 
-        arrays = _bse_arrays(node)
-        if arrays is None:
+        eps = _bse_spectrum_array(node)
+        if eps is None:
             raise _not_a_bse_run(folder, node)
-        eps, excitons = arrays
 
         label = labels[index] if labels else None
         if label is None:
@@ -989,7 +980,7 @@ def resolve_spectrum_series(
                 prefix = folder.name or folder.resolve().name
                 label = f"{prefix}: {label}"
 
-        item = _spectrum_from_node(node, eps, excitons, label)
+        item = _spectrum_from_array(eps, label)
         style_value = styles[index] if styles else None
         if style_value is not None:
             item.style = style_value

@@ -84,11 +84,9 @@ class SpectrumSeries:
     ``energies`` are eV; ``im_eps``/``re_eps`` are the macroscopic dielectric
     function a yambo BSE run computes with local-field and excitonic effects
     included. ``im_eps_o``/``re_eps_o`` are the independent-particle spectrum
-    the same run reports, ``None`` when it reported none. ``exciton_energies``
-    and ``exciton_intensities`` are the excitonic states' energies (eV) and
-    oscillator strengths, one entry each. ``style`` is the matplotlib format
-    string the curve is drawn in, ``None`` leaving its appearance to the
-    figure.
+    the same run reports, ``None`` when it reported none. ``style`` is the
+    matplotlib format string the curve is drawn in, ``None`` leaving its
+    appearance to the figure.
     """
 
     label: str
@@ -97,8 +95,6 @@ class SpectrumSeries:
     re_eps: list[float]
     im_eps_o: list[float] | None = None
     re_eps_o: list[float] | None = None
-    exciton_energies: list[float] = field(default_factory=list)
-    exciton_intensities: list[float] = field(default_factory=list)
     style: str | None = None
 
 

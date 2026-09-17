@@ -289,72 +289,12 @@ def draw_band_structures(
 #: it appears once in the legend no matter how many spectra are drawn.
 _IP_LABEL = "independent particle"
 
-#: Label of the excitonic-state stems, same rule as ``_IP_LABEL``.
-_EXCITON_LABEL = "excitons"
-
-#: Floor an exciton's stem is drawn at, as a fraction of the spectrum's
-#: maximum, so a dark exciton (negligible oscillator strength) still shows.
-_EXCITON_HEIGHT_FLOOR = 0.02
-
-
-def _draw_excitons(
-    axes: Axes,
-    item: SpectrumSeries,
-    energies: np.ndarray,
-    values: np.ndarray,
-    color: object,
-    first: bool,
-) -> None:
-    """Draw one series' excitonic states as stems, within its own energy range.
-
-    Heights are proportional to oscillator strength, normalized so the
-    tallest reaches the spectrum's own maximum; a floor keeps a negligible
-    one visible rather than vanishing into the axis. A state outside
-    ``energies``' range (yambo can report one, e.g. a high-energy continuum
-    state, well past it) is left out of both the drawing and the
-    normalization, so it cannot flatten the real excitons to the floor by
-    setting the scale alone.
-    """
-    exciton_energies = np.asarray(item.exciton_energies, dtype=np.float64)
-    intensities = np.asarray(item.exciton_intensities, dtype=np.float64)
-    in_window = (
-        (exciton_energies >= energies.min()) & (exciton_energies <= energies.max())
-        if energies.size
-        else np.ones_like(exciton_energies, dtype=bool)
-    )
-    shown_energies = exciton_energies[in_window]
-    shown_intensities = intensities[in_window]
-    if not shown_energies.size:
-        return
-
-    scale = float(values.max()) if values.size and values.max() > 0 else 1.0
-    peak_intensity = float(shown_intensities.max())
-    heights = (
-        shown_intensities / peak_intensity * scale
-        if peak_intensity > 0
-        else np.zeros_like(shown_intensities)
-    )
-    heights = np.maximum(heights, _EXCITON_HEIGHT_FLOOR * scale)
-    axes.vlines(
-        shown_energies,
-        0.0,
-        heights,
-        color=color,
-        alpha=0.4,
-        linewidth=1.2,
-        # A leading underscore is matplotlib's own convention for "draw
-        # this, but leave it out of the legend" — ``vlines``, unlike
-        # ``plot``, takes no ``None`` for "no label".
-        label=_EXCITON_LABEL if first else "_nolegend_",
-    )
-
 
 def draw_spectra(
     axes: Axes,
     series: Sequence[SpectrumSeries],
     real: bool = False,
     ip: bool = True,
-    excitons: bool = True,
     ylim: tuple[float, float] | None = None,
     legend: bool | None = None,
 ) -> None:
@@ -362,22 +302,12 @@ def draw_spectra(
 
     Draws Im ε against energy, one curve per series, or Re ε with ``real``.
     ``ip`` overlays each series' independent-particle spectrum, where it
-    reported one, as a lighter dashed curve in the same color. ``excitons``
-    draws each series' excitonic states within its own computed energy range
-    as vertical stems from zero, scaled so the tallest reaches the spectrum's
-    own maximum; a dark exciton (negligible oscillator strength) is still
-    drawn, at a floor height, so it remains visible rather than vanishing
-    into the axis. A state outside that range (yambo can report a
-    high-energy one well past it) is left out of both the drawing and the
-    normalization, so it cannot flatten the real excitons to the floor by
-    setting the scale alone. The x axis is framed to the union of the
-    series' own energy ranges.
+    reported one, as a lighter dashed curve in the same color.
 
     :param axes: where to draw.
     :param series: the spectra to draw.
     :param real: draw Re ε instead of Im ε.
     :param ip: overlay the independent-particle spectrum.
-    :param excitons: draw the excitonic states as stems.
     :param ylim: the range to show. ``None`` shows the data in full.
     :param legend: draw the key, or leave it out. ``None`` draws it for an
         overlay and leaves it out for a single curve.
@@ -386,12 +316,9 @@ def draw_spectra(
     quantity_o = "re_eps_o" if real else "im_eps_o"
     symbol = "Re" if real else "Im"
 
-    curve_extents: list[tuple[float, float]] = []
     for index, item in enumerate(series):
         energies = np.asarray(item.energies, dtype=np.float64)
         values = np.asarray(getattr(item, quantity), dtype=np.float64)
-        if energies.size:
-            curve_extents.append((float(energies.min()), float(energies.max())))
         style = [item.style] if item.style else []
         names_color = bool(style) and _style_color(style[0]) is not None
         color = None if names_color else f"C{index % 10}"
@@ -413,16 +340,6 @@ def draw_spectra(
                     label=_IP_LABEL if index == 0 else None,
                 )
 
-        if excitons and item.exciton_energies:
-            _draw_excitons(axes, item, energies, values, drawn_color, first=index == 0)
-
-    if curve_extents:
-        # The computed spectrum, not the excitonic states, defines the energy
-        # window: a state that falls outside it (yambo can report one well
-        # past the plotted range) draws as a stem cut off at the edge rather
-        # than stretching the whole axis out to reach it.
-        axes.set_xlim(min(lo for lo, _ in curve_extents), max(hi for _, hi in curve_extents))
-
     axes.set_xlabel("Energy (eV)")
     axes.set_ylabel(rf"{symbol} $\varepsilon$")
     if ylim is not None:
@@ -439,7 +356,6 @@ def render_spectra(
     show: bool = False,
     real: bool = False,
     ip: bool = True,
-    excitons: bool = True,
     ylim: tuple[float, float] | None = None,
     legend: bool | None = None,
 ) -> None:
@@ -451,7 +367,6 @@ def render_spectra(
     :param show: open an interactive window.
     :param real: draw Re ε instead of Im ε.
     :param ip: overlay the independent-particle spectrum.
-    :param excitons: draw the excitonic states as stems.
     :param ylim: the range to show. ``None`` shows the data in full.
     :param legend: draw the key, or leave it out. ``None`` draws it for an
         overlay and leaves it out for a single curve.
@@ -465,7 +380,7 @@ def render_spectra(
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(figsize=(6.0, 4.5))
-    draw_spectra(axes, series, real=real, ip=ip, excitons=excitons, ylim=ylim, legend=legend)
+    draw_spectra(axes, series, real=real, ip=ip, ylim=ylim, legend=legend)
     figure.tight_layout()
 
     if output_path is not None:

@@ -113,14 +113,6 @@ def make_bse_arrays(
     return array
 
 
-def make_excitonic_states(energies: list[float], intensities: list[float]) -> orm.ArrayData:
-    """Return an ``ArrayData`` shaped like yambo's own excitonic-state output."""
-    array = orm.ArrayData()
-    array.set_array("energies", np.asarray(energies, dtype=float))
-    array.set_array("intensities", np.asarray(intensities, dtype=float))
-    return array
-
-
 def write_run_folder(root: Path, name: str, node: orm.ProcessNode | None) -> Path:
     """Write a run folder whose metadata names ``node``, and return it."""
     folder = root / name
@@ -3108,7 +3100,7 @@ class TestPathAgreement:
 
 
 def spectrum_series(label: str = "BSE", **overrides: Any) -> SpectrumSeries:
-    """Return a spectrum with a two-peak curve and one exciton, fields overridden."""
+    """Return a spectrum with a two-peak curve, fields overridden."""
     fields: dict[str, Any] = {
         "label": label,
         "energies": [0.0, 1.0, 2.0, 3.0, 4.0],
@@ -3116,8 +3108,6 @@ def spectrum_series(label: str = "BSE", **overrides: Any) -> SpectrumSeries:
         "re_eps": [1.0, 2.0, 4.0, 3.0, 1.5],
         "im_eps_o": [0.0, 0.8, 15.0, 6.0, 1.0],
         "re_eps_o": [1.0, 1.8, 3.5, 3.2, 1.8],
-        "exciton_energies": [2.1],
-        "exciton_intensities": [1e-3],
     }
     fields.update(overrides)
     return SpectrumSeries(**fields)
@@ -3130,11 +3120,6 @@ def bse_run(tmp_path: Path, name: str, **array_kwargs: Any) -> Path:
         process_label="WorkGraph<SinglepointBetheSalpeterWorkflow>",
     )
     attach(root, "bse__array_eps", make_bse_arrays(**array_kwargs))
-    attach(
-        root,
-        "bse__array_excitonic_states",
-        make_excitonic_states([3.5, 4.2], [1e-6, 2.4e-4]),
-    )
     return write_run_folder(tmp_path, name, root)
 
 
@@ -3165,8 +3150,6 @@ class TestSpectrumResolver:
         assert item.re_eps == pytest.approx([6.8, 6.9, 7.0])
         assert item.im_eps_o == pytest.approx([0.09, 0.19, 0.29])
         assert item.re_eps_o == pytest.approx([6.7, 6.8, 6.9])
-        assert item.exciton_energies == pytest.approx([3.5, 4.2])
-        assert item.exciton_intensities == pytest.approx([1e-6, 2.4e-4])
 
     def test_a_non_bse_run_is_refused_naming_its_route(
         self, aiida_profile: Any, tmp_path: Path
@@ -3179,27 +3162,6 @@ class TestSpectrumResolver:
         folder = write_run_folder(tmp_path, "si-dscf", root)
 
         with pytest.raises(PlottingError, match="KoopmansDSCFWorkflow"):
-            resolve_spectrum_series([folder])
-
-    def test_a_partial_bse_namespace_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
-        """Missing the excitonic-state array is as unplottable as missing both.
-
-        A run that failed part way through yambo's BSE step could plausibly
-        publish one array and not the other; either absence means there is
-        no complete spectrum to draw.
-        """
-        root = make_process(
-            "aiida.workflows:workgraph.engine",
-            process_label="WorkGraph<SinglepointBetheSalpeterWorkflow>",
-        )
-        attach(
-            root,
-            "bse__array_eps",
-            make_bse_arrays(energies=[0.0, 1.0], im_eps=[0.1, 0.2], re_eps=[6.8, 6.9]),
-        )
-        folder = write_run_folder(tmp_path, "si-partial", root)
-
-        with pytest.raises(PlottingError, match="SinglepointBetheSalpeterWorkflow"):
             resolve_spectrum_series([folder])
 
     def test_two_folders_are_prefixed_and_take_their_own_style(
@@ -3266,83 +3228,7 @@ class TestSpectrumRenderer:
 
         assert len(axes.get_lines()) == 1
 
-    def test_no_excitons_leaves_out_the_stems(self) -> None:
-        """--no-excitons draws no vertical stems."""
-        axes = blank_axes()
-
-        draw_spectra(axes, [spectrum_series()], excitons=False)
-
-        assert len(axes.collections) == 0
-
-    def test_a_dark_exciton_is_still_drawn_at_a_floor(self) -> None:
-        """Negligible oscillator strength draws a short stem, not nothing."""
-        axes = blank_axes()
-
-        draw_spectra(
-            axes,
-            [spectrum_series(exciton_energies=[2.1], exciton_intensities=[1e-12])],
-        )
-
-        (stems,) = axes.collections
-        segment = stems.get_segments()[0]
-        assert segment[1][1] > 0.0
-
-    def test_the_brightest_exciton_reaches_the_spectrums_peak(self) -> None:
-        """Heights are normalized so the strongest state reaches the curve's max."""
-        axes = blank_axes()
-        item = spectrum_series(exciton_energies=[1.0, 2.0], exciton_intensities=[1e-6, 5e-4])
-
-        draw_spectra(axes, [item])
-
-        (stems,) = axes.collections
-        heights = [segment[1][1] for segment in stems.get_segments()]
-        assert heights[1] == pytest.approx(max(item.im_eps))
-        assert heights[0] < heights[1]
-
-    def test_an_out_of_window_exciton_is_excluded_and_ignored_for_scale(self) -> None:
-        """A state past the computed spectrum neither draws nor sets the scale.
-
-        Reproduces what a live yambo BSE run showed: one reported "excitonic
-        state" well outside the computed energy range, with an oscillator
-        strength that would otherwise dwarf every real state near the gap.
-        """
-        axes = blank_axes()
-        item = spectrum_series(
-            energies=[0.0, 1.0, 2.0],
-            im_eps=[0.0, 1.0, 0.5],
-            im_eps_o=None,
-            re_eps_o=None,
-            exciton_energies=[1.0, 50.0],
-            exciton_intensities=[1e-6, 1.0],
-        )
-
-        draw_spectra(axes, [item])
-
-        (stems,) = axes.collections
-        # Only the in-window state at 1.0 eV is drawn; the one at 50 eV is
-        # left out entirely, not merely clipped by the axis limits.
-        assert [segment[0][0] for segment in stems.get_segments()] == [1.0]
-        # With the 1.0 intensity state excluded, the remaining (and only)
-        # state sets its own scale and is drawn at the spectrum's peak.
-        assert stems.get_segments()[0][1][1] == pytest.approx(max(item.im_eps))
-
-    def test_the_x_axis_is_framed_to_the_spectrum_not_the_excitons(self) -> None:
-        """The axis follows the curve; an out-of-range exciton cannot stretch it."""
-        axes = blank_axes()
-        item = spectrum_series(
-            energies=[0.0, 1.0, 2.0],
-            im_eps=[0.0, 1.0, 0.5],
-            im_eps_o=None,
-            re_eps_o=None,
-            exciton_energies=[50.0],
-            exciton_intensities=[1.0],
-        )
-
-        draw_spectra(axes, [item])
-
-        assert axes.get_xlim() == pytest.approx((0.0, 2.0))
-
-    def test_two_series_share_one_ip_and_one_excitons_legend_entry(self) -> None:
+    def test_two_series_share_one_ip_legend_entry(self) -> None:
         """A per-series overlay does not multiply the legend."""
         axes = blank_axes()
 
@@ -3350,7 +3236,6 @@ class TestSpectrumRenderer:
 
         legend_labels = [text.get_text() for text in axes.get_legend().get_texts()]
         assert legend_labels.count("independent particle") == 1
-        assert legend_labels.count("excitons") == 1
         assert "A" in legend_labels
         assert "B" in legend_labels
 
@@ -3420,7 +3305,7 @@ class TestSpectrumCommand:
     def test_flags_reach_the_renderer(
         self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
     ) -> None:
-        """--real, --no-ip and --no-excitons are not merely accepted and dropped."""
+        """--real and --no-ip are not merely accepted and dropped."""
         from koopmans.cli import cli
 
         folder = bse_run(
@@ -3435,23 +3320,13 @@ class TestSpectrumCommand:
 
         result = runner.invoke(
             cli,
-            [
-                "plot",
-                "spectrum",
-                str(folder),
-                "--real",
-                "--no-ip",
-                "--no-excitons",
-                "-o",
-                str(tmp_path / "a.png"),
-            ],
+            ["plot", "spectrum", str(folder), "--real", "--no-ip", "-o", str(tmp_path / "a.png")],
         )
 
         assert result.exit_code == 0, result.output
         axes = drawn_spectrum_axes[-1]
         (line,) = axes.get_lines()
         assert list(line.get_ydata()) == pytest.approx([6.8, 6.9])
-        assert len(axes.collections) == 0
 
     def test_a_label_names_the_curve_and_brings_the_legend_back(
         self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
