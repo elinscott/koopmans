@@ -313,6 +313,33 @@ class TestStableRows:
 
         assert [row.label for row in render(root)] == ["Koopmans ΔSCF"]
 
+    def test_a_labeled_process_function_gets_its_own_row(
+        self, render: Callable[[FakeNode], list[progress.ProcessRow]]
+    ) -> None:
+        """A PyFunction the plugin named states a fact the user should see."""
+        unlabeled = FakeNode(link="build_iter_source", is_pyfunction=True)
+        name_equal_label = FakeNode(
+            link="create_kpoints_from_distance",
+            label="create_kpoints_from_distance",
+            process_label="create_kpoints_from_distance",
+            is_pyfunction=True,
+        )
+        labeled = FakeNode(
+            link="generate_qp_database",
+            label="Quasiparticle database",
+            is_pyfunction=True,
+        )
+        root = FakeNode(
+            process_label="WorkGraph<BSEWorkflow>",
+            label="Koopmans BSE",
+            children=[unlabeled, name_equal_label, labeled],
+        )
+
+        rows = render(root)
+
+        assert [row.label for row in rows] == ["Koopmans BSE", "Quasiparticle database"]
+        assert rows[1].code is None
+
 
 class _NodeWithoutSchedulerAccessor(FakeNode):
     """A process node whose class predates ``get_scheduler_state`` entirely.
@@ -945,6 +972,10 @@ class TestIdentifiersShownAsRecorded:
         """``wannier90`` names the whole workchain in one place and one run in another."""
         assert progress.describe_label("wannier90", "Wannier90WorkChain").transparent
         assert not progress.describe_label("wannier90", "Wannier90BaseWorkChain").transparent
+
+    def test_select_channel_is_transparent(self) -> None:
+        """The BSE route's spin-channel picker adds no idea its parent row lacks."""
+        assert progress.describe_label("select_channel").transparent
 
 
 # --- the whole table, route by route ----------------------------------
