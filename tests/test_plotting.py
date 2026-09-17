@@ -33,8 +33,10 @@ from koopmans.plotting import (
     check_style,
     describe_energy_zero,
     draw_band_structures,
+    draw_spectra,
     path_distances,
     render_band_structures,
+    render_spectra,
     resolve_band_series,
     resolve_spectrum_series,
     write_series_json,
@@ -1337,6 +1339,26 @@ def drawn_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
         original(axes, *args, **kwargs)
 
     monkeypatch.setattr(render, "draw_band_structures", record)
+    return seen
+
+
+@pytest.fixture
+def drawn_spectrum_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Return the axes each figure ``koopmans plot spectrum`` draws, in order.
+
+    Same rationale as ``drawn_axes``, for ``draw_spectra`` instead.
+    """
+    from koopmans.plotting import render
+
+    seen: list[Any] = []
+    original = render.draw_spectra
+
+    def record(axes: Any, *args: Any, **kwargs: Any) -> None:
+        """Call through to the renderer, keeping the axes it drew."""
+        seen.append(axes)
+        original(axes, *args, **kwargs)
+
+    monkeypatch.setattr(render, "draw_spectra", record)
     return seen
 
 
@@ -3085,6 +3107,22 @@ class TestPathAgreement:
 # ----------------------------------------------------------------------
 
 
+def spectrum_series(label: str = "BSE", **overrides: Any) -> SpectrumSeries:
+    """Return a spectrum with a two-peak curve and one exciton, fields overridden."""
+    fields: dict[str, Any] = {
+        "label": label,
+        "energies": [0.0, 1.0, 2.0, 3.0, 4.0],
+        "im_eps": [0.0, 1.0, 20.0, 5.0, 0.5],
+        "re_eps": [1.0, 2.0, 4.0, 3.0, 1.5],
+        "im_eps_o": [0.0, 0.8, 15.0, 6.0, 1.0],
+        "re_eps_o": [1.0, 1.8, 3.5, 3.2, 1.8],
+        "exciton_energies": [2.1],
+        "exciton_intensities": [1e-3],
+    }
+    fields.update(overrides)
+    return SpectrumSeries(**fields)
+
+
 def bse_run(tmp_path: Path, name: str, **array_kwargs: Any) -> Path:
     """Write a run folder holding one yambo BSE spectrum on its root node."""
     root = make_process(
@@ -3143,6 +3181,197 @@ class TestSpectrumResolver:
         with pytest.raises(PlottingError, match="KoopmansDSCFWorkflow"):
             resolve_spectrum_series([folder])
 
+    def test_a_partial_bse_namespace_is_refused(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Missing the excitonic-state array is as unplottable as missing both.
+
+        A run that failed part way through yambo's BSE step could plausibly
+        publish one array and not the other; either absence means there is
+        no complete spectrum to draw.
+        """
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            process_label="WorkGraph<SinglepointBetheSalpeterWorkflow>",
+        )
+        attach(
+            root,
+            "bse__array_eps",
+            make_bse_arrays(energies=[0.0, 1.0], im_eps=[0.1, 0.2], re_eps=[6.8, 6.9]),
+        )
+        folder = write_run_folder(tmp_path, "si-partial", root)
+
+        with pytest.raises(PlottingError, match="SinglepointBetheSalpeterWorkflow"):
+            resolve_spectrum_series([folder])
+
+    def test_two_folders_are_prefixed_and_take_their_own_style(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """Several folders disambiguate by name, same as ``resolve_band_series``."""
+        si = bse_run(tmp_path, "si-bse", energies=[0.0, 1.0], im_eps=[0.1, 0.2], re_eps=[6.8, 6.9])
+        zno = bse_run(
+            tmp_path, "zno-bse", energies=[0.0, 1.0], im_eps=[0.3, 0.4], re_eps=[7.0, 7.1]
+        )
+
+        found, warnings = resolve_spectrum_series([si, zno], styles=(None, "k--"))
+
+        assert warnings == []
+        assert [item.label for item in found] == [
+            "si-bse: SinglepointBetheSalpeterWorkflow",
+            "zno-bse: SinglepointBetheSalpeterWorkflow",
+        ]
+        assert [item.style for item in found] == [None, "k--"]
+
+
+class TestSpectrumRenderer:
+    """Drawing the records, straight off ``SpectrumSeries``, no AiiDA."""
+
+    def test_writes_the_requested_format(self, tmp_path: Path) -> None:
+        """The extension chooses the format, and nothing opens a window."""
+        target = tmp_path / "spectrum.pdf"
+
+        render_spectra([spectrum_series()], output_path=target)
+
+        assert target.is_file()
+        assert target.read_bytes().startswith(b"%PDF")
+
+    def test_default_draws_im_eps_and_the_independent_particle_overlay(self) -> None:
+        """The main curve is Im ε, and --ip's dashed twin is the same color."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()])
+
+        lines = axes.get_lines()
+        assert len(lines) == 2
+        main, overlay = lines
+        assert list(main.get_ydata()) == pytest.approx(spectrum_series().im_eps)
+        assert list(overlay.get_ydata()) == pytest.approx(spectrum_series().im_eps_o)
+        assert overlay.get_linestyle() == "--"
+        assert main.get_color() == overlay.get_color()
+
+    def test_real_draws_re_eps_instead(self) -> None:
+        """--real switches both the main curve and its overlay to Re ε."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], real=True)
+
+        main, overlay = axes.get_lines()
+        assert list(main.get_ydata()) == pytest.approx(spectrum_series().re_eps)
+        assert list(overlay.get_ydata()) == pytest.approx(spectrum_series().re_eps_o)
+        assert "Re" in axes.get_ylabel()
+
+    def test_no_ip_leaves_out_the_overlay(self) -> None:
+        """--no-ip draws only the main curve."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], ip=False)
+
+        assert len(axes.get_lines()) == 1
+
+    def test_no_excitons_leaves_out_the_stems(self) -> None:
+        """--no-excitons draws no vertical stems."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], excitons=False)
+
+        assert len(axes.collections) == 0
+
+    def test_a_dark_exciton_is_still_drawn_at_a_floor(self) -> None:
+        """Negligible oscillator strength draws a short stem, not nothing."""
+        axes = blank_axes()
+
+        draw_spectra(
+            axes,
+            [spectrum_series(exciton_energies=[2.1], exciton_intensities=[1e-12])],
+        )
+
+        (stems,) = axes.collections
+        segment = stems.get_segments()[0]
+        assert segment[1][1] > 0.0
+
+    def test_the_brightest_exciton_reaches_the_spectrums_peak(self) -> None:
+        """Heights are normalized so the strongest state reaches the curve's max."""
+        axes = blank_axes()
+        item = spectrum_series(exciton_energies=[1.0, 2.0], exciton_intensities=[1e-6, 5e-4])
+
+        draw_spectra(axes, [item])
+
+        (stems,) = axes.collections
+        heights = [segment[1][1] for segment in stems.get_segments()]
+        assert heights[1] == pytest.approx(max(item.im_eps))
+        assert heights[0] < heights[1]
+
+    def test_an_out_of_window_exciton_is_excluded_and_ignored_for_scale(self) -> None:
+        """A state past the computed spectrum neither draws nor sets the scale.
+
+        Reproduces what a live yambo BSE run showed: one reported "excitonic
+        state" well outside the computed energy range, with an oscillator
+        strength that would otherwise dwarf every real state near the gap.
+        """
+        axes = blank_axes()
+        item = spectrum_series(
+            energies=[0.0, 1.0, 2.0],
+            im_eps=[0.0, 1.0, 0.5],
+            im_eps_o=None,
+            re_eps_o=None,
+            exciton_energies=[1.0, 50.0],
+            exciton_intensities=[1e-6, 1.0],
+        )
+
+        draw_spectra(axes, [item])
+
+        (stems,) = axes.collections
+        # Only the in-window state at 1.0 eV is drawn; the one at 50 eV is
+        # left out entirely, not merely clipped by the axis limits.
+        assert [segment[0][0] for segment in stems.get_segments()] == [1.0]
+        # With the 1.0 intensity state excluded, the remaining (and only)
+        # state sets its own scale and is drawn at the spectrum's peak.
+        assert stems.get_segments()[0][1][1] == pytest.approx(max(item.im_eps))
+
+    def test_the_x_axis_is_framed_to_the_spectrum_not_the_excitons(self) -> None:
+        """The axis follows the curve; an out-of-range exciton cannot stretch it."""
+        axes = blank_axes()
+        item = spectrum_series(
+            energies=[0.0, 1.0, 2.0],
+            im_eps=[0.0, 1.0, 0.5],
+            im_eps_o=None,
+            re_eps_o=None,
+            exciton_energies=[50.0],
+            exciton_intensities=[1.0],
+        )
+
+        draw_spectra(axes, [item])
+
+        assert axes.get_xlim() == pytest.approx((0.0, 2.0))
+
+    def test_two_series_share_one_ip_and_one_excitons_legend_entry(self) -> None:
+        """A per-series overlay does not multiply the legend."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series("A"), spectrum_series("B")], legend=True)
+
+        legend_labels = [text.get_text() for text in axes.get_legend().get_texts()]
+        assert legend_labels.count("independent particle") == 1
+        assert legend_labels.count("excitons") == 1
+        assert "A" in legend_labels
+        assert "B" in legend_labels
+
+    def test_one_series_carries_no_legend_by_default(self) -> None:
+        """The control: a single spectrum needs no key, same as one band structure."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()])
+
+        assert axes.get_legend() is None
+
+    def test_style_names_a_color_for_every_curve_the_series_draws(self) -> None:
+        """A style with a color applies it to the main curve and its overlay."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series(style="r-")])
+
+        main, overlay = axes.get_lines()
+        assert main.get_color() == "r"
+        assert overlay.get_color() == "r"
+
 
 class TestSpectrumCommand:
     """``koopmans plot spectrum`` end to end."""
@@ -3187,3 +3416,59 @@ class TestSpectrumCommand:
         assert result.exit_code != 0
         assert "TrajectoryWorkflow" in result.output
         assert "task: bse" in result.output
+
+    def test_flags_reach_the_renderer(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """--real, --no-ip and --no-excitons are not merely accepted and dropped."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 1.0],
+            im_eps=[0.1, 0.2],
+            re_eps=[6.8, 6.9],
+            im_eps_o=[0.09, 0.19],
+            re_eps_o=[6.7, 6.8],
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "spectrum",
+                str(folder),
+                "--real",
+                "--no-ip",
+                "--no-excitons",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        axes = drawn_spectrum_axes[-1]
+        (line,) = axes.get_lines()
+        assert list(line.get_ydata()) == pytest.approx([6.8, 6.9])
+        assert len(axes.collections) == 0
+
+    def test_a_label_names_the_curve_and_brings_the_legend_back(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """Same rule as ``plot bandstructure``: naming a curve asks to see it named."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path, "si-bse", energies=[0.0, 1.0], im_eps=[0.1, 0.2], re_eps=[6.8, 6.9]
+        )
+
+        result = runner.invoke(
+            cli,
+            ["plot", "spectrum", str(folder), "--label", "Si", "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        legend = drawn_spectrum_axes[-1].get_legend()
+        assert legend is not None
+        assert "Si" in [text.get_text() for text in legend.get_texts()]
