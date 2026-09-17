@@ -3164,6 +3164,35 @@ class TestSpectrumResolver:
         with pytest.raises(PlottingError, match="KoopmansDSCFWorkflow"):
             resolve_spectrum_series([folder])
 
+    def test_a_failed_bse_run_names_the_failed_step_not_the_wrong_task(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A `bse` run that failed before yambo published anything ran the right task."""
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            process_label="WorkGraph<SinglepointBetheSalpeterWorkflow>",
+            exit_status=400,
+            exit_message="The bse RunBetheSalpeter sub process failed",
+        )
+        failed = make_process(
+            "aiida.calculations:yambo.yambo",
+            calcjob=True,
+            computer=aiida_localhost,
+            caller=root,
+            link_label="bse",
+            exit_status=400,
+        )
+        failed.set_exit_message("p2y crashed")
+        folder = write_run_folder(tmp_path, "si-bse-failed", root)
+
+        with pytest.raises(PlottingError) as excinfo:
+            resolve_spectrum_series([folder])
+
+        message = str(excinfo.value)
+        assert "did not finish" in message
+        assert "p2y crashed" in message
+        assert "not a `task: bse` run" not in message
+
     def test_two_folders_are_prefixed_and_take_their_own_style(
         self, aiida_profile: Any, tmp_path: Path
     ) -> None:

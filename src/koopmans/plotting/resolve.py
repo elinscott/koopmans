@@ -622,8 +622,8 @@ def _disambiguating_labels(steps: Sequence[orm.ProcessNode], root: orm.ProcessNo
     ]
 
 
-def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
-    """Return a warning naming the step that failed, if the run did not finish."""
+def _failure_detail(node: orm.ProcessNode) -> str | None:
+    """Return which step of ``node`` failed and why, or ``None`` if it finished cleanly."""
     if node.is_finished_ok:
         return None
 
@@ -637,11 +637,16 @@ def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
     # reported the failure upwards; the last one to start, when several did.
     calculations = [child for child in failed if isinstance(child, orm.CalcJobNode)]
     culprit = (calculations or failed or [node])[-1]
-    detail = culprit.exit_message or f"exit status {culprit.exit_status}"
-    return (
-        f"{folder}: the run did not finish — {_step_name(culprit)} failed ({detail}). "
-        "Plotting what is there."
-    )
+    exit_detail = culprit.exit_message or f"exit status {culprit.exit_status}"
+    return f"{_step_name(culprit)} failed ({exit_detail})"
+
+
+def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
+    """Return a warning naming the step that failed, if the run did not finish."""
+    detail = _failure_detail(node)
+    if detail is None:
+        return None
+    return f"{folder}: the run did not finish — {detail}. Plotting what is there."
 
 
 def _cell_of(bands: orm.BandsData) -> list[list[float]] | None:
@@ -913,12 +918,25 @@ def _bse_spectrum_array(node: orm.ProcessNode) -> orm.ArrayData | None:
     return getattr(bse, "array_eps", None)
 
 
+#: The route name :func:`_route_name` reports for a `task: bse` run, absent a
+#: custom label.
+_BSE_ROUTE_NAME = "SinglepointBetheSalpeterWorkflow"
+
+
 def _not_a_bse_run(folder: Path, node: orm.ProcessNode) -> PlottingError:
     """Return the error for a run that published no optical spectrum."""
     route = _route_name(node)
     return PlottingError(
         f"{folder} ran {route}, which is not a `task: bse` run, so it published no "
         "optical absorption spectrum. Set `workflow.task: bse` and rerun."
+    )
+
+
+def _incomplete_bse_run(folder: Path, detail: str) -> PlottingError:
+    """Return the error for a `bse` run that failed before publishing a spectrum."""
+    return PlottingError(
+        f"{folder}: the run did not finish — {detail}. No optical absorption spectrum "
+        "was published."
     )
 
 
@@ -955,7 +973,8 @@ def resolve_spectrum_series(
     :raises ValueError: if given, ``labels``/``styles`` do not number the
         folders.
     :raises PlottingError: if a folder is not a run directory, its run is not
-        in this profile, or any of them ran something other than `task: bse`.
+        in this profile, any of them ran something other than `task: bse`, or
+        a `task: bse` run failed before publishing a spectrum.
     """
     _check_one_per_folder(labels, len(folders), "--label")
     _check_one_per_folder(styles, len(folders), "--style")
@@ -971,6 +990,9 @@ def resolve_spectrum_series(
 
         eps = _bse_spectrum_array(node)
         if eps is None:
+            detail = _failure_detail(node)
+            if detail is not None and _route_name(node) == _BSE_ROUTE_NAME:
+                raise _incomplete_bse_run(folder, detail)
             raise _not_a_bse_run(folder, node)
 
         label = labels[index] if labels else None

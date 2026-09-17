@@ -209,6 +209,19 @@ def check_style(style: str) -> None:
     _style_color(style)
 
 
+def _cycle_color(style: Sequence[str], index: int) -> str | None:
+    """Return the color to force a plot call to, or ``None`` to keep matplotlib's own.
+
+    matplotlib advances its color cycle once per plot call, so a curve whose
+    style names no color still needs one assigned, or its bands or spectra
+    come out in as many colors as they have plot calls. A style that already
+    names a color is left alone.
+    """
+    if style and _style_color(style[0]) is not None:
+        return None
+    return f"C{index % 10}"
+
+
 def draw_band_structures(
     axes: Axes,
     series: Sequence[BandSeries],
@@ -244,11 +257,7 @@ def draw_band_structures(
         drawn_distances.append(distances)
         energies = np.asarray(item.energies, dtype=np.float64) - item.zero
         style = [item.style] if item.style else []
-        # One band is one plot call, and matplotlib advances its color cycle
-        # once per call, so a series whose style names no color still has to be
-        # given one — otherwise its bands come out in as many colors.
-        names_color = bool(style) and _style_color(style[0]) is not None
-        color = None if names_color else f"C{index % 10}"
+        color = _cycle_color(style, index)
         drawn = False
         for span in _segments(item):
             for band in range(energies.shape[1]):
@@ -320,8 +329,7 @@ def draw_spectra(
         energies = np.asarray(item.energies, dtype=np.float64)
         values = np.asarray(getattr(item, quantity), dtype=np.float64)
         style = [item.style] if item.style else []
-        names_color = bool(style) and _style_color(style[0]) is not None
-        color = None if names_color else f"C{index % 10}"
+        color = _cycle_color(style, index)
         (line,) = axes.plot(energies, values, *style, linewidth=1.2, label=item.label)
         if color is not None:
             line.set_color(color)
