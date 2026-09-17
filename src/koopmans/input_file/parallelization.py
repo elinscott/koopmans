@@ -312,10 +312,11 @@ class ParallelizationInput(BaseModel):
 
         ``yambo``'s ``bethe_salpeter``/``static_screening``/``dipoles`` role
         splits pass through as their own keys, each a plain ``{role: rank
-        count}`` dict — the shape ``aiida-koopmans``'s ``CodeParallelization``
-        TypedDict carries. ``aiida-koopmans`` does the translation into
-        yambo's own ``*_CPU``/``*_ROLEs`` runcard strings; this schema never
-        builds those strings itself.
+        count}`` dict — the shape ``aiida-koopmans``'s ``YamboParallelization``
+        TypedDict carries (a strict extension of its ``CodeParallelization``,
+        for the ``yambo`` entry only). ``aiida-koopmans`` does the translation
+        into yambo's own ``*_CPU``/``*_ROLEs`` runcard strings; this schema
+        never builds those strings itself.
 
         This is the ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
         """

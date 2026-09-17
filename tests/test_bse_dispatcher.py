@@ -285,3 +285,36 @@ class TestRouteRefusals:
         """Negative control: the same manifold with a range that fits builds cleanly."""
         wg = _build(_si_bse_dict(BSEBands=[1, 4]))
         assert "bse" in wg.get_task_names()
+
+    def test_yambo_role_split_parallelization_reaches_the_bse_task(
+        self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """``parallelization.yambo``'s role split reaches ``RunBetheSalpeter`` unchanged.
+
+        ``bse`` is a nested ``@task.graph`` call (``RunBetheSalpeter``), so
+        it appears in this dispatcher's built WorkGraph as one deferred
+        ``GraphTask`` node: its own ``yambo_init``/``bse`` CalcJob steps
+        only materialize once the graph actually runs, not at build time.
+        What this route controls -- and what this test checks -- is that
+        the mapping ``ParallelizationInput.as_mapping`` builds reaches that
+        node's own ``parallelization`` socket intact, and that
+        ``aiida-koopmans``'s ``yambo_runcard_variables`` turns it into the
+        same ``BS_CPU``/``BS_ROLEs`` strings regardless of role order.
+        That it lands on the ``bse`` step's own runcard and not
+        ``yambo_init``'s is pinned at the aiida-koopmans level, where
+        ``RunBetheSalpeter`` is built directly and both materialized steps
+        are inspectable
+        (``TestRunBetheSalpeterGraphBuild.test_parallelization_yambo_role_split_reaches_the_bse_step_only``
+        in ``aiida_koopmans``'s own ``tests/test_bethe_salpeter_workgraph.py``).
+        """
+        from aiida_koopmans.parallelization import yambo_runcard_variables
+
+        for roles in ({"k": 2, "eh": 2}, {"eh": 2, "k": 2}):
+            d = _si_bse_dict()
+            d["parallelization"] = {"yambo": {"ntasks": 4, "bethe_salpeter": roles}}
+            wg = _build(d)
+            parallelization = wg.tasks["bse"].inputs["parallelization"].value
+            assert yambo_runcard_variables(parallelization) == {
+                "BS_CPU": "2 2",
+                "BS_ROLEs": "k eh",
+            }
