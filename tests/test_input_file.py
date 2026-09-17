@@ -9,9 +9,13 @@ from pathlib import Path
 import pytest
 from aiida_koopmans.owned_keywords import OWNED
 
+from koopmans.base import BaseModel
 from koopmans.input_file import (
     INPUT_FILE_FORMAT_VERSION,
+    BetheSalpeterRoles,
+    DipoleRoles,
     KoopmansInput,
+    StaticScreeningRoles,
     migrate_input_dict,
     read_input_file,
 )
@@ -536,6 +540,140 @@ class TestParallelizationSchema:
         with pytest.raises(ValueError):
             KoopmansInput.model_validate(
                 _parallelization_input(parallelization={"foo": {"npool": 2}})
+            )
+
+    def test_yambo_role_split_maps_to_structured_dict(self) -> None:
+        """A named driver passes through ``as_mapping`` as its own ``{role: count}`` dict.
+
+        aiida-koopmans, not this schema, turns it into yambo's own
+        ``*_CPU``/``*_ROLEs`` runcard strings.
+        """
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={
+                    "yambo": {"ntasks": 4, "bethe_salpeter": {"k": 2, "eh": 2}},
+                }
+            )
+        )
+        yambo = inp.parallelization.yambo
+        assert yambo is not None
+        assert yambo.bethe_salpeter == BetheSalpeterRoles(k=2, eh=2)
+        assert inp.parallelization.as_mapping() == {
+            "yambo": {
+                "ntasks": 4,
+                "bethe_salpeter": {"k": 2, "eh": 2},
+            }
+        }
+
+    def test_yambo_all_three_drivers_map_independently(self) -> None:
+        """The worked example: three drivers each produce their own structured dict."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={
+                    "yambo": {
+                        "ntasks": 4,
+                        "omp": 1,
+                        "bethe_salpeter": {"k": 2, "eh": 2},
+                        "static_screening": {"k": 4},
+                        "dipoles": {"k": 4},
+                    },
+                }
+            )
+        )
+        assert inp.parallelization.as_mapping() == {
+            "yambo": {
+                "ntasks": 4,
+                "omp": 1,
+                "bethe_salpeter": {"k": 2, "eh": 2},
+                "static_screening": {"k": 4},
+                "dipoles": {"k": 4},
+            }
+        }
+
+    def test_yambo_role_vocabulary_matches_aiida_koopmans(self) -> None:
+        """This schema's role fields cannot drift from aiida-koopmans's own table.
+
+        aiida-koopmans owns the translation into yambo's runcard strings and
+        needs its own per-driver role order to build them (roles are
+        matched by name, not position, in yambo's source, but aiida-koopmans
+        still has to name them in *some* order when it writes the runcard).
+        Each role model here declares its fields in that same order; this
+        pins the two packages' vocabularies together so one cannot add or
+        reorder a role without the other noticing.
+        """
+        from aiida_koopmans.parallelization import YAMBO_ROLE_DRIVERS
+
+        role_models: dict[str, type[BaseModel]] = {
+            "bethe_salpeter": BetheSalpeterRoles,
+            "static_screening": StaticScreeningRoles,
+            "dipoles": DipoleRoles,
+        }
+        assert set(role_models) == set(YAMBO_ROLE_DRIVERS)
+        for driver, model in role_models.items():
+            _prefix, role_order = YAMBO_ROLE_DRIVERS[driver]
+            assert tuple(model.model_fields) == tuple(role_order), driver
+
+    def test_yambo_omitted_driver_has_no_driver_key(self) -> None:
+        """No driver named means ``as_mapping`` emits no key for it at all."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"yambo": {"ntasks": 4}})
+        )
+        assert inp.parallelization.as_mapping() == {"yambo": {"ntasks": 4}}
+
+    @pytest.mark.parametrize(
+        ("driver", "roles"),
+        [
+            ("bethe_salpeter", {"q": 2, "eh": 2}),
+            ("static_screening", {"eh": 4}),
+            ("dipoles", {"t": 4}),
+        ],
+    )
+    def test_yambo_role_split_rejects_unknown_role(
+        self, driver: str, roles: dict[str, int]
+    ) -> None:
+        """A role outside the driver's own vocabulary is refused by name.
+
+        The per-driver role models forbid extra fields; this is pydantic's
+        own ``extra_forbidden`` error, not a hand-written check.
+        """
+        with pytest.raises(ValueError, match=r"Extra inputs are not permitted"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={"yambo": {"ntasks": sum(roles.values()), driver: roles}}
+                )
+            )
+
+    def test_yambo_role_split_rejects_non_positive_count(self) -> None:
+        """A zero or negative rank count is refused by pydantic's own positive-int check."""
+        with pytest.raises(ValueError, match=r"greater than 0"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={
+                        "yambo": {"ntasks": 2, "bethe_salpeter": {"k": 2, "eh": 0}},
+                    }
+                )
+            )
+
+    def test_yambo_role_split_without_ntasks_rejected(self) -> None:
+        """A driver named without ``ntasks`` cannot be checked against the rank count."""
+        with pytest.raises(ValueError, match=r"needs 'parallelization.yambo.ntasks' set"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={"yambo": {"bethe_salpeter": {"k": 2, "eh": 2}}}
+                )
+            )
+
+    def test_yambo_role_split_product_must_equal_ntasks(self) -> None:
+        """The role counts must multiply to ``ntasks``, or yambo silently drops the split."""
+        with pytest.raises(
+            ValueError, match=r"multiply.*to 4.*not 'parallelization.yambo.ntasks' = 8"
+        ):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={
+                        "yambo": {"ntasks": 8, "bethe_salpeter": {"k": 2, "eh": 2}},
+                    }
+                )
             )
 
     @pytest.mark.parametrize("field", ["ntasks", "npool"])
