@@ -318,6 +318,12 @@ class TestStableRows:
     ) -> None:
         """A PyFunction the plugin named states a fact the user should see."""
         unlabeled = FakeNode(link="build_iter_source", is_pyfunction=True)
+        name_equal_label = FakeNode(
+            link="create_kpoints_from_distance",
+            label="create_kpoints_from_distance",
+            process_label="create_kpoints_from_distance",
+            is_pyfunction=True,
+        )
         labeled = FakeNode(
             link="generate_qp_database",
             label="Quasiparticle database",
@@ -326,7 +332,7 @@ class TestStableRows:
         root = FakeNode(
             process_label="WorkGraph<BSEWorkflow>",
             label="Koopmans BSE",
-            children=[unlabeled, labeled],
+            children=[unlabeled, name_equal_label, labeled],
         )
 
         rows = render(root)
