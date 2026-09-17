@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from koopmans.aiida.dumping import NODE_METADATA_FILE
-from koopmans.plotting.series import BandSeries
+from koopmans.plotting.series import BandSeries, SpectrumSeries
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -26,6 +26,7 @@ __all__ = [
     "PlottingError",
     "RunNotInProfileError",
     "resolve_band_series",
+    "resolve_spectrum_series",
     "run_node",
 ]
 
@@ -897,4 +898,101 @@ def resolve_band_series(
 
     if empty:
         raise _nothing_plottable(empty, len(folders))
+    return series, warnings
+
+
+def _bse_arrays(node: orm.ProcessNode) -> tuple[orm.ArrayData, orm.ArrayData] | None:
+    """Return a run's BSE spectrum and excitonic-state arrays, or ``None``.
+
+    A `bse` run publishes both under its ``bse`` output namespace; anything
+    else publishes neither.
+    """
+    bse = getattr(node.outputs, "bse", None)
+    if bse is None:
+        return None
+    eps = getattr(bse, "array_eps", None)
+    excitons = getattr(bse, "array_excitonic_states", None)
+    if eps is None or excitons is None:
+        return None
+    return eps, excitons
+
+
+def _not_a_bse_run(folder: Path, node: orm.ProcessNode) -> PlottingError:
+    """Return the error for a run that published no optical spectrum."""
+    route = _route_name(node)
+    return PlottingError(
+        f"{folder} ran {route}, which is not a `task: bse` run, so it published no "
+        "optical absorption spectrum. Set `workflow.task: bse` and rerun."
+    )
+
+
+def _spectrum_from_node(
+    node: orm.ProcessNode, eps: orm.ArrayData, excitons: orm.ArrayData, label: str
+) -> SpectrumSeries:
+    """Return the spectrum ``eps``/``excitons`` publish, under the given label."""
+    names = eps.get_arraynames()
+    return SpectrumSeries(
+        label=label,
+        energies=eps.get_array("E_1").tolist(),
+        im_eps=eps.get_array("Im_eps").tolist(),
+        re_eps=eps.get_array("Re_eps").tolist(),
+        im_eps_o=eps.get_array("Im_eps_o").tolist() if "Im_eps_o" in names else None,
+        re_eps_o=eps.get_array("Re_eps_o").tolist() if "Re_eps_o" in names else None,
+        exciton_energies=excitons.get_array("energies").tolist(),
+        exciton_intensities=excitons.get_array("intensities").tolist(),
+    )
+
+
+def resolve_spectrum_series(
+    folders: Sequence[Path],
+    labels: Sequence[str | None] = (),
+    styles: Sequence[str | None] = (),
+) -> tuple[list[SpectrumSeries], list[str]]:
+    """Return the BSE optical spectra of the given runs, and any warnings.
+
+    Each folder contributes exactly one spectrum: a `bse` run publishes its
+    absorption spectrum and excitonic states once, on the run itself, so
+    unlike :func:`resolve_band_series` there is no per-step search or
+    per-spin fan-out to resolve. A run is named after the route that produced
+    it (its own label, or its process label) unless ``labels`` names it, and
+    prefixed by its folder name when more than one folder is on the axes.
+    ``None`` in ``labels``/``styles`` leaves that folder's own name or
+    appearance as if the option had not been given for it at all — the same
+    convention :func:`resolve_band_series` uses.
+
+    :raises ValueError: if given, ``labels``/``styles`` do not number the
+        folders.
+    :raises PlottingError: if a folder is not a run directory, its run is not
+        in this profile, or any of them ran something other than `task: bse`.
+    """
+    _check_one_per_folder(labels, len(folders), "--label")
+    _check_one_per_folder(styles, len(folders), "--style")
+
+    nodes = [run_node(folder) for folder in folders]
+
+    series: list[SpectrumSeries] = []
+    warnings: list[str] = []
+    for index, (folder, node) in enumerate(zip(folders, nodes, strict=True)):
+        warning = _failure_warning(folder, node)
+        if warning is not None:
+            warnings.append(warning)
+
+        arrays = _bse_arrays(node)
+        if arrays is None:
+            raise _not_a_bse_run(folder, node)
+        eps, excitons = arrays
+
+        label = labels[index] if labels else None
+        if label is None:
+            label = _route_name(node) or "BSE"
+            if len(folders) > 1:
+                prefix = folder.name or folder.resolve().name
+                label = f"{prefix}: {label}"
+
+        item = _spectrum_from_node(node, eps, excitons, label)
+        style_value = styles[index] if styles else None
+        if style_value is not None:
+            item.style = style_value
+        series.append(item)
+
     return series, warnings

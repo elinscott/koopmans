@@ -26,6 +26,7 @@ from koopmans.plotting import (
     NoEnergyZeroError,
     PathMismatchError,
     PlottingError,
+    SpectrumSeries,
     StyleError,
     apply_energy_zero,
     check_paths_agree,
@@ -35,6 +36,7 @@ from koopmans.plotting import (
     path_distances,
     render_band_structures,
     resolve_band_series,
+    resolve_spectrum_series,
     write_series_json,
 )
 from koopmans.plotting.resolve import SUGGESTION_LIMIT
@@ -88,6 +90,33 @@ def make_spin_bands(kpoints: list[list[float]], energies: list[list[list[float]]
     bands.set_kpoints(kpoints)  # type: ignore[no-untyped-call]
     bands.set_bands(np.asarray(energies, dtype=float), units="eV")  # type: ignore[no-untyped-call]
     return bands
+
+
+def make_bse_arrays(
+    energies: list[float],
+    im_eps: list[float],
+    re_eps: list[float],
+    im_eps_o: list[float] | None = None,
+    re_eps_o: list[float] | None = None,
+) -> orm.ArrayData:
+    """Return an ``ArrayData`` shaped like yambo's own BSE spectrum output."""
+    array = orm.ArrayData()
+    array.set_array("E_1", np.asarray(energies, dtype=float))
+    array.set_array("Im_eps", np.asarray(im_eps, dtype=float))
+    array.set_array("Re_eps", np.asarray(re_eps, dtype=float))
+    if im_eps_o is not None:
+        array.set_array("Im_eps_o", np.asarray(im_eps_o, dtype=float))
+    if re_eps_o is not None:
+        array.set_array("Re_eps_o", np.asarray(re_eps_o, dtype=float))
+    return array
+
+
+def make_excitonic_states(energies: list[float], intensities: list[float]) -> orm.ArrayData:
+    """Return an ``ArrayData`` shaped like yambo's own excitonic-state output."""
+    array = orm.ArrayData()
+    array.set_array("energies", np.asarray(energies, dtype=float))
+    array.set_array("intensities", np.asarray(intensities, dtype=float))
+    return array
 
 
 def write_run_folder(root: Path, name: str, node: orm.ProcessNode | None) -> Path:
@@ -3049,3 +3078,112 @@ class TestPathAgreement:
     def test_one_series_is_always_agreeable(self) -> None:
         """A single band structure has nothing to disagree with."""
         check_paths_agree([series("KI", path_labels=[])])
+
+
+# ----------------------------------------------------------------------
+# Optical spectra (``koopmans plot spectrum``)
+# ----------------------------------------------------------------------
+
+
+def bse_run(tmp_path: Path, name: str, **array_kwargs: Any) -> Path:
+    """Write a run folder holding one yambo BSE spectrum on its root node."""
+    root = make_process(
+        "aiida.workflows:workgraph.engine",
+        process_label="WorkGraph<SinglepointBetheSalpeterWorkflow>",
+    )
+    attach(root, "bse__array_eps", make_bse_arrays(**array_kwargs))
+    attach(
+        root,
+        "bse__array_excitonic_states",
+        make_excitonic_states([3.5, 4.2], [1e-6, 2.4e-4]),
+    )
+    return write_run_folder(tmp_path, name, root)
+
+
+class TestSpectrumResolver:
+    """Turning a `bse` run folder into a spectrum series."""
+
+    def test_arrays_become_a_spectrum_series(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Every array yambo publishes lands on the series it names."""
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+            im_eps_o=[0.09, 0.19, 0.29],
+            re_eps_o=[6.7, 6.8, 6.9],
+        )
+
+        found, warnings = resolve_spectrum_series([folder])
+
+        assert warnings == []
+        assert len(found) == 1
+        item = found[0]
+        assert isinstance(item, SpectrumSeries)
+        assert item.label == "SinglepointBetheSalpeterWorkflow"
+        assert item.energies == pytest.approx([0.0, 0.5, 1.0])
+        assert item.im_eps == pytest.approx([0.1, 0.2, 0.3])
+        assert item.re_eps == pytest.approx([6.8, 6.9, 7.0])
+        assert item.im_eps_o == pytest.approx([0.09, 0.19, 0.29])
+        assert item.re_eps_o == pytest.approx([6.7, 6.8, 6.9])
+        assert item.exciton_energies == pytest.approx([3.5, 4.2])
+        assert item.exciton_intensities == pytest.approx([1e-6, 2.4e-4])
+
+    def test_a_non_bse_run_is_refused_naming_its_route(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A run that never touched yambo has no spectrum to name."""
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+        )
+        folder = write_run_folder(tmp_path, "si-dscf", root)
+
+        with pytest.raises(PlottingError, match="KoopmansDSCFWorkflow"):
+            resolve_spectrum_series([folder])
+
+
+class TestSpectrumCommand:
+    """``koopmans plot spectrum`` end to end."""
+
+    def test_writes_a_figure_from_a_finished_run(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The default writes a file and never blocks on a window."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(
+            cli, ["plot", "spectrum", str(folder), "-o", str(tmp_path / "spectrum.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "spectrum.png").is_file()
+        assert result.output.startswith("Wrote")
+        assert "1 series" in result.output
+
+    def test_a_non_bse_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The command reports what the folder actually ran, not a bare failure."""
+        from koopmans.cli import cli
+
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            process_label="WorkGraph<TrajectoryWorkflow>",
+        )
+        folder = write_run_folder(tmp_path, "traj", root)
+
+        result = runner.invoke(cli, ["plot", "spectrum", str(folder)])
+
+        assert result.exit_code != 0
+        assert "TrajectoryWorkflow" in result.output
+        assert "task: bse" in result.output
