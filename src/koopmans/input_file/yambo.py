@@ -39,30 +39,12 @@ _YAMBO_REASONS: dict[str, str] = {
         "koopmans always computes an optical (momentum-transfer q = 0) spectrum; the "
         "BSE momentum range follows from that."
     ),
-    "BS_CPU": (
-        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
-        "/ `dipoles`)."
-    ),
-    "BS_ROLEs": (
-        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
-        "/ `dipoles`)."
-    ),
-    "X_and_IO_CPU": (
-        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
-        "/ `dipoles`)."
-    ),
-    "X_and_IO_ROLEs": (
-        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
-        "/ `dipoles`)."
-    ),
-    "DIP_CPU": (
-        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
-        "/ `dipoles`)."
-    ),
-    "DIP_ROLEs": (
-        "set the split under `parallelization.yambo` (`bethe_salpeter` / `static_screening` "
-        "/ `dipoles`)."
-    ),
+    "BS_CPU": ("set the split under `parallelization.yambo.bethe_salpeter`."),
+    "BS_ROLEs": ("set the split under `parallelization.yambo.bethe_salpeter`."),
+    "X_and_IO_CPU": ("set the split under `parallelization.yambo.static_screening`."),
+    "X_and_IO_ROLEs": ("set the split under `parallelization.yambo.static_screening`."),
+    "DIP_CPU": ("set the split under `parallelization.yambo.dipoles`."),
+    "DIP_ROLEs": ("set the split under `parallelization.yambo.dipoles`."),
     "rim_cut": "koopmans always turns on yambo's random-integration-method Coulomb-divergence treatment.",
     "WRbsWF": "koopmans always asks yambo to write the excitonic wavefunctions the exciton-brightness output reads.",
     "NLCC": "koopmans always turns on yambo's non-linear core correction support.",
