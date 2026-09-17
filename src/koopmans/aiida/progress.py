@@ -113,7 +113,9 @@ def _is_process_function_node(node: ProcessNode) -> bool:
     generation, Map source builders, gather steps — and add visual noise
     to the koopmans progress table. The koopmans flow's *user-meaningful*
     rows are CalcJobs (kcp.x / pw.x) and the WorkGraph/sub-WorkGraph
-    branches; this predicate is the filter for everything else.
+    branches; this predicate is the filter for everything else, except
+    for a PyFunction the plugin gave a ``label`` of its own — see the
+    exemption in :func:`_ordered_children`.
     """
     from aiida.orm import CalcFunctionNode, WorkFunctionNode
 
@@ -235,7 +237,10 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[LabelDisplay, Pro
 
     ``@calcfunction`` / ``@workfunction`` / ``@task`` PyFunctions are
     dropped here, along with their descendants (see
-    :func:`_is_process_function_node`).
+    :func:`_is_process_function_node`) — unless the plugin gave the node
+    its own ``label``, which means it stands for a fact the user should
+    see (a database assembled, a channel picked) rather than plumbing.
+    Such a node keeps its row, named by that label.
     """
     try:
         called_pks = [n.pk for n in process_node.called]
@@ -250,7 +255,7 @@ def _ordered_children(process_node: ProcessNode) -> list[tuple[LabelDisplay, Pro
             child = _reload(pk)
         except Exception:  # noqa: S112 - skip unreadable children
             continue
-        if _is_process_function_node(child):
+        if _is_process_function_node(child) and not (getattr(child, "label", "") or "").strip():
             continue
         entries.append((describe_process(child), child))
 
