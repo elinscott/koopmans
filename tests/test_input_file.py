@@ -9,10 +9,13 @@ from pathlib import Path
 import pytest
 from aiida_koopmans.owned_keywords import OWNED
 
+from koopmans.base import BaseModel
 from koopmans.input_file import (
     INPUT_FILE_FORMAT_VERSION,
     BetheSalpeterRoles,
+    DipoleRoles,
     KoopmansInput,
+    StaticScreeningRoles,
     migrate_input_dict,
     read_input_file,
 )
@@ -539,8 +542,12 @@ class TestParallelizationSchema:
                 _parallelization_input(parallelization={"foo": {"npool": 2}})
             )
 
-    def test_yambo_role_split_maps_to_runcard_strings(self) -> None:
-        """A single named driver becomes one ``*_CPU``/``*_ROLEs`` pair under ``runcard``."""
+    def test_yambo_role_split_maps_to_structured_dict(self) -> None:
+        """A named driver passes through ``as_mapping`` as its own ``{role: count}`` dict.
+
+        aiida-koopmans, not this schema, turns it into yambo's own
+        ``*_CPU``/``*_ROLEs`` runcard strings.
+        """
         inp = KoopmansInput.model_validate(
             _parallelization_input(
                 parallelization={
@@ -554,12 +561,12 @@ class TestParallelizationSchema:
         assert inp.parallelization.as_mapping() == {
             "yambo": {
                 "ntasks": 4,
-                "runcard": {"BS_CPU": "2 2", "BS_ROLEs": "k eh"},
+                "bethe_salpeter": {"k": 2, "eh": 2},
             }
         }
 
     def test_yambo_all_three_drivers_map_independently(self) -> None:
-        """The worked example: three drivers each produce their own runcard pair."""
+        """The worked example: three drivers each produce their own structured dict."""
         inp = KoopmansInput.model_validate(
             _parallelization_input(
                 parallelization={
@@ -577,42 +584,37 @@ class TestParallelizationSchema:
             "yambo": {
                 "ntasks": 4,
                 "omp": 1,
-                "runcard": {
-                    "BS_CPU": "2 2",
-                    "BS_ROLEs": "k eh",
-                    "X_and_IO_CPU": "4",
-                    "X_and_IO_ROLEs": "k",
-                    "DIP_CPU": "4",
-                    "DIP_ROLEs": "k",
-                },
+                "bethe_salpeter": {"k": 2, "eh": 2},
+                "static_screening": {"k": 4},
+                "dipoles": {"k": 4},
             }
         }
 
-    def test_yambo_role_split_order_is_yambos_own_not_the_users(self) -> None:
-        """The runcard order follows yambo's own per-driver order, not the input's.
+    def test_yambo_role_vocabulary_matches_aiida_koopmans(self) -> None:
+        """This schema's role fields cannot drift from aiida-koopmans's own table.
 
-        yambo's communicator nesting is fixed per driver in its own source
-        and roles are matched by name, not position
-        (``PARALLEL_structure.F`` in the yambo 5.3 source), so the order the
-        user writes the roles in cannot matter: writing ``eh`` before ``k``
-        produces the same runcard strings as writing ``k`` before ``eh``.
+        aiida-koopmans owns the translation into yambo's runcard strings and
+        needs its own per-driver role order to build them (roles are
+        matched by name, not position, in yambo's source, but aiida-koopmans
+        still has to name them in *some* order when it writes the runcard).
+        Each role model here declares its fields in that same order; this
+        pins the two packages' vocabularies together so one cannot add or
+        reorder a role without the other noticing.
         """
-        forward = KoopmansInput.model_validate(
-            _parallelization_input(
-                parallelization={"yambo": {"ntasks": 4, "bethe_salpeter": {"k": 2, "eh": 2}}}
-            )
-        )
-        backward = KoopmansInput.model_validate(
-            _parallelization_input(
-                parallelization={"yambo": {"ntasks": 4, "bethe_salpeter": {"eh": 2, "k": 2}}}
-            )
-        )
-        expected = {"BS_CPU": "2 2", "BS_ROLEs": "k eh"}
-        assert forward.parallelization.as_mapping()["yambo"]["runcard"] == expected
-        assert backward.parallelization.as_mapping()["yambo"]["runcard"] == expected
+        from aiida_koopmans.parallelization import YAMBO_ROLE_DRIVERS
 
-    def test_yambo_omitted_driver_has_no_runcard_key(self) -> None:
-        """No driver named means ``as_mapping`` emits no ``runcard`` key at all."""
+        role_models: dict[str, type[BaseModel]] = {
+            "bethe_salpeter": BetheSalpeterRoles,
+            "static_screening": StaticScreeningRoles,
+            "dipoles": DipoleRoles,
+        }
+        assert set(role_models) == set(YAMBO_ROLE_DRIVERS)
+        for driver, model in role_models.items():
+            _prefix, role_order = YAMBO_ROLE_DRIVERS[driver]
+            assert tuple(model.model_fields) == tuple(role_order), driver
+
+    def test_yambo_omitted_driver_has_no_driver_key(self) -> None:
+        """No driver named means ``as_mapping`` emits no key for it at all."""
         inp = KoopmansInput.model_validate(
             _parallelization_input(parallelization={"yambo": {"ntasks": 4}})
         )

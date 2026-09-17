@@ -18,18 +18,19 @@ code's entry alongside the walltime default.
 
 ``yambo`` additionally takes a per-driver MPI role split
 (:class:`YamboParallelization`), since yambo parallelizes over named roles
-(``k``, ``eh``, ``q``, …) baked into its own runcard rather than over
-``-npool``/``-pd``::
+(``k``, ``eh``, ``q``, …) rather than over ``-npool``/``-pd``::
 
     parallelization:
       yambo:
         ntasks: 4
         bethe_salpeter: {k: 2, eh: 2}   # becomes BS_CPU = "2 2", BS_ROLEs = "k eh"
 
-``static_screening`` (``X_and_IO_CPU``/``X_and_IO_ROLEs``, roles ``q``/``g``/
-``k``/``c``/``v``) and ``dipoles`` (``DIP_CPU``/``DIP_ROLEs``, roles ``k``/
-``c``/``v``) take the same shape. Each role's count must fit the system's
-own phase space (a ``k`` count no larger than the number of irreducible
+Each named driver passes through :meth:`ParallelizationInput.as_mapping` as
+its own ``{role: rank count}`` dict; ``aiida-koopmans`` turns it into
+yambo's own ``*_CPU``/``*_ROLEs`` runcard strings. ``static_screening``
+(roles ``q``/``g``/``k``/``c``/``v``) and ``dipoles`` (roles ``k``/``c``/
+``v``) take the same shape. Each role's count must fit the system's own
+phase space (a ``k`` count no larger than the number of irreducible
 k-points, and so on) — a constraint this schema cannot check.
 
 See :class:`YamboParallelization` for the role vocabulary and validation.
@@ -74,13 +75,12 @@ __all__ = [
     "resolve_effective_walltime",
 ]
 
-# Each yambo parallel driver's runcard variable prefix (yambo 5.3
-# ``src/modules/mod_parallel.F``, ``CPU_str_reset``).
-_YAMBO_RUNCARD_PREFIX: dict[str, str] = {
-    "bethe_salpeter": "BS",
-    "static_screening": "X_and_IO",
-    "dipoles": "DIP",
-}
+# The three yambo parallel drivers this schema names a role split for. Kept
+# as a plain tuple (rather than duplicating aiida-koopmans's own
+# ``YAMBO_ROLE_DRIVERS`` table, which also carries each driver's runcard
+# prefix and role order) since this schema only needs the driver names —
+# ``aiida-koopmans`` does the runcard translation.
+_YAMBO_DRIVERS: tuple[str, ...] = ("bethe_salpeter", "static_screening", "dipoles")
 
 
 # NOTE: keep this Pydantic model (and the per-code fields it validates) in
@@ -169,17 +169,21 @@ class YamboParallelization(CodeParallelization):
     yambo has no ``-npool``/``-pd`` concept (rejected for it like every
     other field on :class:`CodeParallelization`); instead each parallel
     driver distributes its own work over the run's MPI ranks along named
-    roles, in a runcard ``<DRIVER>_ROLEs``/``<DRIVER>_CPU`` pair of strings.
-    ``bethe_salpeter`` (:class:`BetheSalpeterRoles`), ``static_screening``
+    roles. ``bethe_salpeter`` (:class:`BetheSalpeterRoles`), ``static_screening``
     (:class:`StaticScreeningRoles`) and ``dipoles`` (:class:`DipoleRoles`)
-    each name one split, as a small model of that driver's own roles. The
-    communicator nesting for each driver is fixed in yambo's own source and
-    its roles are matched by name, not position (yambo 5.3
-    ``src/parallel/PARALLEL_structure.F``), so the order the roles are
-    written in has no effect: the runcard strings are always emitted in
-    yambo's own fixed order — ``k``, ``eh``, ``t`` for Bethe-Salpeter;
-    ``q``, ``g``, ``k``, ``c``, ``v`` for static screening; ``k``, ``c``,
-    ``v`` for dipoles.
+    each name one split, as a small model of that driver's own roles; this
+    schema passes each set role through as a plain ``{role: rank count}``
+    dict. ``aiida-koopmans`` turns that into yambo's own runcard
+    ``<DRIVER>_ROLEs``/``<DRIVER>_CPU`` pair of strings, in yambo's own
+    fixed per-driver order (its ``YAMBO_ROLE_DRIVERS`` table) — roles are
+    matched by name, not position (yambo 5.3
+    ``src/parallel/PARALLEL_structure.F``), so this schema's own field
+    order carries no meaning for that translation. The three role models
+    above still declare their fields in yambo's own order (``k``, ``eh``,
+    ``t`` for Bethe-Salpeter; ``q``, ``g``, ``k``, ``c``, ``v`` for static
+    screening; ``k``, ``c``, ``v`` for dipoles), checked against
+    ``aiida-koopmans``'s own table by a canary test, so the two packages'
+    role vocabularies cannot drift apart.
 
     A driver's role counts must multiply to ``ntasks``. yambo does not
     abort on a mismatch: it logs a warning and silently discards the named
@@ -224,7 +228,7 @@ class YamboParallelization(CodeParallelization):
     @model_validator(mode="after")
     def check_role_splits(self) -> Self:
         """Validate each named driver's role counts against ``ntasks``."""
-        for driver in _YAMBO_RUNCARD_PREFIX:
+        for driver in _YAMBO_DRIVERS:
             roles: BaseModel | None = getattr(self, driver)
             if roles is None:
                 continue
@@ -245,20 +249,6 @@ class YamboParallelization(CodeParallelization):
                     "distribution rather than use it."
                 )
         return self
-
-    def to_runcard_dict(self) -> dict[str, str]:
-        """Return the named drivers' splits as yambo's own ``*_CPU``/``*_ROLEs`` strings."""
-        runcard: dict[str, str] = {}
-        for driver, prefix in _YAMBO_RUNCARD_PREFIX.items():
-            roles: BaseModel | None = getattr(self, driver)
-            if roles is None:
-                continue
-            set_roles = roles.model_dump(exclude_none=True)
-            if not set_roles:
-                continue
-            runcard[f"{prefix}_CPU"] = " ".join(str(count) for count in set_roles.values())
-            runcard[f"{prefix}_ROLEs"] = " ".join(set_roles)
-        return runcard
 
 
 class ParallelizationInput(BaseModel):
@@ -321,10 +311,11 @@ class ParallelizationInput(BaseModel):
         computer default is omitted.
 
         ``yambo``'s ``bethe_salpeter``/``static_screening``/``dipoles`` role
-        splits do not pass through as their own keys: they are replaced by a
-        single ``runcard`` key holding their serialized ``*_CPU``/``*_ROLEs``
-        strings (:meth:`YamboParallelization.to_runcard_dict`), the shape
-        ``aiida-koopmans``'s ``CodeParallelization`` TypedDict declares.
+        splits pass through as their own keys, each a plain ``{role: rank
+        count}`` dict — the shape ``aiida-koopmans``'s ``CodeParallelization``
+        TypedDict carries. ``aiida-koopmans`` does the translation into
+        yambo's own ``*_CPU``/``*_ROLEs`` runcard strings; this schema never
+        builds those strings itself.
 
         This is the ``ParallelizationDict`` shape ``aiida-koopmans`` expects.
         """
@@ -332,12 +323,6 @@ class ParallelizationInput(BaseModel):
         for code in ALL_CODES:
             cfg = getattr(self, code)
             fields = cfg.model_dump(exclude_none=True, exclude={"walltime"}) if cfg else {}
-            if isinstance(cfg, YamboParallelization):
-                for driver in _YAMBO_RUNCARD_PREFIX:
-                    fields.pop(driver, None)
-                runcard = cfg.to_runcard_dict()
-                if runcard:
-                    fields["runcard"] = runcard
             walltime = resolve_effective_walltime(cfg, computer)
             if walltime is not None:
                 fields = {**fields, "max_wallclock_seconds": int(walltime.total_seconds())}
