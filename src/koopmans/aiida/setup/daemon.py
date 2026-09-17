@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
+from pathlib import Path
 
 import click
 
@@ -13,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 def is_daemon_running() -> bool:
     """Check if the AiiDA daemon is running."""
+    # aiida.engine.daemon.client resolves and caches the verdi executable at
+    # import time, so the PATH fix must land before this first import of it.
+    _ensure_daemon_env()
     from aiida.engine.daemon.client import get_daemon_client
 
     try:
@@ -38,19 +43,35 @@ def _ensure_daemon_env() -> None:
        a large transaction (e.g. the link inserts of a wide fan-out)
        spills to a temporary file: sqlite tries ``/var/tmp`` first,
        which sandboxed environments may not grant.
+    4. ``Unable to find 'verdi' in the path``, or a ``verdi`` from a
+       different Python resolved instead, when ``aiida.engine.daemon.client``
+       looks up ``verdi`` with ``shutil.which`` at import time: whichever
+       ``verdi`` is first on the caller's ``PATH`` at that moment is cached
+       for the life of the process, regardless of the koopmans venv this
+       code is running from.
 
-    Fixed by prepending the bundled bin dir to ``PATH`` and exporting
-    ``HQ_SERVER_DIR`` and ``SQLITE_TMPDIR`` to koopmans-managed
-    directories. All are scoped to *this* Python process (and its
-    forks — the daemon worker), not the user's shell.
+    Fixed by prepending this interpreter's own ``bin`` directory and the
+    bundled hq bin dir to ``PATH``, and exporting ``HQ_SERVER_DIR`` and
+    ``SQLITE_TMPDIR`` to koopmans-managed directories. All are scoped to
+    *this* Python process (and its forks — the daemon worker), not the
+    user's shell. Every caller that may import ``aiida.engine.daemon.client``
+    calls this first, so the fix lands before that module's first import
+    anywhere in the process.
     """
     from .hq import _hq_server_dir, hq_bin_path
     from .profile import koopmans_dir
 
-    bin_dir = str(hq_bin_path().parent)
     current_path = os.environ.get("PATH", "")
-    if bin_dir not in current_path.split(os.pathsep):
-        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{current_path}" if current_path else bin_dir
+    existing_entries = current_path.split(os.pathsep) if current_path else []
+
+    # interpreter_bin_dir goes first: shutil.which("verdi") must resolve to
+    # this venv's verdi, whatever verdi the caller's PATH already contains.
+    interpreter_bin_dir = str(Path(sys.executable).parent)
+    hq_dir = str(hq_bin_path().parent)
+    new_entries = [interpreter_bin_dir, hq_dir]
+
+    path_entries = new_entries + [entry for entry in existing_entries if entry not in new_entries]
+    os.environ["PATH"] = os.pathsep.join(path_entries)
 
     os.environ["HQ_SERVER_DIR"] = str(_hq_server_dir())
 
@@ -66,6 +87,7 @@ def start_daemon(wait: bool = True, cache: bool = True) -> bool:
         wait: If True, wait for the daemon to be fully started.
         cache: If True, enable AiiDA caching for calculations.
     """
+    _ensure_daemon_env()
     from aiida.engine.daemon.client import get_daemon_client
     from aiida.manage import get_config
 
@@ -75,8 +97,6 @@ def start_daemon(wait: bool = True, cache: bool = True) -> bool:
 
     if is_daemon_running():
         return True
-
-    _ensure_daemon_env()
 
     try:
         client = get_daemon_client()
@@ -99,6 +119,7 @@ def start_daemon(wait: bool = True, cache: bool = True) -> bool:
 
 def stop_daemon() -> bool:
     """Stop the AiiDA daemon."""
+    _ensure_daemon_env()
     from aiida.engine.daemon.client import get_daemon_client
 
     if not is_daemon_running():
