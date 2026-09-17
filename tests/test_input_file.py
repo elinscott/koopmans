@@ -11,6 +11,7 @@ from aiida_koopmans.owned_keywords import OWNED
 
 from koopmans.input_file import (
     INPUT_FILE_FORMAT_VERSION,
+    BetheSalpeterRoles,
     KoopmansInput,
     migrate_input_dict,
     read_input_file,
@@ -549,7 +550,7 @@ class TestParallelizationSchema:
         )
         yambo = inp.parallelization.yambo
         assert yambo is not None
-        assert yambo.bethe_salpeter == {"k": 2, "eh": 2}
+        assert yambo.bethe_salpeter == BetheSalpeterRoles(k=2, eh=2)
         assert inp.parallelization.as_mapping() == {
             "yambo": {
                 "ntasks": 4,
@@ -587,25 +588,28 @@ class TestParallelizationSchema:
             }
         }
 
-    def test_yambo_role_split_preserves_insertion_order(self) -> None:
-        """The mapping's own order becomes the ``*_CPU``/``*_ROLEs`` string order.
+    def test_yambo_role_split_order_is_yambos_own_not_the_users(self) -> None:
+        """The runcard order follows yambo's own per-driver order, not the input's.
 
-        Each count must pair with its own role by position
-        (``PARALLEL_get_user_structure.F`` in the yambo 5.3 source parses
-        the two strings positionally), so the split must be passed through
-        exactly as written, not sorted. The fixture below is not
-        alphabetical (``k`` before ``eh``), so a sorting bug would produce
-        ``"eh k"`` and this test would catch it.
+        yambo's communicator nesting is fixed per driver in its own source
+        and roles are matched by name, not position
+        (``PARALLEL_structure.F`` in the yambo 5.3 source), so the order the
+        user writes the roles in cannot matter: writing ``eh`` before ``k``
+        produces the same runcard strings as writing ``k`` before ``eh``.
         """
-        inp = KoopmansInput.model_validate(
+        forward = KoopmansInput.model_validate(
             _parallelization_input(
                 parallelization={"yambo": {"ntasks": 4, "bethe_salpeter": {"k": 2, "eh": 2}}}
             )
         )
-        assert inp.parallelization.as_mapping()["yambo"]["runcard"] == {
-            "BS_CPU": "2 2",
-            "BS_ROLEs": "k eh",
-        }
+        backward = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={"yambo": {"ntasks": 4, "bethe_salpeter": {"eh": 2, "k": 2}}}
+            )
+        )
+        expected = {"BS_CPU": "2 2", "BS_ROLEs": "k eh"}
+        assert forward.parallelization.as_mapping()["yambo"]["runcard"] == expected
+        assert backward.parallelization.as_mapping()["yambo"]["runcard"] == expected
 
     def test_yambo_omitted_driver_has_no_runcard_key(self) -> None:
         """No driver named means ``as_mapping`` emits no ``runcard`` key at all."""
@@ -625,8 +629,12 @@ class TestParallelizationSchema:
     def test_yambo_role_split_rejects_unknown_role(
         self, driver: str, roles: dict[str, int]
     ) -> None:
-        """A role outside the driver's own vocabulary is refused by name."""
-        with pytest.raises(ValueError, match=r"unknown role"):
+        """A role outside the driver's own vocabulary is refused by name.
+
+        The per-driver role models forbid extra fields; this is pydantic's
+        own ``extra_forbidden`` error, not a hand-written check.
+        """
+        with pytest.raises(ValueError, match=r"Extra inputs are not permitted"):
             KoopmansInput.model_validate(
                 _parallelization_input(
                     parallelization={"yambo": {"ntasks": sum(roles.values()), driver: roles}}
@@ -634,8 +642,8 @@ class TestParallelizationSchema:
             )
 
     def test_yambo_role_split_rejects_non_positive_count(self) -> None:
-        """A zero or negative rank count is refused by name."""
-        with pytest.raises(ValueError, match=r"positive rank count"):
+        """A zero or negative rank count is refused by pydantic's own positive-int check."""
+        with pytest.raises(ValueError, match=r"greater than 0"):
             KoopmansInput.model_validate(
                 _parallelization_input(
                     parallelization={

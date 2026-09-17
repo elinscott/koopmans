@@ -34,8 +34,11 @@ from koopmans.input_file.kcp import KCPInputParameters
 from koopmans.input_file.kcw import KCWInputParameters
 from koopmans.input_file.ml import MLConfig
 from koopmans.input_file.parallelization import (
+    BetheSalpeterRoles,
     CodeParallelization,
+    DipoleRoles,
     ParallelizationInput,
+    StaticScreeningRoles,
     YamboParallelization,
 )
 from koopmans.input_file.ph import PHInputParameters
@@ -52,6 +55,7 @@ __all__ = [
     "INPUT_FILE_FORMAT_VERSION",
     "AtomicPositionsInput",
     "AtomsInput",
+    "BetheSalpeterRoles",
     "CalculatorParametersInput",
     "CellParametersViaAlat",
     "CellParametersViaIbrav",
@@ -59,6 +63,7 @@ __all__ = [
     "CodeParallelization",
     "ComputerInput",
     "DensificationFactor",
+    "DipoleRoles",
     "GammaOnlyKpointsInput",
     "GridKpointsInput",
     "IntegerMagnetization",
@@ -76,6 +81,7 @@ __all__ = [
     "Projection",
     "RestrictedWannier90InputParameters",
     "SpinSpecificWannierInput",
+    "StaticScreeningRoles",
     "StepKpointsOverridesInput",
     "Wannier90InputParametersWithUpDown",
     "WannierKpointsOverridesInput",
