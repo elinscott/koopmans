@@ -57,6 +57,8 @@ from koopmans.plotting.series import EnergyZero
 if TYPE_CHECKING:
     from aiida import orm
 
+    from koopmans.aiida.anchor import ResolvedTarget
+
 __all__ = [
     "cli",
     "main",
@@ -102,7 +104,10 @@ def _dump_results(process: orm.ProcessNode, dump_path: Path, input_name: str | N
     fetch) skips the ``ml: {model_file: ...}`` hint, since it would name
     no file to write that keyword beside.
     """
-    dump_workgraph(process, output_path=dump_path, overwrite=True)
+    try:
+        dump_workgraph(process, output_path=dump_path, overwrite=True)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     if input_name is not None and trained_model_output(process) is not None:
         # `ml: model_file` reads a relative path against the input file's
         # own directory, so the snippet drops the leading directories the
@@ -114,29 +119,21 @@ def _dump_results(process: orm.ProcessNode, dump_path: Path, input_name: str | N
         )
 
 
-def _dump_target(
-    node: orm.ProcessNode, target: str | None, uuid_: str | None, pk_: int | None
-) -> Path:
-    """Write ``node``'s results tree where ``koopmans run`` would have written it.
+def _dump_path_for(node: orm.ProcessNode, dump: tuple[Path, str] | None) -> tuple[Path, str | None]:
+    """Return where ``node``'s results tree belongs, and its input file's name if known.
 
-    Reads the sibling input file's name off the anchor file ``target``
-    resolves to, the same way ``koopmans run`` derives its own dump path.
-    A target given directly by ``--uuid``/``--pk``, naming no anchor file
-    to read, falls back to a bare ``./<process label or pk>`` so the dump
-    never lands outside the current directory.
+    ``dump`` is the anchor-derived location :func:`resolve_run_target`
+    resolved, or ``None`` for a target given directly by ``--uuid``/
+    ``--pk``, naming no anchor file to read — that case falls back to a
+    bare ``./<process label or pk>`` so the dump never lands outside the
+    current directory.
     """
-    from koopmans.aiida.anchor import resolve_dump_target
-
-    resolved = resolve_dump_target(target, uuid=uuid_, pk=pk_)
-    if resolved is not None:
-        dump_path, input_name = resolved
-    else:
-        name = node.process_label or ""
-        if not name or "/" in name or name in (".", ".."):
-            name = str(node.pk)
-        dump_path, input_name = Path.cwd() / name, None
-    _dump_results(node, dump_path, input_name)
-    return dump_path
+    if dump is not None:
+        return dump
+    name = node.process_label or ""
+    if not name or "/" in name or name in (".", ".."):
+        name = str(node.pk)
+    return Path.cwd() / name, None
 
 
 def _anchor_run_submission(input_path: Path, node: orm.ProcessNode) -> None:
@@ -262,21 +259,14 @@ def submit(input_file: str) -> None:
     click.echo("🚀 Workflow submitted")
 
 
-def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None) -> orm.ProcessNode:
-    """Resolve and load the process a status/attach target refers to.
+def _load_process(resolved: ResolvedTarget) -> orm.ProcessNode:
+    """Load the AiiDA process ``resolved`` identifies.
 
     Loads the koopmans AiiDA profile as a side effect, since resolution
     only touches the filesystem but loading the node needs the profile.
     """
     from aiida import orm
     from aiida.common.exceptions import NotExistent
-
-    from koopmans.aiida.anchor import resolve_target
-
-    try:
-        resolved = resolve_target(target, uuid=uuid_, pk=pk_)
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
 
     load_koopmans_profile()
     # Both errors below name the identifier the user gave or the run file
@@ -298,6 +288,42 @@ def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None)
             f"{identifier!r} is not a calculation; it holds a {type(node).__name__}."
         )
     return node
+
+
+def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None) -> orm.ProcessNode:
+    """Resolve and load the process a status target refers to."""
+    from koopmans.aiida.anchor import resolve_target
+
+    try:
+        resolved = resolve_target(target, uuid=uuid_, pk=pk_)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return _load_process(resolved)
+
+
+def _resolve_run(
+    target: str | None, uuid_: str | None, pk_: int | None
+) -> tuple[orm.ProcessNode, Path, str | None]:
+    """Resolve an attach/fetch target once, returning the process and where its dump belongs.
+
+    ``attach``/``fetch`` need both the process to act on and its dump
+    location; resolving each independently, as separate calls to
+    ``resolve_target`` and ``resolve_dump_target`` would, reads the
+    anchor file twice and risks the two answers disagreeing if it changes
+    in between (e.g. a second run file appearing while ``attach`` was
+    still waiting). :func:`~koopmans.aiida.anchor.resolve_run_target`
+    reads it once for both.
+    """
+    from koopmans.aiida.anchor import resolve_run_target
+
+    try:
+        resolved = resolve_run_target(target, uuid=uuid_, pk=pk_)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    node = _load_process(resolved.identity)
+    dump_path, input_name = _dump_path_for(node, resolved.dump)
+    return node, dump_path, input_name
 
 
 # Shared options for `status`/`attach`
@@ -361,7 +387,7 @@ def attach(target: str | None, uuid_: str | None, pk_: int | None) -> None:
     """
     from koopmans.aiida.progress import render_process_once, watch_process
 
-    node = _load_target_process(target, uuid_, pk_)
+    node, dump_path, input_name = _resolve_run(target, uuid_, pk_)
 
     with suppress_aiida_logging():
         if node.is_terminated:
@@ -369,7 +395,7 @@ def attach(target: str | None, uuid_: str | None, pk_: int | None) -> None:
         else:
             node = watch_process(node)
 
-    _dump_target(node, target, uuid_, pk_)
+    _dump_results(node, dump_path, input_name)
 
     if node.is_terminated and not node.is_finished_ok:
         raise SystemExit(1)
@@ -399,13 +425,13 @@ def fetch(target: str | None, uuid_: str | None, pk_: int | None) -> None:
     """
     from koopmans.aiida.progress import render_process_once
 
-    node = _load_target_process(target, uuid_, pk_)
+    node, dump_path, input_name = _resolve_run(target, uuid_, pk_)
 
     if not node.is_finished_ok:
         with suppress_aiida_logging():
             render_process_once(node)
 
-    dump_path = _dump_target(node, target, uuid_, pk_)
+    _dump_results(node, dump_path, input_name)
 
     if not node.is_terminated:
         click.echo(

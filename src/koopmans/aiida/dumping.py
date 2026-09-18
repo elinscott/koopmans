@@ -1189,8 +1189,18 @@ def dump_workgraph(
     :param process: The workgraph ProcessNode.
     :param output_path: Output directory. Defaults to current working directory.
     :return: Path where the workgraph was dumped.
+
+    Raises ``ValueError`` if ``output_path`` already exists, is not empty,
+    and holds no :data:`NODE_METADATA_FILE` — i.e. is not itself an
+    earlier koopmans dump, so overwriting it would delete a directory
+    this call did not write.
     """
     if overwrite and output_path.exists():
+        if any(output_path.iterdir()) and not (output_path / NODE_METADATA_FILE).exists():
+            raise ValueError(
+                f"{output_path} exists and was not written by koopmans; move it or "
+                "run from another directory."
+            )
         shutil.rmtree(output_path)
 
     # Use AiiDA's dump to create the initial structure. ``dump_unsealed=True``

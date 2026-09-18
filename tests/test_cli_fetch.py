@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from koopmans.aiida.anchor import AnchorEntry, append_anchor_entry
+from koopmans.aiida.dumping import NODE_METADATA_FILE
 from koopmans.aiida.setup.profile import PROFILE_NAME
 from koopmans.cli import cli
 from tests.fixtures import make_process, skip_profile_loading
@@ -96,13 +97,19 @@ class TestFetch:
     def test_a_refetch_overwrites_the_existing_tree(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any
     ) -> None:
-        """Fetching twice leaves one tree behind, not stale files from the first."""
+        """Fetching twice leaves one tree behind, not stale files from the first.
+
+        The stale tree carries the dump's own marker file, exactly as a
+        real previous fetch would have left it — this is what tells the
+        overwrite guard it is safe to replace.
+        """
         skip_profile_loading(monkeypatch)
         node = make_process(process_label="WorkGraph<Tiny>")
         anchor_path = _anchor(tmp_path, node)
 
         dump_path = tmp_path / "si"
         dump_path.mkdir()
+        (dump_path / NODE_METADATA_FILE).write_text("pk: 1\n")
         stale_file = dump_path / "stale-from-a-previous-fetch.txt"
         stale_file.write_text("leftover")
 
@@ -111,6 +118,44 @@ class TestFetch:
         assert result.exit_code == 0, result.output
         assert dump_path.is_dir()
         assert not stale_file.exists()
+
+    def test_an_empty_existing_directory_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any
+    ) -> None:
+        """An empty directory sitting at the dump target is not "foreign"; fetch proceeds."""
+        skip_profile_loading(monkeypatch)
+        node = make_process(process_label="WorkGraph<Tiny>")
+        anchor_path = _anchor(tmp_path, node)
+        (tmp_path / "si").mkdir()
+
+        result = CliRunner().invoke(cli, ["fetch", str(anchor_path)])
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "si").is_dir()
+
+    def test_uuid_dump_target_refuses_an_unrelated_directory(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any
+    ) -> None:
+        """`--uuid` with no run file never deletes a directory koopmans did not write.
+
+        The process label happens to collide with a directory already in
+        the cwd; since that directory holds no koopmans dump marker, the
+        fetch is refused rather than silently wiping it.
+        """
+        skip_profile_loading(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        node = make_process(process_label="WorkGraph<Direct>")
+        target_dir = tmp_path / "WorkGraph<Direct>"
+        target_dir.mkdir()
+        unrelated_file = target_dir / "my-unrelated-project.txt"
+        unrelated_file.write_text("do not delete me")
+
+        result = CliRunner().invoke(cli, ["fetch", "--uuid", node.uuid])
+
+        assert result.exit_code != 0
+        assert str(target_dir) in result.output
+        assert "was not written by koopmans" in result.output
+        assert unrelated_file.read_text() == "do not delete me"
 
     def test_uuid_with_no_run_file_dumps_beside_the_process_label(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, aiida_profile_clean: Any

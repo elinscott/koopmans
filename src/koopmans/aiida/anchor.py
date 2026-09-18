@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AnchorEntry",
+    "ResolvedRun",
     "ResolvedTarget",
     "anchor_path_for_input",
     "append_anchor_entry",
@@ -39,6 +40,7 @@ __all__ = [
     "read_anchor_entries",
     "record_submission",
     "resolve_dump_target",
+    "resolve_run_target",
     "resolve_target",
 ]
 
@@ -72,6 +74,18 @@ class ResolvedTarget(NamedTuple):
 
     uuid: str | None
     pk: int | None
+
+
+class ResolvedRun(NamedTuple):
+    """A process identity together with where its dump belongs, from one anchor read.
+
+    ``dump`` mirrors :func:`resolve_dump_target`'s return: ``None`` for a
+    target named directly by ``--uuid``/``--pk``, which names no anchor
+    file to read a dump location from.
+    """
+
+    identity: ResolvedTarget
+    dump: tuple[Path, str] | None
 
 
 def anchor_path_for_input(input_path: Path) -> Path:
@@ -258,6 +272,44 @@ def _resolve_anchor_path(target: str | None, *, cwd: Path | None = None) -> Path
     return anchor_path
 
 
+def resolve_run_target(
+    target: str | None,
+    *,
+    uuid: str | None,
+    pk: int | None,
+    cwd: Path | None = None,
+) -> ResolvedRun:
+    """Resolve a ``koopmans status``/``attach``/``fetch`` target, reading its anchor file once.
+
+    Combines what :func:`resolve_target` and :func:`resolve_dump_target`
+    each resolve on their own: a caller needing both a process identity
+    and its dump location (``attach``/``fetch``) reads the anchor file
+    here exactly once, so the two answers cannot disagree because the
+    file changed between two separate reads (a resubmission from the same
+    input, or a second run file appearing while ``target`` is unset).
+
+    ``--uuid``/``--pk`` name a process directly and skip anchor files
+    entirely, so ``dump`` is ``None``. Otherwise ``target`` is resolved to
+    an anchor file by :func:`_resolve_anchor_path`, and both the identity
+    and the dump location come from its newest entry.
+
+    Raises ``ValueError``, naming the ambiguity or the missing/malformed
+    file, for anything the caller should turn into a user-facing error.
+    """
+    if uuid is not None and pk is not None:
+        raise ValueError("Pass only one of --uuid or --pk, not both.")
+    if uuid is not None:
+        return ResolvedRun(ResolvedTarget(uuid=uuid, pk=None), None)
+    if pk is not None:
+        return ResolvedRun(ResolvedTarget(uuid=None, pk=pk), None)
+
+    anchor_path = _resolve_anchor_path(target, cwd=cwd)
+    entry = newest_anchor_entry(anchor_path)
+    identity = ResolvedTarget(uuid=entry.uuid, pk=entry.pk)
+    dump = (anchor_path.parent / Path(entry.input).stem, entry.input)
+    return ResolvedRun(identity, dump)
+
+
 def resolve_target(
     target: str | None,
     *,
@@ -275,16 +327,7 @@ def resolve_target(
     Raises ``ValueError``, naming the ambiguity or the missing/malformed
     file, for anything the caller should turn into a user-facing error.
     """
-    if uuid is not None and pk is not None:
-        raise ValueError("Pass only one of --uuid or --pk, not both.")
-    if uuid is not None:
-        return ResolvedTarget(uuid=uuid, pk=None)
-    if pk is not None:
-        return ResolvedTarget(uuid=None, pk=pk)
-
-    anchor_path = _resolve_anchor_path(target, cwd=cwd)
-    entry = newest_anchor_entry(anchor_path)
-    return ResolvedTarget(uuid=entry.uuid, pk=entry.pk)
+    return resolve_run_target(target, uuid=uuid, pk=pk, cwd=cwd).identity
 
 
 def resolve_dump_target(
@@ -305,8 +348,4 @@ def resolve_dump_target(
 
     Raises ``ValueError`` exactly as :func:`resolve_target` does.
     """
-    if uuid is not None or pk is not None:
-        return None
-    anchor_path = _resolve_anchor_path(target, cwd=cwd)
-    entry = newest_anchor_entry(anchor_path)
-    return anchor_path.parent / Path(entry.input).stem, entry.input
+    return resolve_run_target(target, uuid=uuid, pk=pk, cwd=cwd).dump
