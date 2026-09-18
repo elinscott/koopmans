@@ -13,7 +13,16 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from koopmans.plotting.series import BandSeries, EnergyZero, SpectrumSeries, energy_axis_label
+from koopmans.plotting.series import (
+    BandGap,
+    BandSeries,
+    EnergyZero,
+    SpectrumSeries,
+    _jumps,
+    band_gap,
+    energy_axis_label,
+    path_distances,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -49,51 +58,6 @@ def _format_label(name: str) -> str:
     base, _, subscript = name.partition("_")
     text = _SYMBOLS.get(base.upper(), base)
     return f"{text}$_{{{subscript}}}$" if subscript else text
-
-
-def _labelled(series: BandSeries) -> np.ndarray:
-    """Return a boolean mask of the k-points carrying a high-symmetry label."""
-    mask = np.zeros(len(series.kpoints), dtype=bool)
-    for index, _ in series.path_labels:
-        if 0 <= index < mask.size:
-            mask[index] = True
-    return mask
-
-
-def _jumps(series: BandSeries) -> np.ndarray:
-    """Return a mask over steps that are jumps rather than steps along the path.
-
-    Two consecutive k-points that both carry a high-symmetry label sit at a
-    discontinuity: the path stops at one special point and restarts at another.
-    A branch sampled at its two endpoints alone is indistinguishable from one,
-    and is read as a jump; aiida-core's own band plotting reads it the same way.
-    """
-    labelled = _labelled(series)
-    if labelled.size < 2:
-        return np.zeros(max(labelled.size - 1, 0), dtype=bool)
-    return np.asarray(labelled[:-1] & labelled[1:], dtype=bool)
-
-
-def path_distances(series: BandSeries, cell: list[list[float]] | None = None) -> np.ndarray:
-    """Return the cumulative distance along the path of each k-point.
-
-    Distance is measured in the reciprocal basis ``cell`` defines, defaulting
-    to the series' own; with no cell at all the crystal coordinates stand in,
-    which distorts the relative lengths of the path's segments. A jump
-    contributes no distance.
-    """
-    kpoints = np.asarray(series.kpoints, dtype=np.float64)
-    if len(kpoints) == 0:
-        return np.zeros(0)
-    frame = series.cell if cell is None else cell
-    if frame is None:
-        cartesian = kpoints
-    else:
-        reciprocal = 2 * np.pi * np.linalg.inv(np.asarray(frame, dtype=np.float64)).T
-        cartesian = kpoints @ reciprocal
-    steps = np.linalg.norm(np.diff(cartesian, axis=0), axis=1)
-    steps[_jumps(series)] = 0.0
-    return np.concatenate(([0.0], np.cumsum(steps)))
 
 
 def _shared_cell(series: Sequence[BandSeries]) -> list[list[float]] | None:
@@ -159,6 +123,117 @@ def _path_extent(distances: Sequence[np.ndarray]) -> tuple[float, float] | None:
     first = min(float(item[0]) for item in reached)
     last = max(float(item[-1]) for item in reached)
     return None if last <= first else (first, last)
+
+
+def _draw_gap(
+    axes: Axes,
+    item: BandSeries,
+    edge: BandGap,
+    distances: np.ndarray,
+    color: Any,
+) -> None:
+    """Draw one series' band gap in the conventional textbook form.
+
+    A vertical double-headed arrow, at the conduction band minimum's own
+    k-point, runs from the valence band maximum's energy to the conduction
+    band minimum's; for an indirect gap a dashed rule at the valence level
+    marks where it sits, reaching from its own k-point to the arrow. A
+    direct gap needs no such rule, since the arrow's own foot already sits
+    at the valence band maximum's k-point. The label reads the gap's value
+    to the right of the arrow, and never joins the legend. Every piece is
+    clipped to the axes, so a y-range that excludes an edge cuts the arrow
+    or the label off at the frame rather than drawing it past it.
+
+    Two series whose conduction band minima coincide draw their arrows on
+    top of each other rather than displaced — a displaced arrow would claim
+    the conduction band minimum sits somewhere it does not.
+    """
+    vbm_x = float(distances[edge.vbm_kpoint_index])
+    arrow_x = float(distances[edge.cbm_kpoint_index])
+    vbm_y, cbm_y = edge.vbm - item.zero, edge.cbm - item.zero
+
+    if not edge.direct:
+        axes.plot(
+            [vbm_x, arrow_x],
+            [vbm_y, vbm_y],
+            linestyle="--",
+            linewidth=1.0,
+            color=color,
+            alpha=0.5,
+        )
+
+    arrow = axes.annotate(
+        "",
+        xy=(arrow_x, cbm_y),
+        xytext=(arrow_x, vbm_y),
+        arrowprops={
+            "arrowstyle": "<->",
+            "color": color,
+            "linewidth": 1.0,
+            "shrinkA": 0,
+            "shrinkB": 0,
+        },
+        annotation_clip=True,
+        clip_on=True,
+    )
+    # clip_on above clips the (empty) text; the arrow is a separate artist
+    # that needs its own clip path to stop at the axes too.
+    if arrow.arrow_patch is not None:
+        arrow.arrow_patch.set_clip_path(axes.patch)
+    axes.annotate(
+        f"{edge.value:.2f} {item.units}",
+        xy=(arrow_x, (vbm_y + cbm_y) / 2),
+        xytext=(8, 0),
+        textcoords="offset points",
+        va="center",
+        ha="left",
+        fontsize="small",
+        color=color,
+        annotation_clip=True,
+        clip_on=True,
+        # A white backing keeps the label readable where it lands on a band —
+        # the gap it measures is exactly where the curves are densest.
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 1},
+    )
+
+
+def _draw_gaps(
+    axes: Axes,
+    candidates: Sequence[tuple[BandSeries, BandGap, np.ndarray, Any]],
+) -> None:
+    """Draw every series' gap annotation, each at its own conduction band minimum."""
+    for item, edge, distances, color in candidates:
+        _draw_gap(axes, item, edge, distances, color)
+
+
+def _draw_series_curves(
+    axes: Axes,
+    item: BandSeries,
+    distances: np.ndarray,
+    style: list[str],
+    color: str | None,
+) -> Any:
+    """Plot one series' bands and return the color they were drawn in.
+
+    ``None`` if the series drew no curve at all (an empty path).
+    """
+    energies = np.asarray(item.energies, dtype=np.float64) - item.zero
+    drawn = False
+    drawn_color: Any = None
+    for span in _segments(item):
+        for band in range(energies.shape[1]):
+            (line,) = axes.plot(
+                distances[span],
+                energies[span, band],
+                *style,
+                linewidth=1.2,
+                label=None if drawn else item.label,
+            )
+            if color is not None:
+                line.set_color(color)
+            drawn = True
+            drawn_color = line.get_color()
+    return drawn_color
 
 
 class StyleError(ValueError):
@@ -240,7 +315,10 @@ def draw_band_structures(
     A series carrying a ``style`` is drawn in that format string, color
     included; where the string names no color the series keeps the one these
     axes give it, so its bands are drawn in one color rather than in as many
-    as it has bands.
+    as it has bands. A series with ``show_gap`` set draws its band gap —
+    skipped silently if it reports no valence band edge — as an arrow at its
+    own conduction-band-minimum k-point; two series whose minima coincide
+    draw their arrows on top of each other.
 
     :param axes: where to draw.
     :param series: the curves, each already carrying the figure's ``zero``.
@@ -252,25 +330,21 @@ def draw_band_structures(
     """
     cell = _shared_cell(series)
     drawn_distances: list[np.ndarray] = []
+    gap_candidates: list[tuple[BandSeries, BandGap, np.ndarray, Any]] = []
     for index, item in enumerate(series):
         distances = path_distances(item, cell)
         drawn_distances.append(distances)
-        energies = np.asarray(item.energies, dtype=np.float64) - item.zero
         style = [item.style] if item.style else []
         color = _cycle_color(style, index)
-        drawn = False
-        for span in _segments(item):
-            for band in range(energies.shape[1]):
-                (line,) = axes.plot(
-                    distances[span],
-                    energies[span, band],
-                    *style,
-                    linewidth=1.2,
-                    label=None if drawn else item.label,
-                )
-                if color is not None:
-                    line.set_color(color)
-                drawn = True
+        drawn_color = _draw_series_curves(axes, item, distances, style, color)
+
+        if item.show_gap and drawn_color is not None:
+            try:
+                edge = band_gap(item)
+            except ValueError:
+                pass
+            else:
+                gap_candidates.append((item, edge, distances, drawn_color))
 
     positions, names = _ticks(_tick_source(series), cell)
     if positions:
@@ -284,6 +358,7 @@ def draw_band_structures(
     limits = _path_extent(drawn_distances)
     if limits is not None:
         axes.set_xlim(*limits)
+    _draw_gaps(axes, gap_candidates)
     if ylim is not None:
         axes.set_ylim(*ylim)
 

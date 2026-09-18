@@ -25,7 +25,7 @@ import functools
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import click
 import click.parser
@@ -1022,6 +1022,9 @@ def _recording_process(
     return wrapped
 
 
+_T = TypeVar("_T")
+
+
 class _FolderPairingCommand(click.Command):
     """A command whose ``--style``/``--label`` pair with the folder argument.
 
@@ -1046,15 +1049,15 @@ class _FolderPairingCommand(click.Command):
     """
 
     #: Parameter names paired with the folder argument, one per folder.
-    _paired_params = ("styles", "labels")
+    _paired_params: tuple[str, ...] = ("styles", "labels")
     _folder_param = "folders"
 
     @staticmethod
     def _bind_values(
         flag: str,
-        occurrences: list[tuple[int, str]],
+        occurrences: list[tuple[int, _T]],
         folder_tokens: tuple[Path, ...],
-    ) -> tuple[str | None, ...] | None:
+    ) -> tuple[_T | None, ...] | None:
         """Return one value per folder for a paired option, or ``None`` if unused.
 
         As many values as folders pair positionally, in listing order,
@@ -1083,7 +1086,7 @@ class _FolderPairingCommand(click.Command):
                 f"each one just after the folder it names, or none at all."
             )
 
-        bound: dict[int, str] = {}
+        bound: dict[int, _T] = {}
         for index, value in occurrences:
             if index < 0:
                 raise click.UsageError(
@@ -1111,14 +1114,26 @@ class _FolderPairingCommand(click.Command):
             if not isinstance(param, _PositionalAwareOption):
                 raise TypeError(f"{name!r} must be declared with cls=_PositionalAwareOption.")
             positions = ctx.meta.pop(param.positions_key(), [])
-            values: tuple[str, ...] = ctx.params[name]
+            values: tuple[Any, ...] = ctx.params[name]
             occurrences = list(zip((p - 1 for p in positions), values, strict=True))
             ctx.params[name] = self._bind_values(param.opts[0], occurrences, folder_tokens)
 
         return rv
 
 
-@plot.command(cls=_FolderPairingCommand)
+class _BandStructureCommand(_FolderPairingCommand):
+    """``bandstructure``'s own pairing set: ``--style``/``--label``, plus ``--gap``.
+
+    ``--gap`` is a flag, not a value, but pairs with the folder argument the
+    same way: it must follow the folder whose series it annotates. Annotating
+    every series at once is a separate, ordinary flag, ``--gaps``, outside
+    this pairing altogether.
+    """
+
+    _paired_params = ("styles", "labels", "gaps")
+
+
+@plot.command(cls=_BandStructureCommand)
 @click.argument(
     "folders",
     nargs=-1,
@@ -1130,6 +1145,25 @@ class _FolderPairingCommand(click.Command):
 @zero_option
 @data_option
 @ylim_option
+@click.option(
+    "--gap",
+    "gaps",
+    cls=_PositionalAwareOption,
+    multiple=True,
+    is_flag=True,
+    help="Annotate a series' band gap: a labelled double-headed arrow from "
+    "its valence band maximum to its conduction band minimum. Must follow "
+    "the folder it annotates, and refuses one whose run reports no valence "
+    "band edge, since naming it was asking for it. Does not mix with "
+    "--gaps.",
+)
+@click.option(
+    "--gaps",
+    "all_gaps",
+    is_flag=True,
+    help="Annotate every series that reports a band gap, silently skipping "
+    "those that do not. Does not mix with --gap.",
+)
 @click.option(
     "--label",
     "labels",
@@ -1164,6 +1198,8 @@ def bandstructure(
     zero: str,
     data_path: Path | None,
     ylim: tuple[float, float] | None,
+    gaps: tuple[bool | None, ...] | None,
+    all_gaps: bool,
     labels: tuple[str | None, ...],
     styles: tuple[str | None, ...],
 ) -> None:
@@ -1229,6 +1265,19 @@ def bandstructure(
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
     and so lose both the overlay and its shared zero.
+
+    --gap draws a series' band gap: a dashed rule at the valence band
+    maximum reaching to a double-headed arrow at the conduction band
+    minimum, labelled with the gap's value. Written after a folder it
+    annotates that folder's series only, on this run's own edge:
+
+    \b
+        koopmans plot bandstructure \\
+            si/02-bands --label LDA --style -- \\
+            si-ki --label "KI@LDA" --gap
+
+    --gaps annotates every series that has one instead, silently skipping
+    the rest; the two options do not mix.
     """
     from koopmans.plotting import (
         NoEnergyZeroError,
@@ -1242,11 +1291,16 @@ def bandstructure(
         write_series_json,
     )
 
+    if gaps is not None and all_gaps:
+        raise click.UsageError("--gap and --gaps do not mix; use one or the other.")
+
     load_koopmans_profile()
 
     kind = EnergyZero(zero)
     try:
-        series, warnings = resolve_band_series(folders, labels, styles)
+        series, warnings = resolve_band_series(
+            folders, labels, styles, gaps=gaps or (), gap_all=all_gaps
+        )
         check_paths_agree(series)
         value, reference = apply_energy_zero(series, kind)
     except (PlottingError, PathMismatchError, NoEnergyZeroError, ValueError) as exc:
