@@ -368,7 +368,6 @@ class TestOrbitalGrouping:
         """
         d = _si_dfpt_dict()
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is not None
         assert inp.workflow.group_orbitals_by.value == "none"
         wg = _build(d)
         assert "dfpt" in wg.get_task_names()

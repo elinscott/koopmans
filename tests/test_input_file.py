@@ -10,9 +10,13 @@ import pytest
 import yaml
 from aiida_koopmans.owned_keywords import OWNED
 
+from koopmans.base import BaseModel
 from koopmans.input_file import (
     INPUT_FILE_FORMAT_VERSION,
+    BetheSalpeterRoles,
+    DipoleRoles,
     KoopmansInput,
+    StaticScreeningRoles,
     migrate_input_dict,
     read_input_file,
 )
@@ -232,6 +236,35 @@ class TestCalculateBandsRemoved:
         _set_keyword(d, "workflow", "calculate_bands", False)
 
         with pytest.raises(ValidationError, match="no longer exists"):
+            KoopmansInput.model_validate(d)
+
+
+class TestUnfoldAndInterpolateBlockRemoved:
+    """The band-structure densification factor moved to ``kpoints``."""
+
+    def test_the_block_names_its_replacement(self, tmp_path: Path) -> None:
+        """The message points the reader at the new field, not at ``extra_forbidden``."""
+        d = _minimal_si_input()
+        _set_keyword(d, "calculator_parameters", "unfold_and_interpolate", {"smooth_int_factor": 4})
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.unfold_and_interpolate` was replaced" in message
+        assert "`kpoints.smooth_interpolation_factor`" in message
+        assert "is not a valid keyword" not in message
+
+    def test_the_block_is_rejected_however_it_is_set(self) -> None:
+        """An empty block is refused too: the block itself is gone, not just its keywords."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "calculator_parameters", "unfold_and_interpolate", {})
+
+        with pytest.raises(ValidationError, match="was replaced"):
             KoopmansInput.model_validate(d)
 
 
@@ -479,11 +512,169 @@ class TestParallelizationSchema:
         assert wannier90 is not None
         assert wannier90.ntasks == 4
 
+    def test_yambo_accepts_ntasks_and_omp(self) -> None:
+        """Yambo parallelizes over its own k/eh/t roles, not pools, but takes ntasks/omp."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"yambo": {"ntasks": 4, "omp": 2}})
+        )
+        yambo = inp.parallelization.yambo
+        assert yambo is not None
+        assert (yambo.ntasks, yambo.omp) == (4, 2)
+        assert inp.parallelization.as_mapping() == {"yambo": {"ntasks": 4, "omp": 2}}
+
+    def test_npool_rejected_for_yambo(self) -> None:
+        """Yambo has no ``-npool`` concept; it parallelizes over its own runcard roles."""
+        with pytest.raises(ValueError, match=r"'npool' is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={"yambo": {"npool": 2}})
+            )
+
+    def test_pd_rejected_for_yambo(self) -> None:
+        """Yambo has no pencil-decomposition concept."""
+        with pytest.raises(ValueError, match=r"'pd' \(pencil decomposition\) is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={"yambo": {"pd": True}})
+            )
+
     def test_unknown_code_rejected(self) -> None:
         """An unrecognised code name is not a valid parallelization key."""
         with pytest.raises(ValueError):
             KoopmansInput.model_validate(
                 _parallelization_input(parallelization={"foo": {"npool": 2}})
+            )
+
+    def test_yambo_role_split_maps_to_structured_dict(self) -> None:
+        """A named driver passes through ``as_mapping`` as its own ``{role: count}`` dict.
+
+        aiida-koopmans, not this schema, turns it into yambo's own
+        ``*_CPU``/``*_ROLEs`` runcard strings.
+        """
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={
+                    "yambo": {"ntasks": 4, "bethe_salpeter": {"k": 2, "eh": 2}},
+                }
+            )
+        )
+        yambo = inp.parallelization.yambo
+        assert yambo is not None
+        assert yambo.bethe_salpeter == BetheSalpeterRoles(k=2, eh=2)
+        assert inp.parallelization.as_mapping() == {
+            "yambo": {
+                "ntasks": 4,
+                "bethe_salpeter": {"k": 2, "eh": 2},
+            }
+        }
+
+    def test_yambo_all_three_drivers_map_independently(self) -> None:
+        """The worked example: three drivers each produce their own structured dict."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={
+                    "yambo": {
+                        "ntasks": 4,
+                        "omp": 1,
+                        "bethe_salpeter": {"k": 2, "eh": 2},
+                        "static_screening": {"k": 4},
+                        "dipoles": {"k": 4},
+                    },
+                }
+            )
+        )
+        assert inp.parallelization.as_mapping() == {
+            "yambo": {
+                "ntasks": 4,
+                "omp": 1,
+                "bethe_salpeter": {"k": 2, "eh": 2},
+                "static_screening": {"k": 4},
+                "dipoles": {"k": 4},
+            }
+        }
+
+    def test_yambo_role_vocabulary_matches_aiida_koopmans(self) -> None:
+        """This schema's role fields cannot drift from aiida-koopmans's own table.
+
+        aiida-koopmans owns the translation into yambo's runcard strings and
+        needs its own per-driver role order to build them (roles are
+        matched by name, not position, in yambo's source, but aiida-koopmans
+        still has to name them in *some* order when it writes the runcard).
+        Each role model here declares its fields in that same order; this
+        pins the two packages' vocabularies together so one cannot add or
+        reorder a role without the other noticing.
+        """
+        from aiida_koopmans.parallelization import YAMBO_ROLE_DRIVERS
+
+        role_models: dict[str, type[BaseModel]] = {
+            "bethe_salpeter": BetheSalpeterRoles,
+            "static_screening": StaticScreeningRoles,
+            "dipoles": DipoleRoles,
+        }
+        assert set(role_models) == set(YAMBO_ROLE_DRIVERS)
+        for driver, model in role_models.items():
+            _prefix, role_order = YAMBO_ROLE_DRIVERS[driver]
+            assert tuple(model.model_fields) == tuple(role_order), driver
+
+    def test_yambo_omitted_driver_has_no_driver_key(self) -> None:
+        """No driver named means ``as_mapping`` emits no key for it at all."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"yambo": {"ntasks": 4}})
+        )
+        assert inp.parallelization.as_mapping() == {"yambo": {"ntasks": 4}}
+
+    @pytest.mark.parametrize(
+        ("driver", "roles"),
+        [
+            ("bethe_salpeter", {"q": 2, "eh": 2}),
+            ("static_screening", {"eh": 4}),
+            ("dipoles", {"t": 4}),
+        ],
+    )
+    def test_yambo_role_split_rejects_unknown_role(
+        self, driver: str, roles: dict[str, int]
+    ) -> None:
+        """A role outside the driver's own vocabulary is refused by name.
+
+        The per-driver role models forbid extra fields; this is pydantic's
+        own ``extra_forbidden`` error, not a hand-written check.
+        """
+        with pytest.raises(ValueError, match=r"Extra inputs are not permitted"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={"yambo": {"ntasks": sum(roles.values()), driver: roles}}
+                )
+            )
+
+    def test_yambo_role_split_rejects_non_positive_count(self) -> None:
+        """A zero or negative rank count is refused by pydantic's own positive-int check."""
+        with pytest.raises(ValueError, match=r"greater than 0"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={
+                        "yambo": {"ntasks": 2, "bethe_salpeter": {"k": 2, "eh": 0}},
+                    }
+                )
+            )
+
+    def test_yambo_role_split_without_ntasks_rejected(self) -> None:
+        """A driver named without ``ntasks`` cannot be checked against the rank count."""
+        with pytest.raises(ValueError, match=r"needs 'parallelization.yambo.ntasks' set"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={"yambo": {"bethe_salpeter": {"k": 2, "eh": 2}}}
+                )
+            )
+
+    def test_yambo_role_split_product_must_equal_ntasks(self) -> None:
+        """The role counts must multiply to ``ntasks``, or yambo silently drops the split."""
+        with pytest.raises(
+            ValueError, match=r"multiply.*to 4.*not 'parallelization.yambo.ntasks' = 8"
+        ):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={
+                        "yambo": {"ntasks": 8, "bethe_salpeter": {"k": 2, "eh": 2}},
+                    }
+                )
             )
 
     @pytest.mark.parametrize("field", ["ntasks", "npool"])
@@ -635,6 +826,63 @@ class TestKpointsOffset:
 
         with pytest.raises(ValueError, match="samples Gamma itself"):
             GammaOnlyKpointsInput(offset=(0.5, 0.0, 0.0))
+
+
+class TestSmoothInterpolationFactor:
+    """``smooth_interpolation_factor`` multiplies ``grid`` for the smooth-interpolation method."""
+
+    def test_default_is_one_in_every_direction(self) -> None:
+        """Leaving the keyword out asks for no densification."""
+        from koopmans.input_file import GridKpointsInput
+
+        assert GridKpointsInput(grid=(2, 2, 2)).smooth_interpolation_factor == (1, 1, 1)
+
+    def test_a_bare_integer_broadcasts_to_every_direction(self) -> None:
+        """A scalar factor is shorthand for the same factor on every axis."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=4)
+        assert inp.smooth_interpolation_factor == (4, 4, 4)
+
+    def test_a_triple_scales_each_direction_independently(self) -> None:
+        """A three-entry factor densifies the directions independently."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 2, 3])
+        assert inp.smooth_interpolation_factor == (1, 2, 3)
+
+    def test_a_factor_below_one_is_rejected(self) -> None:
+        """The factor multiplies the grid, so it cannot coarsen it."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=0)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 0, 1])
+
+    def test_a_boolean_is_rejected(self) -> None:
+        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1).
+
+        The strict per-axis type check rejects it as not a valid integer,
+        rather than accepting it as a factor of 1.
+        """
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="valid integer"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=True)
+
+    def test_gamma_only_carries_the_same_field(self) -> None:
+        """Gamma-only kpoints carry the field too, at the same default.
+
+        A gamma-only run has no path to interpolate a band structure along,
+        so a factor above 1 is refused downstream (by the "no path" rule),
+        not by this field being absent from the model.
+        """
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        assert GammaOnlyKpointsInput().smooth_interpolation_factor == (1, 1, 1)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GammaOnlyKpointsInput(smooth_interpolation_factor=0)
 
 
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:
@@ -1165,6 +1413,94 @@ class TestPhCalculatorParameters:
         """With no ``ph`` block, the namelist states nothing explicitly."""
         inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
         assert inp.calculator_parameters.ph.model_fields_set == set()
+
+
+def _bse_input(**yambo_updates: object) -> dict[str, object]:
+    """Return the minimal silicon input at ``task: bse`` with a valid ``yambo`` block."""
+    d = _si_input_with({"ecutwfc": 20.0})
+    d["workflow"]["task"] = "bse"  # type: ignore[index]
+    d["calculator_parameters"]["yambo"] = {  # type: ignore[index]
+        "BndsRnXs": [1, 100],
+        "NGsBlkXs": 2,
+        "BSEBands": [4, 5],
+        "BEnRange": [0, 10],
+        **yambo_updates,
+    }
+    return d
+
+
+class TestYamboSchema:
+    """``calculator_parameters.yambo``: the yambo BSE runcard parameters for ``task: bse``."""
+
+    def test_minimal_block_parses(self) -> None:
+        """The four required fields alone parse, with documented defaults filled in."""
+        inp = KoopmansInput.model_validate(_bse_input())
+        yambo = inp.calculator_parameters.yambo
+        assert yambo is not None
+        assert yambo.BEnSteps == 1000
+        assert yambo.BDmRange == (0.1, 0.1)
+        assert yambo.BSENGBlk == yambo.NGsBlkXs
+
+    def test_task_bse_needs_a_yambo_block(self) -> None:
+        """``task: bse`` with no ``yambo`` block is refused, naming the required fields."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        d["workflow"]["task"] = "bse"  # type: ignore[index]
+        with pytest.raises(ValueError, match=r"needs a `calculator_parameters\.yambo` input block"):
+            KoopmansInput.model_validate(d)
+
+    def test_yambo_block_needs_task_bse(self) -> None:
+        """A ``yambo`` block stated under another task would go unread, and is refused."""
+        d = _bse_input()
+        d["workflow"]["task"] = "singlepoint"  # type: ignore[index]
+        with pytest.raises(ValueError, match=r"`calculator_parameters\.yambo` has no effect"):
+            KoopmansInput.model_validate(d)
+
+    def test_kpoints_path_is_refused(self) -> None:
+        """A ``bse`` task interpolates no band structure; a stated path is refused."""
+        d = _bse_input()
+        d["kpoints"]["path"] = "GX"  # type: ignore[index]
+        with pytest.raises(ValueError, match=r"`kpoints\.path` cannot take effect in a `bse`"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize("bands", [[0, 5], [5, 4]])
+    def test_bsebands_must_be_positive_and_ascending(self, bands: list[int]) -> None:
+        """A zero/negative first band, or a descending range, is refused."""
+        with pytest.raises(ValueError, match=r"ascending"):
+            KoopmansInput.model_validate(_bse_input(BSEBands=bands))
+
+    def test_benrange_must_be_ascending(self) -> None:
+        """A descending ``BEnRange`` is refused."""
+        with pytest.raises(ValueError, match=r"ascending"):
+            KoopmansInput.model_validate(_bse_input(BEnRange=[10, 0]))
+
+    def test_bdmrange_must_be_positive(self) -> None:
+        """A non-positive ``BDmRange`` value is refused."""
+        with pytest.raises(ValueError, match=r"BDmRange"):
+            KoopmansInput.model_validate(_bse_input(BDmRange=[0.1, -0.1]))
+
+    @pytest.mark.parametrize(
+        ("keyword", "reason_snippet"),
+        [
+            ("KfnQPdb", "quasiparticle database"),
+            ("BSEQptR", "optical"),
+            ("BS_CPU", "parallelization.yambo"),
+            ("BS_ROLEs", "parallelization.yambo"),
+            ("rim_cut", "Coulomb-divergence"),
+            ("WRbsWF", "excitonic wavefunctions"),
+            ("NLCC", "non-linear core correction"),
+        ],
+    )
+    def test_owned_keyword_is_rejected(self, keyword: str, reason_snippet: str) -> None:
+        """A yambo runcard variable the route determines is not a ``yambo`` field."""
+        pattern = rf"`calculator_parameters\.yambo\.{keyword}`"
+        with pytest.raises(ValueError, match=pattern) as excinfo:
+            KoopmansInput.model_validate(_bse_input(**{keyword: "nonsense"}))
+        assert reason_snippet in str(excinfo.value)
+
+    def test_unknown_keyword_is_rejected(self) -> None:
+        """A typo is refused generically, unlike a keyword the route owns."""
+        with pytest.raises(ValueError, match=r"extra_forbidden|Extra inputs"):
+            KoopmansInput.model_validate(_bse_input(NGsBlkXd=2))
 
 
 def _collinear_input(**calculator_parameters: object) -> dict[str, object]:

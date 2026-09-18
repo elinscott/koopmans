@@ -304,6 +304,54 @@ class TestPreFlightAdvice:
             build_workgraph(inp)
         assert "koopmans install" in str(excinfo.value)
 
+    def test_bse_missing_pw_earns_preflight_advice(
+        self,
+        aiida_profile_clean: Any,
+        installed_kcw_code: Any,
+        installed_wannier_codes: Any,
+        installed_bse_codes: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """``pw`` is required in ``SinglepointBetheSalpeterCodes`` too, same reasoning as DFPT.
+
+        ``BetheSalpeterCodes`` and ``DfptCodes`` both declare ``pw`` as
+        required; loading it via ``SinglepointBetheSalpeterWorkflow.build``'s
+        own eager bind hits the same pre-flight-catches-a-KeyError situation
+        the DFPT test above pins.
+        """
+        from tests.test_bse_dispatcher import _si_bse_dict
+
+        inp = KoopmansInput.model_validate(_si_bse_dict())
+        with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+
+    def test_bse_missing_p2y_and_yambo_earns_preflight_advice(
+        self,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        installed_kcw_code: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """``p2y`` and ``yambo`` are required in ``BetheSalpeterCodes``, both named at once.
+
+        Neither is one ``koopmans install`` registers (see
+        ``koopmans.aiida.setup.codes.code_specs``), so the advice must not
+        claim that command would fix it — the fix is ``verdi code create``,
+        same as for a code missing on a named remote computer.
+        """
+        from tests.test_bse_dispatcher import _si_bse_dict
+
+        inp = KoopmansInput.model_validate(_si_bse_dict())
+        with pytest.raises(ValueError) as excinfo:
+            build_workgraph(inp)
+        message = str(excinfo.value)
+        assert "`p2y@localhost`" in message
+        assert "`yambo@localhost`" in message
+        assert "verdi code create" in message
+        assert "koopmans install" not in message
+
 
 class TestStructuralAdvice:
     """Codes the plugin graphs wire structurally: ``NotRequired``, input-conditional.

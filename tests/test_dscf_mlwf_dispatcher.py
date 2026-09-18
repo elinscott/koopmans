@@ -934,32 +934,27 @@ class TestBandPathBuildsTheInterpolation:
         kpath = wg.tasks["interpolate_band_structure"].inputs["kpath"].value
         assert [label for _, label in kpath.labels] == ["GAMMA", "X"]
 
-    def test_the_knobs_reach_the_interpolation(
+    def test_the_defaults_reach_the_interpolation(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """The `unfold_and_interpolate` block shapes the stage that runs."""
-        d = self._with_bands()
-        d["calculator_parameters"]["unfold_and_interpolate"] = {
-            "use_ws_distance": False,
-            "do_dos": False,
-        }
-        wg = _build(d)
+        """``use_ws_distance``/``do_dos`` are not user-facing; the stage runs at their defaults."""
+        wg = _build(self._with_bands())
         stage = wg.tasks["interpolate_band_structure"]
-        assert stage.inputs["use_ws_distance"].value == False  # noqa: E712
-        assert stage.inputs["do_dos"].value == False  # noqa: E712
+        assert stage.inputs["use_ws_distance"].value == True  # noqa: E712
+        assert stage.inputs["do_dos"].value == True  # noqa: E712
 
-    def test_the_knobs_alone_are_refused(
+    def test_the_old_unfold_and_interpolate_block_is_refused(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """Settings that shape a stage no path asks for cannot take effect."""
-        d = _si_dscf_dict()
+        """The former block is refused outright, naming its replacement."""
+        d = self._with_bands()
         d["calculator_parameters"]["unfold_and_interpolate"] = {"do_dos": False}
-        with pytest.raises(ValueError, match=r"kpoints: \{path"):
-            _build(d)
+        with pytest.raises(ValueError, match=r"kpoints\.smooth_interpolation_factor"):
+            KoopmansInput.model_validate(d)
 
 
 class TestSmoothInterpolation:
-    """``smooth_int_factor`` above 1 adds a second, denser wannierization.
+    """``kpoints.smooth_interpolation_factor`` above 1 adds a second, denser wannierization.
 
     The smooth-interpolation method swaps each manifold's coarse DFT
     Hamiltonian for one Wannierized on a denser mesh, so the dispatcher
@@ -970,7 +965,7 @@ class TestSmoothInterpolation:
     def _with_smooth(factor: Any = 4, **workflow_updates: Any) -> dict[str, Any]:
         d = _si_dscf_dict(**workflow_updates)
         d["kpoints"]["path"] = "GXG"
-        d["calculator_parameters"]["unfold_and_interpolate"] = {"smooth_int_factor": factor}
+        d["kpoints"]["smooth_interpolation_factor"] = factor
         return d
 
     def test_the_dense_mesh_is_wannierized_off_a_coarse_scf(
@@ -1024,7 +1019,7 @@ class TestSmoothInterpolation:
     ) -> None:
         """No path means no interpolation, so a denser mesh would take no effect."""
         d = _si_dscf_dict()
-        d["calculator_parameters"]["unfold_and_interpolate"] = {"smooth_int_factor": 4}
+        d["kpoints"]["smooth_interpolation_factor"] = 4
         with pytest.raises(ValueError, match=r"kpoints: \{path"):
             _build(d)
 
@@ -1040,5 +1035,15 @@ class TestSmoothInterpolation:
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """The factor multiplies the grid, so it cannot coarsen it."""
-        with pytest.raises(ValueError, match="at least 1"):
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
             KoopmansInput.model_validate(self._with_smooth(factor=0))
+
+    def test_the_top_level_dispatcher_still_accepts_it(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The route-scoped refusal off DSCF must not catch the DSCF route itself."""
+        from koopmans.aiida.workflows import build_workgraph
+
+        inp = KoopmansInput.model_validate(self._with_smooth())
+        wg = build_workgraph(inp)
+        assert "wannierize_smooth" in wg.get_task_names()
