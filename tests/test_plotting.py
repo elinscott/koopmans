@@ -1420,11 +1420,12 @@ class TestGapAnnotation:
 
         assert gap_labels(axes) == ["1.50 eV"]
 
-    def test_two_arrows_sharing_a_cbm_position_are_nudged_apart(self) -> None:
-        """Two gaps whose conduction-band-minimum k-point coincides are spread apart.
+    def test_two_arrows_sharing_a_cbm_position_both_land_there(self) -> None:
+        """Two gaps whose conduction-band-minimum k-point coincides both draw there.
 
-        Left unchecked both arrows would be drawn on top of each other, at
-        the same k-point.
+        A displaced arrow would claim the conduction band minimum sits
+        somewhere it does not, so the arrows are left to overlap rather than
+        spread apart.
         """
         axes = blank_axes()
         first = indirect_gap_series("first")
@@ -1434,13 +1435,8 @@ class TestGapAnnotation:
         draw_band_structures(axes, [first, second])
 
         arrow_x = [arrow.xy[0] for arrow in arrow_annotations(axes)]
-        assert arrow_x[0] != pytest.approx(arrow_x[1])
-        # spread symmetrically about the true (shared) k-point
         true_x = np.pi / 4
-        assert arrow_x[0] - true_x == pytest.approx(-(arrow_x[1] - true_x))
-        # and each label reads from its arrow's outer side
-        alignments = [text.get_horizontalalignment() for text in axes.texts if text.get_text()]
-        assert alignments == ["right", "left"]
+        assert arrow_x == pytest.approx([true_x, true_x])
 
 
 # ----------------------------------------------------------------------

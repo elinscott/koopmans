@@ -125,42 +125,29 @@ def _path_extent(distances: Sequence[np.ndarray]) -> tuple[float, float] | None:
     return None if last <= first else (first, last)
 
 
-#: How close two arrows' conduction-band-minimum positions may sit — as a
-#: fraction of the path's drawn length — before they count as landing at the
-#: same k-point rather than two nearby ones.
-_GAP_COLLISION_TOL_FRACTION = 1e-6
-
-#: How far apart two coinciding arrows are nudged, as a fraction of the
-#: path's drawn length, spread symmetrically about the shared k-point.
-_GAP_NUDGE_FRACTION = 0.03
-
-
 def _draw_gap(
     axes: Axes,
     item: BandSeries,
     edge: BandGap,
     distances: np.ndarray,
     color: Any,
-    arrow_x: float,
-    outward: bool = False,
 ) -> None:
     """Draw one series' band gap in the conventional textbook form.
 
-    A vertical double-headed arrow, at ``arrow_x``, runs from the valence
-    band maximum's energy to the conduction band minimum's; for an indirect
-    gap a dashed rule at the valence level marks where it sits, reaching
-    from its own k-point to the arrow. A direct gap needs no such rule,
-    since the arrow's own foot already sits at the valence band maximum's
-    k-point. The label reads the gap's value beside the arrow, to the right
-    unless ``outward``, and never joins the legend.
+    A vertical double-headed arrow, at the conduction band minimum's own
+    k-point, runs from the valence band maximum's energy to the conduction
+    band minimum's; for an indirect gap a dashed rule at the valence level
+    marks where it sits, reaching from its own k-point to the arrow. A
+    direct gap needs no such rule, since the arrow's own foot already sits
+    at the valence band maximum's k-point. The label reads the gap's value
+    to the right of the arrow, and never joins the legend.
 
-    :param arrow_x: the arrow's x position, nudged away from ``edge``'s own
-        conduction-band-minimum position when another series' arrow lands
-        at the same k-point.
-    :param outward: offset the label, and the dashed rule's reach, to the
-        left of the arrow instead of the right.
+    Two series whose conduction band minima coincide draw their arrows on
+    top of each other rather than displaced — a displaced arrow would claim
+    the conduction band minimum sits somewhere it does not.
     """
     vbm_x = float(distances[edge.vbm_kpoint_index])
+    arrow_x = float(distances[edge.cbm_kpoint_index])
     vbm_y, cbm_y = edge.vbm - item.zero, edge.cbm - item.zero
 
     if not edge.direct:
@@ -186,14 +173,13 @@ def _draw_gap(
         },
         annotation_clip=False,
     )
-    offset, alignment = ((-8, 0), "right") if outward else ((8, 0), "left")
     axes.annotate(
         f"{edge.value:.2f} {item.units}",
         xy=(arrow_x, (vbm_y + cbm_y) / 2),
-        xytext=offset,
+        xytext=(8, 0),
         textcoords="offset points",
         va="center",
-        ha=alignment,
+        ha="left",
         fontsize="small",
         color=color,
         annotation_clip=False,
@@ -203,56 +189,13 @@ def _draw_gap(
     )
 
 
-def _spread_arrow_positions(
-    positions: Sequence[float], path_length: float
-) -> tuple[list[float], list[bool]]:
-    """Return each arrow's x position, nudged apart within its collision cluster.
-
-    Positions within ``_GAP_COLLISION_TOL_FRACTION`` of the path length of
-    each other land at the same k-point; each such cluster is spread
-    symmetrically about it by ``_GAP_NUDGE_FRACTION``, and the accompanying
-    flags say which member reads its label from the arrow's outer (left)
-    side — the ones nudged left — so that neither the arrows nor their
-    labels overlap.
-    """
-    tolerance = _GAP_COLLISION_TOL_FRACTION * path_length
-    nudged = list(positions)
-    outward = [False] * len(positions)
-    placed = [False] * len(positions)
-    for index, position in enumerate(positions):
-        if placed[index]:
-            continue
-        cluster = [
-            other
-            for other, candidate in enumerate(positions)
-            if not placed[other] and abs(candidate - position) <= tolerance
-        ]
-        if len(cluster) > 1:
-            spread = _GAP_NUDGE_FRACTION * path_length
-            offsets = np.linspace(-spread / 2, spread / 2, len(cluster))
-            for member, offset in zip(cluster, offsets, strict=True):
-                nudged[member] = position + float(offset)
-                outward[member] = offset < 0
-                placed[member] = True
-        else:
-            placed[index] = True
-    return nudged, outward
-
-
 def _draw_gaps(
     axes: Axes,
     candidates: Sequence[tuple[BandSeries, BandGap, np.ndarray, Any]],
-    path_length: float,
 ) -> None:
-    """Draw every series' gap annotation, nudging apart ones sharing a k-point."""
-    if not candidates:
-        return
-    positions = [float(distances[edge.cbm_kpoint_index]) for _, edge, distances, _ in candidates]
-    arrow_positions, outward_flags = _spread_arrow_positions(positions, path_length)
-    for (item, edge, distances, color), arrow_x, outward in zip(
-        candidates, arrow_positions, outward_flags, strict=True
-    ):
-        _draw_gap(axes, item, edge, distances, color, arrow_x, outward)
+    """Draw every series' gap annotation, each at its own conduction band minimum."""
+    for item, edge, distances, color in candidates:
+        _draw_gap(axes, item, edge, distances, color)
 
 
 def _draw_series_curves(
@@ -365,9 +308,9 @@ def draw_band_structures(
     included; where the string names no color the series keeps the one these
     axes give it, so its bands are drawn in one color rather than in as many
     as it has bands. A series with ``show_gap`` set draws its band gap —
-    skipped silently if it reports no valence band edge — nudged apart from
-    another series' gap arrow landing at the same conduction-band-minimum
-    k-point.
+    skipped silently if it reports no valence band edge — as an arrow at its
+    own conduction-band-minimum k-point; two series whose minima coincide
+    draw their arrows on top of each other.
 
     :param axes: where to draw.
     :param series: the curves, each already carrying the figure's ``zero``.
@@ -407,8 +350,7 @@ def draw_band_structures(
     limits = _path_extent(drawn_distances)
     if limits is not None:
         axes.set_xlim(*limits)
-    path_length = limits[1] - limits[0] if limits is not None else 0.0
-    _draw_gaps(axes, gap_candidates, path_length)
+    _draw_gaps(axes, gap_candidates)
     if ylim is not None:
         axes.set_ylim(*ylim)
 
