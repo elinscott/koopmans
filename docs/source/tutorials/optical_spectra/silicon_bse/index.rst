@@ -103,7 +103,7 @@ and the BSE spectrum respectively.
 .. tip::
 
     ``yambo`` cannot always split its ranks across the calculation on its own. On this
-    small system, running the BSE step on 4 MPI ranks with no split fails with
+    small system, running the BSE step on 4 MPI ranks with no split can fail with
     "Impossible to define an appropriate parallel structure"; the ``bethe_salpeter``
     role split in the input file above fixes this. Each driver's role counts must
     multiply to that driver's ``ntasks``, and a role count is capped by what the system
