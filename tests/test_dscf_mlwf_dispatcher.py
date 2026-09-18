@@ -1049,14 +1049,15 @@ class TestSmoothInterpolation:
         assert "wannierize_smooth" in wg.get_task_names()
 
 
-class TestDftBandStructureReachesOneWannierization:
+class TestDftBandStructureReachesEveryWannierization:
     """``kpoints.path`` also carries the base-functional (DFT) band structure.
 
     The dispatcher hands no new input to ak2 for this — the same ``kpath``
-    it already resolves for the KI interpolation reaches whichever
-    Wannierization actually samples it. These tests discriminate that
-    routing at the dispatcher boundary: the input file alone must steer it
-    to the right task, and never to both.
+    it already resolves for the KI interpolation reaches every
+    Wannierization the route runs: a Wannierization is already running,
+    so its own pw.x quality-check bands come along at no extra cost. With
+    a denser smooth-interpolation mesh, both the coarse and the smooth
+    Wannierization sample the path, so a run can compare the two.
     """
 
     def test_a_path_alone_reaches_the_initialization_wannierization(
@@ -1076,22 +1077,23 @@ class TestDftBandStructureReachesOneWannierization:
         init = wg.tasks["wannier_initialization"]
         assert not init.inputs["interpolation_kpoints"]._links
 
-    def test_a_smooth_path_reaches_the_smooth_wannierization_instead(
+    def test_a_smooth_path_reaches_both_wannierizations(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """The denser mesh sees the path; the coarse one does not — never both."""
+        """The denser mesh sees the path in addition to the coarse one, not instead of it."""
         wg = _build(TestSmoothInterpolation._with_smooth())
         init = wg.tasks["wannier_initialization"]
         smooth = wg.tasks["wannierize_smooth"]
-        assert not init.inputs["interpolation_kpoints"]._links
+        assert init.inputs["interpolation_kpoints"]._links
         assert smooth.inputs["interpolation_kpoints"]._links
 
-    def test_the_input_path_labels_reach_whichever_wannierization_ran(
+    def test_the_input_path_labels_reach_both_wannierizations(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
         """Nothing downstream can recover a path the dispatcher does not hand over."""
         d = TestSmoothInterpolation._with_smooth()
         d["kpoints"]["path"] = "GX"
         wg = _build(d)
-        kpath = wg.tasks["wannierize_smooth"].inputs["interpolation_kpoints"].value
-        assert [label for _, label in kpath.labels] == ["GAMMA", "X"]
+        for task_name in ("wannier_initialization", "wannierize_smooth"):
+            kpath = wg.tasks[task_name].inputs["interpolation_kpoints"].value
+            assert [label for _, label in kpath.labels] == ["GAMMA", "X"], task_name
