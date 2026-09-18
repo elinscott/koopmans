@@ -6,18 +6,13 @@ This tutorial applies the KI functional to a crystal. Two things change once the
 becomes periodic:
 
 - instead of using Kohn-Sham states as the variational orbitals, we use Wannier functions
-- when computing screening parameters from total-energy differences, the calculations require a supercell to avoid the spurious interaction of charged periodic images
+- when computing screening parameters from total-energy differences, the calculations require a supercell to
+  avoid the spurious interaction of charged periodic images
 
-Everything else is the workflow you already know from :doc:`the previous tutorials on molecules <../../orbital_energies/index>`: initialize the variational orbitals,
+Everything else is the workflow you already know from :doc:`the previous tutorials on molecules
+<../../orbital_energies/index>`: initialize the variational orbitals,
 compute one screening parameter per orbital from constrained calculations, then evaluate
 the corrected functional.
-
-.. note::
-
-    Total-energy differences are not the only way to get the screening parameters. The
-    :doc:`next tutorial <../silicon_linear_response/index>` computes them for the same
-    system by linear response, which removes the need for a supercell throughout and is generally
-    cheaper.
 
 ***********************************
  Variational orbitals in a crystal
@@ -62,11 +57,11 @@ with ``pw.x`` and ``pw2wannier90.x``.
 .. note::
 
     This tutorial does not teach Wannierization itself — the `Wannier90 tutorials
-    <http://www.wannier.org/support/>`_ do that already. One point of departure is
-    worth flagging, though: Most Wannier90 tutorials Wannierize occupied and empty states
-    together. A Koopmans calculation requires separate representations of the occupied
+    <http://www.wannier.org/support/>`_ do that already. One point is
+    worth flagging, though: most Wannier90 tutorials Wannierize the occupied and empty states
+    together, but a Koopmans calculation requires separate representations of the occupied
     and empty manifolds. We therefore Wannierize the two manifolds separately.
-    **blocks**.
+
 
 ****************
  The input file
@@ -104,7 +99,8 @@ Periodic systems also require ``kpoints``:
     :end-at: grid:
 
 sets the Brillouin-zone sampling, and with it the size of the supercell the screening
-calculations will run in — a :math:`2\times2\times2` grid means the :math:`N \pm 1`-electron calculations run in an 8-cell supercell.
+calculations will run in — a :math:`2\times2\times2` grid means the :math:`N \pm 1`-electron calculations run
+in an 8-cell supercell.
 Refining the sampling therefore costs a great deal more here than it would in a plain
 DFT calculation.
 
@@ -116,8 +112,11 @@ Finally, the ``wannier90`` sub-block says which Wannier functions we want:
     :end-before: dis_win_max
 
 Each inner list is one block, and each block gets its own Wannierization. Both blocks
-ask for four :math:`sp^3` hybrids on the bond-center site: the first block takes the
-four filled bonding combinations, the second the four empty antibonding ones.
+ask for the same four :math:`sp^3` hybrids on a silicon atom, pointing along its four
+bonds. What distinguishes them is the bands they are built from: the first block is
+restricted to the four filled bands, where those hybrids can only combine into bonding
+orbitals; the second excludes the filled bands and disentangles four from the empty
+states above, where the same hybrids pick out the antibonding partners.
 
 .. question:: Why is ``alpha_guess`` 0.077 here, when ozone used 0.6?
 
@@ -132,8 +131,8 @@ four filled bonding combinations, the second the four empty antibonding ones.
 ********************************
 
 A Koopmans calculation on a solid is only as good as its variational orbitals, and the
-Wannierization is the one step in this workflow that regularly needs adjusting. So run
-it on its own first — that is what ``task: wannierize`` in the file is for.
+Wannierization can be sensitive to the choice of projectors and windows. Let's run
+it on its own first, to check it (this is why the input file has ``task: wannierize``)
 
 .. code-block:: console
 
@@ -154,13 +153,15 @@ it on its own first — that is what ``task: wannierize`` in the file is for.
 
 The progress table shows a self-consistent ``pw.x`` calculation, then a
 non-self-consistent one that adds the empty bands, then one Wannierization per block —
-each of which is itself a ``wannier90.x`` preprocessing run, a ``pw2wannier90.x`` run
-that extracts the overlaps and projections, and the ``wannier90.x`` run that minimizes
-the spread. A further ``pw.x`` calculation runs off the self-consistent density to get
-the bands along ``path``; the last part of this section is what it is for.
+each of which involves...
 
-The results land in ``si/``, one directory per step, exactly as :doc:`the ozone tutorial
-<../../orbital_energies/ozone/automatically>` describes. The files worth opening are the
+1. a ``wannier90.x`` preprocessing run
+2. a ``pw2wannier90.x`` run that extracts the overlaps and projections,
+3. and the ``wannier90.x`` run that minimizes the spread.
+
+A further ``pw.x`` calculation computes the DFT bands along the specified ``path``.
+
+The results land in ``si/``, one directory per step. The files worth opening are the
 ``aiida.wout`` files under the ``wannierize_occ_1`` and ``wannierize_emp_1`` steps, which
 are Wannier90's own reports on each block. Each contains a table headed
 
@@ -195,23 +196,9 @@ the Wannier functions ended up.
     symmetry, so a run that gives four different spreads has converged to something that
     is not the symmetric minimum.
 
-.. question:: Increase ``grid`` to ``[4, 4, 4]`` and rerun. Do the Wannier functions get better or worse?
-
-    The reported spread *grows* — from 1.025 to 1.617 Å² for the filled block, and to
-    2.066 Å² on an :math:`8\times8\times8` grid. This is not the Wannier functions
-    getting worse. A Wannier function lives in the Born-von Karman supercell that the
-    k-point grid defines, and a :math:`2\times2\times2` grid gives it only eight cells to
-    live in — too few to hold its tails. The coarse grid does not localize the orbital
-    better; it truncates it, and reports a spread that is too small.
-
-    This is the sense in which the grid in this file is unconverged, and it is worth
-    knowing before you read the numbers at the end of this tutorial.
-
-``aiida.wout`` reports what Wannier90 did. Whether the result still describes the
-electronic structure ``pw.x`` computed is a separate question, and the band structure
-answers it. Because ``si.yaml`` gives a ``path``, each block's Wannier functions are
-interpolated along it, and the extra ``pw.x`` calculation supplies the same bands
-directly. Draw them on one set of axes with
+To more rigorously assess the quality of the Wannier functions, let's inspect how they
+interpolate the band structure. Good Wannier functions will give a faithful interpolation.
+The ``koopmans plot bandstructure`` command can be used to plot the band structures:
 
 .. code-block:: console
 
@@ -220,19 +207,34 @@ directly. Draw them on one set of axes with
         si/03-wannierize_emp_1/01-wannier90/03-wannier90 \
         si/04-wannierize_occ_1/01-wannier90/03-wannier90
 
-which writes ``bandstructure.png`` — or add ``--show`` to open a window instead. A
-``--style`` binds to the folder just before it, so this draws the ``pw.x`` bands as
-crosses (``x``) while keeping each series' own color, and leaves the two Wannier
-interpolations — one per block — as plain lines; crosses make it easy to see exactly
-where a line runs through them and where it departs.
+which writes ``bandstructure.png``. ``--style x`` draws the ``pw.x`` bands as crosses, and leaves the two Wannier
+interpolations — one per block — as plain lines. The lines should neatly traverse the crosses.
 
-Two things are worth reading off it. *Which* bands the interpolation is obliged to
-reproduce is what ``dis_froz_max`` sets: the empty block must span the states below it
-and is free above, so tracking ``pw.x`` inside the frozen window and departing from it
-higher up is the disentanglement doing exactly what it was told. *How closely* the
-interpolation follows those bands between the k-points of the grid is set by the grid: a
-Wannier interpolation is exact on the k-points it was built from, and
-:math:`2\times2\times2` gives it eight of them to carry the whole path.
+.. question:: Plot the bandstructure, What do you get?
+
+    .. image:: bandstructure.png
+        :align: center
+        :width: 80%
+
+    The Wannier interpolations (solid lines) follow the explicit evaluation (crosses) exactly at the k-points they
+    were built from,
+    but the interpolation is fairly inaccurate far away from those points! A :math:`2\times2\times2` grid is very
+    coarse, so this is not a surprise.
+
+.. question:: Increase ``grid`` to ``[4, 4, 4]`` and rerun. Do the Wannier functions get
+    better or worse? Check the spreads and the band interpolation.
+
+    The reported spread *grows* — from 1.025 to 1.617 Å² for the filled block, and to
+    2.066 Å² on an :math:`8\times8\times8` grid. This is not the Wannier functions
+    getting worse. A Wannier function lives in the Born-von Karman supercell that the
+    k-point grid defines, and a :math:`2\times2\times2` grid gives it only eight cells to
+    live in — too few to hold its tails. The Wannier functions remain degenerate and centered on the bonds.
+
+    The interpolation gets better. A Wannier interpolation is exact on the k-points it was
+    built from, so the :math:`2\times2\times2` is only exact at :math:`\Gamma`, :math:`X` and :math:`L`.
+    The :math:`4\times4\times4` grid includes the mid-points of the :math:`\Gamma`-:math:`X` and
+    :math:`\Gamma`-:math:`L` lines, so
+    the interpolation is exact there, too.
 
 .. question:: Read through ``koopmans plot bandstructure --help``, then polish the figure:
     give each series a name in the legend, and frame the energy window on the gap
@@ -268,9 +270,14 @@ and run it again.
 
 .. warning::
 
-    The Wannierization runs again as the first stage of it. You will not pay for it
-    twice: ``koopmans`` records every calculation in a database, and if it sees the
-    same input again it fetches the cached result.
+    We will use the :math:`2\times2\times2` grid for the rest of this tutorial, so the calculation runs quickly,
+    even though we know the Wannier functions are not converged.
+
+.. tip::
+
+    ``koopmans`` records every calculation in a database, and if it sees the
+    same input again it fetches the cached result, so the Wannierization you
+    just ran will not be repeated.
 
 -----------------------------------
  Initialization, and the supercell
@@ -278,47 +285,23 @@ and run it again.
 
 Ozone's initialization was three ``kcp.x`` calculations that converged the base
 functional's density. Silicon's is the Wannierization you just ran, followed by a stage
-called *fold to supercell*, whose ``wann2kcp.x`` and ``merge_evc.x`` calculations turn
-the k-dependent primitive-cell Wannier functions into equivalent quantities for a
+where we turn the :math:`k`-dependent primitive-cell Wannier functions into equivalent quantities for a
 :math:`\Gamma`-only supercell.
-
-.. question:: Why is a supercell needed at all?
-
-    Because of what comes next. A screening parameter is computed from the energy cost
-    of removing an electron from one variational orbital, and in the primitive cell there
-    is no such thing: the orbital has a periodic image in every cell of the crystal, so
-    emptying it empties every cell at once. That changes the charge density of the whole
-    crystal; it does not probe one orbital.
-
-    The way out is to make the cell big enough that one orbital can be emptied while the
-    rest of the crystal stays put. The supercell commensurate with the k-point grid —
-    eight primitive cells here — does exactly that, and sampling it at :math:`\Gamma`
-    alone reproduces the primitive cell sampled on the full grid. ``kcp.x``, which runs
-    every stage from here on, works only at :math:`\Gamma`, so this is the form it needs.
-
-    This is also the whole reason the :doc:`linear-response route
-    <../silicon_linear_response/index>` exists. It reaches the same screening parameters
-    from the response of the primitive cell to an infinitesimal change in occupancy, and
-    never builds a supercell.
 
 ------------------------------------
  Computing the screening parameters
 ------------------------------------
 
-The supercell holds 64 variational orbitals: eight Wannier functions per primitive cell,
-in eight cells, 32 filled and 32 empty. A constrained calculation for each would be
-absurd, and unnecessary — most of those orbitals are images of one another.
+The supercell contains 64 variational orbitals: eight Wannier functions per primitive cell,
+in eight cells, 32 filled and 32 empty. Computing a screening parameter for each would be
+unnecessary — most of those orbitals are symmetrically equivalent to one another.
 
-``koopmans`` recognizes this on its own. The default for a Wannier-initialized
-:math:`\Delta`\ SCF run groups orbitals by their self-Hartree energy, which is identical
-for orbitals related by a lattice translation or by the crystal's point group; only one
-representative of each group gets a constrained calculation, and every member of the
-group takes the resulting :math:`\alpha`. Silicon's 32 filled orbitals are one bond
-orbital seen 32 equivalent ways — four bonds in each of eight cells — and the 32 empty
-ones likewise, so of the 64 just **two** are screened. The keywords behind this are
-``group_orbitals_by`` and ``group_orbitals_tol``.
+``koopmans`` can recognize this on its own by grouping together orbitals according to
+a few metrics. The keywords behind this are ``group_orbitals_by`` and ``group_orbitals_tol``.
+In the provided input file we group the orbitals if their self-Hartree energy (the default)
+is within 0.1 eV of one another.
 
-From there the loop is ozone's: a trial KI calculation at the guessed
+From there the loop is the same as ever: a trial KI calculation at the guessed
 :math:`\alpha_i`, then a constrained :math:`N-1` calculation for the filled
 representative and an :math:`N+1` one for the empty representative, then the screening
 parameters that follow.
@@ -338,9 +321,8 @@ orbitals and ``file_alpharef_empty.txt`` for the empty ones.
 
     Two things are worth noticing. Both are far below the 0.66 to 0.79 that ozone gave: a
     covalent solid screens an added or removed charge far more effectively than an
-    isolated molecule, and the screening parameter measures exactly that. And filled and
-    empty orbitals come out a factor of three apart, even though they sit on the same
-    bonds — which is why one :math:`\alpha` for the whole system would not do.
+    isolated molecule. The filled and empty orbitals come out a factor of three apart,
+    so one :math:`\alpha` for the whole system would not do.
 
 The orbital energies are in the final KI calculation's ``outputs/aiida.cpo``, and the
 base-functional ones in the initialization output for comparison.
@@ -391,33 +373,110 @@ base-functional ones in the initialization output for comparison.
  From eigenvalues to a band structure
 **************************************
 
-Turning those supercell eigenvalues into a band structure means undoing the fold:
-assigning each supercell eigenvalue back to the primitive-cell :math:`\mathbf{k}` it came
-from, and interpolating between them onto a path through the Brillouin zone. This is the
-*unfold and interpolate* procedure of Ref. :cite:`DeGennaro2022`.
+Turning those supercell eigenvalues into a band structure means undoing the fold to a
+supercell. This requires us to assign each supercell eigenvalue back to the primitive-cell
+:math:`\mathbf{k}` it came from, and interpolating between them onto a path through the
+Brillouin zone. This is the *unfold and interpolate* procedure of Ref. :cite:`DeGennaro2022`.
 
-.. note::
+The _unfolding_ step involves assigning eigenstates to their corresponding :math:`\mathbf{k}` point.
+This procedure is exact: the supercell's :math:`\Gamma`-point eigenstates *are* the
+primitive cell's states on the :math:`2\times2\times2` grid, so each one can be assigned
+its :math:`\mathbf{k}` without approximation.
 
-    Unfolding is not yet available in this version of ``koopmans``. Until it is, a
-    Koopmans band structure comes from the :doc:`linear-response route
-    <../silicon_linear_response/index>`, which works in the primitive cell throughout and
-    so needs no unfolding — this is a practical argument for that route on top of the
-    cost argument above.
+The _interpolation_ procedure involves mixing in a higher-resolution DFT data into the
+Koopmans band structure. Written in the basis of Wannier functions, the KI Hamiltonian is the LDA Hamiltonian plus
+a correction:
 
-*******************
- Choosing a route
-*******************
+.. math::
 
-Both routes compute the same screening parameters. They differ in what they cost and in
-what they can reach.
+    H^{\mathrm{KI}}_{\mathbf{R}} = H^{\mathrm{LDA}}_{\mathbf{R}} + \Delta H_{\mathbf{R}}
 
-The :math:`\Delta`\ SCF route in this tutorial computes each screening parameter from an
-actual constrained calculation, which makes no assumption of linearity. The price is the
-supercell: refine the k-point grid and the supercell every screening calculation runs in
-grows with it. It is the route to reach for on molecules and on small cells.
+The Koopmans correction is short-ranged and interpolates well even from a coarse grid. The LDA
+part does not — the first figure in this tutorial showed how poorly a
+:math:`2\times2\times2` Wannier interpolation traces the LDA bands. One line in the
+``kpoints`` block of the input file addresses this:
 
-Linear response gets the same parameters from the primitive cell's response to an
-infinitesimal change in occupancy. The cost does not grow with the k-point grid in the
-same way, the primitive cell is never left, and the band structure follows directly.
-:doc:`The next tutorial <../silicon_linear_response/index>` does exactly that for this
-same silicon input.
+.. literalinclude:: si.yaml
+    :language: yaml
+    :start-at: kpoints:
+    :end-at: smooth_interpolation_factor
+
+``smooth_interpolation_factor: 4`` says to replace :math:`H^{\mathrm{LDA}}_{\mathbf{R}}` with the
+same quantity computed on a grid four times denser in each direction, keeping
+:math:`\Delta H_{\mathbf{R}}` from the supercell calculation. The denser grid requires a
+non-self-consistent ``pw.x`` calculation and a Wannierization per block on an
+:math:`8\times8\times8` grid, with the same projections and windows as before. This is not
+expensive, as these are DFT calculations in the primitive cell, far cheaper than the
+charged defect supercell calculations it complements.
+
+These steps appear in the progress table either side of the final KI calculation.
+``Smooth wannierization`` runs the dense-grid Wannierization, and ``Band interpolation``
+extracts the KI Hamiltonian of each block from the final KI calculation, interpolates it
+along ``path``, and joins the two blocks into one band structure. The result lands in
+``si-ki/outputs/band_structure`` as ``kpoints.npy`` and ``bands.npy``.
+
+The same command as before draws it, here on top of the LDA bands from the first part of
+this tutorial:
+
+.. code-block:: console
+
+    $ koopmans plot bandstructure \
+        si/02-bands --label LDA --style -- \
+        si-ki --label "KI@LDA" \
+        --ylim -15 10 \
+        -o ki_bandstructure.png
+
+Handed a whole run rather than a single calculation directory, the command finds the band
+structure that run produced on its own. Both sets of bands are on the same energy scale,
+so no shift is needed to compare them: the zero is the LDA valence-band maximum.
+
+.. question:: What does the KI band structure look like, and what is the band gap?
+
+    .. image:: ki_bandstructure.png
+        :align: center
+        :width: 80%
+
+    The valence-band maximum sits at :math:`\Gamma` and the conduction-band minimum along
+    :math:`\Gamma`-:math:`X`, about 80% of the way to :math:`X`: silicon's indirect gap,
+    recovered from eight eigenvalues per supercell :math:`k`-point.
+
+    To put a number on it, add ``--data ki_bandstructure.json`` to the plot command, which
+    writes the plotted series as JSON, and read off the band edges:
+
+    .. code-block:: python
+
+        import json
+
+        import numpy as np
+
+        for series in json.load(open("ki_bandstructure.json"))["series"]:
+            energies = np.array(series["energies"])
+            filled, empty = energies[:, :4], energies[:, 4:]
+            print(f"{series['label']} band gap = {empty.min() - filled.max():.2f} eV")
+
+    This gives 1.18 eV for KI, against 0.29 eV for the LDA bands along the same path
+    (the dashed lines). Experiment gives 1.17 eV, and Ref. :cite:`Nguyen2018`
+    reports 1.22 eV for KI with converged settings. Our :math:`2\times2\times2` grid is a
+    long way from converged, so some of this agreement is luck.
+
+.. question:: The final KI calculation reported a gap of 1.2792 eV. Where is that number in the band structure?
+
+    At :math:`X`. The conduction band there sits 1.2792 eV above the valence-band
+    maximum at :math:`\Gamma`, matching the supercell's HOMO-LUMO gap to the last digit,
+    as it must: the supercell's :math:`\Gamma`-point states are the primitive cell's
+    states at :math:`\Gamma`, :math:`X` and :math:`L`, and among those the lowest empty
+    one is at :math:`X`. The true minimum lies between the grid points, and only the
+    interpolation can find it.
+
+*********
+ Up next
+*********
+
+Two settings govern the accuracy of this calculation, and both were left coarse here.
+The plane-wave cutoff is moderately cheap to converge, but the :math:`k`-point grid is not: it
+defines the size of the supercell used when computing the screening parameters, so
+increasing the grid massively increases the cost of every constrained calculation.
+
+The :doc:`next tutorial <../silicon_linear_response/index>` computes the screening
+parameters by linear response instead, in the primitive cell, which avoids this expensive
+supercell construction.

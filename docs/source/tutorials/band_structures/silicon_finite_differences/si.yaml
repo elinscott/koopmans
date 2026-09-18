@@ -9,6 +9,7 @@ workflow:
   alpha_guess: 0.077              # a solid screens far more than a molecule
   alpha_numsteps: 1               # one pass of the screening-parameter loop
   mp_correction: false            # no image-charge correction on the charged supercells
+  group_orbitals_tol: 0.1         # self-Hartree energies within 0.1 eV share a screening parameter
   pseudo_library: PseudoDojo/0.4/LDA/SR/standard/upf
 
 atoms:
@@ -26,12 +27,13 @@ atoms:
 kpoints:
   grid: [2, 2, 2]                 # the Brillouin-zone sampling
   path: LGXKG                     # the path a band structure is plotted along
+  smooth_interpolation_factor: 4  # swap in the DFT Hamiltonian from a 4x denser mesh
 
 calculator_parameters:
   ecutwfc: 60.0                   # wavefunction cutoff (Ry)
   nbnd: 20                        # 4 filled bands, and empties to disentangle among
   wannier90:
-    projections:                  # one block per manifold: bonding, then antibonding
+    projections:                  # one block per manifold: filled, then empty
       - [{fractional_site: [0.25, 0.25, 0.25], ang_mtm: sp3}]
       - [{fractional_site: [0.25, 0.25, 0.25], ang_mtm: sp3}]
     dis_win_max: 16.9             # the states the empty block may mix
