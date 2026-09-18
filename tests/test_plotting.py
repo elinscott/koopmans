@@ -17,7 +17,6 @@ import pytest
 import yaml
 from aiida import orm
 from aiida.common.links import LinkType
-from aiida_koopmans.workgraphs.ui import manifolds as _manifolds
 
 from koopmans.aiida.dumping import NODE_METADATA_FILE
 from koopmans.plotting import (
@@ -43,7 +42,7 @@ from koopmans.plotting import (
     resolve_spectrum_series,
     write_series_json,
 )
-from koopmans.plotting.resolve import SUGGESTION_LIMIT
+from koopmans.plotting.resolve import BAND_PRODUCERS, SUGGESTION_LIMIT
 from tests.fixtures import attach, make_process
 
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
@@ -56,18 +55,12 @@ W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
 MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands"
 
 
-def _process_type_of(task: Any) -> str:
-    """Return the ``process_type`` AiiDA stores for a calcfunction task.
-
-    Read off the function rather than retyped, so moving the function to
-    another module fails the resolver's own tests instead of passing them
-    against a name nothing writes any more.
-    """
-    process_class = task._callable.process_class
-    return f"{process_class.__module__}.{process_class.__name__}"
-
-
-BUILD_BAND_STRUCTURE = _process_type_of(_manifolds.build_band_structure)
+#: The name AiiDA stores for the step that attaches interpolated
+#: eigenvalues to their k-path. Spelled out rather than imported: importing
+#: aiida-koopmans at collection time loads the AiiDA configuration, which a
+#: fresh CI checkout has none of yet. ``TestProcessTypeNames`` reads the
+#: real name off the function and fails if this drifts from it.
+BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.manifolds.build_band_structure"
 
 #: The module the same calcfunction lived in before it was shared between
 #: the two Koopmans routes. Nodes written then still carry this name.
@@ -578,6 +571,32 @@ class TestPathDistances:
 # ----------------------------------------------------------------------
 # The resolver
 # ----------------------------------------------------------------------
+
+
+class TestProcessTypeNames:
+    """The names this module spells out are the ones AiiDA actually stores."""
+
+    def test_the_band_structure_step_is_registered_under_the_name_it_writes(self) -> None:
+        """Moving the calcfunction must fail here, not go unnoticed in a figure.
+
+        The resolver matches a stored ``process_type`` string, and nothing
+        else ties that string to the function it names: a move renames
+        every node written afterwards and leaves the resolver matching a
+        name nothing writes any more.
+        """
+        from aiida_koopmans.workgraphs.ui.manifolds import build_band_structure
+
+        process_class = build_band_structure._callable.process_class
+        stored = f"{process_class.__module__}.{process_class.__name__}"
+
+        assert stored == BUILD_BAND_STRUCTURE
+
+    def test_both_names_of_that_step_are_registered(self) -> None:
+        """Runs from either side of the move resolve, so neither may be dropped."""
+        registered = {producer.process_type for producer in BAND_PRODUCERS}
+
+        assert BUILD_BAND_STRUCTURE in registered
+        assert BUILD_BAND_STRUCTURE_BEFORE_THE_MOVE in registered
 
 
 class TestResolver:
