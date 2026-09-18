@@ -100,10 +100,13 @@ a ground-state total energy to converge:
     :width: 70%
 
 The :math:`4\times4\times4` grid this tutorial ran gives a value nearly twice the
-:math:`16\times16\times16` one. The mesh that converges :math:`\varepsilon_\infty`
-is unrelated to any other :math:`k`-point grid in the workflow — a Koopmans
-calculation converged in every other respect can still carry a badly wrong
-Makov-Payne correction if this grid was never checked on its own.
+:math:`16\times16\times16` one, and even the last doubling shown here is not fully flat:
+:math:`12\times12\times12` to :math:`16\times16\times16` still moves the answer by 0.15,
+about 1%. 13.30 is the value this tutorial uses from here on, not a converged one — a
+finer grid would move it further, by less. The mesh that converges
+:math:`\varepsilon_\infty` is unrelated to any other :math:`k`-point grid in the
+workflow — a Koopmans calculation converged in every other respect can still carry a
+badly wrong Makov-Payne correction if this grid was never checked on its own.
 
 .. question:: Change ``kpoints.grid`` to ``[8, 8, 8]`` and rerun. How much closer does
     the answer get?
@@ -117,8 +120,8 @@ Makov-Payne correction if this grid was never checked on its own.
  Feeding it in
 ****************
 
-Set the converged value as ``eps_inf`` in the ``workflow`` block of a ``singlepoint``
-input:
+Set the value you settled on as ``eps_inf`` in the ``workflow`` block of a
+``singlepoint`` input:
 
 .. code-block:: yaml
 
@@ -130,6 +133,17 @@ For a ``screening_method: dfpt`` run, ``eps_inf: auto`` is also accepted: the sa
 scf-then-``ph.x`` calculation this tutorial just ran becomes the workflow's own first
 step, and its result is used in place of a number you supply. ``screening_method: dscf``
 does not yet accept ``auto`` — give it a number, computed as above.
+
+.. warning::
+
+    ``auto`` runs that dielectric chain on the *same* ``kpoints`` mesh as the rest of
+    the singlepoint calculation, not on a grid converged for :math:`\varepsilon_\infty`
+    on its own. This is exactly the trap the table above demonstrates: a mesh dense
+    enough for Wannierization and kcw.x is very unlikely to be dense enough for
+    :math:`\varepsilon_\infty` — at :math:`4\times4\times4` it is out by a factor of
+    two. Use ``auto`` only once you know the singlepoint's own grid is also dense
+    enough for the dielectric constant; otherwise converge :math:`\varepsilon_\infty`
+    separately, as this tutorial did, and give ``eps_inf`` the number.
 
 .. note::
 
