@@ -94,6 +94,51 @@ def cli(pdb: bool, enable_logging: bool) -> None:
         )
 
 
+def _dump_results(process: orm.ProcessNode, dump_path: Path, input_name: str | None) -> None:
+    """Write ``process``'s results tree to ``dump_path``, reporting a trained model if any.
+
+    ``input_name`` is the input file this dump sits beside, when one is
+    known; a dump with no known input file (a bare ``--uuid``/``--pk``
+    fetch) skips the ``ml: {model_file: ...}`` hint, since it would name
+    no file to write that keyword beside.
+    """
+    dump_workgraph(process, output_path=dump_path, overwrite=True)
+    if input_name is not None and trained_model_output(process) is not None:
+        # `ml: model_file` reads a relative path against the input file's
+        # own directory, so the snippet drops the leading directories the
+        # written path carries when the run was started from elsewhere.
+        click.echo(
+            f"Trained model written to {dump_path / MODEL_FILENAME} — reuse it from "
+            f"an input file beside {input_name} with "
+            f"`ml: {{model_file: {Path(dump_path.name) / MODEL_FILENAME}}}`."
+        )
+
+
+def _dump_target(
+    node: orm.ProcessNode, target: str | None, uuid_: str | None, pk_: int | None
+) -> Path:
+    """Write ``node``'s results tree where ``koopmans run`` would have written it.
+
+    Reads the sibling input file's name off the anchor file ``target``
+    resolves to, the same way ``koopmans run`` derives its own dump path.
+    A target given directly by ``--uuid``/``--pk``, naming no anchor file
+    to read, falls back to a bare ``./<process label or pk>`` so the dump
+    never lands outside the current directory.
+    """
+    from koopmans.aiida.anchor import resolve_dump_target
+
+    resolved = resolve_dump_target(target, uuid=uuid_, pk=pk_)
+    if resolved is not None:
+        dump_path, input_name = resolved
+    else:
+        name = node.process_label or ""
+        if not name or "/" in name or name in (".", ".."):
+            name = str(node.pk)
+        dump_path, input_name = Path.cwd() / name, None
+    _dump_results(node, dump_path, input_name)
+    return dump_path
+
+
 def _anchor_run_submission(input_path: Path, node: orm.ProcessNode) -> None:
     """Record ``node`` in ``input_path``'s anchor file, warning rather than aborting on failure.
 
@@ -162,16 +207,7 @@ def run(input_file: str) -> None:
 
     if wg.process is not None:
         dump_path = input_path.parent / input_path.stem
-        dump_workgraph(wg.process, output_path=dump_path, overwrite=True)
-        if trained_model_output(wg.process) is not None:
-            # `ml: model_file` reads a relative path against the input file's
-            # own directory, so the snippet drops the leading directories the
-            # written path carries when the run was started from elsewhere.
-            click.echo(
-                f"Trained model written to {dump_path / MODEL_FILENAME} — reuse it from "
-                f"an input file beside {input_path.name} with "
-                f"`ml: {{model_file: {Path(input_path.stem) / MODEL_FILENAME}}}`."
-            )
+        _dump_results(wg.process, dump_path, input_name=input_path.name)
 
 
 @cli.command()
@@ -317,8 +353,11 @@ def attach(target: str | None, uuid_: str | None, pk_: int | None) -> None:
     TARGET is resolved exactly as for `koopmans status`. Displays the
     same live-updating table `koopmans run` shows, until the calculation
     terminates; a calculation that has already terminated is shown once,
-    as `koopmans status` would. Exits nonzero if the calculation's root
-    process failed.
+    as `koopmans status` would. Once the calculation has terminated —
+    whether it was already finished when this command was called, or it
+    finished while attached — writes the same results folder tree
+    `koopmans run` writes, the same way `koopmans fetch` would. Exits
+    nonzero if the calculation's root process failed.
     """
     from koopmans.aiida.progress import render_process_once, watch_process
 
@@ -330,7 +369,53 @@ def attach(target: str | None, uuid_: str | None, pk_: int | None) -> None:
         else:
             node = watch_process(node)
 
+    _dump_target(node, target, uuid_, pk_)
+
     if node.is_terminated and not node.is_finished_ok:
+        raise SystemExit(1)
+
+
+@cli.command()
+@target_argument
+@uuid_option
+@pk_option
+def fetch(target: str | None, uuid_: str | None, pk_: int | None) -> None:
+    """Write the results folder tree for an already-submitted calculation.
+
+    TARGET is resolved exactly as for `koopmans status`. Writes the same
+    folder tree `koopmans run` would have written: next to the input
+    file named by the resolved run file, or `./<process label or pk>` in
+    the current directory for a bare `--uuid`/`--pk` naming no run file.
+    A tree already there is overwritten.
+
+    \b
+        koopmans submit si.yaml
+        koopmans fetch si.yaml
+
+    A calculation still running is written as far as it has got, with a
+    note that it has not finished; a calculation whose root process
+    failed is written the same way and named `koopmans status` would
+    name it, and this command exits nonzero, as `koopmans status` does.
+    """
+    from koopmans.aiida.progress import render_process_once
+
+    node = _load_target_process(target, uuid_, pk_)
+
+    if not node.is_finished_ok:
+        with suppress_aiida_logging():
+            render_process_once(node)
+
+    dump_path = _dump_target(node, target, uuid_, pk_)
+
+    if not node.is_terminated:
+        click.echo(
+            f"\n{dump_path} holds only the steps finished so far — the run has not "
+            "finished yet; fetch again once it has for the rest."
+        )
+    elif node.is_finished_ok:
+        click.echo(f"Wrote {dump_path}")
+    else:
+        click.echo(f"\nWrote {dump_path}")
         raise SystemExit(1)
 
 

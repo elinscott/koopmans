@@ -25,6 +25,7 @@ from koopmans.aiida.anchor import (
     newest_anchor_entry,
     read_anchor_entries,
     record_submission,
+    resolve_dump_target,
     resolve_target,
 )
 from koopmans.aiida.setup.profile import PROFILE_NAME
@@ -285,6 +286,50 @@ class TestResolveTarget:
         resolved = resolve_target(str(subdir / "si.yaml"), uuid=None, pk=None, cwd=tmp_path)
 
         assert resolved == ResolvedTarget(uuid="uuid-1", pk=1)
+
+
+class TestResolveDumpTarget:
+    """Turning a fetch/attach target into the path `koopmans run` would have dumped to."""
+
+    def test_uuid_has_no_dump_target(self, tmp_path: Path) -> None:
+        """--uuid names no anchor file, so there is no sibling input file to sit beside."""
+        assert resolve_dump_target("si.yaml", uuid="direct-uuid", pk=None, cwd=tmp_path) is None
+
+    def test_pk_has_no_dump_target(self, tmp_path: Path) -> None:
+        """--pk names no anchor file either."""
+        assert resolve_dump_target(None, uuid=None, pk=7, cwd=tmp_path) is None
+
+    def test_a_run_file_target_dumps_beside_its_recorded_input(self, tmp_path: Path) -> None:
+        """The dump path is the input file's stem, next to the anchor file."""
+        anchor = tmp_path / "si.run.yaml"
+        append_anchor_entry(anchor, _entry(uuid="uuid-1", pk=1, input_name="si.yaml"))
+
+        resolved = resolve_dump_target("si.run.yaml", uuid=None, pk=None, cwd=tmp_path)
+
+        assert resolved == (tmp_path / "si", "si.yaml")
+
+    def test_an_input_file_target_reads_its_sibling_anchor(self, tmp_path: Path) -> None:
+        """Naming the input file resolves through its `.run.yaml` sibling."""
+        append_anchor_entry(tmp_path / "si.run.yaml", _entry(uuid="uuid-1", pk=1))
+
+        resolved = resolve_dump_target("si.yaml", uuid=None, pk=None, cwd=tmp_path)
+
+        assert resolved == (tmp_path / "si", "si.yaml")
+
+    def test_a_nested_input_dumps_beside_it_not_in_cwd(self, tmp_path: Path) -> None:
+        """A run file in its own directory dumps there, not into `cwd`."""
+        subdir = tmp_path / "runs"
+        subdir.mkdir()
+        append_anchor_entry(subdir / "si.run.yaml", _entry(uuid="uuid-1", pk=1))
+
+        resolved = resolve_dump_target(str(subdir / "si.yaml"), uuid=None, pk=None, cwd=tmp_path)
+
+        assert resolved == (subdir / "si", "si.yaml")
+
+    def test_no_target_and_no_anchor_file_is_an_error(self, tmp_path: Path) -> None:
+        """Raises exactly as `resolve_target` does on the same input."""
+        with pytest.raises(ValueError, match=r"No \*\.run\.yaml file found"):
+            resolve_dump_target(None, uuid=None, pk=None, cwd=tmp_path)
 
 
 class TestConcurrentAppends:

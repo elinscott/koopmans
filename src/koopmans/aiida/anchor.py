@@ -38,6 +38,7 @@ __all__ = [
     "newest_anchor_entry",
     "read_anchor_entries",
     "record_submission",
+    "resolve_dump_target",
     "resolve_target",
 ]
 
@@ -216,32 +217,17 @@ def newest_anchor_entry(anchor_path: Path) -> AnchorEntry:
     return entries[-1]
 
 
-def resolve_target(
-    target: str | None,
-    *,
-    uuid: str | None,
-    pk: int | None,
-    cwd: Path | None = None,
-) -> ResolvedTarget:
-    """Resolve a ``koopmans status``/``koopmans attach`` target to a process identity.
+def _resolve_anchor_path(target: str | None, *, cwd: Path | None = None) -> Path:
+    """Return the anchor file a status/attach/fetch ``target`` refers to.
 
-    ``--uuid``/``--pk`` name a process directly and skip anchor files
-    entirely. Otherwise ``target`` is read as an anchor file
-    (``foo.run.yaml``) or an input file whose sibling anchor file
-    (``foo.yaml`` -> ``foo.run.yaml``) is read instead; with no target,
-    the single ``*.run.yaml`` in ``cwd`` is used. Every case but a direct
-    ``--uuid``/``--pk`` resolves to the anchor's newest entry.
+    ``target`` is read as an anchor file (``foo.run.yaml``) or an input
+    file whose sibling anchor file (``foo.yaml`` -> ``foo.run.yaml``) is
+    read instead; with no target, the single ``*.run.yaml`` in ``cwd`` is
+    used.
 
-    Raises ``ValueError``, naming the ambiguity or the missing/malformed
-    file, for anything the caller should turn into a user-facing error.
+    Raises ``ValueError``, naming the ambiguity or the missing file, for
+    anything the caller should turn into a user-facing error.
     """
-    if uuid is not None and pk is not None:
-        raise ValueError("Pass only one of --uuid or --pk, not both.")
-    if uuid is not None:
-        return ResolvedTarget(uuid=uuid, pk=None)
-    if pk is not None:
-        return ResolvedTarget(uuid=None, pk=pk)
-
     cwd = Path.cwd() if cwd is None else cwd
 
     if target is None:
@@ -257,18 +243,70 @@ def resolve_target(
                 f"Several run files found ({names}); pass one explicitly, e.g. "
                 f"`koopmans status {anchors[0].name}`."
             )
-        anchor_path = anchors[0]
-    else:
-        target_path = Path(target)
-        if not target_path.is_absolute():
-            target_path = cwd / target_path
-        anchor_path = (
-            target_path
-            if target_path.name.endswith(".run.yaml")
-            else anchor_path_for_input(target_path)
-        )
-        if not anchor_path.exists():
-            raise ValueError(f"No run file found at {anchor_path}.")
+        return anchors[0]
 
+    target_path = Path(target)
+    if not target_path.is_absolute():
+        target_path = cwd / target_path
+    anchor_path = (
+        target_path
+        if target_path.name.endswith(".run.yaml")
+        else anchor_path_for_input(target_path)
+    )
+    if not anchor_path.exists():
+        raise ValueError(f"No run file found at {anchor_path}.")
+    return anchor_path
+
+
+def resolve_target(
+    target: str | None,
+    *,
+    uuid: str | None,
+    pk: int | None,
+    cwd: Path | None = None,
+) -> ResolvedTarget:
+    """Resolve a ``koopmans status``/``attach``/``fetch`` target to a process identity.
+
+    ``--uuid``/``--pk`` name a process directly and skip anchor files
+    entirely. Otherwise ``target`` is resolved to an anchor file by
+    :func:`_resolve_anchor_path`. Every case but a direct ``--uuid``/
+    ``--pk`` resolves to the anchor's newest entry.
+
+    Raises ``ValueError``, naming the ambiguity or the missing/malformed
+    file, for anything the caller should turn into a user-facing error.
+    """
+    if uuid is not None and pk is not None:
+        raise ValueError("Pass only one of --uuid or --pk, not both.")
+    if uuid is not None:
+        return ResolvedTarget(uuid=uuid, pk=None)
+    if pk is not None:
+        return ResolvedTarget(uuid=None, pk=pk)
+
+    anchor_path = _resolve_anchor_path(target, cwd=cwd)
     entry = newest_anchor_entry(anchor_path)
     return ResolvedTarget(uuid=entry.uuid, pk=entry.pk)
+
+
+def resolve_dump_target(
+    target: str | None,
+    *,
+    uuid: str | None,
+    pk: int | None,
+    cwd: Path | None = None,
+) -> tuple[Path, str] | None:
+    """Return where ``koopmans run`` would dump this target's results, and its input file's name.
+
+    Reads the same anchor file :func:`resolve_target` would, and its
+    newest entry's recorded input file name, to reproduce ``koopmans
+    run``'s own dump path: next to that input file, in a directory named
+    after its stem. ``None`` for a target named directly by ``--uuid``/
+    ``--pk``: there is no anchor file to read a sibling input file's name
+    from, so the caller picks its own destination.
+
+    Raises ``ValueError`` exactly as :func:`resolve_target` does.
+    """
+    if uuid is not None or pk is not None:
+        return None
+    anchor_path = _resolve_anchor_path(target, cwd=cwd)
+    entry = newest_anchor_entry(anchor_path)
+    return anchor_path.parent / Path(entry.input).stem, entry.input
