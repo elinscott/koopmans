@@ -995,3 +995,46 @@ class TestPerStepKpointMeshRejected:
 
         with pytest.raises(NotImplementedError, match="only supports DSCF screening"):
             build_trajectory_workgraph(koopmans_input)
+
+
+class TestTrajectorySpinRegime:
+    """The trajectory route hands each snapshot the regime the input states.
+
+    Every snapshot's DSCF reaches pw.x through the same Wannier
+    initialisation as the singlepoint route, so the regime has to arrive
+    per snapshot or each one's ground state runs unpolarized.
+    """
+
+    @pytest.mark.parametrize("spin, expected", [("collinear", True), ("none", False)], ids=str)
+    def test_each_snapshot_dscf_takes_the_regime(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        trajectory_codes: dict[str, Any],
+        installed_wannier_codes: dict[str, Any],
+        installed_fold_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+        spin: str,
+        expected: bool,
+    ) -> None:
+        """Both cases together show the flag is read, not stamped."""
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        o_sp3 = [{"site": "O", "ang_mtm": "sp3"}]
+        h_s = [{"site": "H", "ang_mtm": "s"}]
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _wannier_trajectory_input_dict(str(xyz))
+        d["workflow"]["spin"] = spin
+        if spin == "collinear":
+            d["calculator_parameters"]["tot_magnetization"] = 0
+            d["calculator_parameters"]["wannier90"] = {
+                "up": {"projections": [o_sp3, h_s], "dis_froz_max": 1.0},
+                "down": {"projections": [o_sp3, h_s], "dis_froz_max": 1.0},
+            }
+
+        workgraph = build_trajectory_workgraph(KoopmansInput.model_validate(d))
+
+        for snapshot in ("dscf_snapshot_1", "dscf_snapshot_2"):
+            # A graph input is a proxy, for which ``is`` against a bool is false.
+            assert workgraph.tasks[snapshot].inputs["spin_polarized"].value == expected
