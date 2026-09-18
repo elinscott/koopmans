@@ -142,11 +142,10 @@ it reads
          NSCF                                                  pw.x            finished
        Wannierization                                                          finished
          Band structure                                        pw.x            finished
-         Atomic projections                                    projwfc.x       finished
-         Wannierization (empty block 1)                                        finished
-           wannier90_pp                                        wannier90.x     finished
+         Wannierization (empty block)                                          finished
+           Preprocessing                                       wannier90.x     finished
            Overlaps                                            pw2wannier90.x  finished
-           wannier90                                           wannier90.x     finished
+           Minimization                                        wannier90.x     finished
          Wannierization (occupied block 1)                                     finished
            ...
          Wannierization (occupied block 2)                                     finished
@@ -155,6 +154,7 @@ it reads
            ...
          Wannierization (occupied block 4)                                     finished
            ...
+         Atomic projections                                    projwfc.x       finished
        DFPT screening                                                          finished
          Wannier gauge                                         kcw.x           finished
          Koopmans Hamiltonian                                  kcw.x           finished
@@ -212,17 +212,19 @@ mirror the outline above:
     │   ├── 01-scf
     │   └── 02-nscf
     ├── 02-wannierize
-    │   ├── 01-wannierize_emp
+    │   ├── 01-bands
+    │   ├── 02-wannierize_emp
     │   │   ├── 01-wannier90
     │   │   │   ├── 01-wannier90_pp
     │   │   │   ├── 02-pw2wannier90
     │   │   │   └── 03-wannier90
     │   │   └── 02-extract_wannier_output_files
-    │   ├── 02-wannierize_occ_1
+    │   ├── 03-wannierize_occ_1
     │   │   └── ...
     │   ├── ...
-    │   └── 05-wannierize_occ_4
-    │       └── ...
+    │   ├── 06-wannierize_occ_4
+    │   │   └── ...
+    │   └── 07-projwfc
     ├── 03-dfpt
     │   ├── 01-prepare_kcw_wannier_files
     │   ├── 02-wann2kc
@@ -261,12 +263,12 @@ the band path.
         KC interpolated eigenvalues at k=      0.0000      0.0000      0.0000
 
         -122.5628  -122.4515   -75.4591   -75.4485   -75.3611   -75.3509   -75.3337   -75.3291
-         -11.8377   -11.0732    -0.4194    -0.4115    -0.3589     0.0332     0.0518     0.2166
-           0.2211     0.4949     1.0259     1.1838     2.1654     6.3616     6.4114     7.0942
-           7.1302     7.2299    10.7444    14.8412
+         -11.8377   -11.0732    -0.4194    -0.4113    -0.3589     0.0331     0.0524     0.2166
+           0.2214     0.4947     1.0262     1.1825     2.1655     6.3615     6.4114     7.0942
+           7.1301     7.2303    10.7603    14.8848
 
     The twenty-sixth of these is the valence band edge and the twenty-seventh the
-    conduction band edge, so the KI gap is 10.7444 − 7.2299 = 3.51 eV. Neither edge is
+    conduction band edge, so the KI gap is 10.7603 − 7.2303 = 3.53 eV. Neither edge is
     higher anywhere else on the path, so the gap really is direct. For the LDA gap, look
     in the ground-state output ``zno/01-scf_nscf/01-scf/outputs/aiida.out``:
 
@@ -281,19 +283,24 @@ electronvolt of the measured 3.4 eV. A converged calculation gives 3.6 eV
 :cite:`Colonna2022`; the difference is the coarse cutoff and mesh this tutorial uses to
 stay quick.
 
-Nothing so far has drawn a picture. ``koopmans plot`` does, given the directory the run
-wrote:
+Nothing so far has drawn a picture. ``koopmans plot`` does. The Wannierization stage
+also ran a plain LDA band structure along the same path, to check the projections
+against — at ``zno/02-wannierize/01-bands`` — so this one run already has both the KI
+bands and the LDA ones to put on the same axes:
 
 .. code-block:: console
 
-    $ koopmans plot bandstructure zno/ -o zno_bandstructure.svg
+    $ koopmans plot bandstructure \
+          zno/03-dfpt/03-ham --label "KI@LDA" --gap \
+          zno/02-wannierize/01-bands --label LDA --style k-- \
+          -o zno_bandstructure.svg
 
 .. figure:: zno_bandstructure.svg
     :width: 600
     :align: center
 
-    The KI@LDA band structure of ZnO along the ``ALMGAHK`` path, with the valence band
-    edge at zero.
+    The KI@LDA band structure of ZnO along the ``ALMGAHK`` path (solid), against the
+    underlying LDA calculation (dashed), with the KI valence band edge at zero.
 
 The five blocks of projections are visible in it. Reading the figure from the bottom:
 two bands at −130 eV, six at −83 eV, two around −19 eV, then the sixteen filling the
@@ -303,13 +310,9 @@ separations are the whole reason the manifold was split, and the :ref:`last sect
 
 .. note::
 
-    Two things this figure is not. It is not a comparison against LDA: for that, pass
-    ``koopmans plot bandstructure`` both run directories at once and it puts them on one
-    set of axes with a shared energy zero — but the LDA bands along this path need a
-    ``dft_bands`` run, which the next section sets up anyway. And it is not zoomed to the
-    gap: the range shown includes the semicore bands on purpose, to show all five
-    blocks. ``--ylim`` would narrow the axis to the gap, but the number itself still
-    comes from the eigenvalues above, not by eye off a picture.
+    This is not zoomed to the gap: the range shown includes the semicore bands on
+    purpose, to show all five blocks. ``--ylim`` would narrow the axis to the gap, but
+    the number itself still comes from the eigenvalues above, not by eye off a picture.
 
 .. warning::
 
@@ -397,7 +400,7 @@ them.
 
         $ grep 'highest occupied' zno/01-scf_nscf/01-scf/outputs/aiida.out
 
-    so the 14.5 and 17.0 in the input file sit 5.2 and 7.7 eV above the valence band
+    so the 14.5 and 17.0 in the input file sit 5.21 and 7.71 eV above the valence band
     edge.
 
 .. note::
@@ -417,19 +420,19 @@ as the final spread of every Wannier function, in Å², under ``Final State``:
 
 .. code-block:: console
 
-    $ grep -A3 'Final State' zno/02-wannierize/01-wannierize_emp/01-wannier90/03-wannier90/outputs/aiida.wout
+    $ grep -A3 'Final State' zno/02-wannierize/02-wannierize_emp/01-wannier90/03-wannier90/outputs/aiida.wout
      Final State
-      WF centre and spread    1  (  0.017493,  1.883405,  2.792129 )     8.61129959
-      WF centre and spread    2  (  1.669861,  0.967310, -0.056234 )     7.65083379
-      Sum of centres and spreads (  1.687355,  2.850714,  2.735896 )    16.26213337
+      WF centre and spread    1  (  0.625403,  1.085610,  2.415730 )     8.89591056
+      WF centre and spread    2  (  0.985415,  1.900265,  0.005723 )     8.23402065
+      Sum of centres and spreads (  1.610818,  2.985874,  2.421453 )    17.12993121
 
 .. question:: Why are the two empty Wannier functions so much less localized than the filled ones?
 
     Partly the orbitals themselves: Zn 4s conduction states are diffuse where semicore
     states are not. Partly the disentanglement, which has twenty-six bands to choose
     from and only the two windows constraining the choice. In this run the four filled
-    blocks come out at 0.14, 0.19, 0.58, and between 0.39 and 1.06 Å² per function,
-    against 8.61 and 7.65 Å² for the two empty ones.
+    blocks come out at 0.14, 0.19, 0.58, and between 0.39 and 0.42 Å² per function,
+    against 8.90 and 8.23 Å² for the two empty ones.
 
     Those two numbers are the ones to watch. If they come out much worse, suspect the
     windows: if ``dis_froz_max`` is too low the two Wannier functions are not required to
