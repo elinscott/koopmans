@@ -174,12 +174,12 @@ the self-Hartree energy, once that energy has been shifted by ``x_mean`` and sca
 .. question:: What does the filled-orbital submodel actually predict?
 
     Almost the same number whatever it is given. Its coefficient is small enough that
-    moving the self-Hartree energy across the whole range the training set covers changes
-    the predicted screening parameter in the fourth decimal place, so in practice the
-    submodel returns its intercept, 0.546 — the mean of the filled orbitals' screening
-    parameters in the training set. The empty-orbital submodel, whose coefficient is
-    forty-five times larger, does vary with what it is given. Keep both in mind when
-    reading the next section.
+    moving the self-Hartree energy across the whole range the training set covers — 10.0
+    to 13.5 eV — only moves the prediction from 0.548 to 0.543, a shift in the third
+    decimal place. In practice the submodel returns close to its intercept, 0.546 — the
+    mean of the filled orbitals' screening parameters in the training set. The
+    empty-orbital submodel, whose coefficient is forty-five times larger, does vary with
+    what it is given. Keep both in mind when reading the next section.
 
 .. note::
 
@@ -252,16 +252,16 @@ diagonal loosely, while the filled ones sit on a horizontal line, every one of t
 predicted at 0.546 whatever its true value. This is the constant submodel from the
 previous section, seen from the outside.
 
-The right-hand panel is what that costs. The orbital energies move by 187 meV RMS, and
-by as much as 0.5 eV for individual orbitals.
+The right-hand panel is what that costs: a mean offset of +30 meV, a standard deviation
+of 187 meV around it, and individual orbitals off by as much as 0.5 eV.
 
 .. question:: Why does a 5% error in a screening parameter become a 0.2 eV error in an orbital energy?
 
     Because the screening parameter scales a correction of several electronvolts — the
-    self-Hartree part of it alone averages 11 eV over these orbitals. An error of 0.03 in
-    a parameter multiplying a quantity that size is a few hundred meV in the energy, which
-    is what the histogram shows. A few per cent on a screening parameter is not
-    automatically good enough; what matters is the energy that comes out of it.
+    self-Hartree part of it alone averages 11 eV over these orbitals — an error of a few
+    per cent in the parameter is consistent with an energy error of a few hundred meV,
+    the order of magnitude the histogram shows. A few per cent on a screening parameter
+    is not automatically good enough; what matters is the energy that comes out of it.
 
 .. question:: Does training on ten configurations instead of five do better?
 
@@ -271,10 +271,11 @@ by as much as 0.5 eV for individual orbitals.
     error of 0.028, against 0.033 and 0.027 from five configurations. The extra
     calculations bought nothing.
 
-    That is what a one-number descriptor gets you. The model is a straight line in a
-    single variable, so five configurations already pin it down; what is missing is not
-    data but a description of the orbital rich enough to distinguish orbitals whose
-    screening differs. Adding training configurations cannot supply that.
+    That is consistent with what a one-number descriptor gets you: a straight line in a
+    single variable, which five configurations may already pin down. What looks missing
+    is not data but a description of the orbital rich enough to distinguish orbitals
+    whose screening differs — more training configurations would not obviously supply
+    that.
 
 .. question:: Does the ``power_spectrum`` descriptor do better?
 
@@ -286,10 +287,12 @@ by as much as 0.5 eV for individual orbitals.
     ``pw2wannier90.x`` decompose pass); nothing else about the input files changes.
 
     On the same five-configuration training set and fifteen-configuration test, the
-    screening parameters come out with a spread of 0.015 — under half of
-    ``self_hartree``'s 0.033 — and the final KI orbital energies move by 29 meV RMS, at
-    most 83 meV, against 187 meV RMS and 0.5 eV. That is close to the legacy tutorial's
-    own published error on the same split, 33 meV, measured with a different
+    screening parameters come out with a mean error of -0.002 and a standard deviation
+    of 0.014 — under half of ``self_hartree``'s 0.033 — and the final KI orbital
+    energies move by a mean of -11 meV and a standard deviation of 27 meV, at most 83
+    meV, against ``self_hartree``'s +30 meV mean, 187 meV standard deviation, and 0.5 eV
+    maximum. That is close to the legacy tutorial's own published error on the same
+    split — mean -3 meV, standard deviation 33 meV — measured with a different
     orbital-density descriptor of comparable detail. A one-number descriptor is cheap
     and easy to explain; a richer one is what you would actually use.
 
@@ -333,8 +336,9 @@ how cheap a predicted Koopmans calculation can be.
 .. warning::
 
     And it is worth being clear about what these particular predictions are worth: on
-    this system they moved the orbital energies by 187 meV RMS. Predict on a system you
-    have tested, and read the test before you trust the prediction.
+    this system they moved the orbital energies by a standard deviation of 187 meV.
+    Predict on a system you have tested, and read the test before you trust the
+    prediction.
 
 *************
  The outputs
@@ -363,6 +367,7 @@ here with one subdirectory per configuration:
     │   ├── datasets.json
     │   ├── evaluation.json                    # metrics, predictions, alpha_and_eigenvalue_deltas
     │   ├── model.json
+    │   ├── snapshots
     │   └── snapshots.json
     └── README
 
