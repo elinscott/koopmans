@@ -68,8 +68,9 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
     .. container:: capability-cell
 
-        .. image:: _static/capabilities/dielectric.svg
-            :alt: Placeholder tile for dielectric constants
+        .. image:: tutorials/dielectric_constants/convergence.svg
+            :alt: The dielectric constant of silicon converging from 25.10 at a
+                4x4x4 k-point grid to 13.30 at 16x16x16
 
         :doc:`Dielectric constants <tutorials/dielectric_constants/index>`, which a
         Koopmans calculation on a solid needs
