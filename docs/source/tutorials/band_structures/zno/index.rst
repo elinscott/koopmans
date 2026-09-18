@@ -343,7 +343,7 @@ and hand it the KI run too to get both on one set of axes:
 .. code-block:: console
 
     $ koopmans run zno_dft.yaml
-    $ koopmans plot bandstructure zno_dft/ --style k-- --label LDA zno/ --label "KI@LDA"
+    $ koopmans plot bandstructure zno/ --label "KI@LDA" zno_dft/ --label LDA --style k--
 
 What it shows is that the filled bands of ZnO come in four groups, each separated from
 the next by a wide gap. That is where four of the five blocks come from — one per group
