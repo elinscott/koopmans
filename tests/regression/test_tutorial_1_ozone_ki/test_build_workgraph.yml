@@ -655,6 +655,13 @@ raw:
                 child_default_link_limit: 1
                 help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
+            projwfc:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                help: Needed to compute projected densities of states.
+                required: false
             pw:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -2044,6 +2051,13 @@ raw:
                     child_default_link_limit: 1
                     help: Needed to initialize the variational orbitals as Wannier
                       functions.
+                    required: false
+                projwfc:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    help: Needed to compute projected densities of states.
                     required: false
                 pw:
                   dynamic: false
