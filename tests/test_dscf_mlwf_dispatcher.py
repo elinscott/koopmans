@@ -605,10 +605,10 @@ class TestKcpNbndComesFromTheProjections:
         the tutorial names as the KI variant are overlaid; the
         projections, windows and band count are the tutorial's.
         """
-        import json
+        import yaml
 
-        si_json = tutorials_dir / "band_structures/silicon_finite_differences/si.json"
-        d = json.loads(si_json.read_text())
+        si_yaml = tutorials_dir / "band_structures/silicon_finite_differences/si.yaml"
+        d = yaml.safe_load(si_yaml.read_text())
         d["workflow"].update(
             {
                 "task": "singlepoint",
