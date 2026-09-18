@@ -82,7 +82,7 @@ full:
     with published ones, but a charged periodic supercell really does need the
     correction. For production work leave it on and give the material's ``eps_inf``.
 
-Most of the ``workflow`` block you have met before. Two entries are new:
+Most of the ``workflow`` block you have met before. One entry is new:
 
 .. literalinclude:: si.yaml
     :language: yaml
@@ -132,7 +132,7 @@ states above, where the same hybrids pick out the antibonding partners.
 
 A Koopmans calculation on a solid is only as good as its variational orbitals, and the
 Wannierization can be sensitive to the choice of projectors and windows. Let's run
-it on its own first, to check it (this is why the input file has ``task: wannierize``)
+it on its own first, to check it (this is why the input file has ``task: wannierize``):
 
 .. code-block:: console
 
@@ -152,14 +152,13 @@ it on its own first, to check it (this is why the input file has ``task: wannier
     to the input file runs them on four MPI ranks divided into four k-point pools.
 
 The progress table shows a self-consistent ``pw.x`` calculation, then a
-non-self-consistent one that adds the empty bands, then one Wannierization per block —
-each of which involves...
+non-self-consistent one that adds the empty bands, then a further ``pw.x`` calculation
+that computes the DFT bands along the specified ``path``. One Wannierization per block
+follows, each of which involves...
 
-1. a ``wannier90.x`` preprocessing run
+1. a ``wannier90.x`` preprocessing run,
 2. a ``pw2wannier90.x`` run that extracts the overlaps and projections,
 3. and the ``wannier90.x`` run that minimizes the spread.
-
-A further ``pw.x`` calculation computes the DFT bands along the specified ``path``.
 
 The results land in ``si/``, one directory per step. The files worth opening are the
 ``aiida.wout`` files under the ``wannierize_occ_1`` and ``wannierize_emp_1`` steps, which
@@ -378,12 +377,12 @@ supercell. This requires us to assign each supercell eigenvalue back to the prim
 :math:`\mathbf{k}` it came from, and interpolating between them onto a path through the
 Brillouin zone. This is the *unfold and interpolate* procedure of Ref. :cite:`DeGennaro2022`.
 
-The _unfolding_ step involves assigning eigenstates to their corresponding :math:`\mathbf{k}` point.
+The *unfolding* step involves assigning eigenstates to their corresponding :math:`\mathbf{k}` point.
 This procedure is exact: the supercell's :math:`\Gamma`-point eigenstates *are* the
 primitive cell's states on the :math:`2\times2\times2` grid, so each one can be assigned
 its :math:`\mathbf{k}` without approximation.
 
-The _interpolation_ procedure involves mixing in a higher-resolution DFT data into the
+The *interpolation* procedure involves mixing higher-resolution DFT data into the
 Koopmans band structure. Written in the basis of Wannier functions, the KI Hamiltonian is the LDA Hamiltonian plus
 a correction:
 
@@ -407,7 +406,7 @@ same quantity computed on a grid four times denser in each direction, keeping
 non-self-consistent ``pw.x`` calculation and a Wannierization per block on an
 :math:`8\times8\times8` grid, with the same projections and windows as before. This is not
 expensive, as these are DFT calculations in the primitive cell, far cheaper than the
-charged defect supercell calculations it complements.
+charged supercell calculations it complements.
 
 These steps appear in the progress table either side of the final KI calculation.
 ``Smooth wannierization`` runs the dense-grid Wannierization, and ``Band interpolation``
