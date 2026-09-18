@@ -1044,21 +1044,12 @@ class _FolderPairingCommand(click.Command):
     - given for more folders than that, there is no folder left for the
       extra values to mean, and the command refuses.
 
-    A name listed in ``_unbound_all_params`` (a flag, not a value-taking
-    option) makes one exception: given exactly once, with no folder of its
-    own to follow, it means every folder instead of being refused. A
-    subclass declaring one sets ``<name>_unbound`` in the callback's own
-    parameters to say whether that case fired.
-
     Everything else — tokenizing, ``--``, ``--help``, error formatting — is
     left to click.
     """
 
     #: Parameter names paired with the folder argument, one per folder.
     _paired_params: tuple[str, ...] = ("styles", "labels")
-    #: Of those, the ones a single unbound occurrence means "every folder"
-    #: for, instead of being refused.
-    _unbound_all_params: frozenset[str] = frozenset()
     _folder_param = "folders"
 
     @staticmethod
@@ -1066,37 +1057,28 @@ class _FolderPairingCommand(click.Command):
         flag: str,
         occurrences: list[tuple[int, _T]],
         folder_tokens: tuple[Path, ...],
-        allow_unbound_all: bool = False,
-    ) -> tuple[tuple[_T | None, ...] | None, bool]:
-        """Return one value per folder for a paired option, and whether it came from one bare value.
+    ) -> tuple[_T | None, ...] | None:
+        """Return one value per folder for a paired option, or ``None`` if unused.
 
         As many values as folders pair positionally, in listing order,
         regardless of where among the folders each was written. Fewer values
         than folders binds each one to the folder it immediately followed;
         ``None`` marks a folder that got none of its own, distinct from one
         given an explicit empty string (a no-op matplotlib format string,
-        still a value the user typed). More values than folders has no
-        folder left to mean and is refused; so does a value before any
-        folder, unless ``allow_unbound_all`` and it is the only one given, in
-        which case every folder is left with no value of its own — the
-        caller reads "applies to all" from the second element of the pair,
-        ``True``, not from a value spread across the per-folder tuple, so it
-        stays distinct from a value explicitly bound to each folder.
+        still a value the user typed). More values than folders, or a value
+        before any folder, has no folder left to mean and is refused.
 
         :raises click.UsageError: if there were more values than folders, a
-            value came before any folder (and ``allow_unbound_all`` did not
-            excuse it), or two values bound to one folder — the last two
-            only matter when the count fell short, since an exact count
-            pairs by position and ignores where each was written.
+            value came before any folder, or two values bound to one folder
+            — the last two only matter when the count fell short, since an
+            exact count pairs by position and ignores where each was written.
         """
         nfolders = len(folder_tokens)
         count = len(occurrences)
         if count == 0:
-            return None, False
-        if allow_unbound_all and count == 1 and occurrences[0][0] < 0:
-            return (None,) * nfolders, True
+            return None
         if count == nfolders:
-            return tuple(value for _, value in occurrences), False
+            return tuple(value for _, value in occurrences)
         if count > nfolders:
             raise click.UsageError(
                 f"{count} {flag} values were given for {nfolders} folder(s). Give "
@@ -1118,7 +1100,7 @@ class _FolderPairingCommand(click.Command):
                     f"{flag} per folder overall to pair them by listing order instead."
                 )
             bound[index] = value
-        return tuple(bound.get(i) for i in range(nfolders)), False
+        return tuple(bound.get(i) for i in range(nfolders))
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         """Parse normally, then rebind each paired option to its folder(s)."""
@@ -1134,13 +1116,7 @@ class _FolderPairingCommand(click.Command):
             positions = ctx.meta.pop(param.positions_key(), [])
             values: tuple[Any, ...] = ctx.params[name]
             occurrences = list(zip((p - 1 for p in positions), values, strict=True))
-            allow_unbound_all = name in self._unbound_all_params
-            bound, applied_to_all = self._bind_values(
-                param.opts[0], occurrences, folder_tokens, allow_unbound_all
-            )
-            ctx.params[name] = bound
-            if allow_unbound_all:
-                ctx.params[f"{name}_unbound"] = applied_to_all
+            ctx.params[name] = self._bind_values(param.opts[0], occurrences, folder_tokens)
 
         return rv
 
@@ -1149,14 +1125,12 @@ class _BandStructureCommand(_FolderPairingCommand):
     """``bandstructure``'s own pairing set: ``--style``/``--label``, plus ``--gap``.
 
     ``--gap`` is a flag, not a value, but pairs with the folder argument the
-    same way: written right after a folder it annotates that folder's series
-    only, and given once with no folder of its own — before any folder, or on
-    its own when there is only the one occurrence — it annotates every
-    series instead.
+    same way: it must follow the folder whose series it annotates. Annotating
+    every series at once is a separate, ordinary flag, ``--gaps``, outside
+    this pairing altogether.
     """
 
     _paired_params = ("styles", "labels", "gaps")
-    _unbound_all_params = frozenset({"gaps"})
 
 
 @plot.command(cls=_BandStructureCommand)
@@ -1178,12 +1152,17 @@ class _BandStructureCommand(_FolderPairingCommand):
     multiple=True,
     is_flag=True,
     help="Annotate a series' band gap: a labelled double-headed arrow from "
-    "its valence band maximum to its conduction band minimum. Written right "
-    "after a folder it annotates that folder's series only, refusing one "
-    "whose run reports no valence band edge, since naming it was asking for "
-    "it. Given once with no folder of its own — before any folder, or as "
-    "the only occurrence — it annotates every series that reports an edge "
-    "instead, silently leaving out those that do not.",
+    "its valence band maximum to its conduction band minimum. Must follow "
+    "the folder it annotates, and refuses one whose run reports no valence "
+    "band edge, since naming it was asking for it. Does not mix with "
+    "--gaps.",
+)
+@click.option(
+    "--gaps",
+    "all_gaps",
+    is_flag=True,
+    help="Annotate every series that reports a band gap, silently skipping "
+    "those that do not. Does not mix with --gap.",
 )
 @click.option(
     "--label",
@@ -1220,7 +1199,7 @@ def bandstructure(
     data_path: Path | None,
     ylim: tuple[float, float] | None,
     gaps: tuple[bool | None, ...] | None,
-    gaps_unbound: bool,
+    all_gaps: bool,
     labels: tuple[str | None, ...],
     styles: tuple[str | None, ...],
 ) -> None:
@@ -1296,6 +1275,9 @@ def bandstructure(
         koopmans plot bandstructure \\
             si/02-bands --label LDA --style -- \\
             si-ki --label "KI@LDA" --gap
+
+    --gaps annotates every series that has one instead, silently skipping
+    the rest; the two options do not mix.
     """
     from koopmans.plotting import (
         NoEnergyZeroError,
@@ -1309,12 +1291,15 @@ def bandstructure(
         write_series_json,
     )
 
+    if gaps is not None and all_gaps:
+        raise click.UsageError("--gap and --gaps do not mix; use one or the other.")
+
     load_koopmans_profile()
 
     kind = EnergyZero(zero)
     try:
         series, warnings = resolve_band_series(
-            folders, labels, styles, gaps=gaps or (), gap_all=gaps_unbound
+            folders, labels, styles, gaps=gaps or (), gap_all=all_gaps
         )
         check_paths_agree(series)
         value, reference = apply_energy_zero(series, kind)

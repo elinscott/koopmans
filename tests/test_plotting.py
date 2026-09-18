@@ -1882,10 +1882,10 @@ class TestCommand:
         assert result.exit_code == 0, result.output
         assert len(gap_labels(drawn_axes[-1])) == 1
 
-    def test_gap_given_once_before_any_folder_annotates_every_series(
-        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    def test_gap_before_any_folder_is_a_usage_error(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:
-        """--gap with no folder of its own annotates every series with an edge."""
+        """--gap must follow the folder it applies to, the same way --style does."""
         from koopmans.cli import cli
 
         lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
@@ -1896,17 +1896,58 @@ class TestCommand:
             ["plot", "bandstructure", "--gap", str(lda), str(ki), "-o", str(tmp_path / "a.png")],
         )
 
+        assert result.exit_code != 0
+        assert "must follow the folder it applies to" in result.output
+
+    def test_gap_with_gaps_is_a_usage_error(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--gap and --gaps do not mix."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--gap",
+                "--gaps",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "--gap and --gaps do not mix" in result.output
+
+    def test_gaps_annotates_every_series(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gaps annotates every series with an edge."""
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        ki = dft_run(tmp_path, "ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", "--gaps", str(lda), str(ki), "-o", str(tmp_path / "a.png")],
+        )
+
         assert result.exit_code == 0, result.output
         assert len(gap_labels(drawn_axes[-1])) == 2
 
-    def test_gap_given_once_before_any_folder_skips_an_edgeless_folder(
+    def test_gaps_skips_an_edgeless_folder(
         self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
     ) -> None:
-        """--gap with no folder of its own leaves an edgeless folder out, drawing the rest.
+        """--gaps leaves an edgeless folder out silently, drawing the rest.
 
-        This is the mixed case the unbound-all binding has to keep distinct
-        from a folder --gap named on purpose: one edgeless folder among
-        several must not turn the whole command's silent skip into a refusal.
+        Unlike --gap named on a folder by hand, --gaps never refuses: a
+        folder with no gap to draw is just skipped, and the command still
+        exits 0.
         """
         from koopmans.cli import cli
 
@@ -1915,7 +1956,7 @@ class TestCommand:
 
         result = runner.invoke(
             cli,
-            ["plot", "bandstructure", "--gap", str(lda), str(flat), "-o", str(tmp_path / "a.png")],
+            ["plot", "bandstructure", "--gaps", str(lda), str(flat), "-o", str(tmp_path / "a.png")],
         )
 
         assert result.exit_code == 0, result.output
@@ -1926,11 +1967,11 @@ class TestCommand:
     ) -> None:
         """Asking --gap for a folder that reports no edge is refused, not skipped.
 
-        Naming the folder was asking for its gap on purpose, unlike the
-        every-series default, which leaves an edgeless folder out silently.
-        The assertion is on the --gap refusal itself: --zero none keeps a
-        missing valence band edge from also failing the energy zero, which
-        would pass this test for the wrong reason on a lone folder.
+        Naming the folder was asking for its gap on purpose, unlike --gaps,
+        which leaves an edgeless folder out silently. The assertion is on
+        the --gap refusal itself: --zero none keeps a missing valence band
+        edge from also failing the energy zero, which would pass this test
+        for the wrong reason on a lone folder.
         """
         from koopmans.cli import cli
 
@@ -1973,10 +2014,10 @@ class TestCommand:
         assert result.exit_code != 0
         assert str(folder) in result.output
 
-    def test_gap_given_once_before_any_folder_skips_a_metallic_folder(
+    def test_gaps_skips_a_metallic_folder(
         self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
     ) -> None:
-        """--gap with no folder of its own leaves a metallic folder out, drawing the rest."""
+        """--gaps leaves a metallic folder out, drawing the rest."""
         from koopmans.cli import cli
 
         lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
@@ -1989,7 +2030,15 @@ class TestCommand:
 
         result = runner.invoke(
             cli,
-            ["plot", "bandstructure", "--gap", str(lda), str(metal), "-o", str(tmp_path / "a.png")],
+            [
+                "plot",
+                "bandstructure",
+                "--gaps",
+                str(lda),
+                str(metal),
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
         )
 
         assert result.exit_code == 0, result.output
