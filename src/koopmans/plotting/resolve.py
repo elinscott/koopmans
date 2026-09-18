@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from koopmans.aiida.dumping import NODE_METADATA_FILE
-from koopmans.plotting.series import BandSeries, SpectrumSeries
+from koopmans.plotting.series import BandSeries, SpectrumSeries, band_gap
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -845,9 +845,23 @@ def _check_one_per_folder(values: Sequence[Any], folders: int, option: str) -> N
         )
 
 
+def _has_gap(item: BandSeries) -> bool:
+    """Whether ``band_gap`` can compute a real gap for this series.
+
+    False for a series with no valence band edge, none above it, and one
+    whose "edge" is a metal's own partially filled band, not an insulating
+    gap — the same cases :func:`band_gap` itself refuses.
+    """
+    try:
+        band_gap(item)
+    except ValueError:
+        return False
+    return True
+
+
 def _folder_has_edge(found: Sequence[tuple[BandSeries, str]]) -> bool:
-    """Whether any series a folder contributed reports a valence band edge."""
-    return any(item.vbm is not None for item, _ in found)
+    """Whether any series a folder contributed has a real band gap to draw."""
+    return any(_has_gap(item) for item, _ in found)
 
 
 def _apply_gap_request(
@@ -855,22 +869,27 @@ def _apply_gap_request(
 ) -> None:
     """Mark a folder's series for gap annotation, per ``gaps``/``gap_all`` above.
 
-    A folder ``gap_value`` names explicitly is refused if it reports no edge;
-    ``gap_all`` on its own leaves such a folder out silently.
+    A folder ``gap_value`` names explicitly is refused if none of its series
+    has a real band gap; ``gap_all`` on its own leaves such a folder out
+    silently, and a folder contributing several series draws only the ones
+    among them that have a gap.
 
     :raises PlottingError: if ``gap_value`` names this folder and it reports
-        no valence band edge.
+        no band gap.
     """
     if not (gap_all or gap_value):
         return
-    if gap_value and not _folder_has_edge(found):
-        raise PlottingError(
-            f"'{folder}' reports no valence band edge, so --gap has no gap "
-            "to draw for it. Leave --gap off this folder, or point it at a "
-            "run that reports one."
-        )
+    if not _folder_has_edge(found):
+        if gap_value:
+            raise PlottingError(
+                f"'{folder}' reports no band gap, so --gap has no gap to draw "
+                "for it. Leave --gap off this folder, or point it at a run "
+                "that reports one."
+            )
+        return
     for item, _ in found:
-        item.show_gap = True
+        if _has_gap(item):
+            item.show_gap = True
 
 
 def resolve_band_series(
@@ -898,15 +917,16 @@ def resolve_band_series(
     asked for reads as a figure of them all.
 
     ``gaps`` asks specific folders to draw their band gap; a folder asked for
-    by name that reports no valence band edge is refused, since the caller
-    named it on purpose. ``gap_all`` asks every folder instead, silently
-    leaving out the ones with no edge to draw from.
+    by name that has no real gap to draw — no valence band edge, none above
+    it, or a metal's own partially filled band standing in for one — is
+    refused, since the caller named it on purpose. ``gap_all`` asks every
+    folder instead, silently leaving out the ones with no gap to draw.
 
     :raises ValueError: if given, ``labels``/``styles``/``gaps`` do not
         number the folders.
     :raises PlottingError: if a folder is not a run directory, its run is not
         in this profile, any of them holds nothing plottable, or ``gaps``
-        names a folder with no valence band edge.
+        names a folder with no band gap.
     """
     _check_one_per_folder(labels, len(folders), "--label")
     _check_one_per_folder(styles, len(folders), "--style")

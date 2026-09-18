@@ -1078,8 +1078,10 @@ class _FolderPairingCommand(click.Command):
         still a value the user typed). More values than folders has no
         folder left to mean and is refused; so does a value before any
         folder, unless ``allow_unbound_all`` and it is the only one given, in
-        which case it is returned for every folder and the second element of
-        the pair is ``True``.
+        which case every folder is left with no value of its own — the
+        caller reads "applies to all" from the second element of the pair,
+        ``True``, not from a value spread across the per-folder tuple, so it
+        stays distinct from a value explicitly bound to each folder.
 
         :raises click.UsageError: if there were more values than folders, a
             value came before any folder (and ``allow_unbound_all`` did not
@@ -1092,7 +1094,7 @@ class _FolderPairingCommand(click.Command):
         if count == 0:
             return None, False
         if allow_unbound_all and count == 1 and occurrences[0][0] < 0:
-            return tuple(occurrences[0][1] for _ in range(nfolders)), True
+            return (None,) * nfolders, True
         if count == nfolders:
             return tuple(value for _, value in occurrences), False
         if count > nfolders:

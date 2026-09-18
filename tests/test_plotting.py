@@ -289,6 +289,49 @@ def repeated_high_symmetry_series(label: str = "repeated") -> BandSeries:
     )
 
 
+def tied_pair_series(label: str = "tied") -> BandSeries:
+    """Return a series with two VBM/CBM pairs exactly as far apart as each other.
+
+    Five k-points at binary-fraction steps (0, 0.25, 0.5, 0.75, 1.0) along a
+    cubic cell's x axis put the valence edge at the two ends (0 and 4) and the
+    conduction minimum at the two points next to them (1 and 3): pairing
+    (0, 1) and pairing (4, 3) are exactly one step apart, tied. The
+    ascending scan meets (0, 1) first.
+    """
+    return series(
+        label,
+        kpoints=[
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.75, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ],
+        energies=[
+            [-1.0, 5.0],
+            [-2.0, 1.0],
+            [-3.0, 5.0],
+            [-2.0, 1.0],
+            [-1.0, 5.0],
+        ],
+        vbm=-1.0,
+    )
+
+
+def metallic_series(label: str = "metal") -> BandSeries:
+    """Return a series whose reported edge sits inside a partially filled band.
+
+    The state just above the edge is the same band's own dispersion at a
+    neighbouring k-point, half a meV away — a metal's Fermi surface, not a
+    real gap.
+    """
+    return series(
+        label,
+        energies=[[-5.0, -0.9995], [-5.0, -1.0], [-5.0, 5.0]],
+        vbm=-1.0,
+    )
+
+
 # ----------------------------------------------------------------------
 # The energy zero
 # ----------------------------------------------------------------------
@@ -460,6 +503,22 @@ class TestBandGap:
         assert gap.cbm_kpoint_index == 5
         assert gap.value == pytest.approx(1.3)
         assert gap.direct is False
+
+    def test_a_tie_keeps_the_pair_the_ascending_scan_meets_first(self) -> None:
+        """Two pairs exactly as far apart as each other: the first one visited stands.
+
+        A ``<`` mutated to ``<=`` would instead keep the last pair the nested
+        scan visits, (4, 3), since a tie would then overwrite the earlier one.
+        """
+        gap = band_gap(tied_pair_series())
+
+        assert gap.vbm_kpoint_index == 0
+        assert gap.cbm_kpoint_index == 1
+
+    def test_a_metal_reports_no_band_gap(self) -> None:
+        """A state within the minimum gap of the edge is the same band, not a conduction state."""
+        with pytest.raises(ValueError, match="metal"):
+            band_gap(metallic_series())
 
 
 # ----------------------------------------------------------------------
@@ -1409,6 +1468,17 @@ class TestGapAnnotation:
         assert gap_labels(axes) == []
         assert arrow_annotations(axes) == []
 
+    def test_a_metal_is_skipped_not_errored(self) -> None:
+        """A partially filled band reporting no real gap is skipped like one with no edge."""
+        axes = blank_axes()
+        item = metallic_series()
+        item.show_gap = True
+
+        draw_band_structures(axes, [item])
+
+        assert gap_labels(axes) == []
+        assert arrow_annotations(axes) == []
+
     def test_a_series_not_asking_for_one_draws_no_annotation(self) -> None:
         """A series left with ``show_gap`` unset draws no gap even on an overlay."""
         axes = blank_axes()
@@ -1437,6 +1507,28 @@ class TestGapAnnotation:
         arrow_x = [arrow.xy[0] for arrow in arrow_annotations(axes)]
         true_x = np.pi / 4
         assert arrow_x == pytest.approx([true_x, true_x])
+
+    def test_the_annotation_clips_to_the_axes(self) -> None:
+        """The arrow and its label clip to the axes, so a narrow --ylim cuts them off there.
+
+        Before this, both were drawn with ``annotation_clip=False`` and no
+        clip path of their own, so a y-range narrower than the gap ran the
+        arrow through the top spine and put the label outside the figure.
+        """
+        axes = blank_axes()
+        item = indirect_gap_series()
+        item.show_gap = True
+
+        draw_band_structures(axes, [item], ylim=(-2.0, 0.0))  # excludes the 0.5 eV CBM
+
+        [arrow] = arrow_annotations(axes)
+        [label] = [text for text in axes.texts if text.get_text()]
+        # ``axes.patch`` is a Rectangle, which matplotlib clips to via
+        # ``clip_box`` rather than ``clip_path`` (its documented shortcut).
+        assert arrow.get_clip_box() is not None
+        assert arrow.arrow_patch is not None
+        assert arrow.arrow_patch.get_clip_box() is not None
+        assert label.get_clip_box() is not None
 
 
 # ----------------------------------------------------------------------
@@ -1635,6 +1727,30 @@ def dft_run_no_edge(tmp_path: Path, name: str, energies: list[list[float]]) -> P
     return write_run_folder(tmp_path, name, root)
 
 
+def dft_run_metal(
+    tmp_path: Path, name: str, energies: list[list[float]], occupations: list[list[float]]
+) -> Path:
+    """Write a run folder holding a pw.x band structure with a partially filled band.
+
+    Explicit ``occupations`` let a caller put the reported edge inside a
+    metal's own band, unlike ``dft_run``'s single-threshold derivation.
+    """
+    root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+    chain = make_process(PW_BANDS, caller=root, link_label="bands")
+    attach(
+        chain,
+        "band_structure",
+        make_bands(
+            [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            energies,
+            cell=CUBIC,
+            labels=[(0, "G"), (2, "X")],
+            occupations=occupations,
+        ),
+    )
+    return write_run_folder(tmp_path, name, root)
+
+
 class TestCommand:
     """``koopmans plot bandstructure`` end to end."""
 
@@ -1783,6 +1899,28 @@ class TestCommand:
         assert result.exit_code == 0, result.output
         assert len(gap_labels(drawn_axes[-1])) == 2
 
+    def test_gap_given_once_before_any_folder_skips_an_edgeless_folder(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gap with no folder of its own leaves an edgeless folder out, drawing the rest.
+
+        This is the mixed case the unbound-all binding has to keep distinct
+        from a folder --gap named on purpose: one edgeless folder among
+        several must not turn the whole command's silent skip into a refusal.
+        """
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        flat = dft_run_no_edge(tmp_path, "flat", [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", "--gap", str(lda), str(flat), "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(gap_labels(drawn_axes[-1])) == 1
+
     def test_gap_named_on_an_edgeless_folder_is_refused_by_name(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
     ) -> None:
@@ -1790,10 +1928,43 @@ class TestCommand:
 
         Naming the folder was asking for its gap on purpose, unlike the
         every-series default, which leaves an edgeless folder out silently.
+        The assertion is on the --gap refusal itself: --zero none keeps a
+        missing valence band edge from also failing the energy zero, which
+        would pass this test for the wrong reason on a lone folder.
         """
         from koopmans.cli import cli
 
         folder = dft_run_no_edge(tmp_path, "flat", [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--gap",
+                "--zero",
+                "none",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert str(folder) in result.output
+
+    def test_gap_named_on_a_metallic_folder_is_refused_by_name(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """A folder whose edge sits inside a metal's own band is refused like an edgeless one."""
+        from koopmans.cli import cli
+
+        folder = dft_run_metal(
+            tmp_path,
+            "metal",
+            energies=[[-5.0, -0.9995], [-5.0, -1.0], [-5.0, 5.0]],
+            occupations=[[2.0, 0.0], [2.0, 1.5], [2.0, 0.0]],
+        )
 
         result = runner.invoke(
             cli, ["plot", "bandstructure", str(folder), "--gap", "-o", str(tmp_path / "a.png")]
@@ -1801,6 +1972,58 @@ class TestCommand:
 
         assert result.exit_code != 0
         assert str(folder) in result.output
+
+    def test_gap_given_once_before_any_folder_skips_a_metallic_folder(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gap with no folder of its own leaves a metallic folder out, drawing the rest."""
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        metal = dft_run_metal(
+            tmp_path,
+            "metal",
+            energies=[[-5.0, -0.9995], [-5.0, -1.0], [-5.0, 5.0]],
+            occupations=[[2.0, 0.0], [2.0, 1.5], [2.0, 0.0]],
+        )
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", "--gap", str(lda), str(metal), "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(gap_labels(drawn_axes[-1])) == 1
+
+    def test_the_gap_json_is_null_for_a_metallic_series(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The JSON record's gap is null for a folder with no real gap, a metal included."""
+        from koopmans.cli import cli
+
+        folder = dft_run_metal(
+            tmp_path,
+            "metal",
+            energies=[[-5.0, -0.9995], [-5.0, -1.0], [-5.0, 5.0]],
+            occupations=[[2.0, 0.0], [2.0, 1.5], [2.0, 0.0]],
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "-o",
+                str(tmp_path / "a.png"),
+                "--data",
+                str(tmp_path / "a.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "a.json").read_text())
+        assert payload["series"][0]["gap"] is None
 
     def test_the_gap_json_is_written_whether_or_not_drawn(
         self, aiida_profile: Any, runner: Any, tmp_path: Path

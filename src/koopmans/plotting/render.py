@@ -140,7 +140,9 @@ def _draw_gap(
     marks where it sits, reaching from its own k-point to the arrow. A
     direct gap needs no such rule, since the arrow's own foot already sits
     at the valence band maximum's k-point. The label reads the gap's value
-    to the right of the arrow, and never joins the legend.
+    to the right of the arrow, and never joins the legend. Every piece is
+    clipped to the axes, so a y-range that excludes an edge cuts the arrow
+    or the label off at the frame rather than drawing it past it.
 
     Two series whose conduction band minima coincide draw their arrows on
     top of each other rather than displaced — a displaced arrow would claim
@@ -160,7 +162,7 @@ def _draw_gap(
             alpha=0.5,
         )
 
-    axes.annotate(
+    arrow = axes.annotate(
         "",
         xy=(arrow_x, cbm_y),
         xytext=(arrow_x, vbm_y),
@@ -171,8 +173,13 @@ def _draw_gap(
             "shrinkA": 0,
             "shrinkB": 0,
         },
-        annotation_clip=False,
+        annotation_clip=True,
+        clip_on=True,
     )
+    # clip_on above clips the (empty) text; the arrow is a separate artist
+    # that needs its own clip path to stop at the axes too.
+    if arrow.arrow_patch is not None:
+        arrow.arrow_patch.set_clip_path(axes.patch)
     axes.annotate(
         f"{edge.value:.2f} {item.units}",
         xy=(arrow_x, (vbm_y + cbm_y) / 2),
@@ -182,7 +189,8 @@ def _draw_gap(
         ha="left",
         fontsize="small",
         color=color,
-        annotation_clip=False,
+        annotation_clip=True,
+        clip_on=True,
         # A white backing keeps the label readable where it lands on a band —
         # the gap it measures is exactly where the curves are densest.
         bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 1},

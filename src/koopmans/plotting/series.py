@@ -156,6 +156,12 @@ class BandGap:
 #: as the conduction band minimum rather than the same band as the edge.
 _GAP_TOLERANCE = 1e-6
 
+#: The smallest valence-to-conduction separation read as an insulating gap.
+#: Below it, the "conduction" state is a metal's own partially filled band
+#: sampled at another k-point, not a real gap — QE's own occupation smearing
+#: routinely leaves states this close together at the Fermi level.
+_MIN_GAP = 1e-3
+
 
 def _nearest_pair(
     vbm_kpoints: np.ndarray, cbm_kpoints: np.ndarray, distances: np.ndarray
@@ -183,15 +189,17 @@ def band_gap(item: BandSeries) -> BandGap:
     """Return the series' valence-to-conduction gap.
 
     The valence band maximum is ``item.vbm``; the conduction band minimum is
-    the lowest energy more than ``_GAP_TOLERANCE`` above it. A high-symmetry
-    point the path visits more than once can attain either energy at several
-    k-points alike, within ``_GAP_TOLERANCE``; the pair reported is whichever
-    of those sits closest together along the path, so the gap is drawn at
-    the band edge rather than stretched between unrelated repeats of the
-    same point.
+    the lowest energy more than ``_GAP_TOLERANCE`` above it, provided that
+    exceeds ``_MIN_GAP`` — otherwise the two are read as the same partially
+    filled band sampled at different k-points (a metal), not an insulating
+    gap. A high-symmetry point the path visits more than once can attain
+    either energy at several k-points alike, within ``_GAP_TOLERANCE``; the
+    pair reported is whichever of those sits closest together along the
+    path, so the gap is drawn at the band edge rather than stretched between
+    unrelated repeats of the same point.
 
-    :raises ValueError: if the series reports no valence band edge, or no
-        state above it to measure a gap to.
+    :raises ValueError: if the series reports no valence band edge, no state
+        above it, or a gap no wider than a metal's own dispersion.
     """
     if item.vbm is None:
         raise ValueError(f"'{item.label}' reports no valence band edge to measure a gap from.")
@@ -209,6 +217,11 @@ def band_gap(item: BandSeries) -> BandGap:
     if not np.isfinite(cbm):
         raise ValueError(
             f"'{item.label}' reports no state above its valence band maximum to measure a gap to."
+        )
+    if cbm - item.vbm <= _MIN_GAP:
+        raise ValueError(
+            f"'{item.label}' reports no band gap: the state above its valence "
+            "band maximum sits within a metal's own partially filled band."
         )
     cbm_kpoints = np.flatnonzero(np.any(np.abs(energies - cbm) <= _GAP_TOLERANCE, axis=1))
 
