@@ -12,13 +12,18 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
+
+import numpy as np
 
 __all__ = [
+    "BandGap",
     "BandSeries",
     "EnergyZero",
     "NoEnergyZeroError",
     "PathMismatchError",
     "apply_energy_zero",
+    "band_gap",
     "check_paths_agree",
     "describe_energy_zero",
     "energy_axis_label",
@@ -74,6 +79,54 @@ class BandSeries:
         if kind == EnergyZero.FERMI:
             return self.fermi
         return 0.0
+
+
+@dataclass
+class BandGap:
+    """A series' valence-to-conduction gap.
+
+    ``value``, ``vbm`` and ``cbm`` are in the series' own units, as computed —
+    before the figure's zero. ``vbm_kpoint_index``/``cbm_kpoint_index`` are the
+    k-point each edge sits at, direct when they agree and indirect otherwise.
+    """
+
+    value: float
+    vbm: float
+    cbm: float
+    vbm_kpoint_index: int
+    cbm_kpoint_index: int
+
+
+#: How far above the reported valence band maximum a state must sit to count
+#: as the conduction band minimum rather than the same band as the edge.
+_GAP_TOLERANCE = 1e-6
+
+
+def band_gap(item: BandSeries) -> BandGap:
+    """Return the series' valence-to-conduction gap.
+
+    The valence band maximum sits at whichever k-point holds an energy
+    closest to ``item.vbm``; the conduction band minimum is the lowest energy
+    more than ``_GAP_TOLERANCE`` above it.
+
+    :raises ValueError: if the series reports no valence band edge.
+    """
+    if item.vbm is None:
+        raise ValueError(f"'{item.label}' reports no valence band edge to measure a gap from.")
+
+    energies = np.asarray(item.energies, dtype=np.float64)
+    vbm_index = np.unravel_index(np.argmin(np.abs(energies - item.vbm)), energies.shape)
+    above = np.where(energies > item.vbm + _GAP_TOLERANCE, energies, np.inf)
+    cbm_index = np.unravel_index(np.argmin(above), energies.shape)
+    cbm = float(energies[cbm_index])
+
+    return BandGap(
+        value=cbm - item.vbm,
+        vbm=item.vbm,
+        cbm=cbm,
+        vbm_kpoint_index=int(vbm_index[0]),
+        cbm_kpoint_index=int(cbm_index[0]),
+    )
 
 
 #: How far apart two crystal coordinates may be and still name the same point.
@@ -196,11 +249,25 @@ def describe_energy_zero(
     )
 
 
+def _series_record(item: BandSeries) -> dict[str, Any]:
+    """Return one series' JSON record, with its gap if it reports an edge.
+
+    ``gap`` is written whether or not the figure was asked to draw one, so a
+    script can read the gap off the file without asking for the annotation.
+    """
+    record = asdict(item)
+    try:
+        record["gap"] = asdict(band_gap(item))
+    except ValueError:
+        record["gap"] = None
+    return record
+
+
 def write_series_json(series: Sequence[BandSeries], path: Path) -> None:
     """Write the records the figure was drawn from as JSON.
 
     Energies are as computed; ``zero`` records the shift the figure applied,
     so the file is enough to redraw the figure or to restyle it elsewhere.
     """
-    payload = {"series": [asdict(item) for item in series]}
+    payload = {"series": [_series_record(item) for item in series]}
     path.write_text(json.dumps(payload, indent=2) + "\n")

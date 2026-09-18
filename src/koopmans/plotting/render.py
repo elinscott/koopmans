@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from koopmans.plotting.series import BandSeries, EnergyZero, energy_axis_label
+from koopmans.plotting.series import BandGap, BandSeries, EnergyZero, band_gap, energy_axis_label
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -159,6 +159,74 @@ def _path_extent(distances: Sequence[np.ndarray]) -> tuple[float, float] | None:
     return None if last <= first else (first, last)
 
 
+def _draw_gap(
+    axes: Axes, item: BandSeries, edge: BandGap, distances: np.ndarray, color: Any
+) -> None:
+    """Draw one series' band gap: a double-headed arrow labelled with its value.
+
+    The arrow runs from the valence band maximum to the conduction band
+    minimum, at their own k-points and shifted energies; slanted for an
+    indirect gap, vertical for a direct one. The label sits at the arrow's
+    midpoint, offset to the right, and never joins the legend.
+    """
+    from_x, to_x = float(distances[edge.vbm_kpoint_index]), float(distances[edge.cbm_kpoint_index])
+    from_y, to_y = edge.vbm - item.zero, edge.cbm - item.zero
+
+    axes.annotate(
+        "",
+        xy=(to_x, to_y),
+        xytext=(from_x, from_y),
+        arrowprops={
+            "arrowstyle": "<->",
+            "color": color,
+            "linewidth": 1.0,
+            "shrinkA": 0,
+            "shrinkB": 0,
+        },
+        annotation_clip=False,
+    )
+    axes.annotate(
+        f"{edge.value:.2f} {item.units}",
+        xy=((from_x + to_x) / 2, (from_y + to_y) / 2),
+        xytext=(8, 0),
+        textcoords="offset points",
+        va="center",
+        fontsize="small",
+        color=color,
+        annotation_clip=False,
+    )
+
+
+def _draw_series_curves(
+    axes: Axes,
+    item: BandSeries,
+    distances: np.ndarray,
+    style: list[str],
+    color: str | None,
+) -> Any:
+    """Plot one series' bands and return the color they were drawn in.
+
+    ``None`` if the series drew no curve at all (an empty path).
+    """
+    energies = np.asarray(item.energies, dtype=np.float64) - item.zero
+    drawn = False
+    drawn_color: Any = None
+    for span in _segments(item):
+        for band in range(energies.shape[1]):
+            (line,) = axes.plot(
+                distances[span],
+                energies[span, band],
+                *style,
+                linewidth=1.2,
+                label=None if drawn else item.label,
+            )
+            if color is not None:
+                line.set_color(color)
+            drawn = True
+            drawn_color = line.get_color()
+    return drawn_color
+
+
 class StyleError(ValueError):
     """A style is not one of matplotlib's format strings."""
 
@@ -213,6 +281,7 @@ def draw_band_structures(
     zero: EnergyZero = EnergyZero.NONE,
     ylim: tuple[float, float] | None = None,
     legend: bool | None = None,
+    gap: bool = False,
 ) -> None:
     """Draw every series onto one set of axes, shifted by its own ``zero``.
 
@@ -234,32 +303,29 @@ def draw_band_structures(
         is drawn in. ``None`` shows every band in full.
     :param legend: draw the key, or leave it out. ``None`` draws it for an
         overlay and leaves it out for a single curve.
+    :param gap: annotate each series' band gap, skipping a series that
+        reports no valence band edge.
     """
     cell = _shared_cell(series)
     drawn_distances: list[np.ndarray] = []
     for index, item in enumerate(series):
         distances = path_distances(item, cell)
         drawn_distances.append(distances)
-        energies = np.asarray(item.energies, dtype=np.float64) - item.zero
         style = [item.style] if item.style else []
         # One band is one plot call, and matplotlib advances its color cycle
         # once per call, so a series whose style names no color still has to be
         # given one — otherwise its bands come out in as many colors.
         names_color = bool(style) and _style_color(style[0]) is not None
         color = None if names_color else f"C{index % 10}"
-        drawn = False
-        for span in _segments(item):
-            for band in range(energies.shape[1]):
-                (line,) = axes.plot(
-                    distances[span],
-                    energies[span, band],
-                    *style,
-                    linewidth=1.2,
-                    label=None if drawn else item.label,
-                )
-                if color is not None:
-                    line.set_color(color)
-                drawn = True
+        drawn_color = _draw_series_curves(axes, item, distances, style, color)
+
+        if gap and drawn_color is not None:
+            try:
+                edge = band_gap(item)
+            except ValueError:
+                pass
+            else:
+                _draw_gap(axes, item, edge, distances, drawn_color)
 
     positions, names = _ticks(_tick_source(series), cell)
     if positions:
