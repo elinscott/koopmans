@@ -74,12 +74,14 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
         :doc:`Dielectric constants <tutorials/dielectric_constants/index>`, which a
         Koopmans calculation on a solid needs
 
-    .. container:: capability-cell planned
+    .. container:: capability-cell
 
-        .. image:: _static/capabilities/optical_spectra.svg
-            :alt: Placeholder tile for optical spectra, planned
+        .. image:: tutorials/optical_spectra/silicon_bse/spectrum.png
+            :alt: The KI@LDA and independent-particle optical absorption spectra of
+                silicon, with the exciton red shift visible in the KI curve
 
-        Optical spectra, from the Bethe-Salpeter equation — *planned*
+        :doc:`Optical spectra <tutorials/optical_spectra/silicon_bse/index>`, from the
+        Bethe-Salpeter equation
 
     .. container:: capability-cell planned
 
@@ -127,6 +129,7 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
     tutorials/band_structures/index
     tutorials/screening_via_ml/index
     tutorials/dielectric_constants/index
+    tutorials/optical_spectra/index
 
 **********
  Citation
