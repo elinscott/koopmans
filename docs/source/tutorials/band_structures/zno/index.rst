@@ -356,8 +356,10 @@ group of the plot against the electrons each shell holds will confirm the assign
 .. note::
 
     The general tool for this is a projected density of states, which says outright how
-    much of each band comes from which atomic orbital. ``koopmans`` does not yet produce
-    one.
+    much of each band comes from which atomic orbital. This workflow already computes
+    one, as a side effect of the ``projwfc.x`` quality-check step in the progress table
+    above — but ``koopmans`` has no command to plot it yet, so reading it means opening
+    that step's own AiiDA output directly.
 
 .. question:: How many Wannier functions does a block get?
 
