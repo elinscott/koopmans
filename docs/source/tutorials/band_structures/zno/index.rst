@@ -118,9 +118,11 @@ bands. The two ``dis_`` keywords that follow are energy windows for that last bl
     Make sure you have installed ``koopmans``: see :doc:`here <../../../installation>`
     for more details.
 
-    This workflow needs four executables registered — ``pw.x``, ``pw2wannier90.x``,
-    ``wannier90.x`` and ``kcw.x``. ``kcw.x`` runs every stage of the linear-response
-    part.
+    This workflow needs five executables registered — ``pw.x``, ``pw2wannier90.x``,
+    ``wannier90.x``, ``projwfc.x`` and ``kcw.x``. ``kcw.x`` runs every stage of the
+    linear-response part; ``projwfc.x`` runs because the input file names a band path
+    and these pseudopotentials carry atomic wavefunctions, which together turn on a
+    quality-check band structure and its projected density of states.
 
 Run the calculation with
 
@@ -133,33 +135,36 @@ it reads
 
 .. code-block:: text
 
-     Step                                                                      Status
-     Singlepoint Dfpt Workflow                                               finished
-       SCF Nscf                                                              finished
-         Nscf                                                                finished
-       Wannierize                                                            finished
-         Wannierize Emp                                                      finished
-           Wannier 90                                                        finished
-             Wannier 90 Pp                                                   finished
-             Pw 2 Wannier 90                                                 finished
-         Wannierize Occ 1                                                    finished
+     Step                                                      Code              Status
+     Koopmans DFPT                                                             finished
+       Ground state                                                            finished
+         SCF                                                   pw.x            finished
+         NSCF                                                  pw.x            finished
+       Wannierization                                                          finished
+         Band structure                                        pw.x            finished
+         Atomic projections                                    projwfc.x       finished
+         Wannierization (empty block 1)                                        finished
+           wannier90_pp                                        wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           wannier90                                           wannier90.x     finished
+         Wannierization (occupied block 1)                                     finished
            ...
-         Wannierize Occ 2                                                    finished
+         Wannierization (occupied block 2)                                     finished
            ...
-         Wannierize Occ 3                                                    finished
+         Wannierization (occupied block 3)                                     finished
            ...
-         Wannierize Occ 4                                                    finished
+         Wannierization (occupied block 4)                                     finished
            ...
-       Dfpt                                                                  finished
-         Wann 2 KC                                                           finished
-         Ham                                                                 finished
+       DFPT screening                                                          finished
+         Wannier gauge                                         kcw.x           finished
+         Koopmans Hamiltonian                                  kcw.x           finished
     Workflow completed successfully!
 
 Three stages, in order:
 
----------------------------------
- The ground state (``SCF Nscf``)
----------------------------------
+------------------------------------
+ The ground state (``Ground state``)
+------------------------------------
 
 An LDA calculation, self-consistent on the 4×4×4 mesh and then repeated
 non-self-consistently over the same mesh with symmetry switched off, which is the form
@@ -167,30 +172,31 @@ the Wannierization reads its fifty-two bands from. LDA rather than
 PBE because of the pseudopotential library the input file names: the base functional a
 Koopmans calculation corrects is the one its pseudopotentials were generated with.
 
----------------------------------
- Wannierization (``Wannierize``)
----------------------------------
+------------------------------------
+ Wannierization (``Wannierization``)
+------------------------------------
 
-One ``Wannierize`` step per block, five in all, each of which projects onto that block's
-projections and then minimizes the spread. They are independent of one another and run
-concurrently, so the order they appear in above is not the order of the projections. The
-four filled blocks take exactly as many bands as they have projections, so there is
-nothing for them to choose; the empty block has two projections and twenty-six bands to
-find them in, and the two energy windows are what tells it where to look.
+One ``Wannierization`` step per block, five in all, each of which projects onto that
+block's projections and then minimizes the spread. They are independent of one another
+and run concurrently, so the order they appear in above is not the order of the
+projections. The four filled blocks take exactly as many bands as they have
+projections, so there is nothing for them to choose; the empty block has two
+projections and twenty-six bands to find them in, and the two energy windows are what
+tells it where to look.
 
 The five sets of Wannier functions are then stitched into one manifold — a
 block-diagonal unitary matrix and one list of Wannier centres — which is what the next
 stage reads.
 
-----------------------------
- Linear response (``Dfpt``)
-----------------------------
+--------------------------------------
+ Linear response (``DFPT screening``)
+--------------------------------------
 
-``Wann 2 KC`` converts the ``Wannier90`` output into the format ``kcw.x`` reads. Had we
-asked for the screening parameters to be computed, a ``Screen`` step would follow, one
-linear-response calculation per orbital; with ``calculate_alpha: false`` the workflow
-goes straight to ``Ham``, which builds the Koopmans Hamiltonian, and — because the input
-file gave a band path — interpolates it along that path.
+``Wannier gauge`` converts the ``Wannier90`` output into the format ``kcw.x`` reads. Had
+we asked for the screening parameters to be computed, a ``Screening parameters`` step
+would follow, one linear-response calculation per orbital; with ``calculate_alpha:
+false`` the workflow goes straight to the ``Koopmans Hamiltonian`` step, and — because
+the input file gave a band path — interpolates it along that path.
 
 *************
  The outputs
@@ -286,8 +292,8 @@ wrote:
     :width: 600
     :align: center
 
-    The KI band structure of ZnO along the ``ALMGAHK`` path, with the valence band edge
-    at zero.
+    The KI@LDA band structure of ZnO along the ``ALMGAHK`` path, with the valence band
+    edge at zero.
 
 The five blocks of projections are visible in it. Reading the figure from the bottom:
 two bands at −130 eV, six at −83 eV, two around −19 eV, then the sixteen filling the
@@ -300,9 +306,10 @@ separations are the whole reason the manifold was split, and the :ref:`last sect
     Two things this figure is not. It is not a comparison against LDA: for that, pass
     ``koopmans plot bandstructure`` both run directories at once and it puts them on one
     set of axes with a shared energy zero — but the LDA bands along this path need a
-    ``dft_bands`` run, which the next section sets up anyway. And it is not zoomed: the
-    semicore bands set the vertical scale and the command has no y-range option, which
-    is why the gap above is read off the eigenvalues rather than off the picture.
+    ``dft_bands`` run, which the next section sets up anyway. And it is not zoomed to the
+    gap: the range shown includes the semicore bands on purpose, to show all five
+    blocks. ``--ylim`` would narrow the axis to the gap, but the number itself still
+    comes from the eigenvalues above, not by eye off a picture.
 
 .. warning::
 
@@ -333,7 +340,7 @@ and hand it the KI run too to get both on one set of axes:
 .. code-block:: console
 
     $ koopmans run zno_dft.yaml
-    $ koopmans plot bandstructure zno_dft/ zno/
+    $ koopmans plot bandstructure zno_dft/ --style k-- --label LDA zno/ --label "KI@LDA"
 
 What it shows is that the filled bands of ZnO come in four groups, each separated from
 the next by a wide gap. That is where four of the five blocks come from — one per group
