@@ -1252,15 +1252,12 @@ def spectrum(
         click.echo(f"Wrote {data_path} ({len(series)} series)")
 
     target = output_path if output_path is not None or show else Path("spectrum.png")
-    # Naming a series is asking for it to be named on the figure, so an
-    # explicit label brings the legend back for a single curve.
     render_spectra(
         series,
         output_path=target,
         show=show,
         real=real,
         ip=ip,
-        legend=True if labels else None,
     )
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series)")

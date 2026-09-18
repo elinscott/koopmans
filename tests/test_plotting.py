@@ -3268,13 +3268,81 @@ class TestSpectrumRenderer:
         assert "A" in legend_labels
         assert "B" in legend_labels
 
-    def test_one_series_carries_no_legend_by_default(self) -> None:
-        """The control: a single spectrum needs no key, same as one band structure."""
+    def test_one_series_still_carries_a_legend(self) -> None:
+        """Unlike a band structure, a single spectrum still names its curves.
+
+        A lone run's Im ε and its independent-particle overlay are otherwise
+        indistinguishable but for color and line style, so the key stays even
+        with one series on the axes.
+        """
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series("BSE")])
+
+        legend = axes.get_legend()
+        assert legend is not None
+        legend_labels = [text.get_text() for text in legend.get_texts()]
+        assert legend_labels == ["BSE", "independent particle"]
+
+    def test_one_series_without_ip_still_names_the_run(self) -> None:
+        """--no-ip leaves one curve, and the legend still names it."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series("BSE")], ip=False)
+
+        legend = axes.get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == ["BSE"]
+
+    def test_im_eps_ylim_starts_at_zero(self) -> None:
+        """Im ε never goes negative, so the axis floor is fixed at 0."""
         axes = blank_axes()
 
         draw_spectra(axes, [spectrum_series()])
 
-        assert axes.get_legend() is None
+        bottom, _ = axes.get_ylim()
+        assert bottom == pytest.approx(0.0)
+
+    def test_real_ylim_is_left_automatic(self) -> None:
+        """Re ε can go negative, so --real keeps matplotlib's own limits."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], real=True)
+
+        bottom, _ = axes.get_ylim()
+        assert bottom != pytest.approx(0.0)
+
+    def test_an_explicit_ylim_overrides_the_zero_floor(self) -> None:
+        """``ylim`` still wins over the automatic Im ε floor."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], ylim=(-2.0, 8.0))
+
+        assert axes.get_ylim() == pytest.approx((-2.0, 8.0))
+
+    def test_xlim_is_tight_to_the_energies_drawn(self) -> None:
+        """The x axis carries no margin around the plotted energies."""
+        axes = blank_axes()
+        series = spectrum_series()
+
+        draw_spectra(axes, [series])
+
+        assert axes.get_xlim() == pytest.approx((min(series.energies), max(series.energies)))
+
+    def test_xlim_spans_every_series(self) -> None:
+        """Two runs with different energy ranges both fit inside the x axis."""
+        axes = blank_axes()
+
+        draw_spectra(
+            axes,
+            [
+                spectrum_series("A", energies=[0.0, 1.0, 2.0], im_eps=[0.1, 0.2, 0.3]),
+                spectrum_series("B", energies=[-1.0, 0.0, 3.0], im_eps=[0.4, 0.5, 0.6]),
+            ],
+            ip=False,
+        )
+
+        assert axes.get_xlim() == pytest.approx((-1.0, 3.0))
 
     def test_style_names_a_color_for_every_curve_the_series_draws(self) -> None:
         """A style with a color applies it to the main curve and its overlay."""
@@ -3357,10 +3425,10 @@ class TestSpectrumCommand:
         (line,) = axes.get_lines()
         assert list(line.get_ydata()) == pytest.approx([6.8, 6.9])
 
-    def test_a_label_names_the_curve_and_brings_the_legend_back(
+    def test_a_label_names_the_curve_on_the_legend(
         self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
     ) -> None:
-        """Same rule as ``plot bandstructure``: naming a curve asks to see it named."""
+        """--label renames the run, and the always-drawn legend shows the new name."""
         from koopmans.cli import cli
 
         folder = bse_run(
@@ -3376,3 +3444,30 @@ class TestSpectrumCommand:
         legend = drawn_spectrum_axes[-1].get_legend()
         assert legend is not None
         assert "Si" in [text.get_text() for text in legend.get_texts()]
+
+    def test_a_single_run_still_carries_a_legend(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """The default command, with no --label, still draws a key naming the run."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 1.0],
+            im_eps=[0.1, 0.2],
+            re_eps=[6.8, 6.9],
+            im_eps_o=[0.09, 0.19],
+            re_eps_o=[6.7, 6.8],
+        )
+
+        result = runner.invoke(
+            cli, ["plot", "spectrum", str(folder), "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        legend = drawn_spectrum_axes[-1].get_legend()
+        assert legend is not None
+        legend_labels = [text.get_text() for text in legend.get_texts()]
+        assert "SinglepointBetheSalpeterWorkflow" in legend_labels
+        assert "independent particle" in legend_labels

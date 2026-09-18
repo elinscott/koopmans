@@ -311,22 +311,27 @@ def draw_spectra(
 
     Draws Im ε against energy, one curve per series, or Re ε with ``real``.
     ``ip`` overlays each series' independent-particle spectrum, where it
-    reported one, as a lighter dashed curve in the same color.
+    reported one, as a lighter dashed curve in the same color. The x axis is
+    tight to the energies drawn, with no margin. Im ε's y axis starts at 0;
+    Re ε goes negative, so its automatic limits are left alone unless
+    ``ylim`` overrides them.
 
     :param axes: where to draw.
     :param series: the spectra to draw.
     :param real: draw Re ε instead of Im ε.
     :param ip: overlay the independent-particle spectrum.
-    :param ylim: the range to show. ``None`` shows the data in full.
-    :param legend: draw the key, or leave it out. ``None`` draws it for an
-        overlay and leaves it out for a single curve.
+    :param ylim: the range to show. ``None`` starts Im ε at 0 and leaves
+        Re ε automatic.
+    :param legend: draw the key, or leave it out. ``None`` always draws it.
     """
     quantity = "re_eps" if real else "im_eps"
     quantity_o = "re_eps_o" if real else "im_eps_o"
     symbol = "Re" if real else "Im"
 
+    drawn_energies: list[np.ndarray] = []
     for index, item in enumerate(series):
         energies = np.asarray(item.energies, dtype=np.float64)
+        drawn_energies.append(energies)
         values = np.asarray(getattr(item, quantity), dtype=np.float64)
         style = [item.style] if item.style else []
         color = _cycle_color(style, index)
@@ -350,10 +355,17 @@ def draw_spectra(
 
     axes.set_xlabel("Energy (eV)")
     axes.set_ylabel(rf"{symbol} $\varepsilon$")
+
+    if drawn_energies:
+        all_energies = np.concatenate(drawn_energies)
+        axes.set_xlim(float(all_energies.min()), float(all_energies.max()))
+
     if ylim is not None:
         axes.set_ylim(*ylim)
+    elif not real:
+        axes.set_ylim(bottom=0)
 
-    wanted = len(series) > 1 if legend is None else legend
+    wanted = True if legend is None else legend
     if wanted:
         axes.legend(frameon=False, fontsize="small")
 
@@ -375,9 +387,9 @@ def render_spectra(
     :param show: open an interactive window.
     :param real: draw Re ε instead of Im ε.
     :param ip: overlay the independent-particle spectrum.
-    :param ylim: the range to show. ``None`` shows the data in full.
-    :param legend: draw the key, or leave it out. ``None`` draws it for an
-        overlay and leaves it out for a single curve.
+    :param ylim: the range to show. ``None`` starts Im ε at 0 and leaves
+        Re ε automatic.
+    :param legend: draw the key, or leave it out. ``None`` always draws it.
     """
     import matplotlib
 
