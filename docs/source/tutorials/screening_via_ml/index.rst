@@ -86,12 +86,12 @@ composition and the projections that the rest of the file gives.
 is the model. ``descriptor`` decides what the model sees of an orbital: with
 ``self_hartree`` it sees a single number, the electrostatic self-interaction energy of
 that orbital's density, which the calculation prints anyway and which therefore costs
-nothing to collect. (The other option, ``power_spectrum``, describes each orbital
-density in far more detail.) ``estimator``
-decides how the model fits screening parameters to that number, and
-``occ_and_emp_together: false`` fits the filled and the empty orbitals separately — one
-screening parameter says what happens when an electron leaves an orbital, the other what
-happens when one arrives, and the two need not be related.
+nothing to collect. (The other option, ``power_spectrum``, describes each orbital density
+in far more detail — see the question below.) ``estimator`` decides how the model fits
+screening parameters to that number, and ``occ_and_emp_together: false`` fits the filled
+and the empty orbitals separately — one screening parameter says what happens when an
+electron leaves an orbital, the other what happens when one arrives, and the two need
+not be related.
 
 .. warning::
 
@@ -113,24 +113,24 @@ Koopmans calculation:
 .. code-block:: text
 
      Step                                                                      Status
-     Trajectory Workflow                                                     finished
-       DSCF Snapshot 1                                                       finished
-         Wannier Initialization                                              finished
-           DFT Dummy                                                         finished
-           Wannierize                                                        finished
-           Fold To Supercell                                                 finished
-           DFT Init                                                          finished
-         Compute Screening Parameters                                        finished
+     Trajectory                                                               finished
+       Snapshot 1                                                             finished
+         Wannier initialization                                              finished
+           Wannierization                                                    finished
+           Supercell folding                                                 finished
+           DFT staging                                                       finished
+           DFT initialization                                                finished
+         Screening parameters                                                finished
            Iteration 1                                                       finished
-             KI Trial                                                        finished
-             Compute Orbital Screening Parameters                            finished
-               Compute Alpha Orb 1                                           finished
+             Trial KI                                                        finished
+             Orbital screening                                               finished
+               Orbital 1                                                     finished
                ...
-               Compute Alpha Orb 6                                           finished
-         Run Final KI                                                        finished
-       DSCF Snapshot 2                                                       finished
+               Orbital 6                                                     finished
+         RunFinalKI                                                          finished
+       Snapshot 2                                                            finished
          ...
-       DSCF Snapshot 5                                                       finished
+       Snapshot 5                                                            finished
 
     Workflow completed successfully!
     Trained model stored as node 125246 (…) — reference it via `ml: {model: 125246}`.
@@ -194,7 +194,9 @@ the self-Hartree energy, once that energy has been shifted by ``x_mean`` and sca
 
 A model that has only ever been checked against its own training data tells you nothing.
 Download :download:`test.yaml <test.yaml>` and :download:`testing_snapshots.xyz
-<testing_snapshots.xyz>`, and run
+<testing_snapshots.xyz>` into the same directory as ``train.yaml`` — ``model_file:
+train/model.json`` is a relative path, read against the training run's own output
+folder — and run
 
 .. code-block:: console
 
@@ -223,10 +225,10 @@ configuration's branch:
 
 .. code-block:: text
 
-    DSCF Snapshot 1                                                       finished
+    Snapshot 1                                                             finished
       ...
-      Run Final KI                                                        finished
-      Run Final KI Predicted                                              finished
+      RunFinalKI                                                           finished
+      Final KI (predicted alphas)                                         finished
 
 Both start from the same trial calculation and differ only in the screening parameters,
 so whatever separates their orbital energies is the model's doing and nothing else.
@@ -274,11 +276,31 @@ by as much as 0.5 eV for individual orbitals.
     data but a description of the orbital rich enough to distinguish orbitals whose
     screening differs. Adding training configurations cannot supply that.
 
+.. question:: Does the ``power_spectrum`` descriptor do better?
+
+    Much better. Add ``descriptor: power_spectrum`` to the ``ml`` block of every input
+    above, plus the radial basis it expands each orbital's density on —
+    ``n_max: 6``, ``l_max: 6``, ``r_min: 1.0``, ``r_max: 4.0`` — and repeat the training
+    and testing runs. The Wannier-seeded initialization this tutorial already runs
+    supplies everything the descriptor needs (the per-block Wannierizations and a
+    ``pw2wannier90.x`` decompose pass); nothing else about the input files changes.
+
+    On the same five-configuration training set and fifteen-configuration test, the
+    screening parameters come out with a spread of 0.015 — under half of
+    ``self_hartree``'s 0.033 — and the final KI orbital energies move by 29 meV RMS, at
+    most 83 meV, against 187 meV RMS and 0.5 eV. That is close to the legacy tutorial's
+    own published error on the same split, 33 meV, measured with a different
+    orbital-density descriptor of comparable detail. A one-number descriptor is cheap
+    and easy to explain; a richer one is what you would actually use.
+
+    Both descriptors work in every ``ml`` mode, including ``predict``.
+
 *****************
  Using the model
 *****************
 
-Download :download:`predict.yaml <predict.yaml>` and run
+Download :download:`predict.yaml <predict.yaml>` into the same directory as
+``train.yaml``, for the same reason as ``test.yaml`` above, and run
 
 .. code-block:: console
 
@@ -297,16 +319,16 @@ turns those into screening parameters, and the final KI calculation applies them
 
 .. code-block:: text
 
-    DSCF Snapshot 1                                                       finished
-      Wannier Initialization                                              finished
-      Predict Screening Parameters                                        finished
-        KI Trial                                                          finished
-      Run Final KI                                                        finished
+    Snapshot 1                                                             finished
+      Wannier initialization                                              finished
+      Predicted screening parameters                                     finished
+        Trial KI                                                          finished
+      RunFinalKI                                                           finished
 
-Compare that with the training run's branch: the whole ``Compute Orbital Screening
-Parameters`` fan-out, one constrained calculation per orbital, is gone. What remains —
-the Wannierization, the initialization, the trial and the final calculation — is what
-sets the floor on how cheap a predicted Koopmans calculation can be.
+Compare that with the training run's branch: the whole ``Orbital screening`` fan-out,
+one constrained calculation per orbital, is gone. What remains — the Wannierization,
+the initialization, the trial and the final calculation — is what sets the floor on
+how cheap a predicted Koopmans calculation can be.
 
 .. warning::
 
@@ -329,26 +351,47 @@ here with one subdirectory per configuration:
     │   ├── 02-wannier_initialization
     │   ├── 03-ComputeScreeningParameters
     │   ├── 04-RunFinalKI
-    │   └── 05-run_final_ki_predicted
+    │   ├── 05-run_final_ki_predicted
+    │   └── outputs                            # this snapshot's own alphas, eigenvalues, ...
     ├── ...
     ├── 15-dscf_snapshot_15
     ├── 16-alpha_and_eigenvalue_deltas_snapshot_1-compare_final_kis
     ├── ...
     ├── 30-alpha_and_eigenvalue_deltas_snapshot_15-compare_final_kis
     ├── model.json
+    ├── outputs
+    │   ├── datasets.json
+    │   ├── evaluation.json                    # metrics, predictions, alpha_and_eigenvalue_deltas
+    │   ├── model.json
+    │   └── snapshots.json
     └── README
 
 Each configuration's subdirectory holds the same steps a single Koopmans calculation
 writes, and — in a test run only — the second final KI calculation beside the first. The
 ``compare_final_kis`` steps that follow are the per-configuration comparisons the figure
-above summarizes, and ``model.json`` is the model the run used.
+above summarizes. ``model.json`` at the root is the model the run used; the same content
+sits again inside ``outputs/``, which is where the whole run's own results land —
+including ``evaluation.json``, read below.
 
-*************
- From python
-*************
+**********************
+ Reading the verdict
+**********************
 
-A test run's verdict on its model is available directly, without going through the
-output directories:
+A test run's verdict on its model is ``outputs/evaluation.json``:
+
+.. code-block:: console
+
+    $ python -c "import json; print(json.load(open('test/outputs/evaluation.json'))['metrics'])"
+    {'n_samples': 90, 'mae': 0.027207865435438, 'rmse': 0.032752078844741, 'max_abs_error': 0.096675353075518}
+
+Its ``predictions`` key carries every orbital's predicted and computed screening
+parameter, and ``alpha_and_eigenvalue_deltas`` each configuration's pair of final KI
+calculations — the same numbers the plot above is made from. A training run reports
+metrics too, but they are measured on the configurations the model was fitted to, so
+they say how well the line fits, not how well it predicts. A ``predict`` run computes no
+comparison and writes no ``evaluation.json`` — there is nothing to evaluate against.
+
+The same file loads as a Python dict without going through the output directory at all:
 
 .. code-block:: python
 
@@ -358,9 +401,3 @@ output directories:
 
     metrics = results["evaluation"]["metrics"]
     print(f"typical screening-parameter error: {metrics['mae']:.3f}")  # 0.027
-
-``results["evaluation"]`` also carries every orbital's predicted and computed screening
-parameter under ``predictions``, and each configuration's pair of final KI calculations
-under ``alpha_and_eigenvalue_deltas`` — the same numbers the plot above is made from. A
-training run reports metrics too, but they are measured on the configurations the model
-was fitted to, so they say how well the line fits, not how well it predicts.
