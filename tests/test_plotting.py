@@ -661,6 +661,50 @@ class TestResolver:
         assert [item.label for item in found] == ["KI"]
         assert found[0].vbm == pytest.approx(1.25)
 
+    def test_a_dscf_run_with_a_path_shows_both_dft_and_ki(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A ΔSCF run given ``kpoints.path`` carries both bands from one folder.
+
+        The pw.x quality-check bands run the Wannier initialization samples
+        along ``kpoints.path`` (nested arbitrarily deep under the run) and
+        the ΔSCF interpolation's own Koopmans bands are declared,
+        unrelated producers; the whole-run folder resolves both, one
+        curve per producer, with no special-casing for the route.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="KoopmansDSCFWorkflow")
+        wannier_initialization = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannier_initialization"
+        )
+        wannierize = make_process(
+            "aiida.workflows:workgraph.engine",
+            caller=wannier_initialization,
+            link_label="wannierize",
+        )
+        dft_bands = make_process(
+            PW_BASE,
+            caller=wannierize,
+            link_label="bands",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"pw__parameters": orm.Dict({"CONTROL": {"calculation": "bands"}})},  # type: ignore[no-untyped-call]
+        )
+        attach(dft_bands, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 5.0]]))
+        built = make_process(
+            BUILD_BAND_STRUCTURE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(1.25).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 1.25, 4.0]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == ["DFT", "KI"]
+
     def test_split_mode_names_the_gauge_fragments_and_merge(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
     ) -> None:

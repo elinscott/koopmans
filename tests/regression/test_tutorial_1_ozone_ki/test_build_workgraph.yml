@@ -1371,6 +1371,14 @@ raw:
             extras:
               py_type: aiida.orm.nodes.data.array.bands.BandsData
             required: false
+        band_structure_dft:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.bands.BandsData
+            required: false
         band_structure_reference:
           dynamic: false
           identifier: <scrubbed:identifier>
@@ -2789,6 +2797,14 @@ raw:
                 child_default_link_limit: 1
                 required: true
             band_structure:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.bands.BandsData
+                required: false
+            band_structure_dft:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:
