@@ -21,11 +21,11 @@ executed twice:
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Callable
-from datetime import UTC
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import click
 import click.parser
@@ -56,6 +56,8 @@ from koopmans.plotting.series import EnergyZero
 
 if TYPE_CHECKING:
     from aiida import orm
+
+    from koopmans.aiida.anchor import ResolvedTarget
 
 __all__ = [
     "cli",
@@ -94,14 +96,80 @@ def cli(pdb: bool, enable_logging: bool) -> None:
         )
 
 
+def _dump_results(process: orm.ProcessNode, dump_path: Path, input_name: str | None) -> None:
+    """Write ``process``'s results tree to ``dump_path``, reporting a trained model if any.
+
+    ``input_name`` is the input file this dump sits beside, when one is
+    known; a dump with no known input file (a bare ``--uuid``/``--pk``
+    fetch) skips the ``ml: {model_file: ...}`` hint, since it would name
+    no file to write that keyword beside.
+    """
+    try:
+        dump_workgraph(process, output_path=dump_path, overwrite=True)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if input_name is not None and trained_model_output(process) is not None:
+        # `ml: model_file` reads a relative path against the input file's
+        # own directory, so the snippet drops the leading directories the
+        # written path carries when the run was started from elsewhere.
+        click.echo(
+            f"Trained model written to {dump_path / MODEL_FILENAME} — reuse it from "
+            f"an input file beside {input_name} with "
+            f"`ml: {{model_file: {Path(dump_path.name) / MODEL_FILENAME}}}`."
+        )
+
+
+def _dump_path_for(node: orm.ProcessNode, dump: tuple[Path, str] | None) -> tuple[Path, str | None]:
+    """Return where ``node``'s results tree belongs, and its input file's name if known.
+
+    ``dump`` is the anchor-derived location :func:`resolve_run_target`
+    resolved, or ``None`` for a target given directly by ``--uuid``/
+    ``--pk``, naming no anchor file to read — that case falls back to a
+    bare ``./<process label or pk>`` so the dump never lands outside the
+    current directory.
+    """
+    if dump is not None:
+        return dump
+    name = node.process_label or ""
+    if not name or "/" in name or name in (".", ".."):
+        name = str(node.pk)
+    return Path.cwd() / name, None
+
+
+def _anchor_run_submission(input_path: Path, node: orm.ProcessNode) -> None:
+    """Record ``node`` in ``input_path``'s anchor file, warning rather than aborting on failure.
+
+    Called once ``koopmans run``'s submission is durably in the daemon, so a
+    write failure here must not kill a calculation that is already under
+    way — it only costs the shortcut `koopmans status` would otherwise find
+    on its own.
+    """
+    from koopmans.aiida.anchor import anchor_path_for_input, record_submission
+
+    anchor_path = anchor_path_for_input(input_path)
+    try:
+        record_submission(anchor_path, input_path, node)
+    except (ValueError, OSError) as exc:
+        click.echo(
+            f"Warning: the workflow was submitted, but {anchor_path} could not be "
+            f"written ({exc}), so `koopmans status` will not find it on its own. "
+            f"Follow it with `koopmans status --uuid {node.uuid}`.",
+            err=True,
+        )
+
+
 @cli.command()
 @click.argument("input_file", type=click.Path(exists=True))
 def run(input_file: str) -> None:
     """Run a koopmans calculation from an input file.
 
-    INPUT_FILE is the path to a YAML or JSON input file describing the calculation.
+    INPUT_FILE is the path to a YAML or JSON input file describing the
+    calculation. Records the submission in `<stem>.run.yaml`, next to the
+    input file, the same way `koopmans submit` does, so a run interrupted
+    (e.g. Ctrl-C) after submission can still be found with `koopmans
+    status` or `koopmans attach`.
     """
-    from koopmans.aiida.workflows import advice_for, build_workgraph
+    from koopmans.aiida.workflows import advice_for, advisories_for, build_workgraph
 
     input_path = Path(input_file)
 
@@ -117,30 +185,26 @@ def run(input_file: str) -> None:
     # Build the appropriate workgraph based on task
     wg = build_workgraph(koopmans_input)
 
+    for advisory in advisories_for(koopmans_input):
+        click.echo(f"Warning: {advisory}", err=True)
+
     # Graph validation runs when the engine takes the graph, past the build
     # boundary where `build_workgraph` attaches advice — a missing
     # route-conditional code surfaces here, so translate at this boundary too.
     try:
         with suppress_aiida_logging():
-            run_with_progress(wg)
+            run_with_progress(
+                wg, on_submitted=functools.partial(_anchor_run_submission, input_path)
+            )
     except Exception as exc:
-        advice = advice_for(exc)
+        advice = advice_for(exc, koopmans_input.computer.name)
         if advice is not None:
             exc.add_note(advice)
         raise
 
     if wg.process is not None:
         dump_path = input_path.parent / input_path.stem
-        dump_workgraph(wg.process, output_path=dump_path, overwrite=True)
-        if trained_model_output(wg.process) is not None:
-            # `ml: model_file` reads a relative path against the input file's
-            # own directory, so the snippet drops the leading directories the
-            # written path carries when the run was started from elsewhere.
-            click.echo(
-                f"Trained model written to {dump_path / MODEL_FILENAME} — reuse it from "
-                f"an input file beside {input_path.name} with "
-                f"`ml: {{model_file: {Path(input_path.stem) / MODEL_FILENAME}}}`."
-            )
+        _dump_results(wg.process, dump_path, input_name=input_path.name)
 
 
 @cli.command()
@@ -154,11 +218,8 @@ def submit(input_file: str) -> None:
     `koopmans status` and `koopmans attach` read that file to find the
     calculation again.
     """
-    from datetime import datetime
-
-    from koopmans.aiida.anchor import AnchorEntry, anchor_path_for_input, append_anchor_entry
-    from koopmans.aiida.setup.profile import PROFILE_NAME
-    from koopmans.aiida.workflows import advice_for, build_workgraph
+    from koopmans.aiida.anchor import anchor_path_for_input, record_submission
+    from koopmans.aiida.workflows import advice_for, advisories_for, build_workgraph
     from koopmans.api import launch
 
     input_path = Path(input_file)
@@ -167,30 +228,25 @@ def submit(input_file: str) -> None:
     load_koopmans_profile()
     wg = build_workgraph(koopmans_input)
 
+    for advisory in advisories_for(koopmans_input):
+        click.echo(f"Warning: {advisory}", err=True)
+
     # Graph validation runs when the engine takes the graph, past the build
     # boundary where `build_workgraph` attaches advice — translate here too.
     try:
         with suppress_aiida_logging():
             node = launch(wg, blocking=False, wait=False)
     except Exception as exc:
-        advice = advice_for(exc)
+        advice = advice_for(exc, koopmans_input.computer.name)
         if advice is not None:
             exc.add_note(advice)
         raise
 
-    if node.pk is None:
-        raise click.ClickException("The submitted process was never stored, so it has no id.")
-
     anchor_path = anchor_path_for_input(input_path)
-    entry = AnchorEntry(
-        uuid=node.uuid,
-        pk=node.pk,
-        input=input_path.name,
-        profile=PROFILE_NAME,
-        submitted=datetime.now(UTC).isoformat(),
-    )
     try:
-        append_anchor_entry(anchor_path, entry)
+        record_submission(anchor_path, input_path, node)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     except OSError as exc:
         # The daemon already has the job; losing the run file only loses
         # the *shortcut* back to it, not the submission itself.
@@ -203,21 +259,14 @@ def submit(input_file: str) -> None:
     click.echo("🚀 Workflow submitted")
 
 
-def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None) -> orm.ProcessNode:
-    """Resolve and load the process a status/attach target refers to.
+def _load_process(resolved: ResolvedTarget) -> orm.ProcessNode:
+    """Load the AiiDA process ``resolved`` identifies.
 
     Loads the koopmans AiiDA profile as a side effect, since resolution
     only touches the filesystem but loading the node needs the profile.
     """
     from aiida import orm
     from aiida.common.exceptions import NotExistent
-
-    from koopmans.aiida.anchor import resolve_target
-
-    try:
-        resolved = resolve_target(target, uuid=uuid_, pk=pk_)
-    except ValueError as exc:
-        raise click.ClickException(str(exc)) from exc
 
     load_koopmans_profile()
     # Both errors below name the identifier the user gave or the run file
@@ -239,6 +288,42 @@ def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None)
             f"{identifier!r} is not a calculation; it holds a {type(node).__name__}."
         )
     return node
+
+
+def _load_target_process(target: str | None, uuid_: str | None, pk_: int | None) -> orm.ProcessNode:
+    """Resolve and load the process a status target refers to."""
+    from koopmans.aiida.anchor import resolve_target
+
+    try:
+        resolved = resolve_target(target, uuid=uuid_, pk=pk_)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    return _load_process(resolved)
+
+
+def _resolve_run(
+    target: str | None, uuid_: str | None, pk_: int | None
+) -> tuple[orm.ProcessNode, Path, str | None]:
+    """Resolve an attach/fetch target once, returning the process and where its dump belongs.
+
+    ``attach``/``fetch`` need both the process to act on and its dump
+    location; resolving each independently, as separate calls to
+    ``resolve_target`` and ``resolve_dump_target`` would, reads the
+    anchor file twice and risks the two answers disagreeing if it changes
+    in between (e.g. a second run file appearing while ``attach`` was
+    still waiting). :func:`~koopmans.aiida.anchor.resolve_run_target`
+    reads it once for both.
+    """
+    from koopmans.aiida.anchor import resolve_run_target
+
+    try:
+        resolved = resolve_run_target(target, uuid=uuid_, pk=pk_)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    node = _load_process(resolved.identity)
+    dump_path, input_name = _dump_path_for(node, resolved.dump)
+    return node, dump_path, input_name
 
 
 # Shared options for `status`/`attach`
@@ -294,12 +379,15 @@ def attach(target: str | None, uuid_: str | None, pk_: int | None) -> None:
     TARGET is resolved exactly as for `koopmans status`. Displays the
     same live-updating table `koopmans run` shows, until the calculation
     terminates; a calculation that has already terminated is shown once,
-    as `koopmans status` would. Exits nonzero if the calculation's root
-    process failed.
+    as `koopmans status` would. Once the calculation has terminated —
+    whether it was already finished when this command was called, or it
+    finished while attached — writes the same results folder tree
+    `koopmans run` writes, the same way `koopmans fetch` would. Exits
+    nonzero if the calculation's root process failed.
     """
     from koopmans.aiida.progress import render_process_once, watch_process
 
-    node = _load_target_process(target, uuid_, pk_)
+    node, dump_path, input_name = _resolve_run(target, uuid_, pk_)
 
     with suppress_aiida_logging():
         if node.is_terminated:
@@ -307,7 +395,53 @@ def attach(target: str | None, uuid_: str | None, pk_: int | None) -> None:
         else:
             node = watch_process(node)
 
+    _dump_results(node, dump_path, input_name)
+
     if node.is_terminated and not node.is_finished_ok:
+        raise SystemExit(1)
+
+
+@cli.command()
+@target_argument
+@uuid_option
+@pk_option
+def fetch(target: str | None, uuid_: str | None, pk_: int | None) -> None:
+    """Write the results folder tree for an already-submitted calculation.
+
+    TARGET is resolved exactly as for `koopmans status`. Writes the same
+    folder tree `koopmans run` would have written: next to the input
+    file named by the resolved run file, or `./<process label or pk>` in
+    the current directory for a bare `--uuid`/`--pk` naming no run file.
+    A tree already there is overwritten.
+
+    \b
+        koopmans submit si.yaml
+        koopmans fetch si.yaml
+
+    A calculation still running is written as far as it has got, with a
+    note that it has not finished; a calculation whose root process
+    failed is written the same way and named `koopmans status` would
+    name it, and this command exits nonzero, as `koopmans status` does.
+    """
+    from koopmans.aiida.progress import render_process_once
+
+    node, dump_path, input_name = _resolve_run(target, uuid_, pk_)
+
+    if not node.is_finished_ok:
+        with suppress_aiida_logging():
+            render_process_once(node)
+
+    _dump_results(node, dump_path, input_name)
+
+    if not node.is_terminated:
+        click.echo(
+            f"\n{dump_path} holds only the steps finished so far — the run has not "
+            "finished yet; fetch again once it has for the rest."
+        )
+    elif node.is_finished_ok:
+        click.echo(f"Wrote {dump_path}")
+    else:
+        click.echo(f"\nWrote {dump_path}")
         raise SystemExit(1)
 
 
@@ -753,10 +887,10 @@ data_option = click.option(
 )
 
 
-def _check_ylim(
+def _check_range(
     ctx: click.Context, param: click.Parameter, value: tuple[float, float] | None
 ) -> tuple[float, float] | None:
-    """Reject a range that frames nothing."""
+    """Reject a range that frames nothing, shared by every ``--*lim`` option."""
     if value is not None and value[0] >= value[1]:
         raise click.BadParameter(
             f"MIN must be below MAX; got {value[0]} and {value[1]}.", ctx=ctx, param=param
@@ -789,10 +923,30 @@ ylim_option = click.option(
     nargs=2,
     type=float,
     default=None,
-    callback=_check_ylim,
+    callback=_check_range,
     metavar="MIN MAX",
     help="Show only this range of the energy axis, in the units it is drawn in "
     "and measured from the zero --zero sets. Defaults to every band in full.",
+)
+spectrum_xlim_option = click.option(
+    "--xlim",
+    nargs=2,
+    type=float,
+    default=None,
+    callback=_check_range,
+    metavar="MIN MAX",
+    help="Show only this range of the energy axis, in eV. Defaults to the "
+    "energies drawn, with no margin.",
+)
+spectrum_ylim_option = click.option(
+    "--ylim",
+    nargs=2,
+    type=float,
+    default=None,
+    callback=_check_range,
+    metavar="MIN MAX",
+    help="Show only this range of Im ε (or Re ε with --real). Defaults to Im ε "
+    "starting at 0, or Re ε left automatic.",
 )
 
 
@@ -868,6 +1022,9 @@ def _recording_process(
     return wrapped
 
 
+_T = TypeVar("_T")
+
+
 class _FolderPairingCommand(click.Command):
     """A command whose ``--style``/``--label`` pair with the folder argument.
 
@@ -892,15 +1049,15 @@ class _FolderPairingCommand(click.Command):
     """
 
     #: Parameter names paired with the folder argument, one per folder.
-    _paired_params = ("styles", "labels")
+    _paired_params: tuple[str, ...] = ("styles", "labels")
     _folder_param = "folders"
 
     @staticmethod
     def _bind_values(
         flag: str,
-        occurrences: list[tuple[int, str]],
+        occurrences: list[tuple[int, _T]],
         folder_tokens: tuple[Path, ...],
-    ) -> tuple[str | None, ...] | None:
+    ) -> tuple[_T | None, ...] | None:
         """Return one value per folder for a paired option, or ``None`` if unused.
 
         As many values as folders pair positionally, in listing order,
@@ -929,7 +1086,7 @@ class _FolderPairingCommand(click.Command):
                 f"each one just after the folder it names, or none at all."
             )
 
-        bound: dict[int, str] = {}
+        bound: dict[int, _T] = {}
         for index, value in occurrences:
             if index < 0:
                 raise click.UsageError(
@@ -957,14 +1114,26 @@ class _FolderPairingCommand(click.Command):
             if not isinstance(param, _PositionalAwareOption):
                 raise TypeError(f"{name!r} must be declared with cls=_PositionalAwareOption.")
             positions = ctx.meta.pop(param.positions_key(), [])
-            values: tuple[str, ...] = ctx.params[name]
+            values: tuple[Any, ...] = ctx.params[name]
             occurrences = list(zip((p - 1 for p in positions), values, strict=True))
             ctx.params[name] = self._bind_values(param.opts[0], occurrences, folder_tokens)
 
         return rv
 
 
-@plot.command(cls=_FolderPairingCommand)
+class _BandStructureCommand(_FolderPairingCommand):
+    """``bandstructure``'s own pairing set: ``--style``/``--label``, plus ``--gap``.
+
+    ``--gap`` is a flag, not a value, but pairs with the folder argument the
+    same way: it must follow the folder whose series it annotates. Annotating
+    every series at once is a separate, ordinary flag, ``--gaps``, outside
+    this pairing altogether.
+    """
+
+    _paired_params = ("styles", "labels", "gaps")
+
+
+@plot.command(cls=_BandStructureCommand)
 @click.argument(
     "folders",
     nargs=-1,
@@ -976,6 +1145,25 @@ class _FolderPairingCommand(click.Command):
 @zero_option
 @data_option
 @ylim_option
+@click.option(
+    "--gap",
+    "gaps",
+    cls=_PositionalAwareOption,
+    multiple=True,
+    is_flag=True,
+    help="Annotate a series' band gap: a labelled double-headed arrow from "
+    "its valence band maximum to its conduction band minimum. Must follow "
+    "the folder it annotates, and refuses one whose run reports no valence "
+    "band edge, since naming it was asking for it. Does not mix with "
+    "--gaps.",
+)
+@click.option(
+    "--gaps",
+    "all_gaps",
+    is_flag=True,
+    help="Annotate every series that reports a band gap, silently skipping "
+    "those that do not. Does not mix with --gap.",
+)
 @click.option(
     "--label",
     "labels",
@@ -1010,6 +1198,8 @@ def bandstructure(
     zero: str,
     data_path: Path | None,
     ylim: tuple[float, float] | None,
+    gaps: tuple[bool | None, ...] | None,
+    all_gaps: bool,
     labels: tuple[str | None, ...],
     styles: tuple[str | None, ...],
 ) -> None:
@@ -1075,6 +1265,19 @@ def bandstructure(
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
     and so lose both the overlay and its shared zero.
+
+    --gap draws a series' band gap: a dashed rule at the valence band
+    maximum reaching to a double-headed arrow at the conduction band
+    minimum, labelled with the gap's value. Written after a folder it
+    annotates that folder's series only, on this run's own edge:
+
+    \b
+        koopmans plot bandstructure \\
+            si/02-bands --label LDA --style -- \\
+            si-ki --label "KI@LDA" --gap
+
+    --gaps annotates every series that has one instead, silently skipping
+    the rest; the two options do not mix.
     """
     from koopmans.plotting import (
         NoEnergyZeroError,
@@ -1088,11 +1291,16 @@ def bandstructure(
         write_series_json,
     )
 
+    if gaps is not None and all_gaps:
+        raise click.UsageError("--gap and --gaps do not mix; use one or the other.")
+
     load_koopmans_profile()
 
     kind = EnergyZero(zero)
     try:
-        series, warnings = resolve_band_series(folders, labels, styles)
+        series, warnings = resolve_band_series(
+            folders, labels, styles, gaps=gaps or (), gap_all=all_gaps
+        )
         check_paths_agree(series)
         value, reference = apply_energy_zero(series, kind)
     except (PlottingError, PathMismatchError, NoEnergyZeroError, ValueError) as exc:
@@ -1120,6 +1328,134 @@ def bandstructure(
     )
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series, {caption})")
+
+
+@plot.command(cls=_FolderPairingCommand)
+@click.argument(
+    "folders",
+    nargs=-1,
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),  # type: ignore[type-var]
+)
+@output_option
+@show_option
+@data_option
+@click.option(
+    "--real/--no-real",
+    "real",
+    default=False,
+    help="Draw Re ε instead of Im ε.",
+)
+@click.option(
+    "--ip/--no-ip",
+    "ip",
+    default=True,
+    show_default=True,
+    help="Overlay each run's independent-particle spectrum as a lighter dashed curve.",
+)
+@spectrum_xlim_option
+@spectrum_ylim_option
+@click.option(
+    "--label",
+    "labels",
+    cls=_PositionalAwareOption,
+    multiple=True,
+    metavar="TEXT",
+    help="Name a folder on the legend. One per folder pairs them in listing "
+    "order; fewer than that, each names the folder it was written just after, "
+    "and a folder with none of its own keeps its derived name.",
+)
+@click.option(
+    "--style",
+    "styles",
+    cls=_PositionalAwareOption,
+    multiple=True,
+    metavar="FORMAT",
+    callback=_check_styles,
+    help="Draw a folder's spectrum in a matplotlib format string, such as 'k--' "
+    "for a dashed black line. One per folder pairs them in listing order; "
+    "fewer than that, each draws the folder it was written just after, and a "
+    "folder with none of its own is drawn as the figure would draw it on its "
+    "own.",
+)
+def spectrum(
+    folders: tuple[Path, ...],
+    output_path: Path | None,
+    show: bool,
+    data_path: Path | None,
+    real: bool,
+    ip: bool,
+    xlim: tuple[float, float] | None,
+    ylim: tuple[float, float] | None,
+    labels: tuple[str | None, ...],
+    styles: tuple[str | None, ...],
+) -> None:
+    """Draw the optical absorption spectra of finished `task: bse` runs.
+
+    FOLDERS are directories `koopmans run` wrote for a `task: bse` input, or
+    the run directory itself. Each publishes exactly one spectrum, so unlike
+    `koopmans plot bandstructure` there is nothing to search for beneath a
+    folder. Every spectrum across all the folders is drawn on one set of
+    axes:
+
+    \b
+        koopmans plot spectrum si-bse
+
+    Im ε is drawn against energy in eV; --real draws Re ε instead. The
+    independent-particle spectrum the same run reports is overlaid as a
+    lighter dashed curve labelled "independent particle" unless --no-ip is
+    given. --xlim and --ylim override the default axis ranges, tight to the
+    energies drawn and to Im ε starting at 0 respectively:
+
+    \b
+        koopmans plot spectrum si-bse --xlim 2 6
+
+    Each run is named after the route that produced it unless --label names
+    it, and --style says how it is drawn, following the same pairing rules as
+    `koopmans plot bandstructure`'s --label and --style: written right after
+    a folder, or given once per folder to pair positionally, or given for
+    fewer folders than that to bind each to the folder it immediately
+    followed.
+
+    \b
+        koopmans plot spectrum si-bse --label Si --style k- zno-bse --label ZnO
+
+    A folder that ran anything other than `task: bse` is refused, naming the
+    route it actually ran.
+    """
+    from koopmans.plotting import (
+        PlottingError,
+        render_spectra,
+        resolve_spectrum_series,
+        write_series_json,
+    )
+
+    load_koopmans_profile()
+
+    try:
+        series, warnings = resolve_spectrum_series(folders, labels, styles)
+    except (PlottingError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for warning in warnings:
+        click.echo(f"Warning: {warning}", err=True)
+
+    if data_path is not None:
+        write_series_json(series, data_path)
+        click.echo(f"Wrote {data_path} ({len(series)} series)")
+
+    target = output_path if output_path is not None or show else Path("spectrum.png")
+    render_spectra(
+        series,
+        output_path=target,
+        show=show,
+        real=real,
+        ip=ip,
+        xlim=xlim,
+        ylim=ylim,
+    )
+    if target is not None:
+        click.echo(f"Wrote {target} ({len(series)} series)")
 
 
 def main() -> None:

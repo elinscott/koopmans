@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from koopmans.aiida.dumping import NODE_METADATA_FILE
-from koopmans.plotting.series import BandSeries
+from koopmans.plotting.series import BandSeries, SpectrumSeries, band_gap
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -26,6 +26,7 @@ __all__ = [
     "PlottingError",
     "RunNotInProfileError",
     "resolve_band_series",
+    "resolve_spectrum_series",
     "run_node",
 ]
 
@@ -106,6 +107,18 @@ def _no_references(
 ) -> tuple[float | None, float | None]:
     """Return no reference energies: an interpolation reports neither."""
     return None, None
+
+
+def _unfolded_band_references(
+    node: orm.ProcessNode, bands: orm.BandsData
+) -> tuple[float | None, float | None]:
+    """Return the valence band edge the unfold-and-interpolate stage computed.
+
+    A ΔSCF interpolation carries no occupations, so the edge cannot be read
+    off the bands; it travels as an input of the step that built them.
+    """
+    reference = getattr(node.inputs, "reference", None)
+    return (None if reference is None else float(reference.value)), None
 
 
 def _declared_pw_parameters(node: orm.ProcessNode) -> dict[str, Any]:
@@ -241,6 +254,15 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         series="Wannier interpolation",
         references=_no_references,
     ),
+    # The ΔSCF route's unfold-and-interpolate stage: the step that attaches
+    # the interpolated eigenvalues to their k-path is the one that names a
+    # band structure, and it carries the valence band edge as an input.
+    BandProducer(
+        process_type="aiida_koopmans.workgraphs.ui.dscf.build_band_structure",
+        socket="result",
+        series="KI",
+        references=_unfolded_band_references,
+    ),
 )
 
 
@@ -254,10 +276,18 @@ def _producers_for(step: orm.ProcessNode) -> list[BandProducer]:
     ]
 
 
-#: Why a ΔSCF route draws a blank.
+#: Why a ΔSCF singlepoint draws a blank: it computes on a supercell, so its
+#: bands exist only once the unfold-and-interpolate stage has been asked for.
 _SUPERCELL_REASON = (
-    "the ΔSCF route computes on a supercell, and recovering primitive-cell "
-    "bands from it needs unfold-and-interpolate, which no route calls"
+    "the ΔSCF route computes on a supercell, so a primitive-cell band structure "
+    "has to be asked for; add the path to interpolate along as "
+    "`kpoints: {path: ...}` and rerun"
+)
+
+#: The same blank on the trajectory route, which runs no interpolation stage.
+_TRAJECTORY_REASON = (
+    "the trajectory route screens each snapshot on a supercell and reports "
+    "screening parameters and eigenvalues, not band structures"
 )
 
 #: Why a wannierization draws a blank, whether the folder names the koopmans
@@ -273,7 +303,7 @@ _NO_WANNIER_PATH_REASON = (
 #: calculation a folder inside it names.
 _EMPTY_REASONS = {
     "KoopmansDSCFWorkflow": _SUPERCELL_REASON,
-    "TrajectoryWorkflow": _SUPERCELL_REASON,
+    "TrajectoryWorkflow": _TRAJECTORY_REASON,
     "SinglepointDFPTWorkflow": (
         "kcw.x interpolates a band structure only when it is given a k-point "
         "path; add `kpoints: {path: ...}` to the input file and rerun"
@@ -592,8 +622,8 @@ def _disambiguating_labels(steps: Sequence[orm.ProcessNode], root: orm.ProcessNo
     ]
 
 
-def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
-    """Return a warning naming the step that failed, if the run did not finish."""
+def _failure_detail(node: orm.ProcessNode) -> str | None:
+    """Return which step of ``node`` failed and why, or ``None`` if it finished cleanly."""
     if node.is_finished_ok:
         return None
 
@@ -607,11 +637,16 @@ def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
     # reported the failure upwards; the last one to start, when several did.
     calculations = [child for child in failed if isinstance(child, orm.CalcJobNode)]
     culprit = (calculations or failed or [node])[-1]
-    detail = culprit.exit_message or f"exit status {culprit.exit_status}"
-    return (
-        f"{folder}: the run did not finish — {_step_name(culprit)} failed ({detail}). "
-        "Plotting what is there."
-    )
+    exit_detail = culprit.exit_message or f"exit status {culprit.exit_status}"
+    return f"{_step_name(culprit)} failed ({exit_detail})"
+
+
+def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
+    """Return a warning naming the step that failed, if the run did not finish."""
+    detail = _failure_detail(node)
+    if detail is None:
+        return None
+    return f"{folder}: the run did not finish — {detail}. Plotting what is there."
 
 
 def _cell_of(bands: orm.BandsData) -> list[list[float]] | None:
@@ -797,7 +832,7 @@ def _name_after_folder(found: Sequence[tuple[BandSeries, str]], label: str) -> N
         item.label = f"{label}{qualifier}"
 
 
-def _check_one_per_folder(values: Sequence[str | None], folders: int, option: str) -> None:
+def _check_one_per_folder(values: Sequence[Any], folders: int, option: str) -> None:
     """Reject a per-folder option given for some but not all of the folders.
 
     :raises ValueError: if any values were given and they do not number ``folders``.
@@ -810,10 +845,59 @@ def _check_one_per_folder(values: Sequence[str | None], folders: int, option: st
         )
 
 
+def _has_gap(item: BandSeries) -> bool:
+    """Whether ``band_gap`` can compute a real gap for this series.
+
+    False for a series with no valence band edge, none above it, and one
+    whose "edge" is a metal's own partially filled band, not an insulating
+    gap — the same cases :func:`band_gap` itself refuses.
+    """
+    try:
+        band_gap(item)
+    except ValueError:
+        return False
+    return True
+
+
+def _folder_has_edge(found: Sequence[tuple[BandSeries, str]]) -> bool:
+    """Whether any series a folder contributed has a real band gap to draw."""
+    return any(_has_gap(item) for item, _ in found)
+
+
+def _apply_gap_request(
+    folder: Path, found: Sequence[tuple[BandSeries, str]], gap_value: bool | None, gap_all: bool
+) -> None:
+    """Mark a folder's series for gap annotation, per ``gaps``/``gap_all`` above.
+
+    A folder ``gap_value`` names explicitly is refused if none of its series
+    has a real band gap; ``gap_all`` on its own leaves such a folder out
+    silently, and a folder contributing several series draws only the ones
+    among them that have a gap.
+
+    :raises PlottingError: if ``gap_value`` names this folder and it reports
+        no band gap.
+    """
+    if not (gap_all or gap_value):
+        return
+    if not _folder_has_edge(found):
+        if gap_value:
+            raise PlottingError(
+                f"'{folder}' reports no band gap, so --gap has no gap to draw "
+                "for it. Leave --gap off this folder, or point it at a run "
+                "that reports one."
+            )
+        return
+    for item, _ in found:
+        if _has_gap(item):
+            item.show_gap = True
+
+
 def resolve_band_series(
     folders: Sequence[Path],
     labels: Sequence[str | None] = (),
     styles: Sequence[str | None] = (),
+    gaps: Sequence[bool | None] = (),
+    gap_all: bool = False,
 ) -> tuple[list[BandSeries], list[str]]:
     """Return the band structures of the given runs, and any warnings.
 
@@ -832,13 +916,21 @@ def resolve_band_series(
     folder must carry a band structure: drawing fewer curves than folders
     asked for reads as a figure of them all.
 
-    :raises ValueError: if given, ``labels``/``styles`` do not number the
-        folders.
+    ``gaps`` asks specific folders to draw their band gap; a folder asked for
+    by name that has no real gap to draw — no valence band edge, none above
+    it, or a metal's own partially filled band standing in for one — is
+    refused, since the caller named it on purpose. ``gap_all`` asks every
+    folder instead, silently leaving out the ones with no gap to draw.
+
+    :raises ValueError: if given, ``labels``/``styles``/``gaps`` do not
+        number the folders.
     :raises PlottingError: if a folder is not a run directory, its run is not
-        in this profile, or any of them holds nothing plottable.
+        in this profile, any of them holds nothing plottable, or ``gaps``
+        names a folder with no band gap.
     """
     _check_one_per_folder(labels, len(folders), "--label")
     _check_one_per_folder(styles, len(folders), "--style")
+    _check_one_per_folder(gaps, len(folders), "--gap")
 
     nodes = [run_node(folder) for folder in folders]
 
@@ -857,6 +949,9 @@ def resolve_band_series(
             for item, _ in found:
                 item.style = style_value
 
+        gap_value = gaps[index] if gaps else None
+        _apply_gap_request(folder, found, gap_value, gap_all)
+
         label_value = labels[index] if labels else None
         if label_value is not None:
             _name_after_folder(found, label_value)
@@ -868,4 +963,109 @@ def resolve_band_series(
 
     if empty:
         raise _nothing_plottable(empty, len(folders))
+    return series, warnings
+
+
+def _bse_spectrum_array(node: orm.ProcessNode) -> orm.ArrayData | None:
+    """Return a run's BSE spectrum array, or ``None``.
+
+    A `bse` run publishes it under its ``bse`` output namespace; anything
+    else publishes none.
+    """
+    bse = getattr(node.outputs, "bse", None)
+    if bse is None:
+        return None
+    return getattr(bse, "array_eps", None)
+
+
+#: The route name :func:`_route_name` reports for a `task: bse` run, absent a
+#: custom label.
+_BSE_ROUTE_NAME = "SinglepointBetheSalpeterWorkflow"
+
+
+def _not_a_bse_run(folder: Path, node: orm.ProcessNode) -> PlottingError:
+    """Return the error for a run that published no optical spectrum."""
+    route = _route_name(node)
+    return PlottingError(
+        f"{folder} ran {route}, which is not a `task: bse` run, so it published no "
+        "optical absorption spectrum. Set `workflow.task: bse` and rerun."
+    )
+
+
+def _incomplete_bse_run(folder: Path, detail: str) -> PlottingError:
+    """Return the error for a `bse` run that failed before publishing a spectrum."""
+    return PlottingError(
+        f"{folder}: the run did not finish — {detail}. No optical absorption spectrum "
+        "was published."
+    )
+
+
+def _spectrum_from_array(eps: orm.ArrayData, label: str) -> SpectrumSeries:
+    """Return the spectrum ``eps`` publishes, under the given label."""
+    names = eps.get_arraynames()
+    return SpectrumSeries(
+        label=label,
+        energies=eps.get_array("E_1").tolist(),
+        im_eps=eps.get_array("Im_eps").tolist(),
+        re_eps=eps.get_array("Re_eps").tolist(),
+        im_eps_o=eps.get_array("Im_eps_o").tolist() if "Im_eps_o" in names else None,
+        re_eps_o=eps.get_array("Re_eps_o").tolist() if "Re_eps_o" in names else None,
+    )
+
+
+def resolve_spectrum_series(
+    folders: Sequence[Path],
+    labels: Sequence[str | None] = (),
+    styles: Sequence[str | None] = (),
+) -> tuple[list[SpectrumSeries], list[str]]:
+    """Return the BSE optical spectra of the given runs, and any warnings.
+
+    Each folder contributes exactly one spectrum: a `bse` run publishes its
+    absorption spectrum once, on the run itself, so unlike
+    :func:`resolve_band_series` there is no per-step search or per-spin
+    fan-out to resolve. A run is named after the route that produced it (its
+    own label, or its process label) unless ``labels`` names it, and
+    prefixed by its folder name when more than one folder is on the axes.
+    ``None`` in ``labels``/``styles`` leaves that folder's own name or
+    appearance as if the option had not been given for it at all — the same
+    convention :func:`resolve_band_series` uses.
+
+    :raises ValueError: if given, ``labels``/``styles`` do not number the
+        folders.
+    :raises PlottingError: if a folder is not a run directory, its run is not
+        in this profile, any of them ran something other than `task: bse`, or
+        a `task: bse` run failed before publishing a spectrum.
+    """
+    _check_one_per_folder(labels, len(folders), "--label")
+    _check_one_per_folder(styles, len(folders), "--style")
+
+    nodes = [run_node(folder) for folder in folders]
+
+    series: list[SpectrumSeries] = []
+    warnings: list[str] = []
+    for index, (folder, node) in enumerate(zip(folders, nodes, strict=True)):
+        warning = _failure_warning(folder, node)
+        if warning is not None:
+            warnings.append(warning)
+
+        eps = _bse_spectrum_array(node)
+        if eps is None:
+            detail = _failure_detail(node)
+            if detail is not None and _route_name(node) == _BSE_ROUTE_NAME:
+                raise _incomplete_bse_run(folder, detail)
+            raise _not_a_bse_run(folder, node)
+
+        label = labels[index] if labels else None
+        if label is None:
+            label = _route_name(node) or "BSE"
+            if len(folders) > 1:
+                prefix = folder.name or folder.resolve().name
+                label = f"{prefix}: {label}"
+
+        item = _spectrum_from_array(eps, label)
+        style_value = styles[index] if styles else None
+        if style_value is not None:
+            item.style = style_value
+        series.append(item)
+
     return series, warnings

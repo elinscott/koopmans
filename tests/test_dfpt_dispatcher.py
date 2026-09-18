@@ -368,7 +368,6 @@ class TestOrbitalGrouping:
         """
         d = _si_dfpt_dict()
         inp = KoopmansInput.model_validate(d)
-        assert inp.workflow.group_orbitals_by is not None
         assert inp.workflow.group_orbitals_by.value == "none"
         wg = _build(d)
         assert "dfpt" in wg.get_task_names()
@@ -430,6 +429,45 @@ class TestWannier90Overrides:
         wg = _build(_si_dfpt_dict())
         w90_overrides = wg.tasks["wannierize"].inputs["overrides"]["wannier90"].value
         assert w90_overrides.get("num_iter") != 17
+
+
+class TestKcwOverrides:
+    """``calculator_parameters.kcw`` reaches the ``dfpt`` task split per namelist."""
+
+    def test_keywords_reach_dfpt_split_per_namelist(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A user value on each namelist lands under that namelist's key, not the others."""
+        d = _si_dfpt_dict()
+        d["calculator_parameters"]["kcw"] = {
+            "control": {"lrpa": True},
+            "screen": {"tr2": 1.0e-16},
+            "ham": {"on_site_only": True},
+        }
+        wg = _build(d)
+        overrides = wg.tasks["dfpt"].inputs["kcw_overrides"]
+        assert overrides["control"].value == {"lrpa": True}
+        assert overrides["screen"].value == {"tr2": pytest.approx(1.0e-16)}
+        assert overrides["ham"].value == {"on_site_only": True}
+        assert not overrides["wannier"]._links
+
+    def test_no_kcw_block_leaves_every_namelist_unwired(
+        self, aiida_profile: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: with nothing stated, no namelist entry is wired at all."""
+        wg = _build(_si_dfpt_dict())
+        overrides = wg.tasks["dfpt"].inputs["kcw_overrides"]
+        for name in ("control", "wannier", "screen", "ham"):
+            assert not overrides[name]._links
+
+    def test_route_owned_key_is_rejected_before_the_graph_builds(
+        self, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A route-owned key fails at ``KoopmansInput`` parse, never reaching the dispatcher."""
+        d = _si_dfpt_dict()
+        d["calculator_parameters"]["kcw"] = {"control": {"l_vcut": True}}
+        with pytest.raises(ValueError, match=r"workflow\.gb_correction"):
+            _build(d)
 
 
 @pytest.fixture

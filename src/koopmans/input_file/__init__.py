@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 from aiida_quantumespresso.common.types import SpinType
 from pydantic import (
     AfterValidator,
+    BeforeValidator,
     Field,
     ValidationError,
     ValidationInfo,
@@ -28,15 +29,24 @@ from koopmans.input_file.cell_parameters import (
     CellParametersViaIbrav,
     CellParametersViaVectors,
 )
+from koopmans.input_file.computer import ComputerInput
 from koopmans.input_file.kcp import KCPInputParameters
+from koopmans.input_file.kcw import KCWInputParameters
 from koopmans.input_file.ml import MLConfig
-from koopmans.input_file.parallelization import ParallelizationInput
+from koopmans.input_file.parallelization import (
+    BetheSalpeterRoles,
+    CodeParallelization,
+    DipoleRoles,
+    ParallelizationInput,
+    StaticScreeningRoles,
+    YamboParallelization,
+)
 from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
-from koopmans.input_file.unfold_and_interpolate import UnfoldAndInterpolateConfig
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
-from koopmans.input_file.workflow import WorkflowConfig
+from koopmans.input_file.workflow import Task, WorkflowConfig
+from koopmans.input_file.yambo import YamboBseParameters
 
 # The public schema surface. The documentation renders this list, so a name
 # absent from it is undocumented however it reaches the module namespace;
@@ -45,14 +55,20 @@ __all__ = [
     "INPUT_FILE_FORMAT_VERSION",
     "AtomicPositionsInput",
     "AtomsInput",
+    "BetheSalpeterRoles",
     "CalculatorParametersInput",
     "CellParametersViaAlat",
     "CellParametersViaIbrav",
     "CellParametersViaVectors",
+    "CodeParallelization",
+    "ComputerInput",
+    "DensificationFactor",
+    "DipoleRoles",
     "GammaOnlyKpointsInput",
     "GridKpointsInput",
     "IntegerMagnetization",
     "KCPInputParameters",
+    "KCWInputParameters",
     "KoopmansInput",
     "KpointOffset",
     "KpointsOverridesInput",
@@ -65,11 +81,13 @@ __all__ = [
     "Projection",
     "RestrictedWannier90InputParameters",
     "SpinSpecificWannierInput",
+    "StaticScreeningRoles",
     "StepKpointsOverridesInput",
-    "UnfoldAndInterpolateConfig",
     "Wannier90InputParametersWithUpDown",
     "WannierKpointsOverridesInput",
     "WorkflowConfig",
+    "YamboBseParameters",
+    "YamboParallelization",
     "migrate_input_dict",
     "read_input_file",
 ]
@@ -200,6 +218,26 @@ def _no_shift(value: float) -> float:
 NoOffset = Annotated[float, AfterValidator(_no_shift)]
 
 
+def _broadcast_smooth_interpolation_factor(v: Any) -> Any:
+    """Convert a bare integer or list to the per-direction tuple.
+
+    A bare integer or list broadcasts or reshapes into the triple that then
+    runs through the strict, ``>= 1`` per-axis check below — a bool included,
+    since Python's ``int`` accepts ``True``/``False`` and gets no special
+    case here.
+    """
+    if isinstance(v, list):
+        return tuple(v)
+    if isinstance(v, int):
+        return (v, v, v)
+    return v
+
+
+#: A per-direction densification factor: a strict integer (never a bool,
+#: which Python's own ``int`` would otherwise accept) of at least 1.
+DensificationFactor = Annotated[int, Field(strict=True, ge=1)]
+
+
 class StepKpointsOverridesInput(BaseModel):
     """K-point sampling for one step, in place of the top-level values.
 
@@ -317,6 +355,17 @@ class GammaOnlyKpointsInput(BaseModel):
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, which a gamma-only calculation cannot have."""
 
+    smooth_interpolation_factor: Annotated[
+        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
+        BeforeValidator(_broadcast_smooth_interpolation_factor),
+    ] = (1, 1, 1)
+    """Per-direction densification for the smooth-interpolation method.
+
+    A gamma-only calculation names no path to interpolate a band structure
+    along, so this must be left at its default; see ``GridKpointsInput``'s
+    field of the same name.
+    """
+
     @field_validator("overrides")
     @classmethod
     def check_no_step_is_given_a_mesh(
@@ -356,6 +405,19 @@ class GridKpointsInput(BaseModel):
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, in place of ``grid`` and ``offset``."""
+
+    smooth_interpolation_factor: Annotated[
+        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
+        BeforeValidator(_broadcast_smooth_interpolation_factor),
+    ] = (1, 1, 1)
+    """Per-direction densification of ``grid`` for the smooth-interpolation method.
+
+    Above 1 (in any direction), a ΔSCF band-structure interpolation swaps
+    the DFT part of the Koopmans Hamiltonian for one Wannierized on a mesh
+    this many times denser than ``grid``: ``[a, b, c]`` densifies each
+    direction independently, and a bare integer ``a`` is shorthand for
+    ``[a, a, a]``. Needs ``path`` to interpolate along.
+    """
 
 
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput
@@ -406,41 +468,15 @@ class CalculatorParametersInput(BaseModel):
         default_factory=lambda: PW2Wannier90InputParameters()
     )
     wannier90: Wannier90InputParametersWithUpDown = Field(
-        default_factory=lambda: Wannier90InputParametersWithUpDown()  # type: ignore[call-arg]
-    )
-    unfold_and_interpolate: UnfoldAndInterpolateConfig = Field(
-        default_factory=lambda: UnfoldAndInterpolateConfig()
+        default_factory=lambda: Wannier90InputParametersWithUpDown()
     )
     kcp: KCPInputParameters = Field(default_factory=lambda: KCPInputParameters())
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_removed_per_calculator_cutoffs(cls, data: Any) -> Any:
-        """Point a per-calculator cutoff at the single ``ecutwfc`` field.
-
-        ``pw.system``/``kcp.system`` no longer carry their own
-        ``ecutwfc``/``ecutrho``: pw.x and kcp.x always share one grid, derived
-        from ``calculator_parameters.ecutwfc``. Runs before field validation,
-        so it reports the removed spelling instead of the generic
-        "extra_forbidden" error the nested model would otherwise raise.
-
-        Raises:
-            ValueError: If any of the four removed keys is present.
-        """
-        if not isinstance(data, dict):
-            return data
-        for calc in ("pw", "kcp"):
-            system = data.get(calc)
-            if not isinstance(system, dict) or not isinstance(system.get("system"), dict):
-                continue
-            for key in ("ecutwfc", "ecutrho"):
-                if key in system["system"]:
-                    raise ValueError(
-                        f"`calculator_parameters.{calc}.system.{key}` no longer exists. "
-                        "Set `calculator_parameters.ecutwfc`; `ecutrho` follows at four "
-                        "times it."
-                    )
-        return data
+    kcw: KCWInputParameters = Field(default_factory=lambda: KCWInputParameters())
+    yambo: YamboBseParameters | None = Field(
+        default=None,
+        description="the yambo BSE runcard parameters for a ``task: bse`` calculation; "
+        "required by that task alone",
+    )
 
 
 class KoopmansInput(BaseModel):
@@ -468,8 +504,34 @@ class KoopmansInput(BaseModel):
     )
     parallelization: ParallelizationInput = Field(
         default_factory=ParallelizationInput,
-        description="Per-code parallelization settings (MPI ranks and k-point pools)",
+        description="Per-code parallelization settings (MPI ranks, k-point pools, and, "
+        "for yambo, per-driver MPI role splits)",
     )
+    computer: ComputerInput = Field(
+        default_factory=ComputerInput,
+        description="the AiiDA computer the calculation runs on: a block naming "
+        "``name``, ``account``, ``queue``, and a default ``walltime``",
+    )
+
+    @field_validator("calculator_parameters", mode="before")
+    @classmethod
+    def check_unfold_and_interpolate_was_replaced(cls, calculator_parameters: Any) -> Any:
+        """Reject the former ``unfold_and_interpolate`` block outright.
+
+        Its one user-facing keyword, ``smooth_int_factor``, moved to
+        ``kpoints.smooth_interpolation_factor``; the other two
+        (``use_ws_distance``, ``do_dos``) were never a user's to set.
+        """
+        if (
+            isinstance(calculator_parameters, dict)
+            and "unfold_and_interpolate" in calculator_parameters
+        ):
+            raise ValueError(
+                "`calculator_parameters.unfold_and_interpolate` was replaced by "
+                "`kpoints.smooth_interpolation_factor`; move `smooth_int_factor` there "
+                "and drop the block."
+            )
+        return calculator_parameters
 
     @field_validator("kpoints", mode="before")
     @classmethod
@@ -546,6 +608,58 @@ class KoopmansInput(BaseModel):
                 "electrons. koopmans does not guess it for you: a spin-polarized run "
                 "at the wrong moment is a different calculation from the one you "
                 "asked for. Write 0 if the system is closed-shell."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_kcw_screen_has_a_step_to_reach(self) -> KoopmansInput:
+        """Reject ``kcw.screen`` keywords when no screening calculation runs.
+
+        ``workflow.calculate_alpha = False`` feeds ``workflow.alpha_guess``
+        straight to the Hamiltonian step, so kcw.x is never asked to solve
+        the linear-response problem the ``SCREEN`` namelist configures.
+
+        A keyword counts as stated when it carries a value of its own: one
+        written as ``null`` means the same as an omitted one.
+
+        Raises:
+            ValueError: If ``calculator_parameters.kcw.screen`` states a
+                keyword and ``workflow.calculate_alpha`` is false.
+        """
+        if self.workflow.calculate_alpha:
+            return self
+        stated = self.calculator_parameters.kcw.screen.model_dump(
+            exclude_unset=True, exclude_none=True
+        )
+        if stated:
+            raise ValueError(
+                "`calculator_parameters.kcw.screen` has no effect with "
+                "`workflow.calculate_alpha: false`: no screening step runs, so nothing "
+                "reads that namelist. Remove the block, or set "
+                "`workflow.calculate_alpha: true`."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_yambo_block_matches_task(self) -> KoopmansInput:
+        """Require ``calculator_parameters.yambo`` exactly when the task reads it.
+
+        Raises:
+            ValueError: If ``task: bse`` states no ``calculator_parameters.yambo``
+                block, or a non-``bse`` task states one that would go unread.
+        """
+        yambo = self.calculator_parameters.yambo
+        if self.workflow.task == Task.BSE and yambo is None:
+            raise ValueError(
+                "`workflow.task: bse` needs a `calculator_parameters.yambo` input block "
+                "naming the yambo BSE runcard parameters (`BndsRnXs`, `NGsBlkXs`, "
+                "`BSEBands`, `BEnRange`)."
+            )
+        if self.workflow.task != Task.BSE and yambo is not None:
+            raise ValueError(
+                f"`calculator_parameters.yambo` has no effect with `workflow.task: "
+                f"{self.workflow.task.value}`: only `task: bse` reads it. Remove the "
+                "block, or set `workflow.task: bse`."
             )
         return self
 

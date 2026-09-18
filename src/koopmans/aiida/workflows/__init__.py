@@ -6,7 +6,7 @@ based on the task specified in a KoopmansInput.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -27,8 +27,9 @@ from koopmans.aiida.conversion import (
     input_to_pw_parameters,
     step_grid_spacing,
     step_kpoints_mesh,
+    validate_computer_scheduler_support,
 )
-from koopmans.input_file.workflow import Task
+from koopmans.input_file.workflow import CalculateScreeningMethod, GroupOrbitalsBy, Task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -49,25 +50,133 @@ if TYPE_CHECKING:
     from koopmans.input_file import KoopmansInput
 
 
-def load_code(name: str, executable: str) -> orm.AbstractCode:
-    """Load the code labelled ``<name>@localhost``, with a setup hint on failure."""
+def _install_advice_trailer(computer: str, names: Iterable[str] = ()) -> str:
+    """Return the sentence(s) telling the user how to configure codes on ``computer``.
+
+    ``koopmans install`` only registers the executables
+    :func:`~koopmans.aiida.setup.codes.code_specs` knows about — the bundled
+    QE/Wannier90 backend. A code outside that set (yambo's ``p2y``/``yambo``
+    included) is never touched by it, on ``localhost`` or anywhere else, so
+    it earns its own ``verdi code create core.code.installed`` line naming
+    it, the same wording already used for a named remote computer.
+
+    Args:
+        computer: The run's ``computer.name``.
+        names: The missing codes this trailer is advising about. Empty
+            (the default) renders the plain per-computer sentence, for
+            callers with no code name to check against
+            :func:`~koopmans.aiida.setup.codes.code_specs`.
+    """
+    from koopmans.aiida.setup.codes import code_specs
+
+    names = list(names)
+    known = code_specs()
+    unregistrable = sorted(name for name in names if name not in known)
+    registrable = [name for name in names if name in known]
+
+    if unregistrable and not registrable:
+        return (
+            f"Register {', '.join(f'`{name}`' for name in unregistrable)} on the "
+            f"'{computer}' computer, e.g. with `verdi code create core.code.installed`."
+        )
+
+    if computer == "localhost":
+        sentence = "Please run 'koopmans install' to set up the AiiDA backend."
+    else:
+        sentence = (
+            f"Register them on the '{computer}' computer, e.g. with "
+            "`verdi code create core.code.installed`."
+        )
+    if unregistrable:
+        codes = ", ".join(f"`{name}`" for name in unregistrable)
+        verb, pronoun = ("is", "it") if len(unregistrable) == 1 else ("are", "them")
+        sentence += (
+            f" {codes} {verb} not one 'koopmans install' sets up: create {pronoun} on "
+            f"the '{computer}' computer, e.g. with `verdi code create core.code.installed`."
+        )
+    return sentence
+
+
+def load_code(name: str, executable: str, computer: str = "localhost") -> orm.AbstractCode:
+    """Load the code labelled ``<name>@<computer>``, with a setup hint on failure."""
     try:
-        return orm.load_code(f"{name}@localhost")
+        return orm.load_code(f"{name}@{computer}")
     except Exception as exc:
         raise ValueError(
-            f"Could not load {executable} code: {exc}\n"
-            "Please run 'koopmans install' first to set up the AiiDA backend."
+            f"Could not load {executable} code: {exc}\n{_install_advice_trailer(computer, [name])}"
         ) from exc
 
 
-def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
-    """Load every configured ``<member>@localhost`` code a codes TypedDict declares.
+def require_computer_configured(name: str) -> None:
+    """Raise a setup hint if ``name`` names no AiiDA computer.
+
+    Skipped for the default ``localhost`` computer: a missing localhost
+    leaves every code lookup unresolvable too, and the resulting
+    missing-codes advice (``koopmans install``) is the correct fix there. A
+    named remote computer gets no such automatic recovery, so its absence is
+    diagnosed directly rather than surfacing as a misleading "install the
+    codes" message.
+
+    Args:
+        name: The AiiDA computer label the run's ``computer.name`` names.
+
+    Raises:
+        ValueError: If ``name`` is not ``"localhost"`` and names no
+            configured AiiDA computer.
+    """
+    if name == "localhost":
+        return
+    from aiida.common.exceptions import NotExistent
+
+    try:
+        orm.load_computer(name)
+    except NotExistent as exc:
+        raise ValueError(
+            f"computer '{name}' is not configured; run 'verdi computer setup' "
+            "(and 'verdi computer configure') to register it."
+        ) from exc
+
+
+#: Where :func:`name_run` records a name for :func:`koopmans.api.launch`.
+_RUN_LABEL = "_koopmans_run_label"
+
+
+def name_run(workgraph: WorkGraph, display: str) -> WorkGraph:
+    """Name the calculation ``workgraph`` performs, and return it.
+
+    Each route states its own name, which :func:`koopmans.api.launch`
+    passes as the run's ``metadata.label``. That label is what the
+    progress table's top row, ``verdi process list`` and ``koopmans
+    plot``'s legend show, so a reader is given the calculation they asked
+    for rather than the graph function that implements it.
+
+    The workgraph's own ``name`` is left alone. That one identifies the
+    graph — it is what ``process_label`` wraps and what the regression
+    snapshots record — and a display name is not an identity.
+
+    Args:
+        workgraph: The route's built workgraph (mutated in place).
+        display: The name to show.
+    """
+    setattr(workgraph, _RUN_LABEL, display)
+    return workgraph
+
+
+def run_label(workgraph: WorkGraph) -> str:
+    """Return the name :func:`name_run` gave ``workgraph``, or ``""``."""
+    return str(getattr(workgraph, _RUN_LABEL, "") or "")
+
+
+def load_codes[CodesT: Mapping[str, Any]](
+    codes_spec: type[CodesT], computer: str = "localhost"
+) -> CodesT:
+    """Load every configured ``<member>@<computer>`` code a codes TypedDict declares.
 
     ``codes_spec`` is the workflow's graph-input TypedDict, declared beside
     the workflow entry point it feeds (e.g.
     ``aiida_koopmans.workgraphs.kcp.DscfCodes``) — the single declaration of
     which codes the workflow wires. Every member — required and
-    ``NotRequired`` alike — is loaded when a ``<member>@localhost`` code is
+    ``NotRequired`` alike — is loaded when a ``<member>@<computer>`` code is
     configured, and left out when it is not: which codes a run actually
     needs is now a structural property of the graph it builds (its
     TypedDict specs carry the requiredness), not a decision made here from
@@ -80,7 +189,7 @@ def load_codes[CodesT: Mapping[str, Any]](codes_spec: type[CodesT]) -> CodesT:
     codes: dict[str, orm.AbstractCode] = {}
     for name in get_type_hints(codes_spec, include_extras=True):
         try:
-            codes[name] = orm.load_code(f"{name}@localhost")
+            codes[name] = orm.load_code(f"{name}@{computer}")
         except NotExistent:
             pass
     return cast("CodesT", codes)
@@ -97,7 +206,9 @@ def _socket_help(hint: Any) -> str | None:
     return None
 
 
-def _render_missing_codes_advice(help_by_name: Mapping[str, str | None]) -> str:
+def _render_missing_codes_advice(
+    help_by_name: Mapping[str, str | None], computer: str = "localhost"
+) -> str:
     """Render a ``name -> declared help`` mapping as the shared install-advice message.
 
     The one rendering both :func:`_missing_inputs_advice` (the submit-time
@@ -107,18 +218,19 @@ def _render_missing_codes_advice(help_by_name: Mapping[str, str | None]) -> str:
     fact.
     """
     lines = [
-        f"  - `{name}@localhost`" + (f" ({help_text})" if help_text else "")
+        f"  - `{name}@{computer}`" + (f" ({help_text})" if help_text else "")
         for name, help_text in sorted(help_by_name.items())
     ]
     return (
         "This calculation needs codes that are not configured:\n"
         + "\n".join(lines)
-        + "\nPlease run 'koopmans install' to set up the AiiDA backend."
+        + "\n"
+        + _install_advice_trailer(computer, help_by_name.keys())
     )
 
 
 def require_configured_codes[CodesT: Mapping[str, Any]](
-    codes_spec: type[CodesT], codes: CodesT
+    codes_spec: type[CodesT], codes: CodesT, computer: str = "localhost"
 ) -> None:
     """Raise install advice for any of ``codes_spec``'s required members absent from ``codes``.
 
@@ -144,7 +256,7 @@ def require_configured_codes[CodesT: Mapping[str, Any]](
     required_keys: frozenset[str] = codes_spec.__required_keys__  # type: ignore[attr-defined]
     missing = {name: _socket_help(hints[name]) for name in required_keys if name not in codes}
     if missing:
-        raise ValueError(_render_missing_codes_advice(missing))
+        raise ValueError(_render_missing_codes_advice(missing, computer))
 
 
 def require_cutoffs_for_family(pseudo_family: str, parameters: dict[str, Any]) -> None:
@@ -214,7 +326,9 @@ def prepare_common_inputs(
     # steps; the full per-code mapping is threaded to every graph builder too,
     # so pw.x steps assembled inside the graphs (e.g. the dielectric scf) pick
     # up the same directive.
-    options, settings = code_parallelization(koopmans_input.parallelization.pw)
+    options, settings = code_parallelization(
+        koopmans_input.parallelization.pw, koopmans_input.computer
+    )
     if settings:
         pw_overrides["settings"] = settings
     if options:
@@ -414,7 +528,9 @@ def _parallelization_advice(exc: ParallelizationError) -> str:
     )
 
 
-def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
+def _missing_inputs_advice(
+    exc: MissingRequiredInputsError, computer: str = "localhost"
+) -> str | None:
     """Phrase graph-level missing-code sockets as install advice.
 
     A workflow body that wires a code member it was not given surfaces as
@@ -447,7 +563,7 @@ def _missing_inputs_advice(exc: MissingRequiredInputsError) -> str | None:
             help_by_name[name] = entry.help
     if not help_by_name:
         return None
-    return _render_missing_codes_advice(help_by_name)
+    return _render_missing_codes_advice(help_by_name, computer)
 
 
 def _model_mismatch_advice(exc: ModelMismatchError) -> str:
@@ -460,7 +576,9 @@ def _model_mismatch_advice(exc: ModelMismatchError) -> str:
     )
 
 
-def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str | None]], ...]:
+def _plugin_advice(
+    computer: str = "localhost",
+) -> tuple[tuple[type[ValueError], Callable[[Any], str | None]], ...]:
     """Return the advice table for the plugin's typed errors.
 
     One advice per class — the plugin defines each class for exactly one
@@ -496,7 +614,10 @@ def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str | None
     from aiida_workgraph.errors import MissingRequiredInputsError
 
     return (
-        (MissingRequiredInputsError, _missing_inputs_advice),
+        (
+            MissingRequiredInputsError,
+            lambda exc: _missing_inputs_advice(exc, computer),
+        ),
         (ProjectionSiteError, _projection_site_advice),
         (BlockBoundaryError, _block_boundary_advice),
         (OccupiedCoverageError, _occupied_coverage_advice),
@@ -508,7 +629,7 @@ def _plugin_advice() -> tuple[tuple[type[ValueError], Callable[[Any], str | None
     )
 
 
-def advice_for(exc: BaseException) -> str | None:
+def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
     """Return input-file advice for a typed plugin error, or None.
 
     Dispatches on the exception's type, so an untyped error — the
@@ -517,11 +638,139 @@ def advice_for(exc: BaseException) -> str | None:
     ``raise ... from exc`` is translated only if the replacement is
     itself a typed plugin error. A matching advisor may still decline
     with ``None`` for an instance its advice does not speak to.
+
+    Args:
+        exc: The exception to translate.
+        computer: The run's ``computer.name``, named in a missing-code
+            advice line as ``<code>@<computer>``.
     """
-    for exc_type, advise in _plugin_advice():
+    for exc_type, advise in _plugin_advice(computer):
         if isinstance(exc, exc_type):
             return advise(exc)
     return None
+
+
+#: Tasks whose graphs never call :func:`koopmans.aiida.workflows.grouping.grouping_tol`
+#: or :func:`koopmans.aiida.workflows.grouping.dfpt_grouping_tol`, so ``workflow.
+#: group_orbitals_by``/``group_orbitals_tol`` reach no calculation at all.
+#: ``Task.BSE`` is not among these: it composes the same DFPT chain the
+#: plain DFPT singlepoint route runs, and forwards the same
+#: ``group_orbitals_tol`` into it, so a resolved grouping criterion groups
+#: orbitals exactly as it would under ``task: singlepoint``.
+_TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
+
+
+def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
+    """Return non-fatal notices about keywords the parsed input sets to no effect.
+
+    Unlike the ``ValueError``/``NotImplementedError`` guards in this module,
+    these keywords are not contradictions — they are perfectly valid on
+    another task or route, which the message names, and so are worth
+    keeping in the input file rather than editing out and back in when the
+    task changes.
+
+    The smooth-interpolation check compares the resolved value against its
+    neutral default, since ``kpoints.smooth_interpolation_factor`` has no
+    "unset" state distinct from 1. ``workflow.group_orbitals_by`` is
+    resolved at parse time (see ``WorkflowConfig.resolve_group_orbitals_by``)
+    and so is never unset on the parsed model; the only combination that
+    still signals something the input file actually wrote is a resolved
+    ``'none'`` next to a tolerance (an explicit ``group_orbitals_by: 'none'``
+    with a tolerance is rejected at parse time instead, so this state can
+    only arise when the criterion resolved to ``'none'`` on its own and the
+    tolerance was typed anyway).
+
+    Args:
+        koopmans_input: The parsed koopmans input.
+
+    Returns:
+        One message per keyword left with no effect; empty if none apply.
+    """
+    advisories: list[str] = []
+    workflow = koopmans_input.workflow
+    task = workflow.task
+
+    if any(f > 1 for f in koopmans_input.kpoints.smooth_interpolation_factor):
+        performs_band_interpolation = (
+            task == Task.SINGLEPOINT and workflow.screening_method != CalculateScreeningMethod.DFPT
+        )
+        if not performs_band_interpolation:
+            if task == Task.SINGLEPOINT:
+                advisories.append(
+                    "kpoints.smooth_interpolation_factor has no effect on task: "
+                    f"singlepoint (screening_method: {workflow.screening_method.value}; "
+                    "it shapes the ΔSCF band-structure interpolation); it is kept for "
+                    "when you switch screening_method to dscf."
+                )
+            else:
+                advisories.append(
+                    "kpoints.smooth_interpolation_factor has no effect on task: "
+                    f"{task.value} (it shapes the ΔSCF band-structure interpolation); "
+                    "it is kept for when you switch task to singlepoint."
+                )
+
+    grouping_resolved_to_none = workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+    if grouping_resolved_to_none and workflow.group_orbitals_tol is not None:
+        if task in _TASKS_THAT_GROUP_NO_ORBITALS:
+            advisories.append(
+                "workflow.group_orbitals_tol has no effect on task: "
+                f"{task.value} (it groups orbitals to share a screening parameter, "
+                "computed only within a singlepoint or trajectory); it is kept for "
+                "when you switch task to singlepoint."
+            )
+        else:
+            advisories.append(
+                "workflow.group_orbitals_tol has no effect on task: "
+                f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
+                f"{workflow.init_orbitals.value}, screening_method: "
+                f"{workflow.screening_method.value}); it is kept for when you set "
+                "group_orbitals_by to a criterion this run implements (self_hartree for "
+                "DSCF, spread for DFPT)."
+            )
+
+    return advisories
+
+
+def _build_route(task: Task, koopmans_input: KoopmansInput) -> WorkGraph:
+    """Dispatch to one task's route builder, importing its module lazily.
+
+    Split out of :func:`build_workgraph` so that function's own advice
+    boundary carries none of this dispatch's branching.
+
+    Raises:
+        ValueError: If ``task`` names no implemented route.
+    """
+    if task == Task.DFT_BANDS:
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
+
+        return build_dft_bands_workgraph(koopmans_input)
+    elif task == Task.WANNIERIZE:
+        from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
+
+        return build_wannierize_workgraph(koopmans_input)
+    elif task == Task.SINGLEPOINT:
+        from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
+
+        return build_singlepoint_workgraph(koopmans_input)
+    elif task == Task.TRAJECTORY:
+        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+
+        return build_trajectory_workgraph(koopmans_input)
+    elif task == Task.DFT_EPS:
+        from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
+
+        return build_dft_eps_workgraph(koopmans_input)
+    elif task == Task.BSE:
+        from koopmans.aiida.workflows.bse import build_bse_workgraph
+
+        return build_bse_workgraph(koopmans_input)
+    else:
+        raise ValueError(
+            f"Task '{task.value}' is not yet implemented. "
+            f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
+            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}, "
+            f"{Task.BSE.value}"
+        )
 
 
 def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
@@ -551,40 +800,18 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "permitted singlepoint prediction — not yet ported."
         )
 
-    # Build the workgraph based on task. Each route loads its workflow's
-    # codes itself (:func:`load_codes`) once its input validation has passed.
-    # An error raised inside the plugin speaks its vocabulary (derived
-    # blocks, `num_bands`), which the user never wrote; attach the
-    # input-file advice at this boundary.
+    computer_name = koopmans_input.computer.name
+    require_computer_configured(computer_name)
+    validate_computer_scheduler_support(koopmans_input.computer, koopmans_input.parallelization)
+
+    # Each route loads its workflow's codes itself (:func:`load_codes`) once
+    # its input validation has passed. An error raised inside the plugin
+    # speaks its vocabulary (derived blocks, `num_bands`), which the user
+    # never wrote; attach the input-file advice at this boundary.
     try:
-        if task == Task.DFT_BANDS:
-            from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
-
-            return build_dft_bands_workgraph(koopmans_input)
-        elif task == Task.WANNIERIZE:
-            from koopmans.aiida.workflows.wannierize import build_wannierize_workgraph
-
-            return build_wannierize_workgraph(koopmans_input)
-        elif task == Task.SINGLEPOINT:
-            from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
-
-            return build_singlepoint_workgraph(koopmans_input)
-        elif task == Task.TRAJECTORY:
-            from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
-
-            return build_trajectory_workgraph(koopmans_input)
-        elif task == Task.DFT_EPS:
-            from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
-
-            return build_dft_eps_workgraph(koopmans_input)
-        else:
-            raise ValueError(
-                f"Task '{task.value}' is not yet implemented. "
-                f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-                f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}"
-            )
+        return _build_route(task, koopmans_input)
     except Exception as exc:
-        advice = advice_for(exc)
+        advice = advice_for(exc, computer_name)
         if advice is not None:
             # A PEP 678 note survives exception types whose constructors do
             # not take a single message, and keeps type, args and chaining

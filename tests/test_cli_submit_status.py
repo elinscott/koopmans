@@ -63,7 +63,7 @@ class TestSubmit:
             return fake_node
 
         monkeypatch.setattr("koopmans.api.launch", _fake_launch)
-        result = CliRunner().invoke(cli, ["submit", str(input_path)])
+        result = CliRunner(mix_stderr=False).invoke(cli, ["submit", str(input_path)])
         return result, captured
 
     def test_a_successful_submission_hands_off_without_blocking(
@@ -178,6 +178,51 @@ class TestSubmit:
         entries = read_anchor_entries(tmp_path / "si.run.yaml")
         assert [e.uuid for e in entries] == ["first", "second"]
 
+    def test_smooth_interpolation_factor_on_dft_bands_is_warned(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """dft_bands never interpolates bands: a Warning line, not a build refusal."""
+        from tests.fixtures import silicon_pw_input
+
+        input_path = tmp_path / "si.yaml"
+        d = silicon_pw_input(
+            kpoints={"grid": [2, 2, 2], "offset": [0, 0, 0], "smooth_interpolation_factor": 4}
+        )
+        input_path.write_text(yaml.safe_dump(d))
+        fake_node = FakeProcessNode()
+
+        result, _ = self._invoke(monkeypatch, input_path, fake_node)
+
+        assert result.exit_code == 0, result.output + result.stderr
+        assert (
+            "Warning: kpoints.smooth_interpolation_factor has no effect on task: "
+            "dft_bands" in result.stderr
+        )
+        assert "Warning:" not in result.output
+
+    def test_plain_input_gets_no_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """Negative control: an input touching neither advisory keyword prints nothing."""
+        input_path = write_koopmans_input(tmp_path)
+        fake_node = FakeProcessNode()
+
+        result, _ = self._invoke(monkeypatch, input_path, fake_node)
+
+        assert result.exit_code == 0, result.output + result.stderr
+        assert "Warning:" not in result.output
+        assert "Warning:" not in result.stderr
+
 
 class TestStatus:
     """``koopmans status``: one-shot render plus exit code."""
@@ -252,9 +297,9 @@ class TestStatus:
         result = CliRunner().invoke(cli, ["status", "--pk", str(node.pk)])
 
         assert result.exit_code == 0, result.output
-        # "ByPk" is CamelCase and gets word-split for display, like every
-        # other process label the progress table renders.
-        assert "By Pk" in result.output
+        # "ByPk" is not a name the display table knows, so it is shown
+        # exactly as written rather than guessed at.
+        assert "ByPk" in result.output
 
     def test_a_target_that_is_not_a_process_is_named_as_the_user_named_it(
         self, monkeypatch: pytest.MonkeyPatch, aiida_profile_clean: Any

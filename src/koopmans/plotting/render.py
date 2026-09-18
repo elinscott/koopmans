@@ -13,7 +13,16 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from koopmans.plotting.series import BandSeries, EnergyZero, energy_axis_label
+from koopmans.plotting.series import (
+    BandGap,
+    BandSeries,
+    EnergyZero,
+    SpectrumSeries,
+    _jumps,
+    band_gap,
+    energy_axis_label,
+    path_distances,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -23,8 +32,10 @@ __all__ = [
     "StyleError",
     "check_style",
     "draw_band_structures",
+    "draw_spectra",
     "path_distances",
     "render_band_structures",
+    "render_spectra",
 ]
 
 #: Label of the vertical rules drawn at interior special points. The leading
@@ -47,51 +58,6 @@ def _format_label(name: str) -> str:
     base, _, subscript = name.partition("_")
     text = _SYMBOLS.get(base.upper(), base)
     return f"{text}$_{{{subscript}}}$" if subscript else text
-
-
-def _labelled(series: BandSeries) -> np.ndarray:
-    """Return a boolean mask of the k-points carrying a high-symmetry label."""
-    mask = np.zeros(len(series.kpoints), dtype=bool)
-    for index, _ in series.path_labels:
-        if 0 <= index < mask.size:
-            mask[index] = True
-    return mask
-
-
-def _jumps(series: BandSeries) -> np.ndarray:
-    """Return a mask over steps that are jumps rather than steps along the path.
-
-    Two consecutive k-points that both carry a high-symmetry label sit at a
-    discontinuity: the path stops at one special point and restarts at another.
-    A branch sampled at its two endpoints alone is indistinguishable from one,
-    and is read as a jump; aiida-core's own band plotting reads it the same way.
-    """
-    labelled = _labelled(series)
-    if labelled.size < 2:
-        return np.zeros(max(labelled.size - 1, 0), dtype=bool)
-    return np.asarray(labelled[:-1] & labelled[1:], dtype=bool)
-
-
-def path_distances(series: BandSeries, cell: list[list[float]] | None = None) -> np.ndarray:
-    """Return the cumulative distance along the path of each k-point.
-
-    Distance is measured in the reciprocal basis ``cell`` defines, defaulting
-    to the series' own; with no cell at all the crystal coordinates stand in,
-    which distorts the relative lengths of the path's segments. A jump
-    contributes no distance.
-    """
-    kpoints = np.asarray(series.kpoints, dtype=np.float64)
-    if len(kpoints) == 0:
-        return np.zeros(0)
-    frame = series.cell if cell is None else cell
-    if frame is None:
-        cartesian = kpoints
-    else:
-        reciprocal = 2 * np.pi * np.linalg.inv(np.asarray(frame, dtype=np.float64)).T
-        cartesian = kpoints @ reciprocal
-    steps = np.linalg.norm(np.diff(cartesian, axis=0), axis=1)
-    steps[_jumps(series)] = 0.0
-    return np.concatenate(([0.0], np.cumsum(steps)))
 
 
 def _shared_cell(series: Sequence[BandSeries]) -> list[list[float]] | None:
@@ -159,6 +125,117 @@ def _path_extent(distances: Sequence[np.ndarray]) -> tuple[float, float] | None:
     return None if last <= first else (first, last)
 
 
+def _draw_gap(
+    axes: Axes,
+    item: BandSeries,
+    edge: BandGap,
+    distances: np.ndarray,
+    color: Any,
+) -> None:
+    """Draw one series' band gap in the conventional textbook form.
+
+    A vertical double-headed arrow, at the conduction band minimum's own
+    k-point, runs from the valence band maximum's energy to the conduction
+    band minimum's; for an indirect gap a dashed rule at the valence level
+    marks where it sits, reaching from its own k-point to the arrow. A
+    direct gap needs no such rule, since the arrow's own foot already sits
+    at the valence band maximum's k-point. The label reads the gap's value
+    to the right of the arrow, and never joins the legend. Every piece is
+    clipped to the axes, so a y-range that excludes an edge cuts the arrow
+    or the label off at the frame rather than drawing it past it.
+
+    Two series whose conduction band minima coincide draw their arrows on
+    top of each other rather than displaced — a displaced arrow would claim
+    the conduction band minimum sits somewhere it does not.
+    """
+    vbm_x = float(distances[edge.vbm_kpoint_index])
+    arrow_x = float(distances[edge.cbm_kpoint_index])
+    vbm_y, cbm_y = edge.vbm - item.zero, edge.cbm - item.zero
+
+    if not edge.direct:
+        axes.plot(
+            [vbm_x, arrow_x],
+            [vbm_y, vbm_y],
+            linestyle="--",
+            linewidth=1.0,
+            color=color,
+            alpha=0.5,
+        )
+
+    arrow = axes.annotate(
+        "",
+        xy=(arrow_x, cbm_y),
+        xytext=(arrow_x, vbm_y),
+        arrowprops={
+            "arrowstyle": "<->",
+            "color": color,
+            "linewidth": 1.0,
+            "shrinkA": 0,
+            "shrinkB": 0,
+        },
+        annotation_clip=True,
+        clip_on=True,
+    )
+    # clip_on above clips the (empty) text; the arrow is a separate artist
+    # that needs its own clip path to stop at the axes too.
+    if arrow.arrow_patch is not None:
+        arrow.arrow_patch.set_clip_path(axes.patch)
+    axes.annotate(
+        f"{edge.value:.2f} {item.units}",
+        xy=(arrow_x, (vbm_y + cbm_y) / 2),
+        xytext=(8, 0),
+        textcoords="offset points",
+        va="center",
+        ha="left",
+        fontsize="small",
+        color=color,
+        annotation_clip=True,
+        clip_on=True,
+        # A white backing keeps the label readable where it lands on a band —
+        # the gap it measures is exactly where the curves are densest.
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 1},
+    )
+
+
+def _draw_gaps(
+    axes: Axes,
+    candidates: Sequence[tuple[BandSeries, BandGap, np.ndarray, Any]],
+) -> None:
+    """Draw every series' gap annotation, each at its own conduction band minimum."""
+    for item, edge, distances, color in candidates:
+        _draw_gap(axes, item, edge, distances, color)
+
+
+def _draw_series_curves(
+    axes: Axes,
+    item: BandSeries,
+    distances: np.ndarray,
+    style: list[str],
+    color: str | None,
+) -> Any:
+    """Plot one series' bands and return the color they were drawn in.
+
+    ``None`` if the series drew no curve at all (an empty path).
+    """
+    energies = np.asarray(item.energies, dtype=np.float64) - item.zero
+    drawn = False
+    drawn_color: Any = None
+    for span in _segments(item):
+        for band in range(energies.shape[1]):
+            (line,) = axes.plot(
+                distances[span],
+                energies[span, band],
+                *style,
+                linewidth=1.2,
+                label=None if drawn else item.label,
+            )
+            if color is not None:
+                line.set_color(color)
+            drawn = True
+            drawn_color = line.get_color()
+    return drawn_color
+
+
 class StyleError(ValueError):
     """A style is not one of matplotlib's format strings."""
 
@@ -207,6 +284,19 @@ def check_style(style: str) -> None:
     _style_color(style)
 
 
+def _cycle_color(style: Sequence[str], index: int) -> str | None:
+    """Return the color to force a plot call to, or ``None`` to keep matplotlib's own.
+
+    matplotlib advances its color cycle once per plot call, so a curve whose
+    style names no color still needs one assigned, or its bands or spectra
+    come out in as many colors as they have plot calls. A style that already
+    names a color is left alone.
+    """
+    if style and _style_color(style[0]) is not None:
+        return None
+    return f"C{index % 10}"
+
+
 def draw_band_structures(
     axes: Axes,
     series: Sequence[BandSeries],
@@ -225,7 +315,10 @@ def draw_band_structures(
     A series carrying a ``style`` is drawn in that format string, color
     included; where the string names no color the series keeps the one these
     axes give it, so its bands are drawn in one color rather than in as many
-    as it has bands.
+    as it has bands. A series with ``show_gap`` set draws its band gap —
+    skipped silently if it reports no valence band edge — as an arrow at its
+    own conduction-band-minimum k-point; two series whose minima coincide
+    draw their arrows on top of each other.
 
     :param axes: where to draw.
     :param series: the curves, each already carrying the figure's ``zero``.
@@ -237,29 +330,21 @@ def draw_band_structures(
     """
     cell = _shared_cell(series)
     drawn_distances: list[np.ndarray] = []
+    gap_candidates: list[tuple[BandSeries, BandGap, np.ndarray, Any]] = []
     for index, item in enumerate(series):
         distances = path_distances(item, cell)
         drawn_distances.append(distances)
-        energies = np.asarray(item.energies, dtype=np.float64) - item.zero
         style = [item.style] if item.style else []
-        # One band is one plot call, and matplotlib advances its color cycle
-        # once per call, so a series whose style names no color still has to be
-        # given one — otherwise its bands come out in as many colors.
-        names_color = bool(style) and _style_color(style[0]) is not None
-        color = None if names_color else f"C{index % 10}"
-        drawn = False
-        for span in _segments(item):
-            for band in range(energies.shape[1]):
-                (line,) = axes.plot(
-                    distances[span],
-                    energies[span, band],
-                    *style,
-                    linewidth=1.2,
-                    label=None if drawn else item.label,
-                )
-                if color is not None:
-                    line.set_color(color)
-                drawn = True
+        color = _cycle_color(style, index)
+        drawn_color = _draw_series_curves(axes, item, distances, style, color)
+
+        if item.show_gap and drawn_color is not None:
+            try:
+                edge = band_gap(item)
+            except ValueError:
+                pass
+            else:
+                gap_candidates.append((item, edge, distances, drawn_color))
 
     positions, names = _ticks(_tick_source(series), cell)
     if positions:
@@ -273,6 +358,7 @@ def draw_band_structures(
     limits = _path_extent(drawn_distances)
     if limits is not None:
         axes.set_xlim(*limits)
+    _draw_gaps(axes, gap_candidates)
     if ylim is not None:
         axes.set_ylim(*ylim)
 
@@ -281,6 +367,130 @@ def draw_band_structures(
     wanted = len(series) > 1 if legend is None else legend
     if wanted:
         axes.legend(frameon=False, fontsize="small")
+
+
+#: Label of the independent-particle overlay, shared across every series so
+#: it appears once in the legend no matter how many spectra are drawn.
+_IP_LABEL = "independent particle"
+
+
+def draw_spectra(
+    axes: Axes,
+    series: Sequence[SpectrumSeries],
+    real: bool = False,
+    ip: bool = True,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    legend: bool | None = None,
+) -> None:
+    """Draw every optical spectrum onto one set of axes.
+
+    Draws Im ε against energy, one curve per series, or Re ε with ``real``.
+    ``ip`` overlays each series' independent-particle spectrum, where it
+    reported one, as a lighter dashed curve in the same color. The x axis is
+    tight to the energies drawn, with no margin, unless ``xlim`` overrides it.
+    Im ε's y axis starts at 0; Re ε goes negative, so its automatic limits are
+    left alone unless ``ylim`` overrides them.
+
+    :param axes: where to draw.
+    :param series: the spectra to draw.
+    :param real: draw Re ε instead of Im ε.
+    :param ip: overlay the independent-particle spectrum.
+    :param xlim: the energy range to show, in eV. ``None`` is tight to the
+        energies drawn.
+    :param ylim: the range to show. ``None`` starts Im ε at 0 and leaves
+        Re ε automatic.
+    :param legend: draw the key, or leave it out. ``None`` always draws it.
+    """
+    quantity = "re_eps" if real else "im_eps"
+    quantity_o = "re_eps_o" if real else "im_eps_o"
+    symbol = "Re" if real else "Im"
+
+    drawn_energies: list[np.ndarray] = []
+    for index, item in enumerate(series):
+        energies = np.asarray(item.energies, dtype=np.float64)
+        drawn_energies.append(energies)
+        values = np.asarray(getattr(item, quantity), dtype=np.float64)
+        style = [item.style] if item.style else []
+        color = _cycle_color(style, index)
+        (line,) = axes.plot(energies, values, *style, linewidth=1.2, label=item.label)
+        if color is not None:
+            line.set_color(color)
+        drawn_color = line.get_color()
+
+        if ip:
+            independent = getattr(item, quantity_o)
+            if independent is not None:
+                axes.plot(
+                    energies,
+                    np.asarray(independent, dtype=np.float64),
+                    linestyle="--",
+                    linewidth=1.0,
+                    color=drawn_color,
+                    alpha=0.6,
+                    label=_IP_LABEL if index == 0 else None,
+                )
+
+    axes.set_xlabel("Energy (eV)")
+    axes.set_ylabel(rf"{symbol} $\varepsilon$")
+
+    if xlim is not None:
+        axes.set_xlim(*xlim)
+    elif drawn_energies:
+        all_energies = np.concatenate(drawn_energies)
+        axes.set_xlim(float(all_energies.min()), float(all_energies.max()))
+
+    if ylim is not None:
+        axes.set_ylim(*ylim)
+    elif not real:
+        axes.set_ylim(bottom=0)
+
+    wanted = True if legend is None else legend
+    if wanted:
+        axes.legend(frameon=False, fontsize="small")
+
+
+def render_spectra(
+    series: Sequence[SpectrumSeries],
+    output_path: Path | None = None,
+    show: bool = False,
+    real: bool = False,
+    ip: bool = True,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    legend: bool | None = None,
+) -> None:
+    """Draw the spectra and write or show the figure.
+
+    :param series: the spectra to draw.
+    :param output_path: where to write the figure; the extension sets the
+        format. ``None`` writes nothing.
+    :param show: open an interactive window.
+    :param real: draw Re ε instead of Im ε.
+    :param ip: overlay the independent-particle spectrum.
+    :param xlim: the energy range to show, in eV. ``None`` is tight to the
+        energies drawn.
+    :param ylim: the range to show. ``None`` starts Im ε at 0 and leaves
+        Re ε automatic.
+    :param legend: draw the key, or leave it out. ``None`` always draws it.
+    """
+    import matplotlib
+
+    if not show:
+        # Chosen before pyplot is imported: a run that only writes a file must
+        # not depend on a display, so that it works over ssh and in CI.
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    figure, axes = plt.subplots(figsize=(6.0, 4.5))
+    draw_spectra(axes, series, real=real, ip=ip, xlim=xlim, ylim=ylim, legend=legend)
+    figure.tight_layout()
+
+    if output_path is not None:
+        figure.savefig(output_path, dpi=200)
+    if show:
+        plt.show()
+    plt.close(figure)
 
 
 def render_band_structures(

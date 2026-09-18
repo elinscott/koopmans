@@ -12,16 +12,23 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
+
+import numpy as np
 
 __all__ = [
+    "BandGap",
     "BandSeries",
     "EnergyZero",
     "NoEnergyZeroError",
     "PathMismatchError",
+    "SpectrumSeries",
     "apply_energy_zero",
+    "band_gap",
     "check_paths_agree",
     "describe_energy_zero",
     "energy_axis_label",
+    "path_distances",
     "write_series_json",
 ]
 
@@ -53,7 +60,9 @@ class BandSeries:
     relative lengths of its segments. ``path_labels`` pairs a k-point index
     with the name of the high-symmetry point sitting there. ``style`` is the
     matplotlib format string the curve is drawn in, ``None`` leaving its
-    appearance to the figure.
+    appearance to the figure. ``show_gap`` asks the figure to annotate this
+    series' band gap; it is silently left undrawn when the series reports no
+    valence band edge.
     """
 
     label: str
@@ -66,6 +75,7 @@ class BandSeries:
     vbm: float | None = None
     fermi: float | None = None
     zero: float = 0.0
+    show_gap: bool = False
 
     def reference(self, kind: EnergyZero) -> float | None:
         """Return the energy this series would put at zero, or ``None``."""
@@ -74,6 +84,181 @@ class BandSeries:
         if kind == EnergyZero.FERMI:
             return self.fermi
         return 0.0
+
+
+def _labelled(series: BandSeries) -> np.ndarray:
+    """Return a boolean mask of the k-points carrying a high-symmetry label."""
+    mask = np.zeros(len(series.kpoints), dtype=bool)
+    for index, _ in series.path_labels:
+        if 0 <= index < mask.size:
+            mask[index] = True
+    return mask
+
+
+def _jumps(series: BandSeries) -> np.ndarray:
+    """Return a mask over steps that are jumps rather than steps along the path.
+
+    Two consecutive k-points that both carry a high-symmetry label sit at a
+    discontinuity: the path stops at one special point and restarts at another.
+    A branch sampled at its two endpoints alone is indistinguishable from one,
+    and is read as a jump; aiida-core's own band plotting reads it the same way.
+    """
+    labelled = _labelled(series)
+    if labelled.size < 2:
+        return np.zeros(max(labelled.size - 1, 0), dtype=bool)
+    return np.asarray(labelled[:-1] & labelled[1:], dtype=bool)
+
+
+def path_distances(series: BandSeries, cell: list[list[float]] | None = None) -> np.ndarray:
+    """Return the cumulative distance along the path of each k-point.
+
+    Distance is measured in the reciprocal basis ``cell`` defines, defaulting
+    to the series' own; with no cell at all the crystal coordinates stand in,
+    which distorts the relative lengths of the path's segments. A jump
+    contributes no distance.
+    """
+    kpoints = np.asarray(series.kpoints, dtype=np.float64)
+    if len(kpoints) == 0:
+        return np.zeros(0)
+    frame = series.cell if cell is None else cell
+    if frame is None:
+        cartesian = kpoints
+    else:
+        reciprocal = 2 * np.pi * np.linalg.inv(np.asarray(frame, dtype=np.float64)).T
+        cartesian = kpoints @ reciprocal
+    steps = np.linalg.norm(np.diff(cartesian, axis=0), axis=1)
+    steps[_jumps(series)] = 0.0
+    return np.concatenate(([0.0], np.cumsum(steps)))
+
+
+@dataclass
+class BandGap:
+    """A series' valence-to-conduction gap.
+
+    ``value``, ``vbm`` and ``cbm`` are in the series' own units, as computed —
+    before the figure's zero. ``vbm_kpoint_index``/``cbm_kpoint_index`` are the
+    k-point each edge sits at; ``vbm_distance``/``cbm_distance`` are that same
+    point's position along the series' own path (:func:`path_distances`).
+    ``direct`` is whether the two indices agree.
+    """
+
+    value: float
+    vbm: float
+    cbm: float
+    vbm_kpoint_index: int
+    cbm_kpoint_index: int
+    vbm_distance: float
+    cbm_distance: float
+    direct: bool
+
+
+#: How far above the reported valence band maximum a state must sit to count
+#: as the conduction band minimum rather than the same band as the edge.
+_GAP_TOLERANCE = 1e-6
+
+#: The smallest valence-to-conduction separation read as an insulating gap.
+#: Below it, the "conduction" state is a metal's own partially filled band
+#: sampled at another k-point, not a real gap — QE's own occupation smearing
+#: routinely leaves states this close together at the Fermi level.
+_MIN_GAP = 1e-3
+
+
+def _nearest_pair(
+    vbm_kpoints: np.ndarray, cbm_kpoints: np.ndarray, distances: np.ndarray
+) -> tuple[int, int]:
+    """Return the VBM/CBM k-point pair closest together along the path.
+
+    A high-symmetry point sampled at both ends of the path (Γ opening and
+    closing a loop, say) attains the same energy at more than one k-point;
+    picking the wrong one draws the gap arrow across the whole figure
+    instead of at the band edge it belongs to. Ties keep the pair the
+    ascending scan meets first.
+    """
+    best_pair = (int(vbm_kpoints[0]), int(cbm_kpoints[0]))
+    best_distance = np.inf
+    for vbm_kpoint in vbm_kpoints:
+        for cbm_kpoint in cbm_kpoints:
+            separation = abs(float(distances[cbm_kpoint]) - float(distances[vbm_kpoint]))
+            if separation < best_distance:
+                best_distance = separation
+                best_pair = (int(vbm_kpoint), int(cbm_kpoint))
+    return best_pair
+
+
+def band_gap(item: BandSeries) -> BandGap:
+    """Return the series' valence-to-conduction gap.
+
+    The valence band maximum is ``item.vbm``; the conduction band minimum is
+    the lowest energy more than ``_GAP_TOLERANCE`` above it, provided that
+    exceeds ``_MIN_GAP`` — otherwise the two are read as the same partially
+    filled band sampled at different k-points (a metal), not an insulating
+    gap. A high-symmetry point the path visits more than once can attain
+    either energy at several k-points alike, within ``_GAP_TOLERANCE``; the
+    pair reported is whichever of those sits closest together along the
+    path, so the gap is drawn at the band edge rather than stretched between
+    unrelated repeats of the same point.
+
+    :raises ValueError: if the series reports no valence band edge, no state
+        above it, or a gap no wider than a metal's own dispersion.
+    """
+    if item.vbm is None:
+        raise ValueError(f"'{item.label}' reports no valence band edge to measure a gap from.")
+
+    energies = np.asarray(item.energies, dtype=np.float64)
+    vbm_kpoints = np.flatnonzero(np.any(np.abs(energies - item.vbm) <= _GAP_TOLERANCE, axis=1))
+    if vbm_kpoints.size == 0:
+        # Numerical drift between the reported edge and the band table
+        # itself: fall back to the single closest k-point rather than
+        # matching nothing.
+        vbm_kpoints = np.array([int(np.argmin(np.abs(energies - item.vbm).min(axis=1)))])
+
+    above = np.where(energies > item.vbm + _GAP_TOLERANCE, energies, np.inf)
+    cbm = float(np.min(above))
+    if not np.isfinite(cbm):
+        raise ValueError(
+            f"'{item.label}' reports no state above its valence band maximum to measure a gap to."
+        )
+    if cbm - item.vbm <= _MIN_GAP:
+        raise ValueError(
+            f"'{item.label}' reports no band gap: the state above its valence "
+            "band maximum sits within a metal's own partially filled band."
+        )
+    cbm_kpoints = np.flatnonzero(np.any(np.abs(energies - cbm) <= _GAP_TOLERANCE, axis=1))
+
+    distances = path_distances(item)
+    vbm_kpoint, cbm_kpoint = _nearest_pair(vbm_kpoints, cbm_kpoints, distances)
+
+    return BandGap(
+        value=cbm - item.vbm,
+        vbm=item.vbm,
+        cbm=cbm,
+        vbm_kpoint_index=vbm_kpoint,
+        cbm_kpoint_index=cbm_kpoint,
+        vbm_distance=float(distances[vbm_kpoint]),
+        cbm_distance=float(distances[cbm_kpoint]),
+        direct=vbm_kpoint == cbm_kpoint,
+    )
+
+
+@dataclass
+class SpectrumSeries:
+    """One optical absorption spectrum on the axes.
+
+    ``energies`` are eV; ``im_eps``/``re_eps`` are the macroscopic dielectric
+    function a yambo BSE run computes with local-field and excitonic effects
+    included. ``im_eps_o``/``re_eps_o`` are the independent-particle spectrum
+    the same run reports, ``None`` when it reported none. ``style`` is the
+    matplotlib format string the curve is drawn in, ``None`` leaving its
+    appearance to the figure.
+    """
+
+    label: str
+    energies: list[float]
+    im_eps: list[float]
+    re_eps: list[float]
+    im_eps_o: list[float] | None = None
+    re_eps_o: list[float] | None = None
+    style: str | None = None
 
 
 #: How far apart two crystal coordinates may be and still name the same point.
@@ -196,11 +381,31 @@ def describe_energy_zero(
     )
 
 
-def write_series_json(series: Sequence[BandSeries], path: Path) -> None:
-    """Write the records the figure was drawn from as JSON.
+def _series_record(item: BandSeries | SpectrumSeries) -> dict[str, Any]:
+    """Return one series' JSON record, with its gap if it is a band structure reporting an edge.
 
-    Energies are as computed; ``zero`` records the shift the figure applied,
-    so the file is enough to redraw the figure or to restyle it elsewhere.
+    ``gap`` is written whether or not the figure was asked to draw one, so a
+    script can read the gap off the file without asking for the annotation;
+    ``show_gap`` itself, which only says whether the figure drew it, is left
+    out to keep this key's shape the same either way.
     """
-    payload = {"series": [asdict(item) for item in series]}
+    record = asdict(item)
+    if isinstance(item, BandSeries):
+        record.pop("show_gap", None)
+        try:
+            record["gap"] = asdict(band_gap(item))
+        except ValueError:
+            record["gap"] = None
+    return record
+
+
+def write_series_json(series: Sequence[BandSeries] | Sequence[SpectrumSeries], path: Path) -> None:
+    """Write the records a figure was drawn from as JSON.
+
+    Works on either a band-structure or a spectrum figure's records alike, both
+    being plain dataclasses. Energies are as computed; a ``BandSeries``' zero
+    records the shift the figure applied, so the file is enough to redraw the
+    figure or to restyle it elsewhere.
+    """
+    payload = {"series": [_series_record(item) for item in series]}
     path.write_text(json.dumps(payload, indent=2) + "\n")

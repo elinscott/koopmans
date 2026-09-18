@@ -16,6 +16,7 @@ from koopmans.aiida.conversion import (
 )
 from koopmans.aiida.workflows import (
     load_codes,
+    name_run,
     pin_step_kpoints,
     prepare_common_inputs,
     require_configured_codes,
@@ -263,22 +264,26 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # get_builder_from_protocol call, which raises its own eager error on
     # a missing required member; the pre-flight gets there first with the
     # same install advice every other route gives.
-    codes = load_codes(WannierizeCodes)
-    require_configured_codes(WannierizeCodes, codes)
+    codes = load_codes(WannierizeCodes, koopmans_input.computer.name)
+    require_configured_codes(WannierizeCodes, codes, koopmans_input.computer.name)
 
-    return Wannierize.build(
-        codes=codes,
-        structure=structure,
-        overrides=overrides,
-        pseudo_family=pseudo_family,
-        print_summary=False,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        scf_kpoints=scf_kpoints,
-        kpoints=kpoints,
-        mp_grid=mp_grid,
-        bands_kpoints=bands_kpoints,
-        interpolation_kpoints=interpolation_kpoints,
-        **extra_kwargs,
+    return name_run(
+        Wannierize.build(
+            codes=codes,
+            structure=structure,
+            overrides=overrides,
+            pseudo_family=pseudo_family,
+            print_summary=False,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
+            scf_kpoints=scf_kpoints,
+            kpoints=kpoints,
+            mp_grid=mp_grid,
+            bands_kpoints=bands_kpoints,
+            interpolation_kpoints=interpolation_kpoints,
+            **extra_kwargs,
+        ),
+        "Wannierization",
     )
 
 
@@ -422,8 +427,8 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # binds pw eagerly (aiida-koopmans#97: not yet converted to
     # node_graph.reference); the pre-flight catches a missing required member
     # before that bare subscript can raise a bare KeyError.
-    codes = load_codes(WannierizeBlocksCodes)
-    require_configured_codes(WannierizeBlocksCodes, codes)
+    codes = load_codes(WannierizeBlocksCodes, koopmans_input.computer.name)
+    require_configured_codes(WannierizeBlocksCodes, codes, koopmans_input.computer.name)
 
     # split_threshold and num_occ_bands are split-only: without a threshold
     # the graph splits nothing, and WannierizeBlocks rejects them rather
@@ -436,20 +441,24 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
             "split_threshold": float(threshold),
         }
 
-    return WannierizeBlocks.build(
-        codes=codes,
-        structure=structure,
-        blocks=blocks,
-        kpoints=kpoints,
-        mp_grid=mp_grid,
-        scf_kpoints=scf_kpoints,
-        bands_kpoints=bands_kpoints,
-        **split_kwargs,
-        interpolation_kpoints=interpolation_kpoints,
-        pseudo_family=pseudo_family,
-        overrides=wannier_overrides,
-        parallelization=koopmans_input.parallelization.as_mapping() or None,
-        **external_kwargs,
+    return name_run(
+        WannierizeBlocks.build(
+            codes=codes,
+            structure=structure,
+            blocks=blocks,
+            kpoints=kpoints,
+            mp_grid=mp_grid,
+            scf_kpoints=scf_kpoints,
+            bands_kpoints=bands_kpoints,
+            **split_kwargs,
+            interpolation_kpoints=interpolation_kpoints,
+            pseudo_family=pseudo_family,
+            overrides=wannier_overrides,
+            parallelization=koopmans_input.parallelization.as_mapping(koopmans_input.computer)
+            or None,
+            **external_kwargs,
+        ),
+        "Wannierization",
     )
 
 
