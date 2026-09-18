@@ -817,6 +817,14 @@ ylim_option = click.option(
     help="Show only this range of the energy axis, in the units it is drawn in "
     "and measured from the zero --zero sets. Defaults to every band in full.",
 )
+gap_option = click.option(
+    "--gap/--no-gap",
+    default=False,
+    show_default=True,
+    help="Annotate each series' band gap with a labelled arrow between its "
+    "valence band maximum and conduction band minimum. A series that reports "
+    "no valence band edge is skipped. Written to --data either way.",
+)
 
 
 class _PositionalAwareOption(click.Option):
@@ -999,6 +1007,7 @@ class _FolderPairingCommand(click.Command):
 @zero_option
 @data_option
 @ylim_option
+@gap_option
 @click.option(
     "--label",
     "labels",
@@ -1033,6 +1042,7 @@ def bandstructure(
     zero: str,
     data_path: Path | None,
     ylim: tuple[float, float] | None,
+    gap: bool,
     labels: tuple[str | None, ...],
     styles: tuple[str | None, ...],
 ) -> None:
@@ -1098,6 +1108,15 @@ def bandstructure(
     To export one band structure in Grace, gnuplot or dat form instead, use
     `verdi data core.bands export`: those exporters take one node at a time,
     and so lose both the overlay and its shared zero.
+
+    --gap draws each series' band gap as a labelled arrow between its
+    valence band maximum and conduction band minimum, skipping a series
+    that reports no valence band edge:
+
+    \b
+        koopmans plot bandstructure \\
+            si/02-bands --label LDA --style -- \\
+            si-ki --label "KI@LDA" --gap
     """
     from koopmans.plotting import (
         NoEnergyZeroError,
@@ -1140,6 +1159,7 @@ def bandstructure(
         zero=kind,
         ylim=ylim,
         legend=True if labels else None,
+        gap=gap,
     )
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series, {caption})")

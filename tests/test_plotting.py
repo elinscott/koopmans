@@ -28,6 +28,7 @@ from koopmans.plotting import (
     PlottingError,
     StyleError,
     apply_energy_zero,
+    band_gap,
     check_paths_agree,
     check_style,
     describe_energy_zero,
@@ -139,6 +140,15 @@ def blank_axes() -> Any:
     return plt.subplots()[1]
 
 
+def gap_labels(axes: Any) -> list[str]:
+    """Return the gap-value labels ``_draw_gap`` wrote on ``axes``, in draw order.
+
+    The arrow half of each annotation carries no text, so filtering out the
+    empty ones leaves only the labels.
+    """
+    return [text.get_text() for text in axes.texts if text.get_text()]
+
+
 @pytest.fixture(autouse=True)
 def close_figures() -> Any:
     """Close every figure a test opened.
@@ -198,6 +208,24 @@ def series(label: str = "DFT", **overrides: Any) -> BandSeries:
     }
     fields.update(overrides)
     return BandSeries(**fields)
+
+
+def indirect_gap_series(label: str = "indirect") -> BandSeries:
+    """Return a series whose VBM sits at Γ and CBM at X, 1.5 eV apart."""
+    return series(
+        label,
+        energies=[[-1.0, 2.0], [-1.2, 1.0], [-1.5, 0.5]],
+        vbm=-1.0,
+    )
+
+
+def direct_gap_series(label: str = "direct") -> BandSeries:
+    """Return a series whose VBM and CBM both sit at X, 1.2 eV apart."""
+    return series(
+        label,
+        energies=[[-2.0, 3.0], [-1.5, 2.0], [-1.0, 0.2]],
+        vbm=-1.0,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -301,6 +329,62 @@ class TestSeriesRecords:
         assert record["zero"] == pytest.approx(6.0)
         assert record["energies"] == [[-5.0, 5.0], [-4.5, 5.5], [-4.0, 6.0]]
         assert record["path_labels"] == [[0, "G"], [2, "X"]]
+
+    def test_the_gap_is_written_whether_or_not_it_is_drawn(self, tmp_path: Path) -> None:
+        """A script can read a series' gap off the file without asking for --gap."""
+        target = tmp_path / "bands.json"
+        write_series_json([indirect_gap_series()], target)
+        payload = json.loads(target.read_text())
+
+        (record,) = payload["series"]
+        assert record["gap"]["value"] == pytest.approx(1.5)
+        assert record["gap"]["direct"] is False
+        assert record["gap"]["vbm_distance"] == pytest.approx(0.0)
+        assert record["gap"]["cbm_distance"] == pytest.approx(np.pi / 4)
+
+    def test_a_series_without_an_edge_omits_the_gap(self, tmp_path: Path) -> None:
+        """Nothing to measure a gap from is recorded as ``None``, not left out."""
+        target = tmp_path / "bands.json"
+        write_series_json([series("DFT")], target)
+        payload = json.loads(target.read_text())
+
+        (record,) = payload["series"]
+        assert record["gap"] is None
+
+
+# ----------------------------------------------------------------------
+# The band gap
+# ----------------------------------------------------------------------
+
+
+class TestBandGap:
+    """The valence-to-conduction gap computed from a series' reported edge."""
+
+    def test_indirect_gap_reports_value_positions_and_direct_flag(self) -> None:
+        """VBM at Γ, CBM at X: an indirect gap, not at the same k-point."""
+        gap = band_gap(indirect_gap_series())
+
+        assert gap.value == pytest.approx(1.5)
+        assert gap.vbm == pytest.approx(-1.0)
+        assert gap.cbm == pytest.approx(0.5)
+        assert gap.vbm_kpoint_index == 0
+        assert gap.cbm_kpoint_index == 2
+        assert gap.vbm_distance == pytest.approx(0.0)
+        assert gap.cbm_distance == pytest.approx(np.pi / 4)
+        assert gap.direct is False
+
+    def test_direct_gap_sits_at_one_k_point(self) -> None:
+        """VBM and CBM both at X: a direct gap."""
+        gap = band_gap(direct_gap_series())
+
+        assert gap.value == pytest.approx(1.2)
+        assert gap.vbm_kpoint_index == gap.cbm_kpoint_index == 2
+        assert gap.direct is True
+
+    def test_a_series_without_an_edge_raises(self) -> None:
+        """Nothing to measure a gap from is refused, not silently skipped."""
+        with pytest.raises(ValueError, match="DFT"):
+            band_gap(series("DFT"))
 
 
 # ----------------------------------------------------------------------
@@ -1176,6 +1260,62 @@ class TestRenderer:
 
 
 # ----------------------------------------------------------------------
+# The band-gap annotation
+# ----------------------------------------------------------------------
+
+
+class TestGapAnnotation:
+    """``gap=True`` draws each series' valence-to-conduction gap."""
+
+    def test_off_by_default_draws_nothing(self) -> None:
+        """The default figure carries no annotation at all."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [indirect_gap_series()])
+
+        assert gap_labels(axes) == []
+
+    def test_one_annotation_per_series_with_an_edge(self) -> None:
+        """A series reporting no edge draws no arrow, but does not stop the others."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [indirect_gap_series(), series("no edge")], gap=True)
+
+        assert gap_labels(axes) == ["1.50 eV"]
+
+    def test_the_label_reads_to_two_decimals(self) -> None:
+        """The gap value is rounded to two decimal places, with its unit."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [direct_gap_series()], gap=True)
+
+        assert gap_labels(axes) == ["1.20 eV"]
+
+    def test_a_series_without_an_edge_is_skipped_not_errored(self) -> None:
+        """No valence band edge is a reason to skip the series, not to fail the figure."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [series("no edge")], gap=True)
+
+        assert gap_labels(axes) == []
+
+    def test_close_labels_are_nudged_to_the_outer_side(self) -> None:
+        """Two gaps whose midpoints coincide are pushed to opposite sides.
+
+        Left unchecked both labels would sit on top of each other, offset the
+        same way from the same point.
+        """
+        axes = blank_axes()
+        first = indirect_gap_series("first")
+        second = series("second", energies=first.energies, vbm=first.vbm)
+
+        draw_band_structures(axes, [first, second], gap=True)
+
+        alignments = [text.get_horizontalalignment() for text in axes.texts if text.get_text()]
+        assert alignments == ["left", "right"]
+
+
+# ----------------------------------------------------------------------
 # How a series is drawn
 # ----------------------------------------------------------------------
 
@@ -1413,6 +1553,61 @@ class TestCommand:
         # Clipping frames the figure; it does not discard the bands behind it.
         payload = json.loads((tmp_path / "zno.json").read_text())
         assert payload["series"][0]["energies"][0][0] == pytest.approx(-130.0)
+
+    def test_gap_draws_the_annotation(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gap draws the run's band gap on the figure."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "--gap", "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert gap_labels(drawn_axes[-1]) != []
+
+    def test_gap_is_off_by_default(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """No --gap draws no annotation, even though the run reports an edge."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert gap_labels(drawn_axes[-1]) == []
+
+    def test_the_gap_json_is_written_whether_or_not_drawn(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--data carries the gap even without --gap, so a script can read it."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "-o",
+                str(tmp_path / "a.png"),
+                "--data",
+                str(tmp_path / "a.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "a.json").read_text())
+        assert payload["series"][0]["gap"] is not None
 
     def test_a_label_names_the_curve_and_brings_the_legend_back(
         self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path

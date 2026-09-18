@@ -27,6 +27,7 @@ __all__ = [
     "check_paths_agree",
     "describe_energy_zero",
     "energy_axis_label",
+    "path_distances",
     "write_series_json",
 ]
 
@@ -81,13 +82,60 @@ class BandSeries:
         return 0.0
 
 
+def _labelled(series: BandSeries) -> np.ndarray:
+    """Return a boolean mask of the k-points carrying a high-symmetry label."""
+    mask = np.zeros(len(series.kpoints), dtype=bool)
+    for index, _ in series.path_labels:
+        if 0 <= index < mask.size:
+            mask[index] = True
+    return mask
+
+
+def _jumps(series: BandSeries) -> np.ndarray:
+    """Return a mask over steps that are jumps rather than steps along the path.
+
+    Two consecutive k-points that both carry a high-symmetry label sit at a
+    discontinuity: the path stops at one special point and restarts at another.
+    A branch sampled at its two endpoints alone is indistinguishable from one,
+    and is read as a jump; aiida-core's own band plotting reads it the same way.
+    """
+    labelled = _labelled(series)
+    if labelled.size < 2:
+        return np.zeros(max(labelled.size - 1, 0), dtype=bool)
+    return np.asarray(labelled[:-1] & labelled[1:], dtype=bool)
+
+
+def path_distances(series: BandSeries, cell: list[list[float]] | None = None) -> np.ndarray:
+    """Return the cumulative distance along the path of each k-point.
+
+    Distance is measured in the reciprocal basis ``cell`` defines, defaulting
+    to the series' own; with no cell at all the crystal coordinates stand in,
+    which distorts the relative lengths of the path's segments. A jump
+    contributes no distance.
+    """
+    kpoints = np.asarray(series.kpoints, dtype=np.float64)
+    if len(kpoints) == 0:
+        return np.zeros(0)
+    frame = series.cell if cell is None else cell
+    if frame is None:
+        cartesian = kpoints
+    else:
+        reciprocal = 2 * np.pi * np.linalg.inv(np.asarray(frame, dtype=np.float64)).T
+        cartesian = kpoints @ reciprocal
+    steps = np.linalg.norm(np.diff(cartesian, axis=0), axis=1)
+    steps[_jumps(series)] = 0.0
+    return np.concatenate(([0.0], np.cumsum(steps)))
+
+
 @dataclass
 class BandGap:
     """A series' valence-to-conduction gap.
 
     ``value``, ``vbm`` and ``cbm`` are in the series' own units, as computed —
     before the figure's zero. ``vbm_kpoint_index``/``cbm_kpoint_index`` are the
-    k-point each edge sits at, direct when they agree and indirect otherwise.
+    k-point each edge sits at; ``vbm_distance``/``cbm_distance`` are that same
+    point's position along the series' own path (:func:`path_distances`).
+    ``direct`` is whether the two indices agree.
     """
 
     value: float
@@ -95,6 +143,9 @@ class BandGap:
     cbm: float
     vbm_kpoint_index: int
     cbm_kpoint_index: int
+    vbm_distance: float
+    cbm_distance: float
+    direct: bool
 
 
 #: How far above the reported valence band maximum a state must sit to count
@@ -119,13 +170,18 @@ def band_gap(item: BandSeries) -> BandGap:
     above = np.where(energies > item.vbm + _GAP_TOLERANCE, energies, np.inf)
     cbm_index = np.unravel_index(np.argmin(above), energies.shape)
     cbm = float(energies[cbm_index])
+    vbm_kpoint, cbm_kpoint = int(vbm_index[0]), int(cbm_index[0])
+    distances = path_distances(item)
 
     return BandGap(
         value=cbm - item.vbm,
         vbm=item.vbm,
         cbm=cbm,
-        vbm_kpoint_index=int(vbm_index[0]),
-        cbm_kpoint_index=int(cbm_index[0]),
+        vbm_kpoint_index=vbm_kpoint,
+        cbm_kpoint_index=cbm_kpoint,
+        vbm_distance=float(distances[vbm_kpoint]),
+        cbm_distance=float(distances[cbm_kpoint]),
+        direct=vbm_kpoint == cbm_kpoint,
     )
 
 

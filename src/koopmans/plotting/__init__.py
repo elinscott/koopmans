@@ -25,11 +25,13 @@ from koopmans.plotting.resolve import (
     run_node,
 )
 from koopmans.plotting.series import (
+    BandGap,
     BandSeries,
     EnergyZero,
     NoEnergyZeroError,
     PathMismatchError,
     apply_energy_zero,
+    band_gap,
     check_paths_agree,
     describe_energy_zero,
     energy_axis_label,
@@ -39,6 +41,7 @@ from koopmans.plotting.series import (
 __all__ = [
     "BAND_PRODUCERS",
     "DIVIDER_LABEL",
+    "BandGap",
     "BandProducer",
     "BandSeries",
     "EnergyZero",
@@ -48,6 +51,7 @@ __all__ = [
     "RunNotInProfileError",
     "StyleError",
     "apply_energy_zero",
+    "band_gap",
     "check_paths_agree",
     "check_style",
     "describe_energy_zero",

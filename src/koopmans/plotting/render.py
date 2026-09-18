@@ -13,7 +13,15 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from koopmans.plotting.series import BandGap, BandSeries, EnergyZero, band_gap, energy_axis_label
+from koopmans.plotting.series import (
+    BandGap,
+    BandSeries,
+    EnergyZero,
+    _jumps,
+    band_gap,
+    energy_axis_label,
+    path_distances,
+)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -47,51 +55,6 @@ def _format_label(name: str) -> str:
     base, _, subscript = name.partition("_")
     text = _SYMBOLS.get(base.upper(), base)
     return f"{text}$_{{{subscript}}}$" if subscript else text
-
-
-def _labelled(series: BandSeries) -> np.ndarray:
-    """Return a boolean mask of the k-points carrying a high-symmetry label."""
-    mask = np.zeros(len(series.kpoints), dtype=bool)
-    for index, _ in series.path_labels:
-        if 0 <= index < mask.size:
-            mask[index] = True
-    return mask
-
-
-def _jumps(series: BandSeries) -> np.ndarray:
-    """Return a mask over steps that are jumps rather than steps along the path.
-
-    Two consecutive k-points that both carry a high-symmetry label sit at a
-    discontinuity: the path stops at one special point and restarts at another.
-    A branch sampled at its two endpoints alone is indistinguishable from one,
-    and is read as a jump; aiida-core's own band plotting reads it the same way.
-    """
-    labelled = _labelled(series)
-    if labelled.size < 2:
-        return np.zeros(max(labelled.size - 1, 0), dtype=bool)
-    return np.asarray(labelled[:-1] & labelled[1:], dtype=bool)
-
-
-def path_distances(series: BandSeries, cell: list[list[float]] | None = None) -> np.ndarray:
-    """Return the cumulative distance along the path of each k-point.
-
-    Distance is measured in the reciprocal basis ``cell`` defines, defaulting
-    to the series' own; with no cell at all the crystal coordinates stand in,
-    which distorts the relative lengths of the path's segments. A jump
-    contributes no distance.
-    """
-    kpoints = np.asarray(series.kpoints, dtype=np.float64)
-    if len(kpoints) == 0:
-        return np.zeros(0)
-    frame = series.cell if cell is None else cell
-    if frame is None:
-        cartesian = kpoints
-    else:
-        reciprocal = 2 * np.pi * np.linalg.inv(np.asarray(frame, dtype=np.float64)).T
-        cartesian = kpoints @ reciprocal
-    steps = np.linalg.norm(np.diff(cartesian, axis=0), axis=1)
-    steps[_jumps(series)] = 0.0
-    return np.concatenate(([0.0], np.cumsum(steps)))
 
 
 def _shared_cell(series: Sequence[BandSeries]) -> list[list[float]] | None:
@@ -159,18 +122,43 @@ def _path_extent(distances: Sequence[np.ndarray]) -> tuple[float, float] | None:
     return None if last <= first else (first, last)
 
 
+#: How close two gap labels' midpoints may sit — as a fraction of the path's
+#: drawn length in x, in eV in y — before the second is pushed to the arrow's
+#: outer (left) side instead of the default right side, so the two do not
+#: overlap.
+_GAP_LABEL_TOL_FRACTION = 0.08
+_GAP_LABEL_TOL_ENERGY = 0.5
+
+
+def _gap_midpoint(item: BandSeries, edge: BandGap, distances: np.ndarray) -> tuple[float, float]:
+    """Return one series' gap arrow midpoint, in the axes' data coordinates."""
+    mid_x = (distances[edge.vbm_kpoint_index] + distances[edge.cbm_kpoint_index]) / 2
+    mid_y = (edge.vbm + edge.cbm) / 2 - item.zero
+    return float(mid_x), mid_y
+
+
 def _draw_gap(
-    axes: Axes, item: BandSeries, edge: BandGap, distances: np.ndarray, color: Any
+    axes: Axes,
+    item: BandSeries,
+    edge: BandGap,
+    distances: np.ndarray,
+    color: Any,
+    outward: bool = False,
 ) -> None:
     """Draw one series' band gap: a double-headed arrow labelled with its value.
 
     The arrow runs from the valence band maximum to the conduction band
     minimum, at their own k-points and shifted energies; slanted for an
     indirect gap, vertical for a direct one. The label sits at the arrow's
-    midpoint, offset to the right, and never joins the legend.
+    midpoint, offset to the right unless ``outward``, and never joins the
+    legend.
+
+    :param outward: offset the label to the left of the midpoint instead of
+        the right, to clear another series' label whose arrow sits nearby.
     """
     from_x, to_x = float(distances[edge.vbm_kpoint_index]), float(distances[edge.cbm_kpoint_index])
     from_y, to_y = edge.vbm - item.zero, edge.cbm - item.zero
+    mid_x, mid_y = _gap_midpoint(item, edge, distances)
 
     axes.annotate(
         "",
@@ -185,16 +173,49 @@ def _draw_gap(
         },
         annotation_clip=False,
     )
+    offset, alignment = ((-8, 0), "right") if outward else ((8, 0), "left")
     axes.annotate(
         f"{edge.value:.2f} {item.units}",
-        xy=((from_x + to_x) / 2, (from_y + to_y) / 2),
-        xytext=(8, 0),
+        xy=(mid_x, mid_y),
+        xytext=offset,
         textcoords="offset points",
         va="center",
+        ha=alignment,
         fontsize="small",
         color=color,
         annotation_clip=False,
+        # A white backing keeps the label readable where it lands on a band —
+        # the gap it measures is exactly where the curves are densest.
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 1},
     )
+
+
+def _draw_series_gap(
+    axes: Axes,
+    item: BandSeries,
+    distances: np.ndarray,
+    color: Any,
+    path_length: float,
+    previous_midpoints: list[tuple[float, float]],
+) -> None:
+    """Draw a series' gap annotation, skipping one that reports no edge.
+
+    Nudges the label to the arrow's outer side when its midpoint would
+    otherwise land within ``_GAP_LABEL_TOL_FRACTION``/``_GAP_LABEL_TOL_ENERGY``
+    of an already-drawn gap's label.
+    """
+    try:
+        edge = band_gap(item)
+    except ValueError:
+        return
+    mid_x, mid_y = _gap_midpoint(item, edge, distances)
+    tol_x = _GAP_LABEL_TOL_FRACTION * path_length
+    outward = any(
+        abs(mid_x - other_x) < tol_x and abs(mid_y - other_y) < _GAP_LABEL_TOL_ENERGY
+        for other_x, other_y in previous_midpoints
+    )
+    _draw_gap(axes, item, edge, distances, color, outward)
+    previous_midpoints.append((mid_x, mid_y))
 
 
 def _draw_series_curves(
@@ -308,6 +329,7 @@ def draw_band_structures(
     """
     cell = _shared_cell(series)
     drawn_distances: list[np.ndarray] = []
+    gap_midpoints: list[tuple[float, float]] = []
     for index, item in enumerate(series):
         distances = path_distances(item, cell)
         drawn_distances.append(distances)
@@ -320,12 +342,8 @@ def draw_band_structures(
         drawn_color = _draw_series_curves(axes, item, distances, style, color)
 
         if gap and drawn_color is not None:
-            try:
-                edge = band_gap(item)
-            except ValueError:
-                pass
-            else:
-                _draw_gap(axes, item, edge, distances, drawn_color)
+            path_length = float(distances[-1] - distances[0]) if distances.size else 0.0
+            _draw_series_gap(axes, item, distances, drawn_color, path_length, gap_midpoints)
 
     positions, names = _ticks(_tick_source(series), cell)
     if positions:
@@ -356,6 +374,7 @@ def render_band_structures(
     zero: EnergyZero = EnergyZero.NONE,
     ylim: tuple[float, float] | None = None,
     legend: bool | None = None,
+    gap: bool = False,
 ) -> None:
     """Draw the series and write or show the figure.
 
@@ -368,6 +387,8 @@ def render_band_structures(
         is drawn in. ``None`` shows every band in full.
     :param legend: draw the key, or leave it out. ``None`` draws it for an
         overlay and leaves it out for a single curve.
+    :param gap: annotate each series' band gap, skipping a series that
+        reports no valence band edge.
     """
     import matplotlib
 
@@ -378,7 +399,7 @@ def render_band_structures(
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(figsize=(6.0, 4.5))
-    draw_band_structures(axes, series, zero=zero, ylim=ylim, legend=legend)
+    draw_band_structures(axes, series, zero=zero, ylim=ylim, legend=legend, gap=gap)
     figure.tight_layout()
 
     if output_path is not None:
