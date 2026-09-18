@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from koopmans.plotting.series import BandSeries, EnergyZero, energy_axis_label
+from koopmans.plotting.series import BandSeries, EnergyZero, SpectrumSeries, energy_axis_label
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -23,8 +23,10 @@ __all__ = [
     "StyleError",
     "check_style",
     "draw_band_structures",
+    "draw_spectra",
     "path_distances",
     "render_band_structures",
+    "render_spectra",
 ]
 
 #: Label of the vertical rules drawn at interior special points. The leading
@@ -207,6 +209,19 @@ def check_style(style: str) -> None:
     _style_color(style)
 
 
+def _cycle_color(style: Sequence[str], index: int) -> str | None:
+    """Return the color to force a plot call to, or ``None`` to keep matplotlib's own.
+
+    matplotlib advances its color cycle once per plot call, so a curve whose
+    style names no color still needs one assigned, or its bands or spectra
+    come out in as many colors as they have plot calls. A style that already
+    names a color is left alone.
+    """
+    if style and _style_color(style[0]) is not None:
+        return None
+    return f"C{index % 10}"
+
+
 def draw_band_structures(
     axes: Axes,
     series: Sequence[BandSeries],
@@ -242,11 +257,7 @@ def draw_band_structures(
         drawn_distances.append(distances)
         energies = np.asarray(item.energies, dtype=np.float64) - item.zero
         style = [item.style] if item.style else []
-        # One band is one plot call, and matplotlib advances its color cycle
-        # once per call, so a series whose style names no color still has to be
-        # given one — otherwise its bands come out in as many colors.
-        names_color = bool(style) and _style_color(style[0]) is not None
-        color = None if names_color else f"C{index % 10}"
+        color = _cycle_color(style, index)
         drawn = False
         for span in _segments(item):
             for band in range(energies.shape[1]):
@@ -281,6 +292,130 @@ def draw_band_structures(
     wanted = len(series) > 1 if legend is None else legend
     if wanted:
         axes.legend(frameon=False, fontsize="small")
+
+
+#: Label of the independent-particle overlay, shared across every series so
+#: it appears once in the legend no matter how many spectra are drawn.
+_IP_LABEL = "independent particle"
+
+
+def draw_spectra(
+    axes: Axes,
+    series: Sequence[SpectrumSeries],
+    real: bool = False,
+    ip: bool = True,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    legend: bool | None = None,
+) -> None:
+    """Draw every optical spectrum onto one set of axes.
+
+    Draws Im ε against energy, one curve per series, or Re ε with ``real``.
+    ``ip`` overlays each series' independent-particle spectrum, where it
+    reported one, as a lighter dashed curve in the same color. The x axis is
+    tight to the energies drawn, with no margin, unless ``xlim`` overrides it.
+    Im ε's y axis starts at 0; Re ε goes negative, so its automatic limits are
+    left alone unless ``ylim`` overrides them.
+
+    :param axes: where to draw.
+    :param series: the spectra to draw.
+    :param real: draw Re ε instead of Im ε.
+    :param ip: overlay the independent-particle spectrum.
+    :param xlim: the energy range to show, in eV. ``None`` is tight to the
+        energies drawn.
+    :param ylim: the range to show. ``None`` starts Im ε at 0 and leaves
+        Re ε automatic.
+    :param legend: draw the key, or leave it out. ``None`` always draws it.
+    """
+    quantity = "re_eps" if real else "im_eps"
+    quantity_o = "re_eps_o" if real else "im_eps_o"
+    symbol = "Re" if real else "Im"
+
+    drawn_energies: list[np.ndarray] = []
+    for index, item in enumerate(series):
+        energies = np.asarray(item.energies, dtype=np.float64)
+        drawn_energies.append(energies)
+        values = np.asarray(getattr(item, quantity), dtype=np.float64)
+        style = [item.style] if item.style else []
+        color = _cycle_color(style, index)
+        (line,) = axes.plot(energies, values, *style, linewidth=1.2, label=item.label)
+        if color is not None:
+            line.set_color(color)
+        drawn_color = line.get_color()
+
+        if ip:
+            independent = getattr(item, quantity_o)
+            if independent is not None:
+                axes.plot(
+                    energies,
+                    np.asarray(independent, dtype=np.float64),
+                    linestyle="--",
+                    linewidth=1.0,
+                    color=drawn_color,
+                    alpha=0.6,
+                    label=_IP_LABEL if index == 0 else None,
+                )
+
+    axes.set_xlabel("Energy (eV)")
+    axes.set_ylabel(rf"{symbol} $\varepsilon$")
+
+    if xlim is not None:
+        axes.set_xlim(*xlim)
+    elif drawn_energies:
+        all_energies = np.concatenate(drawn_energies)
+        axes.set_xlim(float(all_energies.min()), float(all_energies.max()))
+
+    if ylim is not None:
+        axes.set_ylim(*ylim)
+    elif not real:
+        axes.set_ylim(bottom=0)
+
+    wanted = True if legend is None else legend
+    if wanted:
+        axes.legend(frameon=False, fontsize="small")
+
+
+def render_spectra(
+    series: Sequence[SpectrumSeries],
+    output_path: Path | None = None,
+    show: bool = False,
+    real: bool = False,
+    ip: bool = True,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    legend: bool | None = None,
+) -> None:
+    """Draw the spectra and write or show the figure.
+
+    :param series: the spectra to draw.
+    :param output_path: where to write the figure; the extension sets the
+        format. ``None`` writes nothing.
+    :param show: open an interactive window.
+    :param real: draw Re ε instead of Im ε.
+    :param ip: overlay the independent-particle spectrum.
+    :param xlim: the energy range to show, in eV. ``None`` is tight to the
+        energies drawn.
+    :param ylim: the range to show. ``None`` starts Im ε at 0 and leaves
+        Re ε automatic.
+    :param legend: draw the key, or leave it out. ``None`` always draws it.
+    """
+    import matplotlib
+
+    if not show:
+        # Chosen before pyplot is imported: a run that only writes a file must
+        # not depend on a display, so that it works over ssh and in CI.
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    figure, axes = plt.subplots(figsize=(6.0, 4.5))
+    draw_spectra(axes, series, real=real, ip=ip, xlim=xlim, ylim=ylim, legend=legend)
+    figure.tight_layout()
+
+    if output_path is not None:
+        figure.savefig(output_path, dpi=200)
+    if show:
+        plt.show()
+    plt.close(figure)
 
 
 def render_band_structures(

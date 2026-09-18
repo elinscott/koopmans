@@ -776,10 +776,10 @@ data_option = click.option(
 )
 
 
-def _check_ylim(
+def _check_range(
     ctx: click.Context, param: click.Parameter, value: tuple[float, float] | None
 ) -> tuple[float, float] | None:
-    """Reject a range that frames nothing."""
+    """Reject a range that frames nothing, shared by every ``--*lim`` option."""
     if value is not None and value[0] >= value[1]:
         raise click.BadParameter(
             f"MIN must be below MAX; got {value[0]} and {value[1]}.", ctx=ctx, param=param
@@ -812,10 +812,30 @@ ylim_option = click.option(
     nargs=2,
     type=float,
     default=None,
-    callback=_check_ylim,
+    callback=_check_range,
     metavar="MIN MAX",
     help="Show only this range of the energy axis, in the units it is drawn in "
     "and measured from the zero --zero sets. Defaults to every band in full.",
+)
+spectrum_xlim_option = click.option(
+    "--xlim",
+    nargs=2,
+    type=float,
+    default=None,
+    callback=_check_range,
+    metavar="MIN MAX",
+    help="Show only this range of the energy axis, in eV. Defaults to the "
+    "energies drawn, with no margin.",
+)
+spectrum_ylim_option = click.option(
+    "--ylim",
+    nargs=2,
+    type=float,
+    default=None,
+    callback=_check_range,
+    metavar="MIN MAX",
+    help="Show only this range of Im ε (or Re ε with --real). Defaults to Im ε "
+    "starting at 0, or Re ε left automatic.",
 )
 
 
@@ -1143,6 +1163,134 @@ def bandstructure(
     )
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series, {caption})")
+
+
+@plot.command(cls=_FolderPairingCommand)
+@click.argument(
+    "folders",
+    nargs=-1,
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),  # type: ignore[type-var]
+)
+@output_option
+@show_option
+@data_option
+@click.option(
+    "--real/--no-real",
+    "real",
+    default=False,
+    help="Draw Re ε instead of Im ε.",
+)
+@click.option(
+    "--ip/--no-ip",
+    "ip",
+    default=True,
+    show_default=True,
+    help="Overlay each run's independent-particle spectrum as a lighter dashed curve.",
+)
+@spectrum_xlim_option
+@spectrum_ylim_option
+@click.option(
+    "--label",
+    "labels",
+    cls=_PositionalAwareOption,
+    multiple=True,
+    metavar="TEXT",
+    help="Name a folder on the legend. One per folder pairs them in listing "
+    "order; fewer than that, each names the folder it was written just after, "
+    "and a folder with none of its own keeps its derived name.",
+)
+@click.option(
+    "--style",
+    "styles",
+    cls=_PositionalAwareOption,
+    multiple=True,
+    metavar="FORMAT",
+    callback=_check_styles,
+    help="Draw a folder's spectrum in a matplotlib format string, such as 'k--' "
+    "for a dashed black line. One per folder pairs them in listing order; "
+    "fewer than that, each draws the folder it was written just after, and a "
+    "folder with none of its own is drawn as the figure would draw it on its "
+    "own.",
+)
+def spectrum(
+    folders: tuple[Path, ...],
+    output_path: Path | None,
+    show: bool,
+    data_path: Path | None,
+    real: bool,
+    ip: bool,
+    xlim: tuple[float, float] | None,
+    ylim: tuple[float, float] | None,
+    labels: tuple[str | None, ...],
+    styles: tuple[str | None, ...],
+) -> None:
+    """Draw the optical absorption spectra of finished `task: bse` runs.
+
+    FOLDERS are directories `koopmans run` wrote for a `task: bse` input, or
+    the run directory itself. Each publishes exactly one spectrum, so unlike
+    `koopmans plot bandstructure` there is nothing to search for beneath a
+    folder. Every spectrum across all the folders is drawn on one set of
+    axes:
+
+    \b
+        koopmans plot spectrum si-bse
+
+    Im ε is drawn against energy in eV; --real draws Re ε instead. The
+    independent-particle spectrum the same run reports is overlaid as a
+    lighter dashed curve labelled "independent particle" unless --no-ip is
+    given. --xlim and --ylim override the default axis ranges, tight to the
+    energies drawn and to Im ε starting at 0 respectively:
+
+    \b
+        koopmans plot spectrum si-bse --xlim 2 6
+
+    Each run is named after the route that produced it unless --label names
+    it, and --style says how it is drawn, following the same pairing rules as
+    `koopmans plot bandstructure`'s --label and --style: written right after
+    a folder, or given once per folder to pair positionally, or given for
+    fewer folders than that to bind each to the folder it immediately
+    followed.
+
+    \b
+        koopmans plot spectrum si-bse --label Si --style k- zno-bse --label ZnO
+
+    A folder that ran anything other than `task: bse` is refused, naming the
+    route it actually ran.
+    """
+    from koopmans.plotting import (
+        PlottingError,
+        render_spectra,
+        resolve_spectrum_series,
+        write_series_json,
+    )
+
+    load_koopmans_profile()
+
+    try:
+        series, warnings = resolve_spectrum_series(folders, labels, styles)
+    except (PlottingError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    for warning in warnings:
+        click.echo(f"Warning: {warning}", err=True)
+
+    if data_path is not None:
+        write_series_json(series, data_path)
+        click.echo(f"Wrote {data_path} ({len(series)} series)")
+
+    target = output_path if output_path is not None or show else Path("spectrum.png")
+    render_spectra(
+        series,
+        output_path=target,
+        show=show,
+        real=real,
+        ip=ip,
+        xlim=xlim,
+        ylim=ylim,
+    )
+    if target is not None:
+        click.echo(f"Wrote {target} ({len(series)} series)")
 
 
 def main() -> None:

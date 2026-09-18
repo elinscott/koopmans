@@ -18,6 +18,7 @@ __all__ = [
     "EnergyZero",
     "NoEnergyZeroError",
     "PathMismatchError",
+    "SpectrumSeries",
     "apply_energy_zero",
     "check_paths_agree",
     "describe_energy_zero",
@@ -74,6 +75,27 @@ class BandSeries:
         if kind == EnergyZero.FERMI:
             return self.fermi
         return 0.0
+
+
+@dataclass
+class SpectrumSeries:
+    """One optical absorption spectrum on the axes.
+
+    ``energies`` are eV; ``im_eps``/``re_eps`` are the macroscopic dielectric
+    function a yambo BSE run computes with local-field and excitonic effects
+    included. ``im_eps_o``/``re_eps_o`` are the independent-particle spectrum
+    the same run reports, ``None`` when it reported none. ``style`` is the
+    matplotlib format string the curve is drawn in, ``None`` leaving its
+    appearance to the figure.
+    """
+
+    label: str
+    energies: list[float]
+    im_eps: list[float]
+    re_eps: list[float]
+    im_eps_o: list[float] | None = None
+    re_eps_o: list[float] | None = None
+    style: str | None = None
 
 
 #: How far apart two crystal coordinates may be and still name the same point.
@@ -196,11 +218,13 @@ def describe_energy_zero(
     )
 
 
-def write_series_json(series: Sequence[BandSeries], path: Path) -> None:
-    """Write the records the figure was drawn from as JSON.
+def write_series_json(series: Sequence[BandSeries] | Sequence[SpectrumSeries], path: Path) -> None:
+    """Write the records a figure was drawn from as JSON.
 
-    Energies are as computed; ``zero`` records the shift the figure applied,
-    so the file is enough to redraw the figure or to restyle it elsewhere.
+    Works on either a band-structure or a spectrum figure's records alike, both
+    being plain dataclasses. Energies are as computed; a ``BandSeries``' zero
+    records the shift the figure applied, so the file is enough to redraw the
+    figure or to restyle it elsewhere.
     """
     payload = {"series": [asdict(item) for item in series]}
     path.write_text(json.dumps(payload, indent=2) + "\n")

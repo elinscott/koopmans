@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from koopmans.aiida.dumping import NODE_METADATA_FILE
-from koopmans.plotting.series import BandSeries
+from koopmans.plotting.series import BandSeries, SpectrumSeries
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -26,6 +26,7 @@ __all__ = [
     "PlottingError",
     "RunNotInProfileError",
     "resolve_band_series",
+    "resolve_spectrum_series",
     "run_node",
 ]
 
@@ -621,8 +622,8 @@ def _disambiguating_labels(steps: Sequence[orm.ProcessNode], root: orm.ProcessNo
     ]
 
 
-def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
-    """Return a warning naming the step that failed, if the run did not finish."""
+def _failure_detail(node: orm.ProcessNode) -> str | None:
+    """Return which step of ``node`` failed and why, or ``None`` if it finished cleanly."""
     if node.is_finished_ok:
         return None
 
@@ -636,11 +637,16 @@ def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
     # reported the failure upwards; the last one to start, when several did.
     calculations = [child for child in failed if isinstance(child, orm.CalcJobNode)]
     culprit = (calculations or failed or [node])[-1]
-    detail = culprit.exit_message or f"exit status {culprit.exit_status}"
-    return (
-        f"{folder}: the run did not finish — {_step_name(culprit)} failed ({detail}). "
-        "Plotting what is there."
-    )
+    exit_detail = culprit.exit_message or f"exit status {culprit.exit_status}"
+    return f"{_step_name(culprit)} failed ({exit_detail})"
+
+
+def _failure_warning(folder: Path, node: orm.ProcessNode) -> str | None:
+    """Return a warning naming the step that failed, if the run did not finish."""
+    detail = _failure_detail(node)
+    if detail is None:
+        return None
+    return f"{folder}: the run did not finish — {detail}. Plotting what is there."
 
 
 def _cell_of(bands: orm.BandsData) -> list[list[float]] | None:
@@ -897,4 +903,109 @@ def resolve_band_series(
 
     if empty:
         raise _nothing_plottable(empty, len(folders))
+    return series, warnings
+
+
+def _bse_spectrum_array(node: orm.ProcessNode) -> orm.ArrayData | None:
+    """Return a run's BSE spectrum array, or ``None``.
+
+    A `bse` run publishes it under its ``bse`` output namespace; anything
+    else publishes none.
+    """
+    bse = getattr(node.outputs, "bse", None)
+    if bse is None:
+        return None
+    return getattr(bse, "array_eps", None)
+
+
+#: The route name :func:`_route_name` reports for a `task: bse` run, absent a
+#: custom label.
+_BSE_ROUTE_NAME = "SinglepointBetheSalpeterWorkflow"
+
+
+def _not_a_bse_run(folder: Path, node: orm.ProcessNode) -> PlottingError:
+    """Return the error for a run that published no optical spectrum."""
+    route = _route_name(node)
+    return PlottingError(
+        f"{folder} ran {route}, which is not a `task: bse` run, so it published no "
+        "optical absorption spectrum. Set `workflow.task: bse` and rerun."
+    )
+
+
+def _incomplete_bse_run(folder: Path, detail: str) -> PlottingError:
+    """Return the error for a `bse` run that failed before publishing a spectrum."""
+    return PlottingError(
+        f"{folder}: the run did not finish — {detail}. No optical absorption spectrum "
+        "was published."
+    )
+
+
+def _spectrum_from_array(eps: orm.ArrayData, label: str) -> SpectrumSeries:
+    """Return the spectrum ``eps`` publishes, under the given label."""
+    names = eps.get_arraynames()
+    return SpectrumSeries(
+        label=label,
+        energies=eps.get_array("E_1").tolist(),
+        im_eps=eps.get_array("Im_eps").tolist(),
+        re_eps=eps.get_array("Re_eps").tolist(),
+        im_eps_o=eps.get_array("Im_eps_o").tolist() if "Im_eps_o" in names else None,
+        re_eps_o=eps.get_array("Re_eps_o").tolist() if "Re_eps_o" in names else None,
+    )
+
+
+def resolve_spectrum_series(
+    folders: Sequence[Path],
+    labels: Sequence[str | None] = (),
+    styles: Sequence[str | None] = (),
+) -> tuple[list[SpectrumSeries], list[str]]:
+    """Return the BSE optical spectra of the given runs, and any warnings.
+
+    Each folder contributes exactly one spectrum: a `bse` run publishes its
+    absorption spectrum once, on the run itself, so unlike
+    :func:`resolve_band_series` there is no per-step search or per-spin
+    fan-out to resolve. A run is named after the route that produced it (its
+    own label, or its process label) unless ``labels`` names it, and
+    prefixed by its folder name when more than one folder is on the axes.
+    ``None`` in ``labels``/``styles`` leaves that folder's own name or
+    appearance as if the option had not been given for it at all — the same
+    convention :func:`resolve_band_series` uses.
+
+    :raises ValueError: if given, ``labels``/``styles`` do not number the
+        folders.
+    :raises PlottingError: if a folder is not a run directory, its run is not
+        in this profile, any of them ran something other than `task: bse`, or
+        a `task: bse` run failed before publishing a spectrum.
+    """
+    _check_one_per_folder(labels, len(folders), "--label")
+    _check_one_per_folder(styles, len(folders), "--style")
+
+    nodes = [run_node(folder) for folder in folders]
+
+    series: list[SpectrumSeries] = []
+    warnings: list[str] = []
+    for index, (folder, node) in enumerate(zip(folders, nodes, strict=True)):
+        warning = _failure_warning(folder, node)
+        if warning is not None:
+            warnings.append(warning)
+
+        eps = _bse_spectrum_array(node)
+        if eps is None:
+            detail = _failure_detail(node)
+            if detail is not None and _route_name(node) == _BSE_ROUTE_NAME:
+                raise _incomplete_bse_run(folder, detail)
+            raise _not_a_bse_run(folder, node)
+
+        label = labels[index] if labels else None
+        if label is None:
+            label = _route_name(node) or "BSE"
+            if len(folders) > 1:
+                prefix = folder.name or folder.resolve().name
+                label = f"{prefix}: {label}"
+
+        item = _spectrum_from_array(eps, label)
+        style_value = styles[index] if styles else None
+        if style_value is not None:
+            item.style = style_value
+        series.append(item)
+
     return series, warnings
