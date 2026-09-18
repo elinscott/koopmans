@@ -3344,6 +3344,15 @@ class TestSpectrumRenderer:
 
         assert axes.get_xlim() == pytest.approx((-1.0, 3.0))
 
+    def test_an_explicit_xlim_overrides_the_tight_default(self) -> None:
+        """``xlim`` still wins over the automatic tight-to-data range."""
+        axes = blank_axes()
+        series = spectrum_series()
+
+        draw_spectra(axes, [series], xlim=(2.0, 6.0))
+
+        assert axes.get_xlim() == pytest.approx((2.0, 6.0))
+
     def test_style_names_a_color_for_every_curve_the_series_draws(self) -> None:
         """A style with a color applies it to the main curve and its overlay."""
         axes = blank_axes()
@@ -3471,3 +3480,108 @@ class TestSpectrumCommand:
         legend_labels = [text.get_text() for text in legend.get_texts()]
         assert "SinglepointBetheSalpeterWorkflow" in legend_labels
         assert "independent particle" in legend_labels
+
+    def test_xlim_overrides_the_tight_default(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """--xlim replaces the default range, tight to the energies drawn."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "spectrum",
+                str(folder),
+                "--xlim",
+                "2",
+                "6",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert drawn_spectrum_axes[-1].get_xlim() == pytest.approx((2.0, 6.0))
+
+    def test_ylim_overrides_the_zero_floor(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """--ylim replaces the default Im ε floor at 0."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "spectrum",
+                str(folder),
+                "--ylim",
+                "-2",
+                "8",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert drawn_spectrum_axes[-1].get_ylim() == pytest.approx((-2.0, 8.0))
+
+    def test_an_inverted_xlim_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """MIN above MAX would silently flip the axis upside down."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(cli, ["plot", "spectrum", str(folder), "--xlim", "6", "2"])
+
+        assert result.exit_code == 2
+        assert "MIN must be below MAX" in result.output
+
+    def test_defaults_are_unchanged_without_the_lim_options(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """With neither option, the axes keep their tight-to-data, zero-floor defaults."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(
+            cli, ["plot", "spectrum", str(folder), "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        axes = drawn_spectrum_axes[-1]
+        assert axes.get_xlim() == pytest.approx((0.0, 1.0))
+        bottom, _ = axes.get_ylim()
+        assert bottom == pytest.approx(0.0)

@@ -776,10 +776,10 @@ data_option = click.option(
 )
 
 
-def _check_ylim(
+def _check_range(
     ctx: click.Context, param: click.Parameter, value: tuple[float, float] | None
 ) -> tuple[float, float] | None:
-    """Reject a range that frames nothing."""
+    """Reject a range that frames nothing, shared by every ``--*lim`` option."""
     if value is not None and value[0] >= value[1]:
         raise click.BadParameter(
             f"MIN must be below MAX; got {value[0]} and {value[1]}.", ctx=ctx, param=param
@@ -812,10 +812,30 @@ ylim_option = click.option(
     nargs=2,
     type=float,
     default=None,
-    callback=_check_ylim,
+    callback=_check_range,
     metavar="MIN MAX",
     help="Show only this range of the energy axis, in the units it is drawn in "
     "and measured from the zero --zero sets. Defaults to every band in full.",
+)
+spectrum_xlim_option = click.option(
+    "--xlim",
+    nargs=2,
+    type=float,
+    default=None,
+    callback=_check_range,
+    metavar="MIN MAX",
+    help="Show only this range of the energy axis, in eV. Defaults to the "
+    "energies drawn, with no margin.",
+)
+spectrum_ylim_option = click.option(
+    "--ylim",
+    nargs=2,
+    type=float,
+    default=None,
+    callback=_check_range,
+    metavar="MIN MAX",
+    help="Show only this range of Im ε (or Re ε with --real). Defaults to Im ε "
+    "starting at 0, or Re ε left automatic.",
 )
 
 
@@ -1168,6 +1188,8 @@ def bandstructure(
     show_default=True,
     help="Overlay each run's independent-particle spectrum as a lighter dashed curve.",
 )
+@spectrum_xlim_option
+@spectrum_ylim_option
 @click.option(
     "--label",
     "labels",
@@ -1198,6 +1220,8 @@ def spectrum(
     data_path: Path | None,
     real: bool,
     ip: bool,
+    xlim: tuple[float, float] | None,
+    ylim: tuple[float, float] | None,
     labels: tuple[str | None, ...],
     styles: tuple[str | None, ...],
 ) -> None:
@@ -1215,7 +1239,11 @@ def spectrum(
     Im ε is drawn against energy in eV; --real draws Re ε instead. The
     independent-particle spectrum the same run reports is overlaid as a
     lighter dashed curve labelled "independent particle" unless --no-ip is
-    given.
+    given. --xlim and --ylim override the default axis ranges, tight to the
+    energies drawn and to Im ε starting at 0 respectively:
+
+    \b
+        koopmans plot spectrum si-bse --xlim 2 6
 
     Each run is named after the route that produced it unless --label names
     it, and --style says how it is drawn, following the same pairing rules as
@@ -1258,6 +1286,8 @@ def spectrum(
         show=show,
         real=real,
         ip=ip,
+        xlim=xlim,
+        ylim=ylim,
     )
     if target is not None:
         click.echo(f"Wrote {target} ({len(series)} series)")

@@ -304,6 +304,7 @@ def draw_spectra(
     series: Sequence[SpectrumSeries],
     real: bool = False,
     ip: bool = True,
+    xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     legend: bool | None = None,
 ) -> None:
@@ -312,14 +313,16 @@ def draw_spectra(
     Draws Im ε against energy, one curve per series, or Re ε with ``real``.
     ``ip`` overlays each series' independent-particle spectrum, where it
     reported one, as a lighter dashed curve in the same color. The x axis is
-    tight to the energies drawn, with no margin. Im ε's y axis starts at 0;
-    Re ε goes negative, so its automatic limits are left alone unless
-    ``ylim`` overrides them.
+    tight to the energies drawn, with no margin, unless ``xlim`` overrides it.
+    Im ε's y axis starts at 0; Re ε goes negative, so its automatic limits are
+    left alone unless ``ylim`` overrides them.
 
     :param axes: where to draw.
     :param series: the spectra to draw.
     :param real: draw Re ε instead of Im ε.
     :param ip: overlay the independent-particle spectrum.
+    :param xlim: the energy range to show, in eV. ``None`` is tight to the
+        energies drawn.
     :param ylim: the range to show. ``None`` starts Im ε at 0 and leaves
         Re ε automatic.
     :param legend: draw the key, or leave it out. ``None`` always draws it.
@@ -356,7 +359,9 @@ def draw_spectra(
     axes.set_xlabel("Energy (eV)")
     axes.set_ylabel(rf"{symbol} $\varepsilon$")
 
-    if drawn_energies:
+    if xlim is not None:
+        axes.set_xlim(*xlim)
+    elif drawn_energies:
         all_energies = np.concatenate(drawn_energies)
         axes.set_xlim(float(all_energies.min()), float(all_energies.max()))
 
@@ -376,6 +381,7 @@ def render_spectra(
     show: bool = False,
     real: bool = False,
     ip: bool = True,
+    xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     legend: bool | None = None,
 ) -> None:
@@ -387,6 +393,8 @@ def render_spectra(
     :param show: open an interactive window.
     :param real: draw Re ε instead of Im ε.
     :param ip: overlay the independent-particle spectrum.
+    :param xlim: the energy range to show, in eV. ``None`` is tight to the
+        energies drawn.
     :param ylim: the range to show. ``None`` starts Im ε at 0 and leaves
         Re ε automatic.
     :param legend: draw the key, or leave it out. ``None`` always draws it.
@@ -400,7 +408,7 @@ def render_spectra(
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(figsize=(6.0, 4.5))
-    draw_spectra(axes, series, real=real, ip=ip, ylim=ylim, legend=legend)
+    draw_spectra(axes, series, real=real, ip=ip, xlim=xlim, ylim=ylim, legend=legend)
     figure.tight_layout()
 
     if output_path is not None:
