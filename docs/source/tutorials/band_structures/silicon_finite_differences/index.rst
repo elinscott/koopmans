@@ -424,15 +424,15 @@ Wannierization computed along the same path:
 .. code-block:: console
 
     $ koopmans plot bandstructure \
-        si/04-wannierize_smooth/01-bands --label LDA --style -- \
         si/06-interpolate_band_structure/05-build_band_structure --label "KI@LDA" --gap \
+        si/04-wannierize_smooth/01-bands --label LDA --style -- \
         --ylim -15 10 \
         -o ki_bandstructure.png
 
 Each argument names one calculation directory inside the run, so each contributes one set
 of bands with its own label and style; ``--gap`` marks the band gap of the set it follows.
 Both sets are on the same energy scale, so no shift is needed to compare them: the zero
-is the LDA valence-band maximum.
+is the valence-band maximum of the first set listed, here the KI one.
 
 .. question:: What does the KI band structure look like, and what is the band gap?
 
