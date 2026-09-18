@@ -173,20 +173,14 @@ run's independent-particle spectrum overlaid as a dashed curve for comparison:
 
 .. question:: What is the exciton's binding energy?
 
-    3.38 eV (the direct transition) minus 3.12 eV (the lowest exciton) is 0.27 eV. Take
-    this as illustrative rather than converged: a :math:`2\times2\times2` grid samples
-    the electron-hole pair's relative motion far too coarsely for the binding energy
-    itself to be trustworthy, even though the qualitative red shift is robust.
-
-.. note::
-
-    As a check that this shift is a quasiparticle-energy effect and not an artifact of
-    the electron-hole kernel: restricting the calculation to just the 4→5 transition at
-    :math:`\Gamma` and turning the Koopmans correction off moves that single exciton to
-    2.57 eV; turning the correction back on moves it to 3.48 eV. That roughly 0.9 eV
-    shift is the same size as the 0.77 eV the correction opened the fundamental gap by
-    above — the spectrum moves because the input quasiparticle energies moved, not
-    because the kernel changed.
+    The lowest bound state yambo reports sits at 3.119 eV — close to, but not exactly
+    on, the peak of the broadened curve above: a peak position and a bound-state
+    eigenvalue are not the same thing once several close-lying states overlap under the
+    0.1 eV broadening. Against the 3.385 eV direct transition it is built from, that is
+    a binding energy of 3.385 − 3.119 = 0.27 eV. Take this as illustrative rather than
+    converged: a :math:`2\times2\times2` grid samples the electron-hole pair's relative
+    motion far too coarsely for the binding energy itself to be trustworthy, even though
+    the qualitative red shift is robust.
 
 *********
  Up next
