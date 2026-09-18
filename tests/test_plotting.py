@@ -26,6 +26,7 @@ from koopmans.plotting import (
     NoEnergyZeroError,
     PathMismatchError,
     PlottingError,
+    SpectrumSeries,
     StyleError,
     apply_energy_zero,
     band_gap,
@@ -33,9 +34,12 @@ from koopmans.plotting import (
     check_style,
     describe_energy_zero,
     draw_band_structures,
+    draw_spectra,
     path_distances,
     render_band_structures,
+    render_spectra,
     resolve_band_series,
+    resolve_spectrum_series,
     write_series_json,
 )
 from koopmans.plotting.resolve import SUGGESTION_LIMIT
@@ -89,6 +93,25 @@ def make_spin_bands(kpoints: list[list[float]], energies: list[list[list[float]]
     bands.set_kpoints(kpoints)  # type: ignore[no-untyped-call]
     bands.set_bands(np.asarray(energies, dtype=float), units="eV")  # type: ignore[no-untyped-call]
     return bands
+
+
+def make_bse_arrays(
+    energies: list[float],
+    im_eps: list[float],
+    re_eps: list[float],
+    im_eps_o: list[float] | None = None,
+    re_eps_o: list[float] | None = None,
+) -> orm.ArrayData:
+    """Return an ``ArrayData`` shaped like yambo's own BSE spectrum output."""
+    array = orm.ArrayData()
+    array.set_array("E_1", np.asarray(energies, dtype=float))
+    array.set_array("Im_eps", np.asarray(im_eps, dtype=float))
+    array.set_array("Re_eps", np.asarray(re_eps, dtype=float))
+    if im_eps_o is not None:
+        array.set_array("Im_eps_o", np.asarray(im_eps_o, dtype=float))
+    if re_eps_o is not None:
+        array.set_array("Re_eps_o", np.asarray(re_eps_o, dtype=float))
+    return array
 
 
 def write_run_folder(root: Path, name: str, node: orm.ProcessNode | None) -> Path:
@@ -224,6 +247,44 @@ def direct_gap_series(label: str = "direct") -> BandSeries:
     return series(
         label,
         energies=[[-2.0, 3.0], [-1.5, 2.0], [-1.0, 0.2]],
+        vbm=-1.0,
+    )
+
+
+def repeated_high_symmetry_series(label: str = "repeated") -> BandSeries:
+    """Return a series whose path visits Γ three times: G-X-G-X-G.
+
+    The valence band edge sits at every Γ; the conduction band minimum sits
+    one step from the middle Γ, far closer to it than to the first or the
+    last — so a VBM/CBM pairing that always took the first or the last
+    occurrence would draw the gap across most of the path instead of at the
+    edge it belongs to.
+    """
+    return series(
+        label,
+        kpoints=[
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+        energies=[
+            [-1.0, 2.0],
+            [-1.1, 1.8],
+            [-1.3, 1.5],
+            [-1.1, 1.8],
+            [-1.0, 2.0],
+            [-1.1, 0.3],
+            [-1.3, 1.5],
+            [-1.1, 1.8],
+            [-1.0, 2.0],
+        ],
+        path_labels=[(0, "G"), (2, "X"), (4, "G"), (6, "X"), (8, "G")],
         vbm=-1.0,
     )
 
@@ -385,6 +446,20 @@ class TestBandGap:
         """Nothing to measure a gap from is refused, not silently skipped."""
         with pytest.raises(ValueError, match="DFT"):
             band_gap(series("DFT"))
+
+    def test_a_repeated_high_symmetry_point_picks_the_nearest_pair(self) -> None:
+        """Of three Γ's carrying the edge, the one nearest the CBM is chosen.
+
+        Picking the first or the last Γ instead would still report the right
+        gap value (every Γ carries the same energy) but the wrong k-point,
+        so the assertion is on the index, not the value.
+        """
+        gap = band_gap(repeated_high_symmetry_series())
+
+        assert gap.vbm_kpoint_index == 4
+        assert gap.cbm_kpoint_index == 5
+        assert gap.value == pytest.approx(1.3)
+        assert gap.direct is False
 
 
 # ----------------------------------------------------------------------
@@ -1264,8 +1339,28 @@ class TestRenderer:
 # ----------------------------------------------------------------------
 
 
+def arrow_annotations(axes: Any) -> list[Any]:
+    """Return the arrow halves ``_draw_gap`` wrote on ``axes``, in draw order.
+
+    The label half carries text; the arrow half is an empty-text annotation
+    whose ``xy`` is the arrow's head, at the conduction band minimum.
+    """
+    return [text for text in axes.texts if not text.get_text()]
+
+
+def dashed_lines(axes: Any) -> list[Any]:
+    """Return the dashed valence-level rules an indirect gap draws."""
+    return [line for line in axes.get_lines() if line.get_linestyle() == "--"]
+
+
 class TestGapAnnotation:
-    """``gap=True`` draws each series' valence-to-conduction gap."""
+    """``show_gap=True`` draws a series' band gap in the conventional textbook form.
+
+    A dashed rule at the valence band maximum's energy reaches from its own
+    k-point to a vertical double-headed arrow at the conduction band
+    minimum's, labelled with the gap's value; a direct gap needs no rule,
+    since the arrow's own foot already sits at the valence band maximum.
+    """
 
     def test_off_by_default_draws_nothing(self) -> None:
         """The default figure carries no annotation at all."""
@@ -1274,45 +1369,78 @@ class TestGapAnnotation:
         draw_band_structures(axes, [indirect_gap_series()])
 
         assert gap_labels(axes) == []
+        assert arrow_annotations(axes) == []
 
-    def test_one_annotation_per_series_with_an_edge(self) -> None:
-        """A series reporting no edge draws no arrow, but does not stop the others."""
+    def test_indirect_gap_draws_a_dashed_line_and_a_vertical_arrow(self) -> None:
+        """The rule reaches from the VBM's k-point to the arrow at the CBM's."""
         axes = blank_axes()
+        item = indirect_gap_series()
+        item.show_gap = True
 
-        draw_band_structures(axes, [indirect_gap_series(), series("no edge")], gap=True)
+        draw_band_structures(axes, [item])
 
         assert gap_labels(axes) == ["1.50 eV"]
+        [line] = dashed_lines(axes)
+        [arrow] = arrow_annotations(axes)
+        assert line.get_xdata()[0] == pytest.approx(0.0)  # the VBM's own k-point
+        assert line.get_xdata()[1] == pytest.approx(arrow.xy[0])  # meets the arrow
+        assert arrow.xy[0] == pytest.approx(np.pi / 4)  # the CBM's own k-point
 
-    def test_the_label_reads_to_two_decimals(self) -> None:
-        """The gap value is rounded to two decimal places, with its unit."""
+    def test_direct_gap_draws_only_the_arrow(self) -> None:
+        """VBM and CBM share a k-point, so there is nowhere for a rule to reach from."""
         axes = blank_axes()
+        item = direct_gap_series()
+        item.show_gap = True
 
-        draw_band_structures(axes, [direct_gap_series()], gap=True)
+        draw_band_structures(axes, [item])
 
         assert gap_labels(axes) == ["1.20 eV"]
+        assert dashed_lines(axes) == []
+        assert len(arrow_annotations(axes)) == 1
 
     def test_a_series_without_an_edge_is_skipped_not_errored(self) -> None:
         """No valence band edge is a reason to skip the series, not to fail the figure."""
         axes = blank_axes()
+        item = series("no edge")
+        item.show_gap = True
 
-        draw_band_structures(axes, [series("no edge")], gap=True)
+        draw_band_structures(axes, [item])
 
         assert gap_labels(axes) == []
+        assert arrow_annotations(axes) == []
 
-    def test_close_labels_are_nudged_to_the_outer_side(self) -> None:
-        """Two gaps whose midpoints coincide are pushed to opposite sides.
+    def test_a_series_not_asking_for_one_draws_no_annotation(self) -> None:
+        """A series left with ``show_gap`` unset draws no gap even on an overlay."""
+        axes = blank_axes()
+        annotated = indirect_gap_series("annotated")
+        annotated.show_gap = True
+        plain = series("plain")
 
-        Left unchecked both labels would sit on top of each other, offset the
-        same way from the same point.
+        draw_band_structures(axes, [annotated, plain])
+
+        assert gap_labels(axes) == ["1.50 eV"]
+
+    def test_two_arrows_sharing_a_cbm_position_are_nudged_apart(self) -> None:
+        """Two gaps whose conduction-band-minimum k-point coincides are spread apart.
+
+        Left unchecked both arrows would be drawn on top of each other, at
+        the same k-point.
         """
         axes = blank_axes()
         first = indirect_gap_series("first")
-        second = series("second", energies=first.energies, vbm=first.vbm)
+        first.show_gap = True
+        second = series("second", energies=first.energies, vbm=first.vbm, show_gap=True)
 
-        draw_band_structures(axes, [first, second], gap=True)
+        draw_band_structures(axes, [first, second])
 
+        arrow_x = [arrow.xy[0] for arrow in arrow_annotations(axes)]
+        assert arrow_x[0] != pytest.approx(arrow_x[1])
+        # spread symmetrically about the true (shared) k-point
+        true_x = np.pi / 4
+        assert arrow_x[0] - true_x == pytest.approx(-(arrow_x[1] - true_x))
+        # and each label reads from its arrow's outer side
         alignments = [text.get_horizontalalignment() for text in axes.texts if text.get_text()]
-        assert alignments == ["left", "right"]
+        assert alignments == ["right", "left"]
 
 
 # ----------------------------------------------------------------------
@@ -1451,6 +1579,26 @@ def drawn_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
     return seen
 
 
+@pytest.fixture
+def drawn_spectrum_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Return the axes each figure ``koopmans plot spectrum`` draws, in order.
+
+    Same rationale as ``drawn_axes``, for ``draw_spectra`` instead.
+    """
+    from koopmans.plotting import render
+
+    seen: list[Any] = []
+    original = render.draw_spectra
+
+    def record(axes: Any, *args: Any, **kwargs: Any) -> None:
+        """Call through to the renderer, keeping the axes it drew."""
+        seen.append(axes)
+        original(axes, *args, **kwargs)
+
+    monkeypatch.setattr(render, "draw_spectra", record)
+    return seen
+
+
 def dft_run(tmp_path: Path, name: str, vbm: float, energies: list[list[float]]) -> Path:
     """Write a run folder holding one pw.x band structure along G-X."""
     root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
@@ -1465,6 +1613,27 @@ def dft_run(tmp_path: Path, name: str, vbm: float, energies: list[list[float]]) 
             cell=CUBIC,
             labels=[(0, "G"), (2, "X")],
             occupations=occupations,
+        ),
+    )
+    return write_run_folder(tmp_path, name, root)
+
+
+def dft_run_no_edge(tmp_path: Path, name: str, energies: list[list[float]]) -> Path:
+    """Write a run folder holding a pw.x band structure with no reported edge.
+
+    No occupations means ``_vbm_from_occupations`` finds none to read a
+    valence band maximum from.
+    """
+    root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+    chain = make_process(PW_BANDS, caller=root, link_label="bands")
+    attach(
+        chain,
+        "band_structure",
+        make_bands(
+            [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            energies,
+            cell=CUBIC,
+            labels=[(0, "G"), (2, "X")],
         ),
     )
     return write_run_folder(tmp_path, name, root)
@@ -1583,6 +1752,59 @@ class TestCommand:
 
         assert result.exit_code == 0, result.output
         assert gap_labels(drawn_axes[-1]) == []
+
+    def test_gap_written_after_one_folder_annotates_only_that_series(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gap pairs with the folder it follows, the same way --style does."""
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        ki = dft_run(tmp_path, "ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(lda), str(ki), "--gap", "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(gap_labels(drawn_axes[-1])) == 1
+
+    def test_gap_given_once_before_any_folder_annotates_every_series(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gap with no folder of its own annotates every series with an edge."""
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        ki = dft_run(tmp_path, "ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", "--gap", str(lda), str(ki), "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(gap_labels(drawn_axes[-1])) == 2
+
+    def test_gap_named_on_an_edgeless_folder_is_refused_by_name(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """Asking --gap for a folder that reports no edge is refused, not skipped.
+
+        Naming the folder was asking for its gap on purpose, unlike the
+        every-series default, which leaves an edgeless folder out silently.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run_no_edge(tmp_path, "flat", [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "--gap", "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code != 0
+        assert str(folder) in result.output
 
     def test_the_gap_json_is_written_whether_or_not_drawn(
         self, aiida_profile: Any, runner: Any, tmp_path: Path
@@ -3244,3 +3466,496 @@ class TestPathAgreement:
     def test_one_series_is_always_agreeable(self) -> None:
         """A single band structure has nothing to disagree with."""
         check_paths_agree([series("KI", path_labels=[])])
+
+
+# ----------------------------------------------------------------------
+# Optical spectra (``koopmans plot spectrum``)
+# ----------------------------------------------------------------------
+
+
+def spectrum_series(label: str = "BSE", **overrides: Any) -> SpectrumSeries:
+    """Return a spectrum with a two-peak curve, fields overridden."""
+    fields: dict[str, Any] = {
+        "label": label,
+        "energies": [0.0, 1.0, 2.0, 3.0, 4.0],
+        "im_eps": [0.0, 1.0, 20.0, 5.0, 0.5],
+        "re_eps": [1.0, 2.0, 4.0, 3.0, 1.5],
+        "im_eps_o": [0.0, 0.8, 15.0, 6.0, 1.0],
+        "re_eps_o": [1.0, 1.8, 3.5, 3.2, 1.8],
+    }
+    fields.update(overrides)
+    return SpectrumSeries(**fields)
+
+
+def bse_run(tmp_path: Path, name: str, **array_kwargs: Any) -> Path:
+    """Write a run folder holding one yambo BSE spectrum on its root node."""
+    root = make_process(
+        "aiida.workflows:workgraph.engine",
+        process_label="WorkGraph<SinglepointBetheSalpeterWorkflow>",
+    )
+    attach(root, "bse__array_eps", make_bse_arrays(**array_kwargs))
+    return write_run_folder(tmp_path, name, root)
+
+
+class TestSpectrumResolver:
+    """Turning a `bse` run folder into a spectrum series."""
+
+    def test_arrays_become_a_spectrum_series(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """Every array yambo publishes lands on the series it names."""
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+            im_eps_o=[0.09, 0.19, 0.29],
+            re_eps_o=[6.7, 6.8, 6.9],
+        )
+
+        found, warnings = resolve_spectrum_series([folder])
+
+        assert warnings == []
+        assert len(found) == 1
+        item = found[0]
+        assert isinstance(item, SpectrumSeries)
+        assert item.label == "SinglepointBetheSalpeterWorkflow"
+        assert item.energies == pytest.approx([0.0, 0.5, 1.0])
+        assert item.im_eps == pytest.approx([0.1, 0.2, 0.3])
+        assert item.re_eps == pytest.approx([6.8, 6.9, 7.0])
+        assert item.im_eps_o == pytest.approx([0.09, 0.19, 0.29])
+        assert item.re_eps_o == pytest.approx([6.7, 6.8, 6.9])
+
+    def test_a_non_bse_run_is_refused_naming_its_route(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A run that never touched yambo has no spectrum to name."""
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+        )
+        folder = write_run_folder(tmp_path, "si-dscf", root)
+
+        with pytest.raises(PlottingError, match="KoopmansDSCFWorkflow"):
+            resolve_spectrum_series([folder])
+
+    def test_a_failed_bse_run_names_the_failed_step_not_the_wrong_task(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A `bse` run that failed before yambo published anything ran the right task."""
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            process_label="WorkGraph<SinglepointBetheSalpeterWorkflow>",
+            exit_status=400,
+            exit_message="The bse RunBetheSalpeter sub process failed",
+        )
+        failed = make_process(
+            "aiida.calculations:yambo.yambo",
+            calcjob=True,
+            computer=aiida_localhost,
+            caller=root,
+            link_label="bse",
+            exit_status=400,
+        )
+        failed.set_exit_message("p2y crashed")
+        folder = write_run_folder(tmp_path, "si-bse-failed", root)
+
+        with pytest.raises(PlottingError) as excinfo:
+            resolve_spectrum_series([folder])
+
+        message = str(excinfo.value)
+        assert "did not finish" in message
+        assert "p2y crashed" in message
+        assert "not a `task: bse` run" not in message
+
+    def test_two_folders_are_prefixed_and_take_their_own_style(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """Several folders disambiguate by name, same as ``resolve_band_series``."""
+        si = bse_run(tmp_path, "si-bse", energies=[0.0, 1.0], im_eps=[0.1, 0.2], re_eps=[6.8, 6.9])
+        zno = bse_run(
+            tmp_path, "zno-bse", energies=[0.0, 1.0], im_eps=[0.3, 0.4], re_eps=[7.0, 7.1]
+        )
+
+        found, warnings = resolve_spectrum_series([si, zno], styles=(None, "k--"))
+
+        assert warnings == []
+        assert [item.label for item in found] == [
+            "si-bse: SinglepointBetheSalpeterWorkflow",
+            "zno-bse: SinglepointBetheSalpeterWorkflow",
+        ]
+        assert [item.style for item in found] == [None, "k--"]
+
+
+class TestSpectrumRenderer:
+    """Drawing the records, straight off ``SpectrumSeries``, no AiiDA."""
+
+    def test_writes_the_requested_format(self, tmp_path: Path) -> None:
+        """The extension chooses the format, and nothing opens a window."""
+        target = tmp_path / "spectrum.pdf"
+
+        render_spectra([spectrum_series()], output_path=target)
+
+        assert target.is_file()
+        assert target.read_bytes().startswith(b"%PDF")
+
+    def test_default_draws_im_eps_and_the_independent_particle_overlay(self) -> None:
+        """The main curve is Im ε, and --ip's dashed twin is the same color."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()])
+
+        lines = axes.get_lines()
+        assert len(lines) == 2
+        main, overlay = lines
+        assert list(main.get_ydata()) == pytest.approx(spectrum_series().im_eps)
+        assert list(overlay.get_ydata()) == pytest.approx(spectrum_series().im_eps_o)
+        assert overlay.get_linestyle() == "--"
+        assert main.get_color() == overlay.get_color()
+
+    def test_real_draws_re_eps_instead(self) -> None:
+        """--real switches both the main curve and its overlay to Re ε."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], real=True)
+
+        main, overlay = axes.get_lines()
+        assert list(main.get_ydata()) == pytest.approx(spectrum_series().re_eps)
+        assert list(overlay.get_ydata()) == pytest.approx(spectrum_series().re_eps_o)
+        assert "Re" in axes.get_ylabel()
+
+    def test_no_ip_leaves_out_the_overlay(self) -> None:
+        """--no-ip draws only the main curve."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], ip=False)
+
+        assert len(axes.get_lines()) == 1
+
+    def test_two_series_share_one_ip_legend_entry(self) -> None:
+        """A per-series overlay does not multiply the legend."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series("A"), spectrum_series("B")], legend=True)
+
+        legend_labels = [text.get_text() for text in axes.get_legend().get_texts()]
+        assert legend_labels.count("independent particle") == 1
+        assert "A" in legend_labels
+        assert "B" in legend_labels
+
+    def test_one_series_still_carries_a_legend(self) -> None:
+        """Unlike a band structure, a single spectrum still names its curves.
+
+        A lone run's Im ε and its independent-particle overlay are otherwise
+        indistinguishable but for color and line style, so the key stays even
+        with one series on the axes.
+        """
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series("BSE")])
+
+        legend = axes.get_legend()
+        assert legend is not None
+        legend_labels = [text.get_text() for text in legend.get_texts()]
+        assert legend_labels == ["BSE", "independent particle"]
+
+    def test_one_series_without_ip_still_names_the_run(self) -> None:
+        """--no-ip leaves one curve, and the legend still names it."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series("BSE")], ip=False)
+
+        legend = axes.get_legend()
+        assert legend is not None
+        assert [text.get_text() for text in legend.get_texts()] == ["BSE"]
+
+    def test_im_eps_ylim_starts_at_zero(self) -> None:
+        """Im ε never goes negative, so the axis floor is fixed at 0."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()])
+
+        bottom, _ = axes.get_ylim()
+        assert bottom == pytest.approx(0.0)
+
+    def test_real_ylim_is_left_automatic(self) -> None:
+        """Re ε can go negative, so --real keeps matplotlib's own limits."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], real=True)
+
+        bottom, _ = axes.get_ylim()
+        assert bottom != pytest.approx(0.0)
+
+    def test_an_explicit_ylim_overrides_the_zero_floor(self) -> None:
+        """``ylim`` still wins over the automatic Im ε floor."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series()], ylim=(-2.0, 8.0))
+
+        assert axes.get_ylim() == pytest.approx((-2.0, 8.0))
+
+    def test_xlim_is_tight_to_the_energies_drawn(self) -> None:
+        """The x axis carries no margin around the plotted energies."""
+        axes = blank_axes()
+        series = spectrum_series()
+
+        draw_spectra(axes, [series])
+
+        assert axes.get_xlim() == pytest.approx((min(series.energies), max(series.energies)))
+
+    def test_xlim_spans_every_series(self) -> None:
+        """Two runs with different energy ranges both fit inside the x axis."""
+        axes = blank_axes()
+
+        draw_spectra(
+            axes,
+            [
+                spectrum_series("A", energies=[0.0, 1.0, 2.0], im_eps=[0.1, 0.2, 0.3]),
+                spectrum_series("B", energies=[-1.0, 0.0, 3.0], im_eps=[0.4, 0.5, 0.6]),
+            ],
+            ip=False,
+        )
+
+        assert axes.get_xlim() == pytest.approx((-1.0, 3.0))
+
+    def test_an_explicit_xlim_overrides_the_tight_default(self) -> None:
+        """``xlim`` still wins over the automatic tight-to-data range."""
+        axes = blank_axes()
+        series = spectrum_series()
+
+        draw_spectra(axes, [series], xlim=(2.0, 6.0))
+
+        assert axes.get_xlim() == pytest.approx((2.0, 6.0))
+
+    def test_style_names_a_color_for_every_curve_the_series_draws(self) -> None:
+        """A style with a color applies it to the main curve and its overlay."""
+        axes = blank_axes()
+
+        draw_spectra(axes, [spectrum_series(style="r-")])
+
+        main, overlay = axes.get_lines()
+        assert main.get_color() == "r"
+        assert overlay.get_color() == "r"
+
+
+class TestSpectrumCommand:
+    """``koopmans plot spectrum`` end to end."""
+
+    def test_writes_a_figure_from_a_finished_run(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The default writes a file and never blocks on a window."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(
+            cli, ["plot", "spectrum", str(folder), "-o", str(tmp_path / "spectrum.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "spectrum.png").is_file()
+        assert result.output.startswith("Wrote")
+        assert "1 series" in result.output
+
+    def test_a_non_bse_folder_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The command reports what the folder actually ran, not a bare failure."""
+        from koopmans.cli import cli
+
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            process_label="WorkGraph<TrajectoryWorkflow>",
+        )
+        folder = write_run_folder(tmp_path, "traj", root)
+
+        result = runner.invoke(cli, ["plot", "spectrum", str(folder)])
+
+        assert result.exit_code != 0
+        assert "TrajectoryWorkflow" in result.output
+        assert "task: bse" in result.output
+
+    def test_flags_reach_the_renderer(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """--real and --no-ip are not merely accepted and dropped."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 1.0],
+            im_eps=[0.1, 0.2],
+            re_eps=[6.8, 6.9],
+            im_eps_o=[0.09, 0.19],
+            re_eps_o=[6.7, 6.8],
+        )
+
+        result = runner.invoke(
+            cli,
+            ["plot", "spectrum", str(folder), "--real", "--no-ip", "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        axes = drawn_spectrum_axes[-1]
+        (line,) = axes.get_lines()
+        assert list(line.get_ydata()) == pytest.approx([6.8, 6.9])
+
+    def test_a_label_names_the_curve_on_the_legend(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """--label renames the run, and the always-drawn legend shows the new name."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path, "si-bse", energies=[0.0, 1.0], im_eps=[0.1, 0.2], re_eps=[6.8, 6.9]
+        )
+
+        result = runner.invoke(
+            cli,
+            ["plot", "spectrum", str(folder), "--label", "Si", "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        legend = drawn_spectrum_axes[-1].get_legend()
+        assert legend is not None
+        assert "Si" in [text.get_text() for text in legend.get_texts()]
+
+    def test_a_single_run_still_carries_a_legend(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """The default command, with no --label, still draws a key naming the run."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 1.0],
+            im_eps=[0.1, 0.2],
+            re_eps=[6.8, 6.9],
+            im_eps_o=[0.09, 0.19],
+            re_eps_o=[6.7, 6.8],
+        )
+
+        result = runner.invoke(
+            cli, ["plot", "spectrum", str(folder), "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        legend = drawn_spectrum_axes[-1].get_legend()
+        assert legend is not None
+        legend_labels = [text.get_text() for text in legend.get_texts()]
+        assert "SinglepointBetheSalpeterWorkflow" in legend_labels
+        assert "independent particle" in legend_labels
+
+    def test_xlim_overrides_the_tight_default(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """--xlim replaces the default range, tight to the energies drawn."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "spectrum",
+                str(folder),
+                "--xlim",
+                "2",
+                "6",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert drawn_spectrum_axes[-1].get_xlim() == pytest.approx((2.0, 6.0))
+
+    def test_ylim_overrides_the_zero_floor(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """--ylim replaces the default Im ε floor at 0."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "spectrum",
+                str(folder),
+                "--ylim",
+                "-2",
+                "8",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert drawn_spectrum_axes[-1].get_ylim() == pytest.approx((-2.0, 8.0))
+
+    def test_an_inverted_xlim_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """MIN above MAX would silently flip the axis upside down."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(cli, ["plot", "spectrum", str(folder), "--xlim", "6", "2"])
+
+        assert result.exit_code == 2
+        assert "MIN must be below MAX" in result.output
+
+    def test_defaults_are_unchanged_without_the_lim_options(
+        self, aiida_profile: Any, runner: Any, drawn_spectrum_axes: Any, tmp_path: Path
+    ) -> None:
+        """With neither option, the axes keep their tight-to-data, zero-floor defaults."""
+        from koopmans.cli import cli
+
+        folder = bse_run(
+            tmp_path,
+            "si-bse",
+            energies=[0.0, 0.5, 1.0],
+            im_eps=[0.1, 0.2, 0.3],
+            re_eps=[6.8, 6.9, 7.0],
+        )
+
+        result = runner.invoke(
+            cli, ["plot", "spectrum", str(folder), "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        axes = drawn_spectrum_axes[-1]
+        assert axes.get_xlim() == pytest.approx((0.0, 1.0))
+        bottom, _ = axes.get_ylim()
+        assert bottom == pytest.approx(0.0)

@@ -22,6 +22,7 @@ __all__ = [
     "EnergyZero",
     "NoEnergyZeroError",
     "PathMismatchError",
+    "SpectrumSeries",
     "apply_energy_zero",
     "band_gap",
     "check_paths_agree",
@@ -59,7 +60,9 @@ class BandSeries:
     relative lengths of its segments. ``path_labels`` pairs a k-point index
     with the name of the high-symmetry point sitting there. ``style`` is the
     matplotlib format string the curve is drawn in, ``None`` leaving its
-    appearance to the figure.
+    appearance to the figure. ``show_gap`` asks the figure to annotate this
+    series' band gap; it is silently left undrawn when the series reports no
+    valence band edge.
     """
 
     label: str
@@ -72,6 +75,7 @@ class BandSeries:
     vbm: float | None = None
     fermi: float | None = None
     zero: float = 0.0
+    show_gap: bool = False
 
     def reference(self, kind: EnergyZero) -> float | None:
         """Return the energy this series would put at zero, or ``None``."""
@@ -153,25 +157,63 @@ class BandGap:
 _GAP_TOLERANCE = 1e-6
 
 
+def _nearest_pair(
+    vbm_kpoints: np.ndarray, cbm_kpoints: np.ndarray, distances: np.ndarray
+) -> tuple[int, int]:
+    """Return the VBM/CBM k-point pair closest together along the path.
+
+    A high-symmetry point sampled at both ends of the path (Γ opening and
+    closing a loop, say) attains the same energy at more than one k-point;
+    picking the wrong one draws the gap arrow across the whole figure
+    instead of at the band edge it belongs to. Ties keep the pair the
+    ascending scan meets first.
+    """
+    best_pair = (int(vbm_kpoints[0]), int(cbm_kpoints[0]))
+    best_distance = np.inf
+    for vbm_kpoint in vbm_kpoints:
+        for cbm_kpoint in cbm_kpoints:
+            separation = abs(float(distances[cbm_kpoint]) - float(distances[vbm_kpoint]))
+            if separation < best_distance:
+                best_distance = separation
+                best_pair = (int(vbm_kpoint), int(cbm_kpoint))
+    return best_pair
+
+
 def band_gap(item: BandSeries) -> BandGap:
     """Return the series' valence-to-conduction gap.
 
-    The valence band maximum sits at whichever k-point holds an energy
-    closest to ``item.vbm``; the conduction band minimum is the lowest energy
-    more than ``_GAP_TOLERANCE`` above it.
+    The valence band maximum is ``item.vbm``; the conduction band minimum is
+    the lowest energy more than ``_GAP_TOLERANCE`` above it. A high-symmetry
+    point the path visits more than once can attain either energy at several
+    k-points alike, within ``_GAP_TOLERANCE``; the pair reported is whichever
+    of those sits closest together along the path, so the gap is drawn at
+    the band edge rather than stretched between unrelated repeats of the
+    same point.
 
-    :raises ValueError: if the series reports no valence band edge.
+    :raises ValueError: if the series reports no valence band edge, or no
+        state above it to measure a gap to.
     """
     if item.vbm is None:
         raise ValueError(f"'{item.label}' reports no valence band edge to measure a gap from.")
 
     energies = np.asarray(item.energies, dtype=np.float64)
-    vbm_index = np.unravel_index(np.argmin(np.abs(energies - item.vbm)), energies.shape)
+    vbm_kpoints = np.flatnonzero(np.any(np.abs(energies - item.vbm) <= _GAP_TOLERANCE, axis=1))
+    if vbm_kpoints.size == 0:
+        # Numerical drift between the reported edge and the band table
+        # itself: fall back to the single closest k-point rather than
+        # matching nothing.
+        vbm_kpoints = np.array([int(np.argmin(np.abs(energies - item.vbm).min(axis=1)))])
+
     above = np.where(energies > item.vbm + _GAP_TOLERANCE, energies, np.inf)
-    cbm_index = np.unravel_index(np.argmin(above), energies.shape)
-    cbm = float(energies[cbm_index])
-    vbm_kpoint, cbm_kpoint = int(vbm_index[0]), int(cbm_index[0])
+    cbm = float(np.min(above))
+    if not np.isfinite(cbm):
+        raise ValueError(
+            f"'{item.label}' reports no state above its valence band maximum to measure a gap to."
+        )
+    cbm_kpoints = np.flatnonzero(np.any(np.abs(energies - cbm) <= _GAP_TOLERANCE, axis=1))
+
     distances = path_distances(item)
+    vbm_kpoint, cbm_kpoint = _nearest_pair(vbm_kpoints, cbm_kpoints, distances)
 
     return BandGap(
         value=cbm - item.vbm,
@@ -183,6 +225,27 @@ def band_gap(item: BandSeries) -> BandGap:
         cbm_distance=float(distances[cbm_kpoint]),
         direct=vbm_kpoint == cbm_kpoint,
     )
+
+
+@dataclass
+class SpectrumSeries:
+    """One optical absorption spectrum on the axes.
+
+    ``energies`` are eV; ``im_eps``/``re_eps`` are the macroscopic dielectric
+    function a yambo BSE run computes with local-field and excitonic effects
+    included. ``im_eps_o``/``re_eps_o`` are the independent-particle spectrum
+    the same run reports, ``None`` when it reported none. ``style`` is the
+    matplotlib format string the curve is drawn in, ``None`` leaving its
+    appearance to the figure.
+    """
+
+    label: str
+    energies: list[float]
+    im_eps: list[float]
+    re_eps: list[float]
+    im_eps_o: list[float] | None = None
+    re_eps_o: list[float] | None = None
+    style: str | None = None
 
 
 #: How far apart two crystal coordinates may be and still name the same point.
@@ -305,25 +368,31 @@ def describe_energy_zero(
     )
 
 
-def _series_record(item: BandSeries) -> dict[str, Any]:
-    """Return one series' JSON record, with its gap if it reports an edge.
+def _series_record(item: BandSeries | SpectrumSeries) -> dict[str, Any]:
+    """Return one series' JSON record, with its gap if it is a band structure reporting an edge.
 
     ``gap`` is written whether or not the figure was asked to draw one, so a
-    script can read the gap off the file without asking for the annotation.
+    script can read the gap off the file without asking for the annotation;
+    ``show_gap`` itself, which only says whether the figure drew it, is left
+    out to keep this key's shape the same either way.
     """
     record = asdict(item)
-    try:
-        record["gap"] = asdict(band_gap(item))
-    except ValueError:
-        record["gap"] = None
+    if isinstance(item, BandSeries):
+        record.pop("show_gap", None)
+        try:
+            record["gap"] = asdict(band_gap(item))
+        except ValueError:
+            record["gap"] = None
     return record
 
 
-def write_series_json(series: Sequence[BandSeries], path: Path) -> None:
-    """Write the records the figure was drawn from as JSON.
+def write_series_json(series: Sequence[BandSeries] | Sequence[SpectrumSeries], path: Path) -> None:
+    """Write the records a figure was drawn from as JSON.
 
-    Energies are as computed; ``zero`` records the shift the figure applied,
-    so the file is enough to redraw the figure or to restyle it elsewhere.
+    Works on either a band-structure or a spectrum figure's records alike, both
+    being plain dataclasses. Energies are as computed; a ``BandSeries``' zero
+    records the shift the figure applied, so the file is enough to redraw the
+    figure or to restyle it elsewhere.
     """
     payload = {"series": [_series_record(item) for item in series]}
     path.write_text(json.dumps(payload, indent=2) + "\n")

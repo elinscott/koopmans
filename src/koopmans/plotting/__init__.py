@@ -1,9 +1,10 @@
 """Plot the results of a finished koopmans run.
 
-Two halves that meet at :class:`~koopmans.plotting.series.BandSeries`: a
-resolver that turns run folders into series records, and a renderer that draws
-records onto axes. Nothing but the resolver touches AiiDA, so a future
-self-contained dump is a change of source rather than a rewrite.
+Two halves that meet at :class:`~koopmans.plotting.series.BandSeries` and
+:class:`~koopmans.plotting.series.SpectrumSeries`: a resolver that turns run
+folders into series records, and a renderer that draws records onto axes.
+Nothing but the resolver touches AiiDA, so a future self-contained dump is a
+change of source rather than a rewrite.
 """
 
 from __future__ import annotations
@@ -13,8 +14,10 @@ from koopmans.plotting.render import (
     StyleError,
     check_style,
     draw_band_structures,
+    draw_spectra,
     path_distances,
     render_band_structures,
+    render_spectra,
 )
 from koopmans.plotting.resolve import (
     BAND_PRODUCERS,
@@ -22,6 +25,7 @@ from koopmans.plotting.resolve import (
     PlottingError,
     RunNotInProfileError,
     resolve_band_series,
+    resolve_spectrum_series,
     run_node,
 )
 from koopmans.plotting.series import (
@@ -30,6 +34,7 @@ from koopmans.plotting.series import (
     EnergyZero,
     NoEnergyZeroError,
     PathMismatchError,
+    SpectrumSeries,
     apply_energy_zero,
     band_gap,
     check_paths_agree,
@@ -49,6 +54,7 @@ __all__ = [
     "PathMismatchError",
     "PlottingError",
     "RunNotInProfileError",
+    "SpectrumSeries",
     "StyleError",
     "apply_energy_zero",
     "band_gap",
@@ -56,10 +62,13 @@ __all__ = [
     "check_style",
     "describe_energy_zero",
     "draw_band_structures",
+    "draw_spectra",
     "energy_axis_label",
     "path_distances",
     "render_band_structures",
+    "render_spectra",
     "resolve_band_series",
+    "resolve_spectrum_series",
     "run_node",
     "write_series_json",
 ]

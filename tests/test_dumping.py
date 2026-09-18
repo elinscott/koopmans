@@ -1666,6 +1666,60 @@ class TestDumpedNodeMetadata:
         ]
 
 
+class TestDumpWorkgraphOverwriteGuard:
+    """``dump_workgraph`` never deletes a directory it did not itself write."""
+
+    def test_refuses_a_non_empty_directory_with_no_dump_marker(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A directory holding someone else's files is left alone."""
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process(label="root")
+        target = tmp_path / "target"
+        target.mkdir()
+        unrelated = target / "notes.txt"
+        unrelated.write_text("unrelated content")
+
+        with pytest.raises(ValueError, match="was not written by koopmans"):
+            dump_workgraph(root, target)
+
+        assert unrelated.read_text() == "unrelated content"
+
+    def test_overwrites_a_directory_carrying_its_own_dump_marker(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A previous koopmans dump, marked by its own metadata file, is replaced."""
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process(label="root")
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / NODE_METADATA_FILE).write_text("pk: 0\n")
+        stale = target / "stale.txt"
+        stale.write_text("from an earlier dump")
+
+        dumped = dump_workgraph(root, target)
+
+        assert dumped == target
+        assert not stale.exists()
+
+    def test_accepts_an_empty_existing_directory(self, aiida_profile: Any, tmp_path: Path) -> None:
+        """An empty directory is not "foreign" -- there is nothing there to lose."""
+        from koopmans.aiida.dumping import dump_workgraph
+        from tests.fixtures import make_process
+
+        root = make_process(label="root")
+        target = tmp_path / "target"
+        target.mkdir()
+
+        dumped = dump_workgraph(root, target)
+
+        assert dumped == target
+
+
 class TestReadStagedJson:
     """Whether a node is JSON-valued is decided from the node, not the staged file."""
 
