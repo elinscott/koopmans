@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
@@ -37,12 +37,18 @@ class DfptChainInputs(TypedDict):
     front of its own yambo steps. Named exactly after
     ``SinglepointDFPTWorkflow.build``'s own parameters so a caller building
     the plain DFPT chain can unpack it directly as ``**chain_inputs``.
+
+    ``smooth_kpoints`` / ``smooth_mp_grid`` are absent unless the caller
+    adds them (:func:`add_smooth_interpolation_inputs`): they shape a band
+    structure, and only the plain DFPT singlepoint publishes one.
     """
 
     structure: orm.StructureData
     kpoints: orm.KpointsData
     scf_kpoints: orm.KpointsData | None
     bands_kpoints: orm.KpointsData | None
+    smooth_kpoints: NotRequired[orm.KpointsData]
+    smooth_mp_grid: NotRequired[list[int]]
     pseudo_family: str
     overrides: dict[str, Any]
     eps_inf: float | str | None
@@ -205,7 +211,10 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
 
     A ``kpoints.path`` in the input reaches the kcw.x ham step as its bands
     path, so the run also emits the Koopmans band structure interpolated
-    along it.
+    along it. A ``kpoints.smooth_interpolation_factor`` above 1 interpolates
+    that band structure with the DFT Hamiltonian from a mesh ``factor``
+    times denser instead of kcw.x's own coarse-grid one
+    (:func:`add_smooth_interpolation_inputs`).
 
     Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
     periodic, MLWF/projwf variational orbitals, and explicit projections.
@@ -215,6 +224,7 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
     from aiida_koopmans.workgraphs.dfpt import DfptCodes, SinglepointDFPTWorkflow
 
     chain_inputs, _manifold_band_counts = assemble_dfpt_chain_inputs(koopmans_input)
+    add_smooth_interpolation_inputs(chain_inputs, koopmans_input)
 
     # load_codes loads every configured member of DfptCodes. ph.x is only
     # actually needed for the `eps_inf: auto` dielectric pre-computation,
@@ -231,6 +241,43 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
         SinglepointDFPTWorkflow.build(codes=codes, **chain_inputs),
         "Koopmans DFPT",
     )
+
+
+def add_smooth_interpolation_inputs(
+    chain_inputs: DfptChainInputs, koopmans_input: KoopmansInput
+) -> None:
+    """Add the denser mesh the smooth-interpolation method Wannierizes, in place.
+
+    kcw.x interpolates the whole Koopmans Hamiltonian from the grid the
+    Wannier functions were built on, DFT part and all, so on a coarse grid
+    its band structure is only as good as a Wannier interpolation of the
+    DFT bands. A ``kpoints.smooth_interpolation_factor`` above 1 replaces
+    that DFT part with the same quantity from a Wannierization on a mesh
+    ``factor`` times denser, stated as the explicit k-point list and its
+    Monkhorst-Pack dimensions. The neutral default adds nothing.
+
+    Args:
+        chain_inputs: The assembled chain inputs, mutated in place.
+        koopmans_input: The parsed koopmans input.
+
+    Raises:
+        ValueError: If the factor shapes an interpolation the input does
+            not ask for.
+    """
+    from koopmans.aiida.conversion import smooth_grid, smooth_kpoints_mesh
+
+    kpoints_input = koopmans_input.kpoints
+    factor = kpoints_input.smooth_interpolation_factor
+    if not any(f > 1 for f in factor):
+        return
+    if chain_inputs["bands_kpoints"] is None:
+        raise ValueError(
+            "`kpoints.smooth_interpolation_factor` shapes the band structure "
+            "interpolation, and this input asks for none. Add the path to interpolate "
+            "along as `kpoints: {path: ...}`, or restore the default `[1, 1, 1]`."
+        )
+    chain_inputs["smooth_kpoints"] = smooth_kpoints_mesh(kpoints_input, factor)
+    chain_inputs["smooth_mp_grid"] = smooth_grid(kpoints_input, factor)
 
 
 def _validated_eps_inf(eps_inf: float | str | None) -> float | str | None:

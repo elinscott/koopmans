@@ -42,7 +42,7 @@ from koopmans.plotting import (
     resolve_spectrum_series,
     write_series_json,
 )
-from koopmans.plotting.resolve import SUGGESTION_LIMIT
+from koopmans.plotting.resolve import BAND_PRODUCERS, SUGGESTION_LIMIT
 from tests.fixtures import attach, make_process
 
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
@@ -53,7 +53,18 @@ W90_CALC = "aiida_wannier90.calculations.wannier90.Wannier90Calculation"
 PW_CALC = "aiida.calculations:quantumespresso.pw"
 W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
 MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands"
-BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.dscf.build_band_structure"
+
+
+#: The name AiiDA stores for the step that attaches interpolated
+#: eigenvalues to their k-path. Spelled out rather than imported: importing
+#: aiida-koopmans at collection time loads the AiiDA configuration, which a
+#: fresh CI checkout has none of yet. ``TestProcessTypeNames`` reads the
+#: real name off the function and fails if this drifts from it.
+BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.manifolds.build_band_structure"
+
+#: The module the same calcfunction lived in before it was shared between
+#: the two Koopmans routes. Nodes written then still carry this name.
+BUILD_BAND_STRUCTURE_BEFORE_THE_MOVE = "aiida_koopmans.workgraphs.ui.dscf.build_band_structure"
 
 #: A cubic cell, so that reciprocal-space distances are easy to reason about.
 CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
@@ -562,6 +573,32 @@ class TestPathDistances:
 # ----------------------------------------------------------------------
 
 
+class TestProcessTypeNames:
+    """The names this module spells out are the ones AiiDA actually stores."""
+
+    def test_the_band_structure_step_is_registered_under_the_name_it_writes(self) -> None:
+        """Moving the calcfunction must fail here, not go unnoticed in a figure.
+
+        The resolver matches a stored ``process_type`` string, and nothing
+        else ties that string to the function it names: a move renames
+        every node written afterwards and leaves the resolver matching a
+        name nothing writes any more.
+        """
+        from aiida_koopmans.workgraphs.ui.manifolds import build_band_structure
+
+        process_class = build_band_structure._callable.process_class
+        stored = f"{process_class.__module__}.{process_class.__name__}"
+
+        assert stored == BUILD_BAND_STRUCTURE
+
+    def test_both_names_of_that_step_are_registered(self) -> None:
+        """Runs from either side of the move resolve, so neither may be dropped."""
+        registered = {producer.process_type for producer in BAND_PRODUCERS}
+
+        assert BUILD_BAND_STRUCTURE in registered
+        assert BUILD_BAND_STRUCTURE_BEFORE_THE_MOVE in registered
+
+
 class TestResolver:
     """Turning run folders into series."""
 
@@ -670,6 +707,96 @@ class TestResolver:
         )
         attach(ham, "output_parameters", orm.Dict({"ki_homo_energy": 5.2}))  # type: ignore[no-untyped-call]
         folder = write_run_folder(tmp_path, "si_ki", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["KI"]
+        assert found[0].vbm == pytest.approx(5.2)
+
+    def test_bands_built_before_the_calcfunction_moved_still_plot(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A run stored under the old module path keeps its KI curve.
+
+        AiiDA writes a calcfunction's module path into ``process_type``, so
+        sharing the step between the two Koopmans routes renamed it. Runs
+        from before that are still in the profile and still plot.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="KoopmansDSCFWorkflow")
+        built = make_process(
+            BUILD_BAND_STRUCTURE_BEFORE_THE_MOVE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(1.25).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 1.25, 4.0]]))
+        folder = write_run_folder(tmp_path, "si_dscf_old", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["KI"]
+        assert found[0].vbm == pytest.approx(1.25)
+
+    def test_a_smooth_dfpt_run_plots_the_smooth_bands_and_not_kcw_own(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """One KI curve, and it is the one interpolated off the denser mesh.
+
+        A smooth DFPT run holds both: kcw.x interpolated the Koopmans
+        Hamiltonian from the coarse grid, and the smooth stage
+        interpolated it again with a denser-grid DFT Hamiltonian. Plotting
+        both under ``KI`` would put two answers to one question on the
+        figure, and the coarse one is the answer the run improved on.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
+        ham = make_process(
+            KCW_HAM, caller=root, link_label="ham", calcjob=True, computer=aiida_localhost
+        )
+        attach(ham, "bands", make_bands([[0.0, 0.0, 0.0]], [[-5.4, 5.2]]))
+        attach(ham, "output_parameters", orm.Dict({"ki_homo_energy": 5.2}))  # type: ignore[no-untyped-call]
+        built = make_process(
+            BUILD_BAND_STRUCTURE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(4.8).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 4.8]]))
+        folder = write_run_folder(tmp_path, "si_ki_smooth", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["KI"]
+        assert found[0].vbm == pytest.approx(4.8)
+
+    def test_kcw_own_bands_still_plot_from_their_own_step_folder(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """Superseding is per run, so the coarse curve stays addressable.
+
+        Nothing is thrown away: a folder naming the ham step alone holds no
+        smooth stage to be superseded by, and plots kcw.x's own
+        interpolation.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
+        ham = make_process(
+            KCW_HAM, caller=root, link_label="ham", calcjob=True, computer=aiida_localhost
+        )
+        attach(ham, "bands", make_bands([[0.0, 0.0, 0.0]], [[-5.4, 5.2]]))
+        attach(ham, "output_parameters", orm.Dict({"ki_homo_energy": 5.2}))  # type: ignore[no-untyped-call]
+        built = make_process(
+            BUILD_BAND_STRUCTURE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(4.8).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 4.8]]))
+        folder = write_run_folder(tmp_path, "ham", ham)
 
         found, _ = resolve_band_series([folder])
 

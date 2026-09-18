@@ -558,3 +558,58 @@ class TestProjwfcQualityCheck:
         assert not wg.tasks["wannierize"].inputs["interpolation_kpoints"]._links
         assert not wg.tasks["dfpt"].inputs["wannierize_bands"]._links
         assert not wg.tasks["dfpt"].inputs["projwfc"]._links
+
+
+class TestSmoothInterpolationFactor:
+    """``kpoints.smooth_interpolation_factor`` densifies the Wannierization mesh."""
+
+    def test_the_factor_densifies_the_mesh_the_second_wannierization_samples(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A factor of 4 on a 2x2x2 grid Wannierizes 8x8x8, as an explicit list.
+
+        Checks the two halves agree: wannier90 cannot re-derive the mesh
+        dimensions from an explicit k-point list, so a ``mp_grid`` that
+        disagreed with the list would describe a different mesh than the
+        one sampled.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        d["kpoints"]["smooth_interpolation_factor"] = 4
+        wg = _build(d)
+
+        smooth = wg.tasks["wannierize_smooth"].inputs
+        assert smooth["mp_grid"].value == [8, 8, 8]
+        assert len(smooth["kpoints"].value.get_kpoints()) == 8 * 8 * 8
+
+    def test_the_factor_may_differ_per_direction(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Each direction densifies on its own, so a slab can densify in-plane only."""
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        d["kpoints"]["smooth_interpolation_factor"] = [4, 2, 1]
+        wg = _build(d)
+
+        assert wg.tasks["wannierize_smooth"].inputs["mp_grid"].value == [8, 4, 2]
+
+    def test_the_default_factor_adds_no_second_wannierization(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: with the factor unset the graph is the one that ran before."""
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+
+        assert "wannierize_smooth" not in wg.get_task_names()
+        assert not wg.tasks["dfpt"].inputs["smooth_block_wannier"]._links
+
+    def test_a_factor_without_a_path_is_refused(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The method shapes a band structure; an input asking for none is a contradiction."""
+        d = _si_dfpt_dict()
+        d["kpoints"]["smooth_interpolation_factor"] = 4
+
+        with pytest.raises(ValueError, match=r"kpoints: \{path"):
+            _build(d)

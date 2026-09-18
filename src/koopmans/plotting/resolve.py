@@ -114,8 +114,8 @@ def _unfolded_band_references(
 ) -> tuple[float | None, float | None]:
     """Return the valence band edge the unfold-and-interpolate stage computed.
 
-    A ΔSCF interpolation carries no occupations, so the edge cannot be read
-    off the bands; it travels as an input of the step that built them.
+    An interpolation carries no occupations, so the edge cannot be read off
+    the bands; it travels as an input of the step that built them.
     """
     reference = getattr(node.inputs, "reference", None)
     return (None if reference is None else float(reference.value)), None
@@ -162,6 +162,11 @@ class BandProducer:
 
     ``socket`` is a dotted output path, so a workflow that publishes its result
     under a namespace can name it.
+
+    ``superseded_by`` names process types whose presence in the same run
+    makes this one redundant: both describe the same physics, and the run
+    computed a better answer. The superseded step keeps its own dumped
+    folder, which plots on its own.
     """
 
     process_type: str
@@ -169,6 +174,7 @@ class BandProducer:
     series: str
     references: References
     applies: Callable[[orm.ProcessNode], bool] | None = None
+    superseded_by: tuple[str, ...] = ()
 
 
 #: The optimize workchain's own wannierization outputs, and the series each
@@ -183,6 +189,16 @@ _OPTIMIZE_OUTPUTS = (
     ("wannier90_plot_up", "Wannier interpolation (up)"),
     ("wannier90_optimal_down", "Wannier interpolation (down)"),
     ("wannier90_plot_down", "Wannier interpolation (down)"),
+)
+
+#: Where the calcfunction that attaches interpolated eigenvalues to their
+#: k-path has lived. AiiDA stores a calcfunction's module path in
+#: ``process_type``, so moving the function renames it and nodes written
+#: before the move keep the name they were stored under. Both are listed so
+#: a run from either side of the move plots.
+_BUILD_BAND_STRUCTURE = (
+    "aiida_koopmans.workgraphs.ui.manifolds.build_band_structure",
+    "aiida_koopmans.workgraphs.ui.dscf.build_band_structure",
 )
 
 BAND_PRODUCERS: tuple[BandProducer, ...] = (
@@ -212,11 +228,17 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         references=_pw_base_bands_references,
         applies=_is_path_bands_run,
     ),
+    # kcw.x interpolates the Koopmans Hamiltonian from the grid the Wannier
+    # functions were built on. A run that also ran the smooth interpolation
+    # has the same bands computed with a denser-grid DFT Hamiltonian, and
+    # that is the run's answer; this one still plots from its own step
+    # folder.
     BandProducer(
         process_type="aiida.calculations:koopmans.kcw_ham",
         socket="bands",
         series="KI",
         references=_kcw_ham_references,
+        superseded_by=_BUILD_BAND_STRUCTURE,
     ),
     BandProducer(
         process_type="aiida.workflows:wannier90_workflows.base.wannier90",
@@ -254,14 +276,18 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         series="Wannier interpolation",
         references=_no_references,
     ),
-    # The ΔSCF route's unfold-and-interpolate stage: the step that attaches
-    # the interpolated eigenvalues to their k-path is the one that names a
-    # band structure, and it carries the valence band edge as an input.
-    BandProducer(
-        process_type="aiida_koopmans.workgraphs.ui.dscf.build_band_structure",
-        socket="result",
-        series="KI",
-        references=_unfolded_band_references,
+    # The unfold-and-interpolate stage both Koopmans routes end in: the step
+    # that attaches the interpolated eigenvalues to their k-path is the one
+    # that names a band structure, and it carries the valence band edge as
+    # an input.
+    *(
+        BandProducer(
+            process_type=process_type,
+            socket="result",
+            series="KI",
+            references=_unfolded_band_references,
+        )
+        for process_type in _BUILD_BAND_STRUCTURE
     ),
 )
 
@@ -760,6 +786,19 @@ def _producing_steps(root: orm.ProcessNode) -> list[orm.ProcessNode]:
     return sorted(found, key=lambda step: (step.ctime, step.pk))
 
 
+def _drop_superseded[MatchT: tuple[orm.ProcessNode, BandProducer, Any]](
+    matches: list[MatchT],
+) -> list[MatchT]:
+    """Drop the matches another match in the same run supersedes.
+
+    A run that computed the same band structure twice, once better, plots
+    the better one alone; the other stays plottable from its own dumped
+    step folder, where it is the only match there is.
+    """
+    present = {step.process_type for step, _, _ in matches}
+    return [match for match in matches if not present.intersection(match[1].superseded_by)]
+
+
 def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
     """Return every declared band structure a run produced, in run order.
 
@@ -773,6 +812,7 @@ def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
             bands = _output_at(step, producer.socket)
             if bands is not None:
                 matches.append((step, producer, bands))
+    matches = _drop_superseded(matches)
 
     # One step per series name needs no disambiguation; several — a per-spin
     # or per-block fan-out — are told apart by the call chain that led there.
