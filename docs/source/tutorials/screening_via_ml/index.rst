@@ -127,7 +127,7 @@ Koopmans calculation:
                Orbital 1                                                     finished
                ...
                Orbital 6                                                     finished
-         RunFinalKI                                                          finished
+         Final KI                                                            finished
        Snapshot 2                                                            finished
          ...
        Snapshot 5                                                            finished
@@ -227,7 +227,7 @@ configuration's branch:
 
     Snapshot 1                                                             finished
       ...
-      RunFinalKI                                                           finished
+      Final KI                                                             finished
       Final KI (predicted alphas)                                         finished
 
 Both start from the same trial calculation and differ only in the screening parameters,
@@ -323,7 +323,7 @@ turns those into screening parameters, and the final KI calculation applies them
       Wannier initialization                                              finished
       Predicted screening parameters                                     finished
         Trial KI                                                          finished
-      RunFinalKI                                                           finished
+      Final KI                                                             finished
 
 Compare that with the training run's branch: the whole ``Orbital screening`` fan-out,
 one constrained calculation per orbital, is gone. What remains — the Wannierization,
