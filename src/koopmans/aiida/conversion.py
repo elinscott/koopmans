@@ -35,7 +35,8 @@ if TYPE_CHECKING:
         CellParametersViaIbrav,
         CellParametersViaVectors,
     )
-    from koopmans.input_file.parallelization import CodeParallelization
+    from koopmans.input_file.computer import ComputerInput
+    from koopmans.input_file.parallelization import CodeParallelization, ParallelizationInput
 
 # Quantum ESPRESSO's own value, so that converted quantities match QE output
 BOHR_TO_ANGSTROM: float = CONSTANTS.bohr_to_ang
@@ -47,6 +48,7 @@ NORM_CONSERVING_DUAL: float = 4.0
 
 def code_parallelization(
     config: CodeParallelization | None,
+    computer: ComputerInput | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Translate a code's parallelization config into ``(options, settings)``.
 
@@ -66,26 +68,116 @@ def code_parallelization(
     ``prepend_text``, so emitting it here as well would duplicate it. omp
     therefore rides the threaded mapping alone (via ``as_mapping``).
 
+    ``computer`` supplies the run's scheduler options: its ``walltime``
+    becomes ``metadata.options.max_wallclock_seconds`` (whole seconds), and
+    its ``account`` / ``queue`` become ``metadata.options.account`` /
+    ``queue_name``. ``config.walltime`` overrides ``computer.walltime`` for
+    this one code; ``account`` and ``queue`` have no per-code override.
+
     Args:
         config: The per-code parallelization settings, or ``None``.
+        computer: The run's computer settings, or ``None``.
 
     Returns:
         A ``(options, settings)`` tuple of dicts, either of which may be empty.
     """
     options: dict[str, Any] = {}
     settings: dict[str, Any] = {}
-    if config is None:
-        return options, settings
-    if config.ntasks is not None:
-        options["resources"] = {"num_machines": 1, "num_mpiprocs_per_machine": config.ntasks}
-    cmdline: list[str] = []
-    if config.npool is not None:
-        cmdline += ["-npool", str(config.npool)]
-    if config.pd:
-        cmdline += ["-pd", "true"]
-    if cmdline:
-        settings["cmdline"] = cmdline
+    if config is not None:
+        if config.ntasks is not None:
+            options["resources"] = {
+                "num_machines": 1,
+                "num_mpiprocs_per_machine": config.ntasks,
+            }
+        cmdline: list[str] = []
+        if config.npool is not None:
+            cmdline += ["-npool", str(config.npool)]
+        if config.pd:
+            cmdline += ["-pd", "true"]
+        if cmdline:
+            settings["cmdline"] = cmdline
+
+    from koopmans.input_file.parallelization import resolve_effective_walltime
+
+    walltime = resolve_effective_walltime(config, computer)
+    if walltime is not None:
+        options["max_wallclock_seconds"] = int(walltime.total_seconds())
+    if computer is not None and computer.account is not None:
+        options["account"] = computer.account
+    if computer is not None and computer.queue is not None:
+        options["queue_name"] = computer.queue
+
     return options, settings
+
+
+# Schedulers with no account/project concept: HyperQueue (the localhost
+# backend's own scheduler) and aiida-core's direct scheduler have neither
+# flag on their command line.
+_NO_ACCOUNT_QUEUE_SCHEDULERS: frozenset[str] = frozenset({"hyperqueue", "core.direct"})
+
+# Schedulers that ignore ``max_wallclock_seconds``. HyperQueue does honour it
+# (``--time-limit``/``--time-request``, source-verified in
+# ``aiida_hyperqueue.scheduler.HyperQueueScheduler._get_submit_script_header``);
+# aiida-core's direct scheduler carries the line that would emit a ``timeout``
+# wrapper, but it is commented out
+# (``aiida.schedulers.plugins.direct.DirectScheduler``), so a walltime set
+# there has no effect.
+_NO_WALLTIME_SCHEDULERS: frozenset[str] = frozenset({"core.direct"})
+
+
+def validate_computer_scheduler_support(
+    computer: ComputerInput, parallelization: ParallelizationInput
+) -> None:
+    """Reject a scheduler option the resolved computer's scheduler cannot honour.
+
+    A no-op if ``computer.name`` names no configured AiiDA computer: the
+    default ``localhost`` reaches here unchecked whenever the profile has no
+    ``localhost`` computer yet, and the missing-codes advice is the correct
+    diagnosis for that, not this function's. Call after the existence check
+    that produces a setup hint for a named remote computer
+    (:func:`~koopmans.aiida.workflows.require_computer_configured`).
+
+    Args:
+        computer: The run's computer settings.
+        parallelization: The run's per-code parallelization settings, whose
+            per-code ``walltime`` is checked against the same scheduler.
+
+    Raises:
+        ValueError: If ``account`` or ``queue`` is set against a scheduler
+            with no such concept, or if a ``walltime`` (computer-level or
+            per-code) is set against a scheduler that ignores it.
+    """
+    from aiida.common.exceptions import NotExistent
+
+    try:
+        scheduler_type = orm.load_computer(computer.name).scheduler_type
+    except NotExistent:
+        return
+
+    if scheduler_type in _NO_ACCOUNT_QUEUE_SCHEDULERS:
+        if computer.account is not None:
+            raise ValueError(
+                f"`computer.account` has no effect on '{computer.name}' "
+                f"({scheduler_type} has no account/project concept); remove it."
+            )
+        if computer.queue is not None:
+            raise ValueError(
+                f"`computer.queue` has no effect on '{computer.name}' "
+                f"({scheduler_type} has no queue concept); remove it."
+            )
+
+    if scheduler_type in _NO_WALLTIME_SCHEDULERS:
+        if computer.walltime is not None:
+            raise ValueError(
+                f"`computer.walltime` has no effect on '{computer.name}' "
+                f"({scheduler_type} does not enforce a wallclock limit); remove it."
+            )
+        for code, cfg in parallelization.as_dict().items():
+            if cfg.walltime is not None:
+                raise ValueError(
+                    f"`parallelization.{code}.walltime` has no effect on '{computer.name}' "
+                    f"({scheduler_type} does not enforce a wallclock limit); remove it."
+                )
 
 
 def celldms_to_cell(ibrav: int, celldms: dict[int, float]) -> list[list[float]]:
@@ -322,6 +414,34 @@ def kpoints_input_to_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData:
     kpts = orm.KpointsData()
     kpts.set_kpoints_mesh(list(kpoints.grid), offset=list(kpoints.offset))  # type: ignore[no-untyped-call]
     return kpts
+
+
+def smooth_kpoints_mesh(kpoints: KpointsInput, factor: tuple[int, int, int]) -> orm.KpointsData:
+    """Expand the k-mesh by ``factor`` and return it as an explicit k-point list.
+
+    The smooth-interpolation method Wannierizes a mesh ``factor`` times
+    denser than ``kpoints.grid``. wannier90 and pw2wannier90 need that
+    mesh as the full explicit list in kmesh.pl order, not as a mesh a
+    symmetry-reducing nscf could shrink.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        factor: Per-direction densification, one entry per lattice vector.
+
+    Returns:
+        AiiDA KpointsData node holding the explicit denser k-point list.
+    """
+    from aiida_wannier90_workflows.utils.kpoints import get_explicit_kpoints
+
+    mesh = orm.KpointsData()
+    mesh.set_kpoints_mesh(smooth_grid(kpoints, factor))  # type: ignore[no-untyped-call]
+    explicit: orm.KpointsData = get_explicit_kpoints(mesh)
+    return explicit
+
+
+def smooth_grid(kpoints: KpointsInput, factor: tuple[int, int, int]) -> list[int]:
+    """Return the Monkhorst-Pack dimensions of the densified mesh."""
+    return [int(g) * int(f) for g, f in zip(kpoints.grid, factor, strict=True)]
 
 
 def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
@@ -702,6 +822,71 @@ def input_to_pw_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str,
     parameters = _convert_paths_to_strings(parameters)
 
     return parameters
+
+
+def input_to_kcw_overrides(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:
+    """Convert ``calculator_parameters.kcw`` into a kcw.x namelist-overrides dict.
+
+    One entry per namelist (``control``, ``wannier``, ``screen``, ``ham``),
+    present only when the user set at least one of its keywords: the DFPT
+    route's own values stand wherever the user is silent. A keyword written
+    as ``null`` means the same as one left out — kcw.x has no third state —
+    so it is dropped too rather than blanking the route's value.
+    Route-owned keys are refused at parse time
+    (``koopmans.input_file.kcw``) and never reach here.
+    """
+    kcw = koopmans_input.calculator_parameters.kcw
+    overrides: dict[str, dict[str, Any]] = {}
+    for name, namelist in (
+        ("control", kcw.control),
+        ("wannier", kcw.wannier),
+        ("screen", kcw.screen),
+        ("ham", kcw.ham),
+    ):
+        dumped = namelist.model_dump(exclude_unset=True, exclude_none=True)
+        if dumped:
+            overrides[name] = _convert_paths_to_strings(dumped)
+    return overrides
+
+
+#: Yambo BSE runcard arguments the workflow always turns on: ``rim_cut``
+#: (random-integration-method Coulomb-divergence treatment, needed for any
+#: periodic BSE), ``WRbsWF`` (write the excitonic wavefunctions the
+#: additional-parsing quantities read) and ``NLCC`` (harmless for a
+#: pseudopotential family with no non-linear core correction; needed for one
+#: that has it, as koopmans2's own PseudoDojo/SG15 defaults do). Mirrors the
+#: k2y BSE example (``examples/silicon_aiida_bse/03_bse_submit.py``). Kept in
+#: step with ``aiida_koopmans.owned_keywords.OWNED["yambo"]``, which also
+#: claims these three as workflow-owned.
+_BSE_ARGUMENTS: tuple[str, ...] = ("rim_cut", "WRbsWF", "NLCC")
+
+
+def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, Any]:
+    """Convert ``calculator_parameters.yambo`` into the yambo BSE runcard dict.
+
+    ``aiida_koopmans.workgraphs.bethe_salpeter.RunBetheSalpeter`` takes the
+    ``{"arguments": [...], "variables": {...}}`` result verbatim as its own
+    ``bse_parameters``. Call only where ``koopmans_input.calculator_parameters.yambo``
+    is set (``workflow.task == 'bse'``, enforced at parse time).
+
+    Every yambo runcard variable this route sets either comes straight off a
+    ``YamboBseParameters`` field, via its own ``to_runcard_variables`` (each
+    field's unit travels on the field itself, so nothing is hand-listed
+    here), or is fixed here: ``KfnQPdb`` (the Koopmans quasiparticle
+    database), the BSE momentum-transfer range and the MPI role split are
+    the composed graph's own, and refused if stated here (they are not — no
+    field maps to them). The light-polarisation direction (``LongDrXs`` /
+    ``BLongDir``) is emitted only when the input states it; left unset,
+    yambo's own compiled-in default (x-polarized) applies — the `bse`
+    protocol sets neither, so there is no protocol default to fall back to.
+    """
+    yambo = koopmans_input.calculator_parameters.yambo
+    if yambo is None:
+        raise ValueError(
+            "`yambo_input_to_bse_parameters` needs `koopmans_input.calculator_parameters.yambo` "
+            "set; only a `workflow.task: bse` input reaches here."
+        )
+    return {"arguments": list(_BSE_ARGUMENTS), "variables": yambo.to_runcard_variables()}
 
 
 def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:

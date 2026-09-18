@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -12,8 +13,10 @@ from koopmans.aiida.conversion import (
     _calculate_kpoints_along_path,
     _parse_kpoints_path_string,
     atoms_input_to_structure,
+    input_to_kcw_overrides,
     input_to_ph_parameters,
     input_to_pw_parameters,
+    yambo_input_to_bse_parameters,
 )
 from koopmans.input_file import AtomsInput
 from tests.fixtures import path_labels
@@ -375,6 +378,182 @@ class TestInputToPwParameters:
         assert parameters["SYSTEM"]["ecutrho"] == pytest.approx(80.0)
 
 
+class TestInputToKcwOverrides:
+    """``calculator_parameters.kcw`` splits per namelist, only where the user wrote something."""
+
+    def test_no_kcw_block_gives_no_overrides(self, aiida_profile: Any) -> None:
+        """Silence everywhere means an empty overrides dict, not four empty entries."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_pw_input())
+        assert input_to_kcw_overrides(inp) == {}
+
+    def test_each_namelist_lands_under_its_own_key_and_nowhere_else(
+        self, aiida_profile: Any
+    ) -> None:
+        """A keyword set on one namelist appears only under that namelist's key."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "kcw": {
+                        "control": {"lrpa": True},
+                        "screen": {"tr2": 1.0e-16},
+                        "ham": {"on_site_only": True},
+                    },
+                }
+            )
+        )
+        overrides = input_to_kcw_overrides(inp)
+
+        assert overrides["control"] == {"lrpa": True}
+        assert overrides["screen"] == {"tr2": pytest.approx(1.0e-16)}
+        assert overrides["ham"] == {"on_site_only": True}
+        assert "wannier" not in overrides
+        # Every namelist's dict carries only what it owns.
+        assert "tr2" not in overrides["control"]
+        assert "lrpa" not in overrides["screen"]
+        assert "on_site_only" not in overrides["control"]
+        assert "on_site_only" not in overrides["screen"]
+
+    def test_a_null_keyword_is_left_out(self, aiida_profile: Any) -> None:
+        """``null`` means the same as leaving the keyword out, not blanking the route's value.
+
+        The keyword is *set* in pydantic's sense, so ``exclude_unset`` alone
+        keeps it and the route's own value is replaced by ``None``.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                calculator_parameters={
+                    "ecutwfc": 20.0,
+                    "kcw": {"screen": {"niter": None, "nmix": 6}},
+                }
+            )
+        )
+        overrides = input_to_kcw_overrides(inp)
+
+        assert overrides["screen"] == {"nmix": 6}
+
+    def test_unset_namelists_are_absent(self, aiida_profile: Any) -> None:
+        """Setting only ``control`` leaves ``wannier``/``screen``/``ham`` out entirely."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(calculator_parameters={"ecutwfc": 20.0, "kcw": {"control": {"lrpa": True}}})
+        )
+        overrides = input_to_kcw_overrides(inp)
+        assert set(overrides) == {"control"}
+
+
+def _bse_pw_input(**yambo_updates: Any) -> dict[str, Any]:
+    """Return a minimal ``task: bse`` input dict with the given ``calculator_parameters.yambo``."""
+    d = _pw_input(calculator_parameters={"ecutwfc": 20.0})
+    d["workflow"]["task"] = "bse"
+    d["calculator_parameters"]["yambo"] = {
+        "BndsRnXs": [1, 100],
+        "NGsBlkXs": 2,
+        "BSEBands": [4, 5],
+        "BEnRange": [0, 10],
+        **yambo_updates,
+    }
+    return d
+
+
+class TestYamboInputToBseParameters:
+    """``calculator_parameters.yambo`` maps onto the yambo BSE runcard's own arguments/variables."""
+
+    def test_full_mapping(self, aiida_profile: Any) -> None:
+        """Every field lands under its own yambo variable name, matching the k2y BSE example.
+
+        Values are the k2y example's own literal runcard
+        (``k2y/examples/silicon_aiida_bse/03_bse_submit.py``), so this pins
+        the whole conversion dict against the real numbers a user runs with,
+        not placeholders that happen to satisfy the field types.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(
+            _bse_pw_input(LongDrXs=[1.0, 1.0, 1.0], BLongDir=[1.0, 1.0, 1.0])
+        )
+        parameters = yambo_input_to_bse_parameters(inp)
+
+        assert parameters == {
+            "arguments": ["rim_cut", "WRbsWF", "NLCC"],
+            "variables": {
+                "BndsRnXs": [[1, 100], ""],
+                "NGsBlkXs": [2, "Ry"],
+                "BSENGBlk": [2, "Ry"],
+                "BSEBands": [[4, 5], ""],
+                "LongDrXs": [[1.0, 1.0, 1.0], ""],
+                "BLongDir": [[1.0, 1.0, 1.0], ""],
+                "BEnRange": [[0, 10], "eV"],
+                "BEnSteps": [1000, ""],
+                "BDmRange": [[0.1, 0.1], "eV"],
+            },
+        }
+
+    def test_defaults(self, aiida_profile: Any) -> None:
+        """``BEnSteps``, ``BDmRange`` and ``BSENGBlk`` take their documented defaults."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input())
+        parameters = yambo_input_to_bse_parameters(inp)
+
+        assert parameters["variables"]["BEnSteps"] == [1000, ""]
+        assert parameters["variables"]["BDmRange"] == [[0.1, 0.1], "eV"]
+        assert parameters["variables"]["BSENGBlk"] == [2, "Ry"]
+
+    def test_bsengblk_survives_when_stated_apart_from_ngsblkxs(self, aiida_profile: Any) -> None:
+        """A caller-stated ``BSENGBlk`` overrides the ``NGsBlkXs`` default."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input(BSENGBlk=5))
+        parameters = yambo_input_to_bse_parameters(inp)
+
+        assert parameters["variables"]["BSENGBlk"] == [5, "Ry"]
+
+    def test_asymmetric_broadening_survives_unbroadcast(self, aiida_profile: Any) -> None:
+        """A [min, max] ``BDmRange`` reaches the runcard unbroadcast."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input(BDmRange=[0.05, 0.3]))
+        parameters = yambo_input_to_bse_parameters(inp)
+
+        assert parameters["variables"]["BDmRange"] == [[0.05, 0.3], "eV"]
+
+    def test_no_owned_keyword_is_emitted(self, aiida_profile: Any) -> None:
+        """The route-owned keywords never appear: this conversion never invents them.
+
+        ``RunBetheSalpeter`` sets ``KfnQPdb``/``BSEQptR``/``BS_CPU``/``BS_ROLEs``
+        itself and refuses a caller that states them (see
+        ``aiida_koopmans.owned_keywords.OWNED["yambo"]``).
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input())
+        variables = yambo_input_to_bse_parameters(inp)["variables"]
+        for keyword in ("KfnQPdb", "BSEQptR", "BS_CPU", "BS_ROLEs"):
+            assert keyword not in variables
+
+    def test_unset_light_polarization_is_not_emitted(self, aiida_profile: Any) -> None:
+        """``LongDrXs``/``BLongDir`` are ordinary optional fields, left out when unset.
+
+        Unlike the route-owned keywords above, a caller may set these; the
+        input file default is simply unset, leaving yambo's own compiled-in
+        (x-polarized) default to apply.
+        """
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input())
+        variables = yambo_input_to_bse_parameters(inp)["variables"]
+        assert "LongDrXs" not in variables
+        assert "BLongDir" not in variables
+
+
 class TestPwNamelistDumpSurvivesDefaultValues:
     """A value equal to the schema default is not the same as an unset field.
 
@@ -536,6 +715,153 @@ class TestCodeParallelizationHelper:
         assert code_parallelization(CodeParallelization(pd=False)) == ({}, {})
         assert code_parallelization(None) == ({}, {})
 
+    def test_computer_walltime_account_and_queue(self) -> None:
+        """The computer block's walltime/account/queue land in metadata.options."""
+        from datetime import timedelta
+
+        from koopmans.aiida.conversion import code_parallelization
+        from koopmans.input_file.computer import ComputerInput
+
+        computer = ComputerInput(
+            name="daint", account="mr32", queue="normal", walltime=timedelta(hours=2)
+        )
+        options, settings = code_parallelization(None, computer)
+        assert options == {"max_wallclock_seconds": 7200, "account": "mr32", "queue_name": "normal"}
+        assert settings == {}
+
+    def test_per_code_walltime_overrides_the_computer_default(self) -> None:
+        """A code's own ``walltime`` wins over ``computer.walltime``."""
+        from datetime import timedelta
+
+        from koopmans.aiida.conversion import code_parallelization
+        from koopmans.input_file.computer import ComputerInput
+        from koopmans.input_file.parallelization import CodeParallelization
+
+        computer = ComputerInput(name="daint", walltime=timedelta(hours=2))
+        code = CodeParallelization(walltime=timedelta(minutes=30))
+        options, _ = code_parallelization(code, computer)
+        assert options["max_wallclock_seconds"] == 1800
+
+    def test_computer_walltime_used_when_code_leaves_it_unset(self) -> None:
+        """A code with no walltime of its own falls back to the computer default."""
+        from datetime import timedelta
+
+        from koopmans.aiida.conversion import code_parallelization
+        from koopmans.input_file.computer import ComputerInput
+        from koopmans.input_file.parallelization import CodeParallelization
+
+        computer = ComputerInput(name="daint", walltime=timedelta(hours=2))
+        options, _ = code_parallelization(CodeParallelization(ntasks=4), computer)
+        assert options["max_wallclock_seconds"] == 7200
+
+    def test_no_computer_leaves_scheduler_options_empty(self) -> None:
+        """``computer=None`` (the default) adds no scheduler keys, matching the old signature."""
+        from koopmans.aiida.conversion import code_parallelization
+        from koopmans.input_file.parallelization import CodeParallelization
+
+        options, _ = code_parallelization(CodeParallelization(ntasks=4))
+        assert options == {"resources": {"num_machines": 1, "num_mpiprocs_per_machine": 4}}
+
+
+class TestValidateComputerSchedulerSupport:
+    """``validate_computer_scheduler_support`` refuses options a scheduler cannot honour."""
+
+    def test_hyperqueue_allows_walltime(
+        self, aiida_profile_clean: Any, aiida_computer: Any
+    ) -> None:
+        """HyperQueue does map ``max_wallclock_seconds`` (``--time-limit``), so this passes."""
+        from datetime import timedelta
+
+        from koopmans.aiida.conversion import validate_computer_scheduler_support
+        from koopmans.input_file.computer import ComputerInput
+        from koopmans.input_file.parallelization import ParallelizationInput
+
+        aiida_computer(label="hq-host", scheduler_type="hyperqueue", transport_type="core.local")
+        validate_computer_scheduler_support(
+            ComputerInput(name="hq-host", walltime=timedelta(hours=1)), ParallelizationInput()
+        )
+
+    @pytest.mark.parametrize("field", ["account", "queue"])
+    def test_hyperqueue_refuses_account_and_queue(
+        self, aiida_profile_clean: Any, aiida_computer: Any, field: str
+    ) -> None:
+        """HyperQueue has no account/project or queue concept."""
+        from koopmans.aiida.conversion import validate_computer_scheduler_support
+        from koopmans.input_file.computer import ComputerInput
+        from koopmans.input_file.parallelization import ParallelizationInput
+
+        aiida_computer(label="hq-host2", scheduler_type="hyperqueue", transport_type="core.local")
+        computer = ComputerInput(name="hq-host2", **{field: "value"})
+        with pytest.raises(ValueError, match=rf"`computer\.{field}`"):
+            validate_computer_scheduler_support(computer, ParallelizationInput())
+
+    def test_direct_scheduler_refuses_computer_walltime(
+        self, aiida_profile_clean: Any, aiida_computer: Any
+    ) -> None:
+        """The direct scheduler carries no wallclock enforcement (its own line is dead code)."""
+        from datetime import timedelta
+
+        from koopmans.aiida.conversion import validate_computer_scheduler_support
+        from koopmans.input_file.computer import ComputerInput
+        from koopmans.input_file.parallelization import ParallelizationInput
+
+        aiida_computer(
+            label="direct-host", scheduler_type="core.direct", transport_type="core.local"
+        )
+        with pytest.raises(ValueError, match=r"`computer\.walltime`"):
+            validate_computer_scheduler_support(
+                ComputerInput(name="direct-host", walltime=timedelta(hours=1)),
+                ParallelizationInput(),
+            )
+
+    @pytest.mark.parametrize("code_name", ["pw", "kcw"])
+    def test_direct_scheduler_refuses_per_code_walltime(
+        self, aiida_profile_clean: Any, aiida_computer: Any, code_name: str
+    ) -> None:
+        """A per-code walltime is checked against the same scheduler, for every code."""
+        from datetime import timedelta
+
+        from koopmans.aiida.conversion import validate_computer_scheduler_support
+        from koopmans.input_file.computer import ComputerInput
+        from koopmans.input_file.parallelization import (
+            CodeParallelization,
+            ParallelizationInput,
+        )
+
+        aiida_computer(
+            label="direct-host2", scheduler_type="core.direct", transport_type="core.local"
+        )
+        code = CodeParallelization(walltime=timedelta(minutes=30))
+        parallelization = ParallelizationInput(**{code_name: code})
+        with pytest.raises(ValueError, match=rf"`parallelization\.{code_name}\.walltime`"):
+            validate_computer_scheduler_support(ComputerInput(name="direct-host2"), parallelization)
+
+    def test_slurm_allows_account_queue_and_walltime(
+        self, aiida_profile_clean: Any, aiida_computer: Any
+    ) -> None:
+        """A real batch scheduler (SLURM) accepts every option."""
+        from datetime import timedelta
+
+        from koopmans.aiida.conversion import validate_computer_scheduler_support
+        from koopmans.input_file.computer import ComputerInput
+        from koopmans.input_file.parallelization import ParallelizationInput
+
+        aiida_computer(label="slurm-host", scheduler_type="core.slurm", transport_type="core.ssh")
+        computer = ComputerInput(
+            name="slurm-host", account="mr32", queue="normal", walltime=timedelta(hours=2)
+        )
+        validate_computer_scheduler_support(computer, ParallelizationInput())
+
+    def test_unconfigured_computer_is_a_no_op(self, aiida_profile_clean: Any) -> None:
+        """A computer that does not exist yet is not this function's problem to diagnose."""
+        from koopmans.aiida.conversion import validate_computer_scheduler_support
+        from koopmans.input_file.computer import ComputerInput
+        from koopmans.input_file.parallelization import ParallelizationInput
+
+        validate_computer_scheduler_support(
+            ComputerInput(name="localhost", account="mr32"), ParallelizationInput()
+        )
+
 
 class TestParallelizationWiring:
     """The pw parallelization directive threads into the shared pw overrides."""
@@ -618,10 +944,10 @@ class TestDispatcherThreadsParallelization:
 
         captured: dict[str, Any] = {}
 
-        def fake_build(**kwargs: Any) -> str:
-            """Capture the builder call's kwargs."""
+        def fake_build(**kwargs: Any) -> SimpleNamespace:
+            """Capture the builder call's kwargs, standing in for the workgraph."""
             captured.update(kwargs)
-            return "workgraph"
+            return SimpleNamespace()
 
         # Stub the profile-dependent structure/pseudo setup and the graph build
         # so the test isolates the dispatcher's threading logic.
@@ -635,6 +961,75 @@ class TestDispatcherThreadsParallelization:
         )
         build_dft_bands_workgraph(inp)
         assert captured["parallelization"] == {"pw": {"npool": 4}, "kcw": {"ntasks": 8}}
+
+    def test_computer_walltime_reaches_a_non_pw_code(
+        self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
+    ) -> None:
+        """``computer.walltime``/``account``/``queue`` default every code's entry, not just pw's."""
+        import aiida_koopmans.workgraphs.pw as pw_module
+
+        from koopmans.aiida.workflows import dft as dft_module
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        captured: dict[str, Any] = {}
+
+        def fake_build(**kwargs: Any) -> SimpleNamespace:
+            """Capture the builder call's kwargs, standing in for the workgraph."""
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        monkeypatch.setattr(
+            dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+        )
+        monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
+
+        inp = KoopmansInput.model_validate(
+            _pw_input(
+                parallelization={"kcw": {"ntasks": 8}, "wannier90": {"walltime": "PT30M"}},
+                computer={"walltime": "PT2H", "account": "mr32", "queue": "normal"},
+            )
+        )
+        build_dft_bands_workgraph(inp)
+        # kcw picks up the computer defaults; wannier90's own walltime wins over
+        # the computer's, but account/queue still reach it (no per-code override).
+        assert captured["parallelization"]["kcw"] == {
+            "ntasks": 8,
+            "max_wallclock_seconds": 7200,
+            "account": "mr32",
+            "queue_name": "normal",
+        }
+        assert captured["parallelization"]["wannier90"] == {
+            "max_wallclock_seconds": 1800,
+            "account": "mr32",
+            "queue_name": "normal",
+        }
+
+    def test_localhost_default_emits_neither_account_nor_queue(
+        self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
+    ) -> None:
+        """With no ``computer.account``/``queue`` set, a non-pw entry carries neither key."""
+        import aiida_koopmans.workgraphs.pw as pw_module
+
+        from koopmans.aiida.workflows import dft as dft_module
+        from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
+        from koopmans.input_file import KoopmansInput
+
+        captured: dict[str, Any] = {}
+
+        def fake_build(**kwargs: Any) -> SimpleNamespace:
+            """Capture the builder call's kwargs, standing in for the workgraph."""
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        monkeypatch.setattr(
+            dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
+        )
+        monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
+
+        inp = KoopmansInput.model_validate(_pw_input(parallelization={"kcw": {"ntasks": 8}}))
+        build_dft_bands_workgraph(inp)
+        assert captured["parallelization"]["kcw"] == {"ntasks": 8}
 
     def test_no_config_passes_none(
         self, aiida_profile: Any, installed_pw_code: Any, monkeypatch: Any
@@ -650,9 +1045,13 @@ class TestDispatcherThreadsParallelization:
         monkeypatch.setattr(
             dft_module, "prepare_common_inputs", lambda inp, keys: (None, "fam", {})
         )
-        monkeypatch.setattr(
-            pw_module.RunPwBands, "build", staticmethod(lambda **kw: captured.update(kw))
-        )
+
+        def fake_build(**kwargs: Any) -> SimpleNamespace:
+            """Capture the builder call's kwargs, standing in for the workgraph."""
+            captured.update(kwargs)
+            return SimpleNamespace()
+
+        monkeypatch.setattr(pw_module.RunPwBands, "build", staticmethod(fake_build))
 
         build_dft_bands_workgraph(KoopmansInput.model_validate(_pw_input()))
         assert captured["parallelization"] is None

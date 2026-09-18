@@ -910,6 +910,11 @@ scratch/
 # docs tree has that shape, so the prose, input files and figures stay tracked.
 docs/source/tutorials/**/[0-9][0-9]*-*/
 docs/source/tutorials/**/README
+docs/source/tutorials/**/aiida_node_metadata.yaml
+
+# `koopmans run` also writes a `<input>.run.yaml` anchor beside the input file,
+# recording the submitted process; it belongs to one run, not to the tutorial.
+docs/source/tutorials/**/*.run.yaml
 
 # Tutorial input archives are packed from the tracked input files at build time
 # (see TUTORIAL_ARCHIVES in docs/source/conf.py), so the archive can never fall

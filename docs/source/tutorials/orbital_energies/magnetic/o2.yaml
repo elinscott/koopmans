@@ -1,13 +1,11 @@
 # Molecular oxygen: the ozone calculation applied to a paramagnetic molecule,
-# with two screening iterations and near-degenerate orbitals sharing a
-# screening parameter.
+# with near-degenerate orbitals sharing a screening parameter.
 
 workflow:
   task: singlepoint
   correction: ki
   screening_method: dscf
   init_orbitals: kohn-sham
-  alpha_numsteps: 2               # refine the screening parameters once more
   pseudo_library: SG15/1.2/PBE/SR
   spin: collinear                 # the two spin channels differ
   group_orbitals_by: self_hartree # orbitals this alike share one parameter
