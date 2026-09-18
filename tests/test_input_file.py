@@ -1,16 +1,25 @@
 """Tests for input file parsing."""
 
 import json
+import re
+from datetime import timedelta
+from importlib import import_module
 from pathlib import Path
 
 import pytest
+from aiida_koopmans.owned_keywords import OWNED
 
+from koopmans.base import BaseModel
 from koopmans.input_file import (
     INPUT_FILE_FORMAT_VERSION,
+    BetheSalpeterRoles,
+    DipoleRoles,
     KoopmansInput,
+    StaticScreeningRoles,
     migrate_input_dict,
     read_input_file,
 )
+from koopmans.input_file._codegen import MODULES, REASONS, UNREACHABLE
 from koopmans.input_file.workflow import Task
 
 # The silicon tutorial input file, relative to the tutorials directory.
@@ -127,7 +136,6 @@ _REMOVED_KEYWORDS = [
     ("workflow", "automated_wannierization"),
     ("ml", "train_on_the_fly"),
     ("ml", "alphas_from_file"),
-    ("calculator_parameters.wannier90", "auto_projections"),
     ("calculator_parameters.wannier90.up", "auto_projections"),
     ("calculator_parameters.wannier90.down", "auto_projections"),
 ]
@@ -230,6 +238,35 @@ class TestCalculateBandsRemoved:
             KoopmansInput.model_validate(d)
 
 
+class TestUnfoldAndInterpolateBlockRemoved:
+    """The band-structure densification factor moved to ``kpoints``."""
+
+    def test_the_block_names_its_replacement(self, tmp_path: Path) -> None:
+        """The message points the reader at the new field, not at ``extra_forbidden``."""
+        d = _minimal_si_input()
+        _set_keyword(d, "calculator_parameters", "unfold_and_interpolate", {"smooth_int_factor": 4})
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.unfold_and_interpolate` was replaced" in message
+        assert "`kpoints.smooth_interpolation_factor`" in message
+        assert "is not a valid keyword" not in message
+
+    def test_the_block_is_rejected_however_it_is_set(self) -> None:
+        """An empty block is refused too: the block itself is gone, not just its keywords."""
+        from pydantic import ValidationError
+
+        d = _minimal_si_input()
+        _set_keyword(d, "calculator_parameters", "unfold_and_interpolate", {})
+
+        with pytest.raises(ValidationError, match="was replaced"):
+            KoopmansInput.model_validate(d)
+
+
 class TestPeriodicIsOnePerCellVector:
     """``periodic`` is canonical after validation, whichever way it was written."""
 
@@ -329,7 +366,38 @@ class TestPerCalculatorCutoffsRemoved:
         assert (kcp["ecutwfc"], kcp["ecutrho"]) == pytest.approx((45.0, 180.0))
 
 
-def _parallelization_input(*, parallelization: object | None = None) -> dict[str, object]:
+class TestKcpMagnetizationRemoved:
+    """The magnetization is stated once, via ``calculator_parameters``."""
+
+    def test_the_kcp_magnetization_names_the_shared_field(self, tmp_path: Path) -> None:
+        """The retired ``kcp`` spelling points at ``calculator_parameters``' own field."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with({"kcp": {"system": {"tot_magnetization": 2.0}}}))
+        )
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcp.system.tot_magnetization`" in message
+        assert "`calculator_parameters.tot_magnetization`" in message
+
+    def test_the_shared_magnetization_still_reaches_kcp(self, tmp_path: Path) -> None:
+        """The surviving spelling is what the kcp.x builders read."""
+        from koopmans.aiida.workflows.dscf import kcp_dscf_inputs
+
+        input_file = tmp_path / "input.json"
+        input_file.write_text(
+            json.dumps(_si_input_with({"ecutwfc": 45.0, "nbnd": 8, "tot_magnetization": 2.0}))
+        )
+
+        assert kcp_dscf_inputs(read_input_file(input_file))["tot_magnetization"] == 2
+
+
+def _parallelization_input(
+    *, parallelization: object | None = None, computer: object | None = None
+) -> dict[str, object]:
     """Return a minimal silicon input dict for parallelization-block tests."""
     d: dict[str, object] = {
         "workflow": {"task": "dft_bands", "pseudo_library": "X"},
@@ -345,6 +413,8 @@ def _parallelization_input(*, parallelization: object | None = None) -> dict[str
     }
     if parallelization is not None:
         d["parallelization"] = parallelization
+    if computer is not None:
+        d["computer"] = computer
     return d
 
 
@@ -441,6 +511,30 @@ class TestParallelizationSchema:
         assert wannier90 is not None
         assert wannier90.ntasks == 4
 
+    def test_yambo_accepts_ntasks_and_omp(self) -> None:
+        """Yambo parallelizes over its own k/eh/t roles, not pools, but takes ntasks/omp."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"yambo": {"ntasks": 4, "omp": 2}})
+        )
+        yambo = inp.parallelization.yambo
+        assert yambo is not None
+        assert (yambo.ntasks, yambo.omp) == (4, 2)
+        assert inp.parallelization.as_mapping() == {"yambo": {"ntasks": 4, "omp": 2}}
+
+    def test_npool_rejected_for_yambo(self) -> None:
+        """Yambo has no ``-npool`` concept; it parallelizes over its own runcard roles."""
+        with pytest.raises(ValueError, match=r"'npool' is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={"yambo": {"npool": 2}})
+            )
+
+    def test_pd_rejected_for_yambo(self) -> None:
+        """Yambo has no pencil-decomposition concept."""
+        with pytest.raises(ValueError, match=r"'pd' \(pencil decomposition\) is not valid"):
+            KoopmansInput.model_validate(
+                _parallelization_input(parallelization={"yambo": {"pd": True}})
+            )
+
     def test_unknown_code_rejected(self) -> None:
         """An unrecognised code name is not a valid parallelization key."""
         with pytest.raises(ValueError):
@@ -448,11 +542,249 @@ class TestParallelizationSchema:
                 _parallelization_input(parallelization={"foo": {"npool": 2}})
             )
 
+    def test_yambo_role_split_maps_to_structured_dict(self) -> None:
+        """A named driver passes through ``as_mapping`` as its own ``{role: count}`` dict.
+
+        aiida-koopmans, not this schema, turns it into yambo's own
+        ``*_CPU``/``*_ROLEs`` runcard strings.
+        """
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={
+                    "yambo": {"ntasks": 4, "bethe_salpeter": {"k": 2, "eh": 2}},
+                }
+            )
+        )
+        yambo = inp.parallelization.yambo
+        assert yambo is not None
+        assert yambo.bethe_salpeter == BetheSalpeterRoles(k=2, eh=2)
+        assert inp.parallelization.as_mapping() == {
+            "yambo": {
+                "ntasks": 4,
+                "bethe_salpeter": {"k": 2, "eh": 2},
+            }
+        }
+
+    def test_yambo_all_three_drivers_map_independently(self) -> None:
+        """The worked example: three drivers each produce their own structured dict."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={
+                    "yambo": {
+                        "ntasks": 4,
+                        "omp": 1,
+                        "bethe_salpeter": {"k": 2, "eh": 2},
+                        "static_screening": {"k": 4},
+                        "dipoles": {"k": 4},
+                    },
+                }
+            )
+        )
+        assert inp.parallelization.as_mapping() == {
+            "yambo": {
+                "ntasks": 4,
+                "omp": 1,
+                "bethe_salpeter": {"k": 2, "eh": 2},
+                "static_screening": {"k": 4},
+                "dipoles": {"k": 4},
+            }
+        }
+
+    def test_yambo_role_vocabulary_matches_aiida_koopmans(self) -> None:
+        """This schema's role fields cannot drift from aiida-koopmans's own table.
+
+        aiida-koopmans owns the translation into yambo's runcard strings and
+        needs its own per-driver role order to build them (roles are
+        matched by name, not position, in yambo's source, but aiida-koopmans
+        still has to name them in *some* order when it writes the runcard).
+        Each role model here declares its fields in that same order; this
+        pins the two packages' vocabularies together so one cannot add or
+        reorder a role without the other noticing.
+        """
+        from aiida_koopmans.parallelization import YAMBO_ROLE_DRIVERS
+
+        role_models: dict[str, type[BaseModel]] = {
+            "bethe_salpeter": BetheSalpeterRoles,
+            "static_screening": StaticScreeningRoles,
+            "dipoles": DipoleRoles,
+        }
+        assert set(role_models) == set(YAMBO_ROLE_DRIVERS)
+        for driver, model in role_models.items():
+            _prefix, role_order = YAMBO_ROLE_DRIVERS[driver]
+            assert tuple(model.model_fields) == tuple(role_order), driver
+
+    def test_yambo_omitted_driver_has_no_driver_key(self) -> None:
+        """No driver named means ``as_mapping`` emits no key for it at all."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"yambo": {"ntasks": 4}})
+        )
+        assert inp.parallelization.as_mapping() == {"yambo": {"ntasks": 4}}
+
+    @pytest.mark.parametrize(
+        ("driver", "roles"),
+        [
+            ("bethe_salpeter", {"q": 2, "eh": 2}),
+            ("static_screening", {"eh": 4}),
+            ("dipoles", {"t": 4}),
+        ],
+    )
+    def test_yambo_role_split_rejects_unknown_role(
+        self, driver: str, roles: dict[str, int]
+    ) -> None:
+        """A role outside the driver's own vocabulary is refused by name.
+
+        The per-driver role models forbid extra fields; this is pydantic's
+        own ``extra_forbidden`` error, not a hand-written check.
+        """
+        with pytest.raises(ValueError, match=r"Extra inputs are not permitted"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={"yambo": {"ntasks": sum(roles.values()), driver: roles}}
+                )
+            )
+
+    def test_yambo_role_split_rejects_non_positive_count(self) -> None:
+        """A zero or negative rank count is refused by pydantic's own positive-int check."""
+        with pytest.raises(ValueError, match=r"greater than 0"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={
+                        "yambo": {"ntasks": 2, "bethe_salpeter": {"k": 2, "eh": 0}},
+                    }
+                )
+            )
+
+    def test_yambo_role_split_without_ntasks_rejected(self) -> None:
+        """A driver named without ``ntasks`` cannot be checked against the rank count."""
+        with pytest.raises(ValueError, match=r"needs 'parallelization.yambo.ntasks' set"):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={"yambo": {"bethe_salpeter": {"k": 2, "eh": 2}}}
+                )
+            )
+
+    def test_yambo_role_split_product_must_equal_ntasks(self) -> None:
+        """The role counts must multiply to ``ntasks``, or yambo silently drops the split."""
+        with pytest.raises(
+            ValueError, match=r"multiply.*to 4.*not 'parallelization.yambo.ntasks' = 8"
+        ):
+            KoopmansInput.model_validate(
+                _parallelization_input(
+                    parallelization={
+                        "yambo": {"ntasks": 8, "bethe_salpeter": {"k": 2, "eh": 2}},
+                    }
+                )
+            )
+
     @pytest.mark.parametrize("field", ["ntasks", "npool"])
     def test_positive_ints_only(self, field: str) -> None:
         """Both integer fields reject zero and negative values."""
         with pytest.raises(ValueError):
             KoopmansInput.model_validate(_parallelization_input(parallelization={"pw": {field: 0}}))
+
+    def test_walltime_valid_for_pw(self) -> None:
+        """Pw accepts a per-code walltime override."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={"pw": {"walltime": "PT2H"}})
+        )
+        pw = inp.parallelization.pw
+        assert pw is not None and pw.walltime == timedelta(hours=2)
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_walltime_valid_for_every_code(self, code: str) -> None:
+        """Every code accepts a walltime override and it lands in the mapping."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(parallelization={code: {"walltime": "PT2H"}})
+        )
+        cfg = getattr(inp.parallelization, code)
+        assert cfg is not None and cfg.walltime == timedelta(hours=2)
+        assert inp.parallelization.as_mapping() == {code: {"max_wallclock_seconds": 7200}}
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_computer_default_reaches_every_code(self, code: str) -> None:
+        """A code with no walltime of its own falls back to ``computer.walltime``."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={code: {"ntasks": 2}},
+                computer={"name": "daint", "walltime": "PT1H"},
+            )
+        )
+        mapping = inp.parallelization.as_mapping(inp.computer)
+        assert mapping[code] == {"ntasks": 2, "max_wallclock_seconds": 3600}
+
+    @pytest.mark.parametrize("code", ["kcp", "kcw", "wannier90", "ph"])
+    def test_per_code_walltime_beats_computer_default(self, code: str) -> None:
+        """A code's own ``walltime`` wins over ``computer.walltime``, for every code."""
+        inp = KoopmansInput.model_validate(
+            _parallelization_input(
+                parallelization={code: {"walltime": "PT30M"}},
+                computer={"name": "daint", "walltime": "PT2H"},
+            )
+        )
+        mapping = inp.parallelization.as_mapping(inp.computer)
+        assert mapping[code] == {"max_wallclock_seconds": 1800}
+
+
+def _si_input_with_computer(computer: object) -> dict[str, object]:
+    """Return a minimal silicon input dict naming a top-level ``computer`` block."""
+    d = _parallelization_input()
+    d["computer"] = computer
+    return d
+
+
+class TestComputerSchema:
+    """The top-level ``computer`` block: name/account/queue/walltime."""
+
+    def test_default_is_localhost(self) -> None:
+        """With no `computer` block, the run targets the bundled `localhost` computer."""
+        inp = KoopmansInput.model_validate(_parallelization_input())
+        assert inp.computer.name == "localhost"
+        assert (inp.computer.account, inp.computer.queue, inp.computer.walltime) == (
+            None,
+            None,
+            None,
+        )
+
+    def test_bare_label_is_rejected(self) -> None:
+        """`computer: daint` is refused; only the block form (`computer: {name: daint}`) parses."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="Input should be a valid dictionary"):
+            KoopmansInput.model_validate(_si_input_with_computer("daint"))
+
+    def test_block_form_carries_account_queue_and_walltime(self) -> None:
+        """The block form's fields all round-trip."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_computer(
+                {"name": "daint", "account": "mr32", "queue": "normal", "walltime": "PT2H"}
+            )
+        )
+        assert inp.computer.name == "daint"
+        assert inp.computer.account == "mr32"
+        assert inp.computer.queue == "normal"
+        assert inp.computer.walltime == timedelta(hours=2)
+
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("02:30:00", timedelta(hours=2, minutes=30)),
+            ("PT2H30M", timedelta(hours=2, minutes=30)),
+            (9000, timedelta(hours=2, minutes=30)),
+            (timedelta(hours=2, minutes=30), timedelta(hours=2, minutes=30)),
+        ],
+    )
+    def test_walltime_spellings(self, spelling: object, expected: timedelta) -> None:
+        """``HH:MM:SS``, an ISO 8601 duration, a seconds count, and a ``timedelta`` all parse."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_computer({"name": "daint", "walltime": spelling})
+        )
+        assert inp.computer.walltime == expected
+
+    @pytest.mark.parametrize("spelling", ["2h", "90m", "1d12h", "30s", "two hours"])
+    def test_walltime_shorthand_and_nonsense_rejected(self, spelling: str) -> None:
+        """Pydantic's native timedelta parsing rejects the old compact shorthand too."""
+        with pytest.raises(ValueError):
+            KoopmansInput.model_validate(_si_input_with_computer({"walltime": spelling}))
 
 
 class TestKpointsOffset:
@@ -493,6 +825,63 @@ class TestKpointsOffset:
 
         with pytest.raises(ValueError, match="samples Gamma itself"):
             GammaOnlyKpointsInput(offset=(0.5, 0.0, 0.0))
+
+
+class TestSmoothInterpolationFactor:
+    """``smooth_interpolation_factor`` multiplies ``grid`` for the smooth-interpolation method."""
+
+    def test_default_is_one_in_every_direction(self) -> None:
+        """Leaving the keyword out asks for no densification."""
+        from koopmans.input_file import GridKpointsInput
+
+        assert GridKpointsInput(grid=(2, 2, 2)).smooth_interpolation_factor == (1, 1, 1)
+
+    def test_a_bare_integer_broadcasts_to_every_direction(self) -> None:
+        """A scalar factor is shorthand for the same factor on every axis."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=4)
+        assert inp.smooth_interpolation_factor == (4, 4, 4)
+
+    def test_a_triple_scales_each_direction_independently(self) -> None:
+        """A three-entry factor densifies the directions independently."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 2, 3])
+        assert inp.smooth_interpolation_factor == (1, 2, 3)
+
+    def test_a_factor_below_one_is_rejected(self) -> None:
+        """The factor multiplies the grid, so it cannot coarsen it."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=0)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 0, 1])
+
+    def test_a_boolean_is_rejected(self) -> None:
+        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1).
+
+        The strict per-axis type check rejects it as not a valid integer,
+        rather than accepting it as a factor of 1.
+        """
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="valid integer"):
+            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=True)
+
+    def test_gamma_only_carries_the_same_field(self) -> None:
+        """Gamma-only kpoints carry the field too, at the same default.
+
+        A gamma-only run has no path to interpolate a band structure along,
+        so a factor above 1 is refused downstream (by the "no path" rule),
+        not by this field being absent from the model.
+        """
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        assert GammaOnlyKpointsInput().smooth_interpolation_factor == (1, 1, 1)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GammaOnlyKpointsInput(smooth_interpolation_factor=0)
 
 
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:
@@ -695,15 +1084,283 @@ class TestPathDensityRename:
         assert inp.kpoints.path_density == 20.0
 
 
-# (keyword, a value the dft_eps route would never accept from the user, a
-# substring of what actually owns it).
-_PH_ROUTE_OWNED_KEYS = [
-    ("epsil", False, "dft_eps route"),
-    ("trans", True, "dft_eps route"),
-    ("verbosity", "low", "aiida-quantumespresso"),
+# The kcw.x models the generator emits, each with the input-file path it is
+# mounted at.
+_KCW_MODELS = [
+    model for module in MODULES if module.filename == "kcw.py" for model in module.models
 ]
 
-# (keyword, the value the route always forces — restating it is accepted).
+# (input-file path, ownership block, keyword). Read off the ownership roster
+# rather than restated here, so a keyword the DFPT route starts determining
+# is covered the moment ``aiida_koopmans`` declares it.
+_KCW_ROUTE_OWNED_KEYS = [
+    (model.path, model.block, keyword)
+    for model in _KCW_MODELS
+    for keyword in sorted(OWNED[model.block])
+]
+
+# (section, keyword, the value the DFPT route forces anyway).
+_KCW_ROUTE_FORCED_VALUES = [
+    ("calculator_parameters.kcw.control", "kcw_at_ks", False),
+    ("calculator_parameters.kcw.control", "read_unitary_matrix", True),
+    ("calculator_parameters.kcw.control", "l_vcut", True),
+    ("calculator_parameters.kcw.control", "spin_component", 1),
+    ("calculator_parameters.kcw.ham", "do_bands", False),
+]
+
+# (input-file section, block, keyword) for every unreachable kcw.x keyword.
+_KCW_UNREACHABLE_KEYS = [
+    (model.path, model.block, keyword)
+    for model in _KCW_MODELS
+    for keyword in sorted(UNREACHABLE.get(model.block, {}))
+]
+
+# Every keyword the kcw.x models still declare, with a non-default value.
+_KCW_PASSTHROUGH_KEYS = [
+    ("calculator_parameters.kcw.control", "kcw_iverbosity", 2),
+    ("calculator_parameters.kcw.control", "lrpa", True),
+    ("calculator_parameters.kcw.control", "assume_isolated", "martyna-tuckerman"),
+    ("calculator_parameters.kcw.control", "homo_only", True),
+    ("calculator_parameters.kcw.control", "spread_thr", 0.01),
+    ("calculator_parameters.kcw.control", "io_sp", True),
+    ("calculator_parameters.kcw.control", "io_real_space", True),
+    ("calculator_parameters.kcw.control", "irr_bz", True),
+    ("calculator_parameters.kcw.control", "use_wct", True),
+    ("calculator_parameters.kcw.wannier", "check_ks", False),
+    ("calculator_parameters.kcw.screen", "niter", 50),
+    ("calculator_parameters.kcw.screen", "nmix", 6),
+    ("calculator_parameters.kcw.screen", "tr2", 1.0e-16),
+    ("calculator_parameters.kcw.ham", "use_ws_distance", False),
+    ("calculator_parameters.kcw.ham", "write_hr", False),
+    ("calculator_parameters.kcw.ham", "on_site_only", True),
+]
+
+
+class TestKcwCalculatorParameters:
+    """``calculator_parameters.kcw`` mounts the kcw.x namelists (koopmans2#164)."""
+
+    @pytest.mark.parametrize(
+        ("section", "block", "keyword"),
+        _KCW_ROUTE_OWNED_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[2]}" for case in _KCW_ROUTE_OWNED_KEYS],
+    )
+    def test_route_owned_key_is_rejected(self, section: str, block: str, keyword: str) -> None:
+        """A key the DFPT route determines fails at parse, naming what to set instead."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, 1)
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}` is not a koopmans keyword" in message
+        assert REASONS[block][keyword] in message
+
+    @pytest.mark.parametrize(
+        ("section", "keyword", "value"),
+        _KCW_ROUTE_FORCED_VALUES,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[1]}" for case in _KCW_ROUTE_FORCED_VALUES],
+    )
+    def test_restating_the_forced_value_is_rejected_too(
+        self, section: str, keyword: str, value: object
+    ) -> None:
+        """The keyword is gone, so agreeing with the route is refused like disagreeing.
+
+        Accepting the agreeing spelling is what an earlier check did: it
+        compared the field against its declared default, so whichever value
+        that was passed and was then overwritten by the route anyway.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, value)
+
+        with pytest.raises(ValueError, match=rf"`{re.escape(section)}\.{keyword}`"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize(
+        ("section", "block", "keyword"),
+        _KCW_UNREACHABLE_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[2]}" for case in _KCW_UNREACHABLE_KEYS],
+    )
+    def test_unreachable_keyword_is_rejected(self, section: str, block: str, keyword: str) -> None:
+        """A keyword koopmans cannot pass through fails at parse, saying why.
+
+        Writing it would abort kcw.x at the namelist read, so accepting it
+        and forwarding it is worse than refusing it.
+        """
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, [0.5, 0.5])
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert f"`{section}.{keyword}` cannot be set from a koopmans input file" in message
+        assert UNREACHABLE[block][keyword] in message
+
+    def test_dump_and_revalidate_roundtrips(self) -> None:
+        """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks.
+
+        ``model_dump()`` states every field explicitly, so a check keyed on
+        presence rather than on the keyword being gone from the schema would
+        refuse any input round-tripped this way — a pattern koopmans itself
+        uses to re-validate a modified input.
+        """
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        KoopmansInput.model_validate(inp.model_dump())
+
+    @pytest.mark.parametrize(
+        ("section", "keyword", "value"),
+        _KCW_PASSTHROUGH_KEYS,
+        ids=[f"{case[0].rsplit('.', 1)[-1]}.{case[1]}" for case in _KCW_PASSTHROUGH_KEYS],
+    )
+    def test_pass_through_keyword_is_accepted_as_stated(
+        self, section: str, keyword: str, value: object
+    ) -> None:
+        """Every keyword the DFPT route does not determine is settable and comes back unchanged."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        _set_keyword(d, section, keyword, value)
+
+        inp = KoopmansInput.model_validate(d)
+
+        namelist: object = inp.calculator_parameters.kcw
+        for part in section.split(".")[2:]:  # drop "calculator_parameters", "kcw"
+            namelist = getattr(namelist, part)
+        assert getattr(namelist, keyword) == value
+
+    def test_every_declared_keyword_is_exercised(self) -> None:
+        """No kcw.x keyword reaches the input file untested.
+
+        A pydantic-espresso model regenerated with a new keyword must land in
+        ``_KCW_PASSTHROUGH_KEYS`` — or in the ownership roster, which drops it
+        from the schema — before it can quietly become settable.
+        """
+        exercised: dict[str, set[str]] = {model.path: set() for model in _KCW_MODELS}
+        for section, keyword, _value in _KCW_PASSTHROUGH_KEYS:
+            exercised[section].add(keyword)
+
+        for model in _KCW_MODELS:
+            declared = set(
+                getattr(import_module("koopmans.input_file.kcw"), model.emitted).model_fields
+            )
+            assert exercised[model.path] == declared, model.path
+
+    def test_defaults_leave_every_namelist_unset(self) -> None:
+        """With no ``kcw`` block, every namelist states nothing explicitly."""
+        inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
+        kcw = inp.calculator_parameters.kcw
+        assert kcw.control.model_fields_set == set()
+        assert kcw.wannier.model_fields_set == set()
+        assert kcw.screen.model_fields_set == set()
+        assert kcw.ham.model_fields_set == set()
+
+
+class TestKcwScreenNeedsAScreeningStep:
+    """``kcw.screen`` configures a calculation that ``calculate_alpha: false`` skips."""
+
+    def test_a_screen_block_without_a_screening_step_is_refused(self) -> None:
+        """The namelist would be assembled and never read; say so rather than drop it."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": 50}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcw.screen` has no effect" in message
+        assert "`workflow.calculate_alpha: false`" in message
+
+    def test_the_other_namelists_are_unaffected(self) -> None:
+        """``control`` / ``wannier`` / ``ham`` reach steps that still run."""
+        d = _si_input_with(
+            {"ecutwfc": 20.0, "kcw": {"control": {"lrpa": True}, "ham": {"write_hr": False}}}
+        )
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.calculator_parameters.kcw.control.lrpa is True
+
+    def test_a_null_keyword_is_not_a_stated_one(self) -> None:
+        """``null`` means the keyword was left out, here as in the overrides it builds."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": None}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        inp = KoopmansInput.model_validate(d)
+
+        assert inp.calculator_parameters.kcw.screen.niter is None
+
+    def test_an_empty_screen_block_is_accepted(self) -> None:
+        """A block stating no keyword asks for nothing, so there is nothing to refuse."""
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        KoopmansInput.model_validate(d)
+
+    def test_a_value_equal_to_the_schema_default_is_still_refused(self) -> None:
+        """Writing the default is still writing the keyword, so it is still refused.
+
+        ``nmix``'s pydantic default is 4: a user who writes ``nmix: 4`` is
+        stating a value the same as a user who writes ``nmix: 5``, and
+        ``input_to_kcw_overrides`` (``aiida/conversion.py``) emits it either
+        way.
+        """
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"nmix": 4}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcw.screen` has no effect" in message
+
+    def test_a_value_equal_to_the_seeded_default_is_still_refused(self) -> None:
+        """Writing the koopmans-seeded default is still writing the keyword.
+
+        ``tr2``'s generated field default is ``1e-18``, the value the DFPT
+        route seeds (not kcw.x's own ``1e-14``): a user who writes
+        ``tr2: 1.0e-18`` states the same value the route already uses, but
+        states it nonetheless, so it is still refused.
+        """
+        d = _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"tr2": 1.0e-18}}})
+        d["workflow"]["calculate_alpha"] = False  # type: ignore[index]
+        d["workflow"]["alpha_guess"] = 0.4  # type: ignore[index]
+
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.kcw.screen` has no effect" in message
+
+    def test_a_screen_block_is_fine_when_screening_runs(self) -> None:
+        """The default ``calculate_alpha: true`` runs the screen step that reads it."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with({"ecutwfc": 20.0, "kcw": {"screen": {"niter": 50}}})
+        )
+
+        assert inp.calculator_parameters.kcw.screen.niter == 50
+
+    def test_the_zno_tutorial_still_parses(self, tutorials_dir: Path) -> None:
+        """The shipped ZnO input runs at ``calculate_alpha: false`` with no screen block."""
+        inp = read_input_file(tutorials_dir / "band_structures/zno/zno.json")
+
+        assert inp.workflow.calculate_alpha is False
+        assert inp.calculator_parameters.kcw.screen.model_fields_set == set()
+
+
+# (keyword, a substring of the explanation it is refused with).
+_PH_ROUTE_OWNED_KEYS = [
+    ("epsil", "dft_eps"),
+    ("trans", "dft_eps"),
+    ("verbosity", "AiiDA"),
+    ("outdir", "AiiDA"),
+]
+
+# (keyword, the value the dft_eps route always forces).
 _PH_ROUTE_FORCED_VALUES = [
     ("epsil", True),
     ("trans", False),
@@ -714,37 +1371,30 @@ _PH_ROUTE_FORCED_VALUES = [
 class TestPhCalculatorParameters:
     """``calculator_parameters.ph`` mounts the ph.x ``INPUTPH`` namelist (koopmans2#162)."""
 
-    @pytest.mark.parametrize(("keyword", "value", "owner_snippet"), _PH_ROUTE_OWNED_KEYS)
-    def test_route_owned_key_is_rejected(
-        self, keyword: str, value: object, owner_snippet: str
-    ) -> None:
-        """A user-set route-owned key fails at parse, naming the key and its owner."""
+    @pytest.mark.parametrize(("keyword", "reason_snippet"), _PH_ROUTE_OWNED_KEYS)
+    def test_route_owned_key_is_rejected(self, keyword: str, reason_snippet: str) -> None:
+        """A user-set route-owned key fails at parse, naming the key and why it went."""
         d = _si_input_with({"ecutwfc": 20.0})
-        _set_keyword(d, "calculator_parameters.ph", keyword, value)
+        _set_keyword(d, "calculator_parameters.ph", keyword, "custom")
 
         with pytest.raises(ValueError) as excinfo:
             KoopmansInput.model_validate(d)
 
         message = str(excinfo.value)
         assert f"`calculator_parameters.ph.{keyword}`" in message
-        assert owner_snippet in message
-
-    def test_a_plugin_managed_key_is_an_unknown_field(self) -> None:
-        """``outdir`` is absent from the schema: aiida-quantumespresso forces it for every run."""
-        from pydantic import ValidationError
-
-        d = _si_input_with({"ecutwfc": 20.0})
-        _set_keyword(d, "calculator_parameters.ph", "outdir", "custom")
-
-        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-            KoopmansInput.model_validate(d)
+        assert reason_snippet in message
 
     @pytest.mark.parametrize(("keyword", "value"), _PH_ROUTE_FORCED_VALUES)
-    def test_restating_the_forced_value_is_accepted(self, keyword: str, value: object) -> None:
-        """A route-owned key stated at the value the route actually forces is not rejected."""
+    def test_restating_the_forced_value_is_rejected_too(self, keyword: str, value: object) -> None:
+        """The keyword is gone, so agreeing with the route is refused like disagreeing.
+
+        Accepting the agreeing spelling was how the old check let a stated
+        value through: it compared against the field's declared default, so
+        whichever value that was passed and then won the merge.
+        """
         d = _si_input_with({"ecutwfc": 20.0, "ph": {keyword: value}})
-        inp = KoopmansInput.model_validate(d)
-        assert getattr(inp.calculator_parameters.ph, keyword) == value
+        with pytest.raises(ValueError, match=rf"`calculator_parameters\.ph\.{keyword}`"):
+            KoopmansInput.model_validate(d)
 
     def test_dump_and_revalidate_roundtrips(self) -> None:
         """``model_dump()`` -> ``model_validate()`` must not trip the owned-key checks."""
@@ -762,6 +1412,94 @@ class TestPhCalculatorParameters:
         """With no ``ph`` block, the namelist states nothing explicitly."""
         inp = KoopmansInput.model_validate(_si_input_with({"ecutwfc": 20.0}))
         assert inp.calculator_parameters.ph.model_fields_set == set()
+
+
+def _bse_input(**yambo_updates: object) -> dict[str, object]:
+    """Return the minimal silicon input at ``task: bse`` with a valid ``yambo`` block."""
+    d = _si_input_with({"ecutwfc": 20.0})
+    d["workflow"]["task"] = "bse"  # type: ignore[index]
+    d["calculator_parameters"]["yambo"] = {  # type: ignore[index]
+        "BndsRnXs": [1, 100],
+        "NGsBlkXs": 2,
+        "BSEBands": [4, 5],
+        "BEnRange": [0, 10],
+        **yambo_updates,
+    }
+    return d
+
+
+class TestYamboSchema:
+    """``calculator_parameters.yambo``: the yambo BSE runcard parameters for ``task: bse``."""
+
+    def test_minimal_block_parses(self) -> None:
+        """The four required fields alone parse, with documented defaults filled in."""
+        inp = KoopmansInput.model_validate(_bse_input())
+        yambo = inp.calculator_parameters.yambo
+        assert yambo is not None
+        assert yambo.BEnSteps == 1000
+        assert yambo.BDmRange == (0.1, 0.1)
+        assert yambo.BSENGBlk == yambo.NGsBlkXs
+
+    def test_task_bse_needs_a_yambo_block(self) -> None:
+        """``task: bse`` with no ``yambo`` block is refused, naming the required fields."""
+        d = _si_input_with({"ecutwfc": 20.0})
+        d["workflow"]["task"] = "bse"  # type: ignore[index]
+        with pytest.raises(ValueError, match=r"needs a `calculator_parameters\.yambo` input block"):
+            KoopmansInput.model_validate(d)
+
+    def test_yambo_block_needs_task_bse(self) -> None:
+        """A ``yambo`` block stated under another task would go unread, and is refused."""
+        d = _bse_input()
+        d["workflow"]["task"] = "singlepoint"  # type: ignore[index]
+        with pytest.raises(ValueError, match=r"`calculator_parameters\.yambo` has no effect"):
+            KoopmansInput.model_validate(d)
+
+    def test_kpoints_path_is_refused(self) -> None:
+        """A ``bse`` task interpolates no band structure; a stated path is refused."""
+        d = _bse_input()
+        d["kpoints"]["path"] = "GX"  # type: ignore[index]
+        with pytest.raises(ValueError, match=r"`kpoints\.path` cannot take effect in a `bse`"):
+            KoopmansInput.model_validate(d)
+
+    @pytest.mark.parametrize("bands", [[0, 5], [5, 4]])
+    def test_bsebands_must_be_positive_and_ascending(self, bands: list[int]) -> None:
+        """A zero/negative first band, or a descending range, is refused."""
+        with pytest.raises(ValueError, match=r"ascending"):
+            KoopmansInput.model_validate(_bse_input(BSEBands=bands))
+
+    def test_benrange_must_be_ascending(self) -> None:
+        """A descending ``BEnRange`` is refused."""
+        with pytest.raises(ValueError, match=r"ascending"):
+            KoopmansInput.model_validate(_bse_input(BEnRange=[10, 0]))
+
+    def test_bdmrange_must_be_positive(self) -> None:
+        """A non-positive ``BDmRange`` value is refused."""
+        with pytest.raises(ValueError, match=r"BDmRange"):
+            KoopmansInput.model_validate(_bse_input(BDmRange=[0.1, -0.1]))
+
+    @pytest.mark.parametrize(
+        ("keyword", "reason_snippet"),
+        [
+            ("KfnQPdb", "quasiparticle database"),
+            ("BSEQptR", "optical"),
+            ("BS_CPU", "parallelization.yambo"),
+            ("BS_ROLEs", "parallelization.yambo"),
+            ("rim_cut", "Coulomb-divergence"),
+            ("WRbsWF", "excitonic wavefunctions"),
+            ("NLCC", "non-linear core correction"),
+        ],
+    )
+    def test_owned_keyword_is_rejected(self, keyword: str, reason_snippet: str) -> None:
+        """A yambo runcard variable the route determines is not a ``yambo`` field."""
+        pattern = rf"`calculator_parameters\.yambo\.{keyword}`"
+        with pytest.raises(ValueError, match=pattern) as excinfo:
+            KoopmansInput.model_validate(_bse_input(**{keyword: "nonsense"}))
+        assert reason_snippet in str(excinfo.value)
+
+    def test_unknown_keyword_is_rejected(self) -> None:
+        """A typo is refused generically, unlike a keyword the route owns."""
+        with pytest.raises(ValueError, match=r"extra_forbidden|Extra inputs"):
+            KoopmansInput.model_validate(_bse_input(NGsBlkXd=2))
 
 
 def _collinear_input(**calculator_parameters: object) -> dict[str, object]:
@@ -891,12 +1629,13 @@ class TestTheMomentIsWholeElectrons:
         with pytest.raises(ValueError, match="whole"):
             KoopmansInput.model_validate(d)
 
-    def test_the_pw_namelist_spelling_is_untouched(self) -> None:
-        """``pw.system.tot_magnetization`` reaches pw.x alone, under the user's occupations.
+    def test_the_pw_namelist_spelling_is_refused(self) -> None:
+        """``pw.system.tot_magnetization`` has no input-file spelling.
 
-        A fractional moment is legal there — with smearing, QE takes one —
-        so the rule belongs to the shared field the fixed-occupation routes
-        read, not to the namelist keyword.
+        The moment has exactly one spelling, ``calculator_parameters.
+        tot_magnetization``; every route that runs pw.x under ``nspin = 2``
+        writes the namelist keyword from there, so stating it directly
+        would risk a second, disagreeing value.
         """
         d = _si_input_with(
             {
@@ -910,5 +1649,9 @@ class TestTheMomentIsWholeElectrons:
                 },
             }
         )
-        inp = KoopmansInput.model_validate(d)
-        assert inp.calculator_parameters.pw.system.tot_magnetization == pytest.approx(0.5)
+        with pytest.raises(ValueError) as excinfo:
+            KoopmansInput.model_validate(d)
+
+        message = str(excinfo.value)
+        assert "`calculator_parameters.pw.system.tot_magnetization`" in message
+        assert "`calculator_parameters.tot_magnetization`" in message

@@ -35,8 +35,14 @@ from typing import Any
 
 import pytest
 
-from koopmans.aiida.workflows import advice_for, build_workgraph, load_codes
+from koopmans.aiida.workflows import (
+    advice_for,
+    build_workgraph,
+    load_codes,
+    require_computer_configured,
+)
 from koopmans.input_file import KoopmansInput
+from tests.fixtures import silicon_pw_input
 from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
 
 
@@ -298,6 +304,54 @@ class TestPreFlightAdvice:
             build_workgraph(inp)
         assert "koopmans install" in str(excinfo.value)
 
+    def test_bse_missing_pw_earns_preflight_advice(
+        self,
+        aiida_profile_clean: Any,
+        installed_kcw_code: Any,
+        installed_wannier_codes: Any,
+        installed_bse_codes: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """``pw`` is required in ``SinglepointBetheSalpeterCodes`` too, same reasoning as DFPT.
+
+        ``BetheSalpeterCodes`` and ``DfptCodes`` both declare ``pw`` as
+        required; loading it via ``SinglepointBetheSalpeterWorkflow.build``'s
+        own eager bind hits the same pre-flight-catches-a-KeyError situation
+        the DFPT test above pins.
+        """
+        from tests.test_bse_dispatcher import _si_bse_dict
+
+        inp = KoopmansInput.model_validate(_si_bse_dict())
+        with pytest.raises(ValueError, match="`pw@localhost`") as excinfo:
+            build_workgraph(inp)
+        assert "koopmans install" in str(excinfo.value)
+
+    def test_bse_missing_p2y_and_yambo_earns_preflight_advice(
+        self,
+        aiida_profile_clean: Any,
+        installed_pw_code: Any,
+        installed_kcw_code: Any,
+        installed_wannier_codes: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """``p2y`` and ``yambo`` are required in ``BetheSalpeterCodes``, both named at once.
+
+        Neither is one ``koopmans install`` registers (see
+        ``koopmans.aiida.setup.codes.code_specs``), so the advice must not
+        claim that command would fix it — the fix is ``verdi code create``,
+        same as for a code missing on a named remote computer.
+        """
+        from tests.test_bse_dispatcher import _si_bse_dict
+
+        inp = KoopmansInput.model_validate(_si_bse_dict())
+        with pytest.raises(ValueError) as excinfo:
+            build_workgraph(inp)
+        message = str(excinfo.value)
+        assert "`p2y@localhost`" in message
+        assert "`yambo@localhost`" in message
+        assert "verdi code create" in message
+        assert "koopmans install" not in message
+
 
 class TestStructuralAdvice:
     """Codes the plugin graphs wire structurally: ``NotRequired``, input-conditional.
@@ -369,3 +423,72 @@ class TestStructuralAdvice:
         assert "`wannierjl@localhost`" in advice
         assert "`projwfc@localhost`" in advice
         assert advice.count("wannierjl@localhost") == 1
+
+
+class TestComputerLoading:
+    """A ``computer.name`` other than ``localhost`` composes ``<code>@<computer>``."""
+
+    def test_require_computer_configured_is_a_no_op_for_localhost(
+        self, aiida_profile_clean: Any
+    ) -> None:
+        """A missing ``localhost`` is left to the missing-codes advice, not this check."""
+        require_computer_configured("localhost")
+
+    def test_require_computer_configured_passes_for_a_configured_remote(
+        self, aiida_profile_clean: Any, mock_remote_computer: Any
+    ) -> None:
+        """A configured remote computer passes without complaint."""
+        require_computer_configured("mock-remote")
+
+    def test_require_computer_configured_raises_for_an_unconfigured_remote(
+        self, aiida_profile_clean: Any
+    ) -> None:
+        """A named remote computer that was never set up gets a `verdi computer setup` hint."""
+        with pytest.raises(ValueError, match="computer 'daint' is not configured"):
+            require_computer_configured("daint")
+        with pytest.raises(ValueError, match="verdi computer setup"):
+            require_computer_configured("daint")
+
+    def test_load_codes_composes_the_remote_label(
+        self, aiida_profile_clean: Any, mock_remote_computer: Any, stub_executable: Any
+    ) -> None:
+        """A code registered on the named computer resolves as ``<name>@<computer>``."""
+        from aiida.orm import InstalledCode
+        from aiida_koopmans.workgraphs.pw import PwBandsCodes
+
+        InstalledCode(
+            label="pw",
+            computer=mock_remote_computer,
+            default_calc_job_plugin="quantumespresso.pw",
+            filepath_executable=str(stub_executable("pw.x")),
+        ).store()
+
+        codes = load_codes(PwBandsCodes, "mock-remote")
+        assert codes["pw"].computer.label == "mock-remote"
+
+    def test_missing_remote_computer_earns_a_setup_hint_before_any_code_lookup(
+        self, aiida_profile_clean: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A ``computer.name`` naming no computer at all fails before code loading.
+
+        Discriminates against the ordinary missing-codes advice: for a named
+        remote computer that was never registered, ``verdi computer setup``
+        is the fix, not ``koopmans install`` (which only touches the bundled
+        ``localhost`` backend).
+        """
+        d = silicon_pw_input()
+        d["computer"] = {"name": "daint"}
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(ValueError, match="computer 'daint' is not configured"):
+            build_workgraph(inp)
+
+    def test_missing_pw_on_a_configured_remote_names_the_remote_label(
+        self, aiida_profile_clean: Any, mock_remote_computer: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The pre-flight advice names ``pw@mock-remote``, not ``pw@localhost``."""
+        d = silicon_pw_input()
+        d["computer"] = {"name": "mock-remote"}
+        inp = KoopmansInput.model_validate(d)
+        with pytest.raises(ValueError, match=r"`pw@mock-remote`") as excinfo:
+            build_workgraph(inp)
+        assert "verdi code create" in str(excinfo.value)

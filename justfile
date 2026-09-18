@@ -48,6 +48,15 @@ format-docs:
 format-markdown:
     npx --yes prettier --write --prose-wrap always "**/*.md"
 
+[doc("regenerate the input-file models of the calculators koopmans drives")]
+generate-input-models:
+    uv run python src/koopmans/input_file/_codegen.py
+
+[doc("check the generated input-file models match their generator")]
+check-input-models:
+    just generate-input-models
+    git diff --exit-code src/koopmans/input_file/_generated
+
 [doc("check code quality")]
 lint:
     uvx ruff@0.14.14 check
