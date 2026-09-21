@@ -135,8 +135,8 @@ class TestEpsInfFactorAdvisory:
         d["kpoints"].update(kpoints_updates)
         return d
 
-    def test_auto_at_default_factor_is_advised_and_names_the_grid(self) -> None:
-        """The message names ``kpoints.grid`` — the mesh the dielectric step actually uses.
+    def test_auto_at_default_factor_names_kpoints_grid_when_scf_is_unset(self) -> None:
+        """Without an ``overrides.scf`` mesh, the dielectric step falls back to ``kpoints.grid``.
 
         A mutant that drops the mesh from the message, or that fires
         regardless of the actual grid, would still pass a bare "advisory
@@ -146,24 +146,48 @@ class TestEpsInfFactorAdvisory:
         assert advisories_for(inp) == [
             "workflow.eps_inf: auto computes the dielectric constant on the "
             "kpoints.grid mesh (4, 4, 4); it converges slowly with k-points, so "
-            "that mesh may be too coarse. Set kpoints.eps_inf_factor to densify "
-            "it for the dielectric-constant step alone."
+            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
+            "multiply kpoints.grid — not this mesh — into a denser one for the "
+            "dielectric-constant step alone."
         ]
 
-    def test_advisory_names_kpoints_grid_even_with_a_different_scf_override(self) -> None:
-        """The base is always ``kpoints.grid``, never ``overrides.scf``.
+    def test_auto_at_default_factor_names_the_scf_override_grid(self) -> None:
+        """With ``overrides.scf.grid`` set, the dielectric step falls back to THAT mesh.
 
-        A mutant that reads the chain's own (possibly overridden) scf mesh
-        instead of the top-level ``grid`` would print the wrong mesh here.
+        At the default factor ``eps_kpoints`` is unset, so the dielectric
+        scf reuses the chain's own ``scf_kpoints`` — which is
+        ``overrides.scf.grid`` when the caller states one, not
+        ``kpoints.grid``. A mutant that always names ``kpoints.grid``
+        would print (2, 2, 2) here while the calculation actually runs on
+        (6, 6, 6).
         """
         d = self._dfpt_dict(grid=[2, 2, 2])
         d["kpoints"]["overrides"] = {"scf": {"grid": [6, 6, 6]}}
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            "kpoints.grid mesh (2, 2, 2); it converges slowly with k-points, so "
-            "that mesh may be too coarse. Set kpoints.eps_inf_factor to densify "
-            "it for the dielectric-constant step alone."
+            "kpoints.overrides.scf.grid mesh (6, 6, 6); it converges slowly with "
+            "k-points, so that mesh may be too coarse. Set kpoints.eps_inf_factor "
+            "above 1 to multiply kpoints.grid — not this mesh — into a denser one "
+            "for the dielectric-constant step alone."
+        ]
+
+    def test_auto_at_default_factor_names_the_scf_override_spacing(self) -> None:
+        """With ``overrides.scf.grid_spacing`` set, no concrete mesh is knowable at parse.
+
+        A mutant that invents dimensions from ``kpoints.grid`` regardless
+        would misdescribe a run whose mesh the protocol only fixes later.
+        """
+        d = self._dfpt_dict(grid=[2, 2, 2])
+        d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.15}}
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the mesh "
+            "kpoints.overrides.scf.grid_spacing = 0.15 builds (dimensions unknown "
+            "until the calculation runs); it converges slowly with k-points, so "
+            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
+            "multiply kpoints.grid — not this mesh — into a denser one for the "
+            "dielectric-constant step alone."
         ]
 
     def test_auto_with_a_non_default_factor_is_silent(self) -> None:
