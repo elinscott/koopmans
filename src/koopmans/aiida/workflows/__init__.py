@@ -660,23 +660,6 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 _TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
 
 
-def _dfpt_scf_mesh_description(koopmans_input: KoopmansInput) -> str:
-    """Describe, in the user's vocabulary, the mesh ``eps_inf: auto`` falls back to.
-
-    ``SinglepointDFPTWorkflow`` gives the dielectric scf the chain's own
-    ``scf`` mesh unless ``kpoints.overrides.ph`` states one of its own — the
-    same resolution :func:`~koopmans.aiida.conversion.step_kpoints_mesh`
-    performs at build time, read here off the parsed model alone so this
-    check never touches the ORM.
-    """
-    scf_override = koopmans_input.kpoints.overrides.scf
-    if scf_override is not None and scf_override.grid is not None:
-        return f"mesh {tuple(scf_override.grid)}"
-    if scf_override is not None and scf_override.grid_spacing is not None:
-        return "scf's own kpoints_distance-derived mesh"
-    return f"mesh {tuple(koopmans_input.kpoints.grid)}"
-
-
 def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     """Return non-fatal notices about keywords the parsed input sets to no effect.
 
@@ -730,13 +713,13 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
         task == Task.SINGLEPOINT
         and workflow.screening_method == CalculateScreeningMethod.DFPT
         and workflow.eps_inf == "auto"
-        and koopmans_input.kpoints.overrides.ph is None
+        and koopmans_input.kpoints.eps_inf_factor == (1, 1, 1)
     ):
         advisories.append(
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            f"{_dfpt_scf_mesh_description(koopmans_input)}; it converges slowly "
-            "with k-points, so that mesh may be too coarse. Set kpoints.overrides.ph "
-            "to a denser mesh for the dielectric-constant step alone."
+            f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}; it converges "
+            "slowly with k-points, so that mesh may be too coarse. Set "
+            "kpoints.eps_inf_factor to densify it for the dielectric-constant step alone."
         )
 
     grouping_resolved_to_none = workflow.group_orbitals_by == GroupOrbitalsBy.NONE

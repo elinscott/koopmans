@@ -885,53 +885,83 @@ class TestSmoothInterpolationFactor:
             GammaOnlyKpointsInput(smooth_interpolation_factor=0)
 
 
-class TestPhOverride:
-    """``kpoints.overrides.ph`` takes effect only on a DFPT singlepoint under ``eps_inf: auto``."""
+class TestEpsInfFactor:
+    """``eps_inf_factor`` densifies ``grid`` for the DFPT ``eps_inf: auto`` dielectric step."""
+
+    def test_default_is_one_in_every_direction(self) -> None:
+        """Leaving the keyword out asks for no densification."""
+        from koopmans.input_file import GridKpointsInput
+
+        assert GridKpointsInput(grid=(2, 2, 2)).eps_inf_factor == (1, 1, 1)
+
+    def test_a_bare_integer_broadcasts_to_every_direction(self) -> None:
+        """A scalar factor is shorthand for the same factor on every axis."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=4)
+        assert inp.eps_inf_factor == (4, 4, 4)
+
+    def test_a_triple_scales_each_direction_independently(self) -> None:
+        """A three-entry factor densifies the directions independently."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=[1, 2, 3])
+        assert inp.eps_inf_factor == (1, 2, 3)
+
+    def test_a_factor_below_one_is_rejected(self) -> None:
+        """The factor multiplies the grid, so it cannot coarsen it."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=0)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=[1, 0, 1])
+
+    def test_a_boolean_is_rejected(self) -> None:
+        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1)."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="valid integer"):
+            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=True)
+
+    def test_gamma_only_carries_the_same_field(self) -> None:
+        """Gamma-only kpoints carry the field too, at the same default."""
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        assert GammaOnlyKpointsInput().eps_inf_factor == (1, 1, 1)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GammaOnlyKpointsInput(eps_inf_factor=0)
 
     @staticmethod
-    def _dfpt_input(ph: object = None) -> dict[str, object]:
+    def _dfpt_input(factor: object = None) -> dict[str, object]:
         d = _minimal_si_input()
         d["workflow"]["screening_method"] = "dfpt"
         d["workflow"]["correction"] = "ki"
         d["workflow"]["init_orbitals"] = "mlwfs"
         d["workflow"]["eps_inf"] = "auto"
-        if ph is not None:
-            d["kpoints"]["overrides"] = {"ph": ph}  # type: ignore[index]
+        if factor is not None:
+            d["kpoints"]["eps_inf_factor"] = factor  # type: ignore[index]
         return d
 
     def test_reaches_the_dielectric_step(self) -> None:
         """The one situation where it takes effect: parses and keeps the value."""
-        inp = KoopmansInput.model_validate(self._dfpt_input({"grid": [8, 8, 8]}))
-        assert inp.kpoints.overrides.ph.grid == (8, 8, 8)  # type: ignore[union-attr]
-
-    def test_a_spacing_and_an_offset_are_both_accepted(self) -> None:
-        """``ph`` is a plain ground state, like ``scf``: a spacing or a shift both work.
-
-        Unlike ``nscf``, whose mesh must stay an explicit, Gamma-centred
-        ``grid``.
-        """
-        inp = KoopmansInput.model_validate(self._dfpt_input({"grid_spacing": 0.15}))
-        assert inp.kpoints.overrides.ph.grid_spacing == pytest.approx(0.15)  # type: ignore[union-attr]
-
-        inp = KoopmansInput.model_validate(
-            self._dfpt_input({"grid": [8, 8, 8], "offset": [0.5, 0.5, 0.5]})
-        )
-        assert inp.kpoints.overrides.ph.offset == (0.5, 0.5, 0.5)  # type: ignore[union-attr]
+        inp = KoopmansInput.model_validate(self._dfpt_input(2))
+        assert inp.kpoints.eps_inf_factor == (2, 2, 2)  # type: ignore[union-attr]
 
     def test_refused_with_a_numeric_eps_inf(self) -> None:
         """A mutant that ignores ``eps_inf`` would accept this: it must not.
 
-        ``overrides.ph`` names a mesh for a dielectric step that a numeric
+        ``eps_inf_factor`` densifies a dielectric step that a numeric
         ``eps_inf`` never runs.
         """
-        d = self._dfpt_input({"grid": [8, 8, 8]})
+        d = self._dfpt_input(2)
         d["workflow"]["eps_inf"] = 11.7
         with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
             KoopmansInput.model_validate(d)
 
     def test_refused_without_eps_inf_set(self) -> None:
         """The unset default (no dielectric run at all) is refused the same way."""
-        d = self._dfpt_input({"grid": [8, 8, 8]})
+        d = self._dfpt_input(2)
         del d["workflow"]["eps_inf"]
         with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
             KoopmansInput.model_validate(d)
@@ -939,10 +969,10 @@ class TestPhOverride:
     def test_refused_with_dscf_screening(self) -> None:
         """A mutant that ignores ``screening_method`` would accept this: it must not.
 
-        ``overrides.ph`` names a mesh for the DFPT dielectric step; DSCF
-        never wires ``eps_inf: auto`` to a dielectric step at all.
+        ``eps_inf_factor`` densifies the DFPT dielectric step; DSCF never
+        wires ``eps_inf: auto`` to a dielectric step at all.
         """
-        d = self._dfpt_input({"grid": [8, 8, 8]})
+        d = self._dfpt_input(2)
         d["workflow"]["screening_method"] = "dscf"
         with pytest.raises(ValueError, match="screening_method` is not 'dfpt'"):
             KoopmansInput.model_validate(d)
@@ -952,14 +982,14 @@ class TestPhOverride:
 
         ``task: wannierize`` runs no DFPT chain and so no dielectric step.
         """
-        d = self._dfpt_input({"grid": [8, 8, 8]})
+        d = self._dfpt_input(2)
         d["workflow"]["task"] = "wannierize"
         with pytest.raises(ValueError, match="task: wannierize"):
             KoopmansInput.model_validate(d)
 
     def test_refused_on_bse(self) -> None:
-        """``bse`` composes the same DFPT chain but does not yet thread ``overrides.ph`` through."""
-        d = self._dfpt_input({"grid": [8, 8, 8]})
+        """``bse`` composes the same DFPT chain but does not yet thread ``eps_inf_factor``."""
+        d = self._dfpt_input(2)
         d["workflow"]["task"] = "bse"
         d["calculator_parameters"]["yambo"] = {
             "BndsRnXs": [1, 100],
@@ -970,22 +1000,22 @@ class TestPhOverride:
         with pytest.raises(ValueError, match="task: bse"):
             KoopmansInput.model_validate(d)
 
-    def test_refused_on_dft_eps_names_scf_instead(self) -> None:
-        """``task: dft_eps`` already samples its dielectric scf via ``overrides.scf``.
+    def test_refused_on_dft_eps_names_grid_instead(self) -> None:
+        """``task: dft_eps`` already samples its dielectric scf via ``kpoints.grid``.
 
         The message points at the keyword that actually reaches it, not a
         generic "no effect" line.
         """
-        d = self._dfpt_input({"grid": [8, 8, 8]})
+        d = self._dfpt_input(2)
         d["workflow"]["task"] = "dft_eps"
-        with pytest.raises(ValueError, match=r"task: dft_eps.*`kpoints\.overrides\.scf`"):
+        with pytest.raises(ValueError, match=r"task: dft_eps.*`kpoints\.grid`"):
             KoopmansInput.model_validate(d)
 
     def test_refused_on_gamma_only(self) -> None:
-        """A gamma-only run cannot give a dielectric step a mesh of its own either."""
+        """A gamma-only run has no k-point grid to densify."""
         d = self._dfpt_input()
-        d["kpoints"] = {"gamma_only": True, "overrides": {"ph": {"grid": [8, 8, 8]}}}
-        with pytest.raises(ValueError, match=r"overrides\.ph"):
+        d["kpoints"] = {"gamma_only": True, "eps_inf_factor": 2}
+        with pytest.raises(ValueError, match=r"eps_inf_factor.*gamma_only"):
             KoopmansInput.model_validate(d)
 
 

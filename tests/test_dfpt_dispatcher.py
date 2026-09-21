@@ -163,23 +163,23 @@ class TestPerStepKpointMesh:
             _build(d)
 
 
-class TestPhOverride:
-    """``kpoints.overrides.ph`` gives the ``eps_inf: auto`` dielectric step its own mesh."""
+class TestEpsInfFactor:
+    """``kpoints.eps_inf_factor`` densifies the ``eps_inf: auto`` dielectric step's own mesh."""
 
-    def test_ph_grid_reaches_the_dielectric_scf(
+    def test_factor_densifies_the_dielectric_scf_mesh(
         self,
         aiida_profile: Any,
         dfpt_codes: Any,
         installed_ph_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """The dielectric step samples ``overrides.ph.grid``, not ``kpoints.grid``.
+        """The dielectric step samples ``kpoints.grid`` densified by the factor.
 
-        A mutant that ignores ``overrides.ph`` would leave this on the
+        A mutant that ignores ``eps_inf_factor`` would leave this on the
         chain's own 2x2x2 mesh instead — the negative control below.
         """
         d = _si_dfpt_dict(eps_inf="auto")
-        d["kpoints"]["overrides"] = {"ph": {"grid": [4, 4, 4]}}
+        d["kpoints"]["eps_inf_factor"] = 2
         wg = _build(d)
         dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
         assert list(dielectric_kpoints.get_kpoints_mesh()[0]) == [4, 4, 4]
@@ -191,38 +191,58 @@ class TestPhOverride:
 
         WorkGraph.from_dict(wg.to_dict())
 
-    def test_ph_grid_spacing_reaches_only_the_dielectric_scf(
+    def test_factor_densifies_kpoints_grid_not_a_different_scf_override(
         self,
         aiida_profile: Any,
         dfpt_codes: Any,
         installed_ph_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """``overrides.ph.grid_spacing`` becomes a distance, not a displaced mesh.
+        """The base is always ``kpoints.grid``, never ``overrides.scf``, which may be a spacing.
 
-        A mutant that pins an explicit mesh regardless would silently
-        discard the distance (``PwBaseWorkChain`` takes one or the other).
+        A mutant that densifies the chain's own (possibly overridden) scf
+        mesh instead of the top-level ``grid`` would produce 12x12x12 here
+        (2x the ``overrides.scf.grid``), not the expected 4x4x4.
         """
         d = _si_dfpt_dict(eps_inf="auto")
-        d["kpoints"]["overrides"] = {"ph": {"grid_spacing": 0.15}}
+        d["kpoints"]["eps_inf_factor"] = 2
+        d["kpoints"]["overrides"] = {"scf": {"grid": [6, 6, 6]}}
         wg = _build(d)
-        dielectric = wg.tasks["dielectric"]
-        assert dielectric.inputs["scf_kpoints"].value is None
-        assert dielectric.inputs["overrides"].value["scf"]["kpoints_distance"] == pytest.approx(
-            0.15
-        )
-        # The DFPT chain's own ground state keeps sampling kpoints.grid, unaffected.
+        dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        assert list(dielectric_kpoints.get_kpoints_mesh()[0]) == [4, 4, 4]
+        # The chain's own ground state samples the overridden mesh, unaffected.
         scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
-        assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
+        assert list(scf_kpoints.get_kpoints_mesh()[0]) == [6, 6, 6]
 
-    def test_without_ph_override_the_dielectric_scf_keeps_the_chain_mesh(
+    def test_factor_keeps_the_chains_own_scf_offset(
         self,
         aiida_profile: Any,
         dfpt_codes: Any,
         installed_ph_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """The negative control: no ``overrides.ph`` keeps today's fallback mesh."""
+        """The densified mesh's offset follows ``overrides.scf.offset``, not the top-level default.
+
+        A mutant that always used the top-level ``kpoints.offset`` would
+        leave this unshifted.
+        """
+        d = _si_dfpt_dict(eps_inf="auto")
+        d["kpoints"]["eps_inf_factor"] = 2
+        d["kpoints"]["overrides"] = {"scf": {"offset": [0.5, 0.5, 0.5]}}
+        wg = _build(d)
+        dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        mesh, offset = dielectric_kpoints.get_kpoints_mesh()
+        assert list(mesh) == [4, 4, 4]
+        assert list(offset) == [0.5, 0.5, 0.5]
+
+    def test_without_a_factor_the_dielectric_scf_keeps_the_chain_mesh(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """The negative control: the default factor keeps today's fallback mesh."""
         d = _si_dfpt_dict(eps_inf="auto")
         wg = _build(d)
         dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
