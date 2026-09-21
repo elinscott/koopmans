@@ -60,11 +60,7 @@ MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_inte
 #: aiida-koopmans at collection time loads the AiiDA configuration, which a
 #: fresh CI checkout has none of yet. ``TestProcessTypeNames`` reads the
 #: real name off the function and fails if this drifts from it.
-BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.manifolds.build_band_structure"
-
-#: The module the same calcfunction lived in before it was shared between
-#: the two Koopmans routes. Nodes written then still carry this name.
-BUILD_BAND_STRUCTURE_BEFORE_THE_MOVE = "aiida_koopmans.workgraphs.ui.dscf.build_band_structure"
+BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.band_structure.build_band_structure"
 
 #: A cubic cell, so that reciprocal-space distances are easy to reason about.
 CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
@@ -584,19 +580,18 @@ class TestProcessTypeNames:
         every node written afterwards and leaves the resolver matching a
         name nothing writes any more.
         """
-        from aiida_koopmans.workgraphs.ui.manifolds import build_band_structure
+        from aiida_koopmans.workgraphs.ui.band_structure import build_band_structure
 
         process_class = build_band_structure._callable.process_class
         stored = f"{process_class.__module__}.{process_class.__name__}"
 
         assert stored == BUILD_BAND_STRUCTURE
 
-    def test_both_names_of_that_step_are_registered(self) -> None:
-        """Runs from either side of the move resolve, so neither may be dropped."""
+    def test_the_name_is_registered(self) -> None:
+        """The resolver's producer table matches the name AiiDA stores."""
         registered = {producer.process_type for producer in BAND_PRODUCERS}
 
         assert BUILD_BAND_STRUCTURE in registered
-        assert BUILD_BAND_STRUCTURE_BEFORE_THE_MOVE in registered
 
 
 class TestResolver:
@@ -712,32 +707,6 @@ class TestResolver:
 
         assert [item.label for item in found] == ["KI"]
         assert found[0].vbm == pytest.approx(5.2)
-
-    def test_bands_built_before_the_calcfunction_moved_still_plot(
-        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
-    ) -> None:
-        """A run stored under the old module path keeps its KI curve.
-
-        AiiDA writes a calcfunction's module path into ``process_type``, so
-        sharing the step between the two Koopmans routes renamed it. Runs
-        from before that are still in the profile and still plot.
-        """
-        root = make_process("aiida.workflows:workgraph.engine", label="KoopmansDSCFWorkflow")
-        built = make_process(
-            BUILD_BAND_STRUCTURE_BEFORE_THE_MOVE,
-            caller=root,
-            link_label="build_band_structure",
-            calcjob=True,
-            computer=aiida_localhost,
-            inputs={"reference": orm.Float(1.25).store()},  # type: ignore[no-untyped-call]
-        )
-        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 1.25, 4.0]]))
-        folder = write_run_folder(tmp_path, "si_dscf_old", root)
-
-        found, _ = resolve_band_series([folder])
-
-        assert [item.label for item in found] == ["KI"]
-        assert found[0].vbm == pytest.approx(1.25)
 
     def test_a_smooth_dfpt_run_plots_the_smooth_bands_and_not_kcw_own(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path

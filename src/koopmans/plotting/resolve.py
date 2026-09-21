@@ -191,15 +191,11 @@ _OPTIMIZE_OUTPUTS = (
     ("wannier90_plot_down", "Wannier interpolation (down)"),
 )
 
-#: Where the calcfunction that attaches interpolated eigenvalues to their
-#: k-path has lived. AiiDA stores a calcfunction's module path in
-#: ``process_type``, so moving the function renames it and nodes written
-#: before the move keep the name they were stored under. Both are listed so
-#: a run from either side of the move plots.
-_BUILD_BAND_STRUCTURE = (
-    "aiida_koopmans.workgraphs.ui.manifolds.build_band_structure",
-    "aiida_koopmans.workgraphs.ui.dscf.build_band_structure",
-)
+#: The calcfunction that attaches interpolated eigenvalues to their k-path,
+#: shared by both Koopmans routes. AiiDA stores a calcfunction's module path
+#: in ``process_type``, so a run made before this module existed stores no
+#: node under this name and simply has no KI band structure to plot.
+_BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.band_structure.build_band_structure"
 
 BAND_PRODUCERS: tuple[BandProducer, ...] = (
     BandProducer(
@@ -238,7 +234,7 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         socket="bands",
         series="KI",
         references=_kcw_ham_references,
-        superseded_by=_BUILD_BAND_STRUCTURE,
+        superseded_by=(_BUILD_BAND_STRUCTURE,),
     ),
     BandProducer(
         process_type="aiida.workflows:wannier90_workflows.base.wannier90",
@@ -280,14 +276,11 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
     # that attaches the interpolated eigenvalues to their k-path is the one
     # that names a band structure, and it carries the valence band edge as
     # an input.
-    *(
-        BandProducer(
-            process_type=process_type,
-            socket="result",
-            series="KI",
-            references=_unfolded_band_references,
-        )
-        for process_type in _BUILD_BAND_STRUCTURE
+    BandProducer(
+        process_type=_BUILD_BAND_STRUCTURE,
+        socket="result",
+        series="KI",
+        references=_unfolded_band_references,
     ),
 )
 
