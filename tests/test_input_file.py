@@ -885,38 +885,53 @@ class TestSmoothInterpolationFactor:
             GammaOnlyKpointsInput(smooth_interpolation_factor=0)
 
 
-class TestEpsGrid:
-    """``kpoints.eps_grid`` takes effect only on a DFPT singlepoint under ``eps_inf: auto``."""
+class TestPhOverride:
+    """``kpoints.overrides.ph`` takes effect only on a DFPT singlepoint under ``eps_inf: auto``."""
 
     @staticmethod
-    def _dfpt_input(**kpoints_updates: object) -> dict[str, object]:
+    def _dfpt_input(ph: object = None) -> dict[str, object]:
         d = _minimal_si_input()
         d["workflow"]["screening_method"] = "dfpt"
         d["workflow"]["correction"] = "ki"
         d["workflow"]["init_orbitals"] = "mlwfs"
         d["workflow"]["eps_inf"] = "auto"
-        d["kpoints"].update(kpoints_updates)  # type: ignore[attr-defined]
+        if ph is not None:
+            d["kpoints"]["overrides"] = {"ph": ph}  # type: ignore[index]
         return d
 
     def test_reaches_the_dielectric_step(self) -> None:
         """The one situation where it takes effect: parses and keeps the value."""
-        inp = KoopmansInput.model_validate(self._dfpt_input(eps_grid=[8, 8, 8]))
-        assert inp.kpoints.eps_grid == (8, 8, 8)  # type: ignore[union-attr]
+        inp = KoopmansInput.model_validate(self._dfpt_input({"grid": [8, 8, 8]}))
+        assert inp.kpoints.overrides.ph.grid == (8, 8, 8)  # type: ignore[union-attr]
+
+    def test_a_spacing_and_an_offset_are_both_accepted(self) -> None:
+        """``ph`` is a plain ground state, like ``scf``: a spacing or a shift both work.
+
+        Unlike ``nscf``, whose mesh must stay an explicit, Gamma-centred
+        ``grid``.
+        """
+        inp = KoopmansInput.model_validate(self._dfpt_input({"grid_spacing": 0.15}))
+        assert inp.kpoints.overrides.ph.grid_spacing == pytest.approx(0.15)  # type: ignore[union-attr]
+
+        inp = KoopmansInput.model_validate(
+            self._dfpt_input({"grid": [8, 8, 8], "offset": [0.5, 0.5, 0.5]})
+        )
+        assert inp.kpoints.overrides.ph.offset == (0.5, 0.5, 0.5)  # type: ignore[union-attr]
 
     def test_refused_with_a_numeric_eps_inf(self) -> None:
         """A mutant that ignores ``eps_inf`` would accept this: it must not.
 
-        ``eps_grid`` names a mesh for a dielectric step that a numeric
+        ``overrides.ph`` names a mesh for a dielectric step that a numeric
         ``eps_inf`` never runs.
         """
-        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d = self._dfpt_input({"grid": [8, 8, 8]})
         d["workflow"]["eps_inf"] = 11.7
         with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
             KoopmansInput.model_validate(d)
 
     def test_refused_without_eps_inf_set(self) -> None:
         """The unset default (no dielectric run at all) is refused the same way."""
-        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d = self._dfpt_input({"grid": [8, 8, 8]})
         del d["workflow"]["eps_inf"]
         with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
             KoopmansInput.model_validate(d)
@@ -924,10 +939,10 @@ class TestEpsGrid:
     def test_refused_with_dscf_screening(self) -> None:
         """A mutant that ignores ``screening_method`` would accept this: it must not.
 
-        ``eps_grid`` names a mesh for the DFPT dielectric step; DSCF never
-        wires ``eps_inf: auto`` to a dielectric step at all.
+        ``overrides.ph`` names a mesh for the DFPT dielectric step; DSCF
+        never wires ``eps_inf: auto`` to a dielectric step at all.
         """
-        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d = self._dfpt_input({"grid": [8, 8, 8]})
         d["workflow"]["screening_method"] = "dscf"
         with pytest.raises(ValueError, match="screening_method` is not 'dfpt'"):
             KoopmansInput.model_validate(d)
@@ -937,14 +952,14 @@ class TestEpsGrid:
 
         ``task: wannierize`` runs no DFPT chain and so no dielectric step.
         """
-        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d = self._dfpt_input({"grid": [8, 8, 8]})
         d["workflow"]["task"] = "wannierize"
         with pytest.raises(ValueError, match="task: wannierize"):
             KoopmansInput.model_validate(d)
 
     def test_refused_on_bse(self) -> None:
-        """``bse`` composes the same DFPT chain but does not yet thread ``eps_grid`` through it."""
-        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        """``bse`` composes the same DFPT chain but does not yet thread ``overrides.ph`` through."""
+        d = self._dfpt_input({"grid": [8, 8, 8]})
         d["workflow"]["task"] = "bse"
         d["calculator_parameters"]["yambo"] = {
             "BndsRnXs": [1, 100],
@@ -955,15 +970,22 @@ class TestEpsGrid:
         with pytest.raises(ValueError, match="task: bse"):
             KoopmansInput.model_validate(d)
 
-    def test_refused_on_dft_eps_names_grid_instead(self) -> None:
-        """``task: dft_eps`` has its own dielectric step, sampled by ``kpoints.grid``.
+    def test_refused_on_dft_eps_names_scf_instead(self) -> None:
+        """``task: dft_eps`` already samples its dielectric scf via ``overrides.scf``.
 
         The message points at the keyword that actually reaches it, not a
         generic "no effect" line.
         """
-        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d = self._dfpt_input({"grid": [8, 8, 8]})
         d["workflow"]["task"] = "dft_eps"
-        with pytest.raises(ValueError, match=r"task: dft_eps.*`kpoints\.grid`"):
+        with pytest.raises(ValueError, match=r"task: dft_eps.*`kpoints\.overrides\.scf`"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_on_gamma_only(self) -> None:
+        """A gamma-only run cannot give a dielectric step a mesh of its own either."""
+        d = self._dfpt_input()
+        d["kpoints"] = {"gamma_only": True, "overrides": {"ph": {"grid": [8, 8, 8]}}}
+        with pytest.raises(ValueError, match=r"overrides\.ph"):
             KoopmansInput.model_validate(d)
 
 

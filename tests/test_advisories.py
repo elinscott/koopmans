@@ -120,8 +120,8 @@ class TestSmoothInterpolationFactorAdvisory:
         assert advisories_for(inp) == []
 
 
-class TestEpsGridAdvisory:
-    """``workflow.eps_inf: auto`` without ``kpoints.eps_grid`` names the fallback mesh."""
+class TestPhOverrideAdvisory:
+    """``workflow.eps_inf: auto`` without ``kpoints.overrides.ph`` names the fallback mesh."""
 
     @staticmethod
     def _dfpt_dict(**kpoints_updates: Any) -> dict[str, Any]:
@@ -135,24 +135,55 @@ class TestEpsGridAdvisory:
         d["kpoints"].update(kpoints_updates)
         return d
 
-    def test_auto_without_eps_grid_is_advised_and_names_the_grid(self) -> None:
-        """The message names the mesh the dielectric step falls back to.
+    def test_auto_without_ph_override_is_advised_and_names_the_top_level_grid(self) -> None:
+        """Without an ``overrides.scf`` mesh either, the message names ``kpoints.grid``.
 
-        A mutant that drops ``kpoints.grid`` from the message, or that
-        fires regardless of the actual grid, would still pass a bare
-        "advisory present" check — this pins the printed mesh too.
+        A mutant that drops the mesh from the message, or that fires
+        regardless of the actual grid, would still pass a bare "advisory
+        present" check — this pins the printed mesh too.
         """
         inp = KoopmansInput.model_validate(self._dfpt_dict(grid=[4, 4, 4]))
         assert advisories_for(inp) == [
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            "kpoints.grid mesh (4, 4, 4); it converges slowly with k-points, so "
-            "that mesh may be too coarse. Set kpoints.eps_grid to a denser mesh "
-            "for the dielectric-constant step alone."
+            "mesh (4, 4, 4); it converges slowly with k-points, so that mesh "
+            "may be too coarse. Set kpoints.overrides.ph to a denser mesh for "
+            "the dielectric-constant step alone."
         ]
 
-    def test_auto_with_eps_grid_is_silent(self) -> None:
-        """The negative control: setting ``eps_grid`` silences the advisory."""
-        inp = KoopmansInput.model_validate(self._dfpt_dict(eps_grid=[8, 8, 8]))
+    def test_auto_without_ph_override_names_the_scf_overrides_grid(self) -> None:
+        """With ``overrides.scf.grid`` set, the message names that mesh, not ``kpoints.grid``.
+
+        The dielectric scf falls back to the chain's own scf, not the
+        top-level default — a mutant reading ``kpoints.grid`` unconditionally
+        would print the wrong mesh here.
+        """
+        d = self._dfpt_dict(grid=[2, 2, 2])
+        d["kpoints"]["overrides"] = {"scf": {"grid": [6, 6, 6]}}
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            "mesh (6, 6, 6); it converges slowly with k-points, so that mesh "
+            "may be too coarse. Set kpoints.overrides.ph to a denser mesh for "
+            "the dielectric-constant step alone."
+        ]
+
+    def test_auto_without_ph_override_names_the_scf_overrides_spacing(self) -> None:
+        """With only an ``overrides.scf.grid_spacing``, no concrete mesh is knowable at parse."""
+        d = self._dfpt_dict(grid=[2, 2, 2])
+        d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.15}}
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            "scf's own kpoints_distance-derived mesh; it converges slowly with "
+            "k-points, so that mesh may be too coarse. Set kpoints.overrides.ph "
+            "to a denser mesh for the dielectric-constant step alone."
+        ]
+
+    def test_auto_with_ph_override_is_silent(self) -> None:
+        """The negative control: setting ``overrides.ph`` silences the advisory."""
+        d = self._dfpt_dict()
+        d["kpoints"]["overrides"] = {"ph": {"grid": [8, 8, 8]}}
+        inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == []
 
     def test_numeric_eps_inf_is_silent(self) -> None:

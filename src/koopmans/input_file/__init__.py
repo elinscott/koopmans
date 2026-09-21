@@ -251,7 +251,8 @@ class StepKpointsOverridesInput(BaseModel):
     offset: tuple[KpointOffset, KpointOffset, KpointOffset] | None = None
     """Per-axis fraction of a grid step to shift this step's mesh by.
 
-    Available on the ``scf`` entry alone.
+    Available on the ``scf`` and ``ph`` entries, both independent ground
+    states; the ``nscf`` entry's mesh is Gamma-centred and cannot be shifted.
     """
 
     grid_spacing: float | None = Field(default=None, gt=0.0)
@@ -310,6 +311,18 @@ class KpointsOverridesInput(BaseModel):
     """The density wannier90 interpolates its band structure at.
 
     Unset takes :attr:`WannierKpointsOverridesInput.path_density`'s default.
+    """
+
+    ph: StepKpointsOverridesInput | None = None
+    """The mesh a DFPT ``eps_inf: auto`` dielectric-constant step samples.
+
+    The dielectric constant converges far more slowly with k-points than
+    the run itself, so a denser mesh here often lands closer to the
+    converged value than reusing ``scf``. Unset, that step falls back to
+    the ``scf`` entry (or the top-level ``grid``) and a build-time advisory
+    says so. Takes effect only on a ``singlepoint`` task with
+    ``screening_method: dfpt`` and ``workflow.eps_inf: auto``; set
+    anywhere else, it is refused by name.
     """
 
     @model_validator(mode="after")
@@ -372,7 +385,7 @@ class GammaOnlyKpointsInput(BaseModel):
         cls, overrides: KpointsOverridesInput
     ) -> KpointsOverridesInput:
         """Reject a per-step mesh: every step of a gamma-only run samples Gamma."""
-        for step in ("scf", "nscf"):
+        for step in ("scf", "nscf", "ph"):
             if getattr(overrides, step) is not None:
                 raise ValueError(
                     f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
@@ -417,17 +430,6 @@ class GridKpointsInput(BaseModel):
     this many times denser than ``grid``: ``[a, b, c]`` densifies each
     direction independently, and a bare integer ``a`` is shorthand for
     ``[a, a, a]``. Needs ``path`` to interpolate along.
-    """
-
-    eps_grid: tuple[int, int, int] | None = None
-    """Monkhorst-Pack mesh the ``eps_inf: auto`` dielectric-constant step samples.
-
-    The dielectric constant converges far more slowly with k-points than
-    the run's own ``grid``, so ``auto`` needs a denser mesh to land close
-    to the converged value. Unset, that step falls back to ``grid`` and a
-    build-time advisory says so. Takes effect only on a ``singlepoint`` or
-    ``bse`` task with ``screening_method: dfpt`` and ``workflow.eps_inf:
-    auto``; set anywhere else, it is refused by name.
     """
 
 
@@ -584,50 +586,52 @@ class KoopmansInput(BaseModel):
 
     @field_validator("kpoints", mode="after")
     @classmethod
-    def check_eps_grid_reaches_a_dielectric_step(
+    def check_ph_override_reaches_a_dielectric_step(
         cls, kpoints: KpointsInput, info: ValidationInfo
     ) -> KpointsInput:
-        """Reject ``kpoints.eps_grid`` wherever no DFPT dielectric step runs.
+        """Reject ``kpoints.overrides.ph`` wherever no DFPT dielectric step runs.
 
         Only a ``singlepoint`` task with ``screening_method: dfpt`` and
         ``workflow.eps_inf: auto`` runs the dielectric-constant step
-        ``eps_grid`` gives a mesh of its own; every other combination is
-        refused by name rather than silently ignored. ``bse`` composes the
-        same DFPT chain and so shares the gap: ``eps_grid`` is not yet
-        threaded through it. Reads ``workflow``, declared ahead of
+        ``overrides.ph`` gives a mesh of its own; every other combination
+        is refused by name rather than silently ignored. ``bse`` composes
+        the same DFPT chain and so shares the gap: ``overrides.ph`` is not
+        yet threaded through it. Reads ``workflow``, declared ahead of
         ``kpoints`` and so already validated.
         """
-        eps_grid = getattr(kpoints, "eps_grid", None)
-        if eps_grid is None:
+        ph_override = getattr(getattr(kpoints, "overrides", None), "ph", None)
+        if ph_override is None:
             return kpoints
         workflow = info.data.get("workflow")
         if workflow is None:
             return kpoints
         if workflow.task == Task.DFT_EPS:
             raise ValueError(
-                "`kpoints.eps_grid` has no effect on task: dft_eps: that task already "
-                "samples its own dielectric-constant run on `kpoints.grid`. Use "
-                "`kpoints.grid` instead."
+                "`kpoints.overrides.ph` has no effect on task: dft_eps: that task's "
+                "own dielectric-constant scf is already `kpoints.overrides.scf` (or "
+                "`kpoints.grid`, unset). Use that instead."
             )
         if workflow.task != Task.SINGLEPOINT:
             raise ValueError(
-                f"`kpoints.eps_grid` has no effect on task: {workflow.task.value} (only "
-                "task: singlepoint runs the DFPT dielectric-constant step `eps_grid` "
-                "gives a mesh of its own; `bse` composes the same chain but does not "
-                "yet thread `eps_grid` through it). Remove it, or switch task."
+                f"`kpoints.overrides.ph` has no effect on task: {workflow.task.value} "
+                "(only task: singlepoint runs the DFPT dielectric-constant step "
+                "`overrides.ph` gives a mesh of its own; `bse` composes the same "
+                "chain but does not yet thread `overrides.ph` through it). Remove "
+                "it, or switch task."
             )
         if workflow.screening_method != CalculateScreeningMethod.DFPT:
             raise ValueError(
-                "`kpoints.eps_grid` has no effect: `workflow.screening_method` is not "
-                f"'dfpt' (got {workflow.screening_method.value!r}; only the DFPT route "
-                "runs the dielectric-constant step). Set screening_method to 'dfpt', or "
-                "remove `kpoints.eps_grid`."
+                "`kpoints.overrides.ph` has no effect: `workflow.screening_method` "
+                f"is not 'dfpt' (got {workflow.screening_method.value!r}; only the "
+                "DFPT route runs the dielectric-constant step). Set "
+                "screening_method to 'dfpt', or remove `kpoints.overrides.ph`."
             )
         if workflow.eps_inf != "auto":
             raise ValueError(
-                "`kpoints.eps_grid` has no effect: `workflow.eps_inf` is not 'auto' (it "
-                "only shapes the dielectric-constant step `eps_inf: auto` runs). Set "
-                "eps_inf to 'auto', or remove `kpoints.eps_grid`."
+                "`kpoints.overrides.ph` has no effect: `workflow.eps_inf` is not "
+                "'auto' (it only shapes the dielectric-constant step `eps_inf: "
+                "auto` runs). Set eps_inf to 'auto', or remove "
+                "`kpoints.overrides.ph`."
             )
         return kpoints
 

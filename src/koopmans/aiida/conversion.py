@@ -478,28 +478,6 @@ def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
     return kpts
 
 
-def eps_grid_kpoints_mesh(kpoints: KpointsInput) -> orm.KpointsData | None:
-    """Convert ``kpoints.eps_grid`` to a Gamma-centred AiiDA ``KpointsData`` mesh.
-
-    ``None`` where ``eps_grid`` is unset: the ``eps_inf: auto`` dielectric
-    step then falls back to the run's own scf mesh, and this function has
-    nothing to build.
-
-    Args:
-        kpoints: The kpoints input from KoopmansInput.
-
-    Returns:
-        AiiDA KpointsData node with the dielectric-constant step's own
-        k-point mesh, or ``None``.
-    """
-    eps_grid = getattr(kpoints, "eps_grid", None)
-    if eps_grid is None:
-        return None
-    kpts = orm.KpointsData()
-    kpts.set_kpoints_mesh(list(eps_grid))  # type: ignore[no-untyped-call]
-    return kpts
-
-
 def step_grid_spacing(kpoints: KpointsInput, step: str) -> float | None:
     """Return the largest k-point spacing the named step samples at, if it states one.
 
