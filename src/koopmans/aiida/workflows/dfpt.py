@@ -43,6 +43,7 @@ class DfptChainInputs(TypedDict):
     kpoints: orm.KpointsData
     scf_kpoints: orm.KpointsData | None
     bands_kpoints: orm.KpointsData | None
+    eps_kpoints: orm.KpointsData | None
     pseudo_family: str
     overrides: dict[str, Any]
     eps_inf: float | str | None
@@ -73,6 +74,7 @@ def assemble_dfpt_chain_inputs(
         ``yambo.BSEBands`` against them.
     """
     from koopmans.aiida.conversion import (
+        eps_grid_kpoints_mesh,
         get_pseudos_from_family,
         input_to_kcw_overrides,
         kpoints_input_to_interpolation_path,
@@ -175,6 +177,7 @@ def assemble_dfpt_chain_inputs(
             kpoints=nscf_mesh,
             scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
             bands_kpoints=bands_kpoints,
+            eps_kpoints=eps_grid_kpoints_mesh(koopmans_input.kpoints),
             pseudo_family=pseudo_family,
             overrides=overrides,
             eps_inf=eps_inf,

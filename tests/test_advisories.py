@@ -120,6 +120,56 @@ class TestSmoothInterpolationFactorAdvisory:
         assert advisories_for(inp) == []
 
 
+class TestEpsGridAdvisory:
+    """``workflow.eps_inf: auto`` without ``kpoints.eps_grid`` names the fallback mesh."""
+
+    @staticmethod
+    def _dfpt_dict(**kpoints_updates: Any) -> dict[str, Any]:
+        d = _si_dict(
+            "singlepoint",
+            screening_method="dfpt",
+            correction="ki",
+            init_orbitals="mlwfs",
+            eps_inf="auto",
+        )
+        d["kpoints"].update(kpoints_updates)
+        return d
+
+    def test_auto_without_eps_grid_is_advised_and_names_the_grid(self) -> None:
+        """The message names the mesh the dielectric step falls back to.
+
+        A mutant that drops ``kpoints.grid`` from the message, or that
+        fires regardless of the actual grid, would still pass a bare
+        "advisory present" check — this pins the printed mesh too.
+        """
+        inp = KoopmansInput.model_validate(self._dfpt_dict(grid=[4, 4, 4]))
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            "kpoints.grid mesh (4, 4, 4); it converges slowly with k-points, so "
+            "that mesh may be too coarse. Set kpoints.eps_grid to a denser mesh "
+            "for the dielectric-constant step alone."
+        ]
+
+    def test_auto_with_eps_grid_is_silent(self) -> None:
+        """The negative control: setting ``eps_grid`` silences the advisory."""
+        inp = KoopmansInput.model_validate(self._dfpt_dict(eps_grid=[8, 8, 8]))
+        assert advisories_for(inp) == []
+
+    def test_numeric_eps_inf_is_silent(self) -> None:
+        """A numeric ``eps_inf`` runs no dielectric step, so no mesh to advise on."""
+        d = _si_dict("singlepoint", screening_method="dfpt", correction="ki", init_orbitals="mlwfs")
+        d["workflow"]["eps_inf"] = 11.7
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == []
+
+    def test_dscf_screening_is_silent(self) -> None:
+        """DSCF never wires eps_inf: auto to a dielectric step, so nothing to advise."""
+        d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
+        d["workflow"]["eps_inf"] = "auto"
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == []
+
+
 class TestOrbitalGroupingAdvisory:
     """``group_orbitals_by``/``group_orbitals_tol`` only apply to singlepoint/trajectory.
 

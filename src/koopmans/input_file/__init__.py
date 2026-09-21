@@ -45,7 +45,7 @@ from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
-from koopmans.input_file.workflow import Task, WorkflowConfig
+from koopmans.input_file.workflow import CalculateScreeningMethod, Task, WorkflowConfig
 from koopmans.input_file.yambo import YamboBseParameters
 
 # The public schema surface. The documentation renders this list, so a name
@@ -419,6 +419,17 @@ class GridKpointsInput(BaseModel):
     ``[a, a, a]``. Needs ``path`` to interpolate along.
     """
 
+    eps_grid: tuple[int, int, int] | None = None
+    """Monkhorst-Pack mesh the ``eps_inf: auto`` dielectric-constant step samples.
+
+    The dielectric constant converges far more slowly with k-points than
+    the run's own ``grid``, so ``auto`` needs a denser mesh to land close
+    to the converged value. Unset, that step falls back to ``grid`` and a
+    build-time advisory says so. Takes effect only on a ``singlepoint`` or
+    ``bse`` task with ``screening_method: dfpt`` and ``workflow.eps_inf:
+    auto``; set anywhere else, it is refused by name.
+    """
+
 
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput
 
@@ -569,6 +580,55 @@ class KoopmansInput(BaseModel):
         message = band_path_refusal(workflow, any(atoms.cell_parameters.periodic))
         if message is not None:
             raise ValueError(message)
+        return kpoints
+
+    @field_validator("kpoints", mode="after")
+    @classmethod
+    def check_eps_grid_reaches_a_dielectric_step(
+        cls, kpoints: KpointsInput, info: ValidationInfo
+    ) -> KpointsInput:
+        """Reject ``kpoints.eps_grid`` wherever no DFPT dielectric step runs.
+
+        Only a ``singlepoint`` task with ``screening_method: dfpt`` and
+        ``workflow.eps_inf: auto`` runs the dielectric-constant step
+        ``eps_grid`` gives a mesh of its own; every other combination is
+        refused by name rather than silently ignored. ``bse`` composes the
+        same DFPT chain and so shares the gap: ``eps_grid`` is not yet
+        threaded through it. Reads ``workflow``, declared ahead of
+        ``kpoints`` and so already validated.
+        """
+        eps_grid = getattr(kpoints, "eps_grid", None)
+        if eps_grid is None:
+            return kpoints
+        workflow = info.data.get("workflow")
+        if workflow is None:
+            return kpoints
+        if workflow.task == Task.DFT_EPS:
+            raise ValueError(
+                "`kpoints.eps_grid` has no effect on task: dft_eps: that task already "
+                "samples its own dielectric-constant run on `kpoints.grid`. Use "
+                "`kpoints.grid` instead."
+            )
+        if workflow.task != Task.SINGLEPOINT:
+            raise ValueError(
+                f"`kpoints.eps_grid` has no effect on task: {workflow.task.value} (only "
+                "task: singlepoint runs the DFPT dielectric-constant step `eps_grid` "
+                "gives a mesh of its own; `bse` composes the same chain but does not "
+                "yet thread `eps_grid` through it). Remove it, or switch task."
+            )
+        if workflow.screening_method != CalculateScreeningMethod.DFPT:
+            raise ValueError(
+                "`kpoints.eps_grid` has no effect: `workflow.screening_method` is not "
+                f"'dfpt' (got {workflow.screening_method.value!r}; only the DFPT route "
+                "runs the dielectric-constant step). Set screening_method to 'dfpt', or "
+                "remove `kpoints.eps_grid`."
+            )
+        if workflow.eps_inf != "auto":
+            raise ValueError(
+                "`kpoints.eps_grid` has no effect: `workflow.eps_inf` is not 'auto' (it "
+                "only shapes the dielectric-constant step `eps_inf: auto` runs). Set "
+                "eps_inf to 'auto', or remove `kpoints.eps_grid`."
+            )
         return kpoints
 
     @field_validator("version")

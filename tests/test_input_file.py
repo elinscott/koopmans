@@ -885,6 +885,88 @@ class TestSmoothInterpolationFactor:
             GammaOnlyKpointsInput(smooth_interpolation_factor=0)
 
 
+class TestEpsGrid:
+    """``kpoints.eps_grid`` takes effect only on a DFPT singlepoint under ``eps_inf: auto``."""
+
+    @staticmethod
+    def _dfpt_input(**kpoints_updates: object) -> dict[str, object]:
+        d = _minimal_si_input()
+        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["correction"] = "ki"
+        d["workflow"]["init_orbitals"] = "mlwfs"
+        d["workflow"]["eps_inf"] = "auto"
+        d["kpoints"].update(kpoints_updates)  # type: ignore[attr-defined]
+        return d
+
+    def test_reaches_the_dielectric_step(self) -> None:
+        """The one situation where it takes effect: parses and keeps the value."""
+        inp = KoopmansInput.model_validate(self._dfpt_input(eps_grid=[8, 8, 8]))
+        assert inp.kpoints.eps_grid == (8, 8, 8)  # type: ignore[union-attr]
+
+    def test_refused_with_a_numeric_eps_inf(self) -> None:
+        """A mutant that ignores ``eps_inf`` would accept this: it must not.
+
+        ``eps_grid`` names a mesh for a dielectric step that a numeric
+        ``eps_inf`` never runs.
+        """
+        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d["workflow"]["eps_inf"] = 11.7
+        with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_without_eps_inf_set(self) -> None:
+        """The unset default (no dielectric run at all) is refused the same way."""
+        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        del d["workflow"]["eps_inf"]
+        with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_with_dscf_screening(self) -> None:
+        """A mutant that ignores ``screening_method`` would accept this: it must not.
+
+        ``eps_grid`` names a mesh for the DFPT dielectric step; DSCF never
+        wires ``eps_inf: auto`` to a dielectric step at all.
+        """
+        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d["workflow"]["screening_method"] = "dscf"
+        with pytest.raises(ValueError, match="screening_method` is not 'dfpt'"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_on_wannierize(self) -> None:
+        """A mutant that ignores ``task`` would accept this: it must not.
+
+        ``task: wannierize`` runs no DFPT chain and so no dielectric step.
+        """
+        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d["workflow"]["task"] = "wannierize"
+        with pytest.raises(ValueError, match="task: wannierize"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_on_bse(self) -> None:
+        """``bse`` composes the same DFPT chain but does not yet thread ``eps_grid`` through it."""
+        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d["workflow"]["task"] = "bse"
+        d["calculator_parameters"]["yambo"] = {
+            "BndsRnXs": [1, 100],
+            "NGsBlkXs": 2,
+            "BSEBands": [1, 4],
+            "BEnRange": [0, 10],
+        }
+        with pytest.raises(ValueError, match="task: bse"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_on_dft_eps_names_grid_instead(self) -> None:
+        """``task: dft_eps`` has its own dielectric step, sampled by ``kpoints.grid``.
+
+        The message points at the keyword that actually reaches it, not a
+        generic "no effect" line.
+        """
+        d = self._dfpt_input(eps_grid=[8, 8, 8])
+        d["workflow"]["task"] = "dft_eps"
+        with pytest.raises(ValueError, match=r"task: dft_eps.*`kpoints\.grid`"):
+            KoopmansInput.model_validate(d)
+
+
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:
     """Return the minimal silicon input with its ``kpoints`` block replaced."""
     d = _minimal_si_input()
