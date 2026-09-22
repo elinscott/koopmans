@@ -935,10 +935,10 @@ class TestEpsInfFactor:
     @staticmethod
     def _dfpt_input(factor: object = None) -> dict[str, object]:
         d = _minimal_si_input()
-        d["workflow"]["screening_method"] = "dfpt"
-        d["workflow"]["correction"] = "ki"
-        d["workflow"]["init_orbitals"] = "mlwfs"
-        d["workflow"]["eps_inf"] = "auto"
+        d["workflow"]["screening_method"] = "dfpt"  # type: ignore[index]
+        d["workflow"]["correction"] = "ki"  # type: ignore[index]
+        d["workflow"]["init_orbitals"] = "mlwfs"  # type: ignore[index]
+        d["workflow"]["eps_inf"] = "auto"  # type: ignore[index]
         if factor is not None:
             d["kpoints"]["eps_inf_factor"] = factor  # type: ignore[index]
         return d
@@ -946,7 +946,7 @@ class TestEpsInfFactor:
     def test_reaches_the_dielectric_step(self) -> None:
         """The one situation where it takes effect: parses and keeps the value."""
         inp = KoopmansInput.model_validate(self._dfpt_input(2))
-        assert inp.kpoints.eps_inf_factor == (2, 2, 2)  # type: ignore[union-attr]
+        assert inp.kpoints.eps_inf_factor == (2, 2, 2)
 
     def test_refused_with_a_numeric_eps_inf(self) -> None:
         """A mutant that ignores ``eps_inf`` would accept this: it must not.
@@ -955,14 +955,14 @@ class TestEpsInfFactor:
         ``eps_inf`` never runs.
         """
         d = self._dfpt_input(2)
-        d["workflow"]["eps_inf"] = 11.7
+        d["workflow"]["eps_inf"] = 11.7  # type: ignore[index]
         with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
             KoopmansInput.model_validate(d)
 
     def test_refused_without_eps_inf_set(self) -> None:
         """The unset default (no dielectric run at all) is refused the same way."""
         d = self._dfpt_input(2)
-        del d["workflow"]["eps_inf"]
+        del d["workflow"]["eps_inf"]  # type: ignore[attr-defined]
         with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
             KoopmansInput.model_validate(d)
 
@@ -973,8 +973,8 @@ class TestEpsInfFactor:
         wires ``eps_inf: auto`` to a dielectric step at all.
         """
         d = self._dfpt_input(2)
-        d["workflow"]["screening_method"] = "dscf"
-        with pytest.raises(ValueError, match="screening_method` is not 'dfpt'"):
+        d["workflow"]["screening_method"] = "dscf"  # type: ignore[index]
+        with pytest.raises(ValueError, match="DSCF route has no dielectric-constant step yet"):
             KoopmansInput.model_validate(d)
 
     def test_refused_on_wannierize(self) -> None:
@@ -983,15 +983,15 @@ class TestEpsInfFactor:
         ``task: wannierize`` runs no DFPT chain and so no dielectric step.
         """
         d = self._dfpt_input(2)
-        d["workflow"]["task"] = "wannierize"
+        d["workflow"]["task"] = "wannierize"  # type: ignore[index]
         with pytest.raises(ValueError, match="task: wannierize"):
             KoopmansInput.model_validate(d)
 
     def test_refused_on_bse(self) -> None:
         """``bse`` composes the same DFPT chain but does not yet thread ``eps_inf_factor``."""
         d = self._dfpt_input(2)
-        d["workflow"]["task"] = "bse"
-        d["calculator_parameters"]["yambo"] = {
+        d["workflow"]["task"] = "bse"  # type: ignore[index]
+        d["calculator_parameters"]["yambo"] = {  # type: ignore[index]
             "BndsRnXs": [1, 100],
             "NGsBlkXs": 2,
             "BSEBands": [1, 4],
@@ -1007,7 +1007,7 @@ class TestEpsInfFactor:
         generic "no effect" line.
         """
         d = self._dfpt_input(2)
-        d["workflow"]["task"] = "dft_eps"
+        d["workflow"]["task"] = "dft_eps"  # type: ignore[index]
         with pytest.raises(ValueError, match=r"task: dft_eps.*`kpoints\.grid`"):
             KoopmansInput.model_validate(d)
 

@@ -643,9 +643,10 @@ class KoopmansInput(BaseModel):
         if workflow.screening_method != CalculateScreeningMethod.DFPT:
             raise ValueError(
                 "`kpoints.eps_inf_factor` has no effect: `workflow.screening_method` "
-                f"is not 'dfpt' (got {workflow.screening_method.value!r}; only the "
-                "DFPT route runs the dielectric-constant step). Set "
-                "screening_method to 'dfpt', or restore the default `[1, 1, 1]`."
+                f"is not 'dfpt' (got {workflow.screening_method.value!r}), and the "
+                "DSCF route has no dielectric-constant step yet (`eps_inf: auto` is "
+                "not wired there). Set screening_method to 'dfpt', or restore the "
+                "default `[1, 1, 1]`."
             )
         if workflow.eps_inf != "auto":
             raise ValueError(
