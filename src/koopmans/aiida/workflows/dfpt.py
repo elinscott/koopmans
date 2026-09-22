@@ -49,6 +49,7 @@ class DfptChainInputs(TypedDict):
     bands_kpoints: orm.KpointsData | None
     smooth_kpoints: NotRequired[orm.KpointsData]
     smooth_mp_grid: NotRequired[list[int]]
+    eps_kpoints: orm.KpointsData | None
     pseudo_family: str
     overrides: dict[str, Any]
     eps_inf: float | str | None
@@ -79,6 +80,7 @@ def assemble_dfpt_chain_inputs(
         ``yambo.BSEBands`` against them.
     """
     from koopmans.aiida.conversion import (
+        eps_inf_kpoints_mesh,
         get_pseudos_from_family,
         input_to_kcw_overrides,
         kpoints_input_to_interpolation_path,
@@ -175,12 +177,24 @@ def assemble_dfpt_chain_inputs(
 
     kcw_overrides = input_to_kcw_overrides(koopmans_input)
 
+    # Only when the factor densifies: at the default (1, 1, 1) the
+    # dielectric scf must keep sampling exactly what it did before this
+    # keyword existed (the chain's own scf), not a freshly built mesh that
+    # merely happens to equal it.
+    eps_inf_factor = koopmans_input.kpoints.eps_inf_factor
+    eps_kpoints = (
+        eps_inf_kpoints_mesh(koopmans_input.kpoints, eps_inf_factor)
+        if any(f > 1 for f in eps_inf_factor)
+        else None
+    )
+
     return (
         DfptChainInputs(
             structure=structure,
             kpoints=nscf_mesh,
             scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
             bands_kpoints=bands_kpoints,
+            eps_kpoints=eps_kpoints,
             pseudo_family=pseudo_family,
             overrides=overrides,
             eps_inf=eps_inf,

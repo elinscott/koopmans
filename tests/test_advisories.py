@@ -109,6 +109,96 @@ class TestSmoothInterpolationFactorAdvisory:
         assert advisories_for(inp) == []
 
 
+class TestEpsInfFactorAdvisory:
+    """``workflow.eps_inf: auto`` without ``kpoints.eps_inf_factor`` names the fallback mesh."""
+
+    @staticmethod
+    def _dfpt_dict(**kpoints_updates: Any) -> dict[str, Any]:
+        d = _si_dict(
+            "singlepoint",
+            screening_method="dfpt",
+            correction="ki",
+            init_orbitals="mlwfs",
+            eps_inf="auto",
+        )
+        d["kpoints"].update(kpoints_updates)
+        return d
+
+    def test_auto_at_default_factor_names_kpoints_grid_when_scf_is_unset(self) -> None:
+        """Without an ``overrides.scf`` mesh, the dielectric step falls back to ``kpoints.grid``.
+
+        A mutant that drops the mesh from the message, or that fires
+        regardless of the actual grid, would still pass a bare "advisory
+        present" check — this pins the printed mesh too.
+        """
+        inp = KoopmansInput.model_validate(self._dfpt_dict(grid=[4, 4, 4]))
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            "kpoints.grid mesh (4, 4, 4); it converges slowly with k-points, so "
+            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
+            "multiply kpoints.grid — not this mesh — into a denser one for the "
+            "dielectric-constant step alone."
+        ]
+
+    def test_auto_at_default_factor_names_the_scf_override_grid(self) -> None:
+        """With ``overrides.scf.grid`` set, the dielectric step falls back to THAT mesh.
+
+        At the default factor ``eps_kpoints`` is unset, so the dielectric
+        scf reuses the chain's own ``scf_kpoints`` — which is
+        ``overrides.scf.grid`` when the caller states one, not
+        ``kpoints.grid``. A mutant that always names ``kpoints.grid``
+        would print (2, 2, 2) here while the calculation actually runs on
+        (6, 6, 6).
+        """
+        d = self._dfpt_dict(grid=[2, 2, 2])
+        d["kpoints"]["overrides"] = {"scf": {"grid": [6, 6, 6]}}
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            "kpoints.overrides.scf.grid mesh (6, 6, 6); it converges slowly with "
+            "k-points, so that mesh may be too coarse. Set kpoints.eps_inf_factor "
+            "above 1 to multiply kpoints.grid — not this mesh — into a denser one "
+            "for the dielectric-constant step alone."
+        ]
+
+    def test_auto_at_default_factor_names_the_scf_override_spacing(self) -> None:
+        """With ``overrides.scf.grid_spacing`` set, no concrete mesh is knowable at parse.
+
+        A mutant that invents dimensions from ``kpoints.grid`` regardless
+        would misdescribe a run whose mesh the protocol only fixes later.
+        """
+        d = self._dfpt_dict(grid=[2, 2, 2])
+        d["kpoints"]["overrides"] = {"scf": {"grid_spacing": 0.15}}
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the mesh "
+            "kpoints.overrides.scf.grid_spacing = 0.15 builds (dimensions unknown "
+            "until the calculation runs); it converges slowly with k-points, so "
+            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
+            "multiply kpoints.grid — not this mesh — into a denser one for the "
+            "dielectric-constant step alone."
+        ]
+
+    def test_auto_with_a_non_default_factor_is_silent(self) -> None:
+        """The negative control: a densifying factor silences the advisory."""
+        inp = KoopmansInput.model_validate(self._dfpt_dict(eps_inf_factor=2))
+        assert advisories_for(inp) == []
+
+    def test_numeric_eps_inf_is_silent(self) -> None:
+        """A numeric ``eps_inf`` runs no dielectric step, so no mesh to advise on."""
+        d = _si_dict("singlepoint", screening_method="dfpt", correction="ki", init_orbitals="mlwfs")
+        d["workflow"]["eps_inf"] = 11.7
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == []
+
+    def test_dscf_screening_is_silent(self) -> None:
+        """DSCF never wires eps_inf: auto to a dielectric step, so nothing to advise."""
+        d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
+        d["workflow"]["eps_inf"] = "auto"
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == []
+
+
 class TestOrbitalGroupingAdvisory:
     """``group_orbitals_by``/``group_orbitals_tol`` only apply to singlepoint/trajectory.
 

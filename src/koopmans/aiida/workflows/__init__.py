@@ -29,7 +29,7 @@ from koopmans.aiida.conversion import (
     step_kpoints_mesh,
     validate_computer_scheduler_support,
 )
-from koopmans.input_file.workflow import GroupOrbitalsBy, Task
+from koopmans.input_file.workflow import CalculateScreeningMethod, GroupOrbitalsBy, Task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -660,6 +660,28 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 _TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
 
 
+def _dfpt_default_scf_mesh_description(koopmans_input: KoopmansInput) -> str:
+    """Describe the mesh ``eps_inf: auto`` falls back to at the default factor.
+
+    At ``kpoints.eps_inf_factor == (1, 1, 1)`` the dielectric scf reuses
+    the DFPT chain's own ``scf`` mesh, not ``kpoints.grid`` — the same
+    resolution :func:`~koopmans.aiida.conversion.step_kpoints_mesh` /
+    :func:`~koopmans.aiida.workflows.pin_step_kpoints` perform for the
+    ``"scf"`` step at build time, read here off the parsed model alone so
+    this check never touches the ORM.
+    """
+    scf_override = koopmans_input.kpoints.overrides.scf
+    if scf_override is not None and scf_override.grid is not None:
+        return f"kpoints.overrides.scf.grid mesh {tuple(scf_override.grid)}"
+    if scf_override is not None and scf_override.grid_spacing is not None:
+        return (
+            "mesh kpoints.overrides.scf.grid_spacing = "
+            f"{scf_override.grid_spacing} builds (dimensions unknown until the "
+            "calculation runs)"
+        )
+    return f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}"
+
+
 def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     """Return non-fatal notices about keywords the parsed input sets to no effect.
 
@@ -698,6 +720,20 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 "which a singlepoint computes); it is kept for when you switch task "
                 "to singlepoint."
             )
+
+    if (
+        task == Task.SINGLEPOINT
+        and workflow.screening_method == CalculateScreeningMethod.DFPT
+        and workflow.eps_inf == "auto"
+        and koopmans_input.kpoints.eps_inf_factor == (1, 1, 1)
+    ):
+        advisories.append(
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            f"{_dfpt_default_scf_mesh_description(koopmans_input)}; it converges "
+            "slowly with k-points, so that mesh may be too coarse. Set "
+            "kpoints.eps_inf_factor above 1 to multiply kpoints.grid — not this mesh "
+            "— into a denser one for the dielectric-constant step alone."
+        )
 
     grouping_resolved_to_none = workflow.group_orbitals_by == GroupOrbitalsBy.NONE
     if grouping_resolved_to_none and workflow.group_orbitals_tol is not None:
