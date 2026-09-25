@@ -50,7 +50,7 @@ def _bse_dict(**workflow_updates: Any) -> dict[str, Any]:
 
 
 class TestSmoothInterpolationFactorAdvisory:
-    """``kpoints.smooth_interpolation_factor`` only shapes the DSCF band interpolation."""
+    """``kpoints.smooth_interpolation_factor`` only shapes a singlepoint's band structure."""
 
     def test_default_factor_is_silent(self) -> None:
         """Negative control: the neutral default names nothing."""
@@ -64,19 +64,19 @@ class TestSmoothInterpolationFactorAdvisory:
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
             "kpoints.smooth_interpolation_factor has no effect on task: wannierize "
-            "(it shapes the ΔSCF band-structure interpolation); it is kept for when "
-            "you switch task to singlepoint."
+            "(it shapes the Koopmans band-structure interpolation, which a "
+            "singlepoint computes); it is kept for when you switch task to singlepoint."
         ]
 
     def test_dft_bands_is_advised(self) -> None:
-        """A dft_bands task computes DFT bands directly, no ΔSCF interpolation."""
+        """A dft_bands task computes DFT bands directly, with no Koopmans Hamiltonian."""
         d = _si_dict("dft_bands")
         d["kpoints"]["smooth_interpolation_factor"] = 3
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
             "kpoints.smooth_interpolation_factor has no effect on task: dft_bands "
-            "(it shapes the ΔSCF band-structure interpolation); it is kept for when "
-            "you switch task to singlepoint."
+            "(it shapes the Koopmans band-structure interpolation, which a "
+            "singlepoint computes); it is kept for when you switch task to singlepoint."
         ]
 
     def test_dft_eps_is_advised(self) -> None:
@@ -86,31 +86,20 @@ class TestSmoothInterpolationFactorAdvisory:
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
             "kpoints.smooth_interpolation_factor has no effect on task: dft_eps "
-            "(it shapes the ΔSCF band-structure interpolation); it is kept for when "
-            "you switch task to singlepoint."
+            "(it shapes the Koopmans band-structure interpolation, which a "
+            "singlepoint computes); it is kept for when you switch task to singlepoint."
         ]
 
-    def test_dfpt_singlepoint_is_advised(self) -> None:
-        """DFPT screening within a singlepoint also runs no band interpolation."""
-        d = _si_dict(
-            "singlepoint",
-            screening_method="dfpt",
-            correction="ki",
-            init_orbitals="mlwfs",
-        )
-        d["kpoints"]["smooth_interpolation_factor"] = 2
-        inp = KoopmansInput.model_validate(d)
-        assert advisories_for(inp) == [
-            "kpoints.smooth_interpolation_factor has no effect on task: singlepoint "
-            "(screening_method: dfpt; it shapes the ΔSCF band-structure "
-            "interpolation); it is kept for when you switch screening_method to dscf."
-        ]
+    @pytest.mark.parametrize("screening_method", ["dscf", "dfpt"])
+    def test_neither_singlepoint_route_is_advised(self, screening_method: str) -> None:
+        """Both routes interpolate a Koopmans band structure, so neither is inert.
 
-    def test_dscf_singlepoint_is_not_advised(self) -> None:
-        """The one route that performs the interpolation is silent."""
+        The DFPT route is the discriminating case: it used to be advised
+        here, kcw.x having interpolated off the coarse grid alone.
+        """
         d = _si_dict(
             "singlepoint",
-            screening_method="dscf",
+            screening_method=screening_method,
             correction="ki",
             init_orbitals="mlwfs",
         )

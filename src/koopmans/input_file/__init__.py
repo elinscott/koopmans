@@ -423,11 +423,12 @@ class GridKpointsInput(BaseModel):
     ] = (1, 1, 1)
     """Per-direction densification of ``grid`` for the smooth-interpolation method.
 
-    Above 1 (in any direction), a ΔSCF band-structure interpolation swaps
-    the DFT part of the Koopmans Hamiltonian for one Wannierized on a mesh
-    this many times denser than ``grid``: ``[a, b, c]`` densifies each
-    direction independently, and a bare integer ``a`` is shorthand for
-    ``[a, a, a]``. Needs ``path`` to interpolate along.
+    Above 1 (in any direction), a singlepoint's band-structure
+    interpolation swaps the DFT part of the Koopmans Hamiltonian for one
+    Wannierized on a mesh this many times denser than ``grid``:
+    ``[a, b, c]`` densifies each direction independently, and a bare
+    integer ``a`` is shorthand for ``[a, a, a]``. Needs ``path`` to
+    interpolate along.
     """
 
     eps_inf_factor: Annotated[

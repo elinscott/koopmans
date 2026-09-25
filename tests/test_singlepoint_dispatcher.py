@@ -288,8 +288,8 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
         advisories = advisories_for(inp)
         assert advisories == [
             "kpoints.smooth_interpolation_factor has no effect on task: dft_bands "
-            "(it shapes the ΔSCF band-structure interpolation); it is kept for when "
-            "you switch task to singlepoint."
+            "(it shapes the Koopmans band-structure interpolation, which a "
+            "singlepoint computes); it is kept for when you switch task to singlepoint."
         ]
 
     def test_wannierize_builds_and_is_advised(
@@ -314,41 +314,8 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
         advisories = advisories_for(inp)
         assert advisories == [
             "kpoints.smooth_interpolation_factor has no effect on task: wannierize "
-            "(it shapes the ΔSCF band-structure interpolation); it is kept for when "
-            "you switch task to singlepoint."
-        ]
-
-    def test_singlepoint_dfpt_builds_and_is_advised(
-        self,
-        aiida_profile: Any,
-        installed_pw_code: Any,
-        installed_kcw_code: Any,
-        installed_wannier_codes: Any,
-        fake_sg15_pseudo_family: Any,
-    ) -> None:
-        """DFPT screening within a singlepoint builds normally too."""
-        from koopmans.aiida.workflows import advisories_for, build_workgraph
-
-        d = self._si_dict(
-            "singlepoint",
-            screening_method="dfpt",
-            correction="ki",
-            init_orbitals="mlwfs",
-            calculate_alpha=True,
-        )
-        d["calculator_parameters"]["wannier90"] = {
-            "projections": [[{"site": "Si", "ang_mtm": "sp"}]]
-        }
-        inp = KoopmansInput.model_validate(d)
-        wg = build_workgraph(inp)
-        assert wg is not None
-        assert "interpolate_band_structure" not in wg.get_task_names()
-
-        advisories = advisories_for(inp)
-        assert advisories == [
-            "kpoints.smooth_interpolation_factor has no effect on task: singlepoint "
-            "(screening_method: dfpt; it shapes the ΔSCF band-structure "
-            "interpolation); it is kept for when you switch screening_method to dscf."
+            "(it shapes the Koopmans band-structure interpolation, which a "
+            "singlepoint computes); it is kept for when you switch task to singlepoint."
         ]
 
     def test_a_factor_of_one_is_not_advised(self) -> None:
