@@ -708,16 +708,15 @@ class TestResolver:
         assert [item.label for item in found] == ["KI"]
         assert found[0].vbm == pytest.approx(5.2)
 
-    def test_a_smooth_dfpt_run_plots_the_smooth_bands_and_not_kcw_own(
+    def test_a_smooth_dfpt_run_plots_both_ki_curves(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
     ) -> None:
-        """One KI curve, and it is the one interpolated off the denser mesh.
+        """A smooth DFPT run answers ``KI`` twice, and both curves plot.
 
-        A smooth DFPT run holds both: kcw.x interpolated the Koopmans
-        Hamiltonian from the coarse grid, and the smooth stage
-        interpolated it again with a denser-grid DFT Hamiltonian. Plotting
-        both under ``KI`` would put two answers to one question on the
-        figure, and the coarse one is the answer the run improved on.
+        kcw.x interpolated the Koopmans Hamiltonian from the coarse grid,
+        and the smooth stage interpolated it again with a denser-grid DFT
+        Hamiltonian; nothing decides which one the user wants, so both
+        plot, told apart by which stage produced them.
         """
         root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
         ham = make_process(
@@ -738,17 +737,20 @@ class TestResolver:
 
         found, _ = resolve_band_series([folder])
 
-        assert [item.label for item in found] == ["KI"]
-        assert found[0].vbm == pytest.approx(4.8)
+        by_label = {item.label: item for item in found}
+        assert set(by_label) == {"KI (kcw.x)", "KI (smooth interpolation)"}
+        assert by_label["KI (kcw.x)"].vbm == pytest.approx(5.2)
+        assert by_label["KI (smooth interpolation)"].vbm == pytest.approx(4.8)
 
     def test_kcw_own_bands_still_plot_from_their_own_step_folder(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
     ) -> None:
-        """Superseding is per run, so the coarse curve stays addressable.
+        """A folder naming the ham step alone sees only what that step produced.
 
-        Nothing is thrown away: a folder naming the ham step alone holds no
-        smooth stage to be superseded by, and plots kcw.x's own
-        interpolation.
+        The smooth stage lives elsewhere in the same run's call tree; a
+        folder scoped to the ham calculation itself never reaches it, and
+        plots kcw.x's own interpolation unqualified, same as it would with
+        no smooth stage in the run at all.
         """
         root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
         ham = make_process(

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -163,10 +163,12 @@ class BandProducer:
     ``socket`` is a dotted output path, so a workflow that publishes its result
     under a namespace can name it.
 
-    ``superseded_by`` names process types whose presence in the same run
-    makes this one redundant: both describe the same physics, and the run
-    computed a better answer. The superseded step keeps its own dumped
-    folder, which plots on its own.
+    ``qualifier`` names this producer's own step, for a series that more than
+    one producer can contribute to a single run (kcw.x's own interpolation
+    and the smooth stage that re-interpolates it both report ``KI``). It
+    reaches the legend only when the run in fact produced more than one
+    series of that name; a producer that never shares its series with
+    another carries none.
     """
 
     process_type: str
@@ -174,7 +176,7 @@ class BandProducer:
     series: str
     references: References
     applies: Callable[[orm.ProcessNode], bool] | None = None
-    superseded_by: tuple[str, ...] = ()
+    qualifier: str | None = None
 
 
 #: The optimize workchain's own wannierization outputs, and the series each
@@ -226,15 +228,14 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
     ),
     # kcw.x interpolates the Koopmans Hamiltonian from the grid the Wannier
     # functions were built on. A run that also ran the smooth interpolation
-    # has the same bands computed with a denser-grid DFT Hamiltonian, and
-    # that is the run's answer; this one still plots from its own step
-    # folder.
+    # reports a second, denser-grid answer to the same question; both plot,
+    # told apart by which stage produced them.
     BandProducer(
         process_type="aiida.calculations:koopmans.kcw_ham",
         socket="bands",
         series="KI",
         references=_kcw_ham_references,
-        superseded_by=(_BUILD_BAND_STRUCTURE,),
+        qualifier="kcw.x",
     ),
     BandProducer(
         process_type="aiida.workflows:wannier90_workflows.base.wannier90",
@@ -275,12 +276,14 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
     # The unfold-and-interpolate stage both Koopmans routes end in: the step
     # that attaches the interpolated eigenvalues to their k-path is the one
     # that names a band structure, and it carries the valence band edge as
-    # an input.
+    # an input. On a DFPT run with the smooth-interpolation correction on,
+    # this is the second, denser-grid answer alongside kcw.x's own.
     BandProducer(
         process_type=_BUILD_BAND_STRUCTURE,
         socket="result",
         series="KI",
         references=_unfolded_band_references,
+        qualifier="smooth interpolation",
     ),
 )
 
@@ -779,17 +782,26 @@ def _producing_steps(root: orm.ProcessNode) -> list[orm.ProcessNode]:
     return sorted(found, key=lambda step: (step.ctime, step.pk))
 
 
-def _drop_superseded[MatchT: tuple[orm.ProcessNode, BandProducer, Any]](
-    matches: list[MatchT],
-) -> list[MatchT]:
-    """Drop the matches another match in the same run supersedes.
+Match = tuple["orm.ProcessNode", BandProducer, "orm.BandsData"]
 
-    A run that computed the same band structure twice, once better, plots
-    the better one alone; the other stays plottable from its own dumped
-    step folder, where it is the only match there is.
+
+def _tied_group_qualifiers(
+    indices: list[int], matches: Sequence[Match], node: orm.ProcessNode
+) -> dict[int, str]:
+    """Return the parenthesised legend suffix for one tied group of matches.
+
+    Each producer's own declared ``qualifier`` is used when every match in
+    the group names one; that is the case for two different producers
+    reporting the same series (kcw.x's own interpolation and the smooth
+    stage that re-interpolates it). Otherwise the tied steps all come from
+    one producer repeated at different points of the run (a per-spin or
+    per-block fan-out), told apart by the call chain that led there instead.
     """
-    present = {step.process_type for step, _, _ in matches}
-    return [match for match in matches if not present.intersection(match[1].superseded_by)]
+    names = [matches[i][1].qualifier for i in indices]
+    if all(name is not None for name in names):
+        return {i: f" ({name})" for i, name in zip(indices, cast("list[str]", names), strict=True)}
+    suffixes = _disambiguating_labels([matches[i][0] for i in indices], node)
+    return {i: f" ({suffix})" for i, suffix in zip(indices, suffixes, strict=True)}
 
 
 def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
@@ -799,16 +811,15 @@ def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
     it from the other series of the same run, empty when the run produced only
     one.
     """
-    matches = []
+    matches: list[Match] = []
     for step in _producing_steps(node):
         for producer in _producers_for(step):
             bands = _output_at(step, producer.socket)
             if bands is not None:
                 matches.append((step, producer, bands))
-    matches = _drop_superseded(matches)
 
-    # One step per series name needs no disambiguation; several — a per-spin
-    # or per-block fan-out — are told apart by the call chain that led there.
+    # One step per series name needs no disambiguation; several are told
+    # apart by _tied_group_qualifiers.
     grouped: dict[str, list[int]] = {}
     for index, (_, producer, _) in enumerate(matches):
         grouped.setdefault(producer.series, []).append(index)
@@ -817,9 +828,8 @@ def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
     for indices in grouped.values():
         if len(indices) < 2:
             continue
-        suffixes = _disambiguating_labels([matches[i][0] for i in indices], node)
-        for index, suffix in zip(indices, suffixes, strict=True):
-            qualifiers[index] = f" ({suffix})"
+        for index, qualifier in _tied_group_qualifiers(indices, matches, node).items():
+            qualifiers[index] = qualifier
 
     series: list[tuple[BandSeries, str]] = []
     for (step, producer, bands), qualifier in zip(matches, qualifiers, strict=True):
