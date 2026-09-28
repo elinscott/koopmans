@@ -9,13 +9,23 @@ from __future__ import annotations
 import atexit
 import logging
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 import click
+
+if TYPE_CHECKING:
+    from aiida.manage.configuration.config import Config
 
 logger = logging.getLogger(__name__)
 
 PROFILE_NAME: Final = "koopmans"
+
+# AiiDA's defaults (a 60 s runner poll, one daemon worker) serialize every
+# in-flight process onto a single worker and leave a finished child waiting
+# up to a minute for a missed broadcast. The koopmans daemon runs alone on a
+# single-user localhost backend, so both are set tighter at install time.
+_RUNNER_POLL_INTERVAL: Final = 5
+_DAEMON_DEFAULT_WORKERS: Final = 4
 
 _CLOSE_HOOK_REGISTERED = False
 
@@ -28,6 +38,20 @@ def profile_exists() -> bool:
     return PROFILE_NAME in config.profile_names
 
 
+def _set_daemon_defaults(config: Config) -> None:
+    """Set the profile's runner poll interval and daemon worker count.
+
+    Config values, not code, so a profile created before these defaults
+    existed picks them up the next time ``koopmans install`` runs.
+    """
+    config.set_option(  # type: ignore[no-untyped-call]
+        "runner.poll.interval", _RUNNER_POLL_INTERVAL, scope=PROFILE_NAME
+    )
+    config.set_option(  # type: ignore[no-untyped-call]
+        "daemon.default_workers", _DAEMON_DEFAULT_WORKERS, scope=PROFILE_NAME
+    )
+
+
 def setup_profile(*, use_postgres: bool = False) -> None:
     """Set up the AiiDA profile for koopmans.
 
@@ -36,14 +60,16 @@ def setup_profile(*, use_postgres: bool = False) -> None:
     """
     from aiida.manage.configuration import create_profile, get_config, load_profile
 
+    config = get_config()
+
     if profile_exists():
         click.echo(f"Profile '{PROFILE_NAME}' already exists.")
+        _set_daemon_defaults(config)
+        config.store()  # type: ignore[no-untyped-call]
         load_profile(PROFILE_NAME)
         return
 
     click.echo(f"Creating AiiDA profile '{PROFILE_NAME}'...")
-
-    config = get_config()
 
     if use_postgres:
         click.echo("  Detecting PostgreSQL configuration...")
@@ -96,6 +122,7 @@ def setup_profile(*, use_postgres: bool = False) -> None:
         broker_config=broker_config,
     )
 
+    _set_daemon_defaults(config)
     config.set_default_profile(PROFILE_NAME)  # type: ignore[no-untyped-call]
     config.store()  # type: ignore[no-untyped-call]
 
