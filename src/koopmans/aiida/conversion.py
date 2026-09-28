@@ -444,6 +444,36 @@ def smooth_grid(kpoints: KpointsInput, factor: tuple[int, int, int]) -> list[int
     return [int(g) * int(f) for g, f in zip(kpoints.grid, factor, strict=True)]
 
 
+def eps_inf_kpoints_mesh(kpoints: KpointsInput, factor: tuple[int, int, int]) -> orm.KpointsData:
+    """Return the ``eps_inf: auto`` dielectric step's own Monkhorst-Pack mesh.
+
+    ``kpoints.grid`` densified per axis by ``factor`` — always the
+    top-level ``grid``, never ``kpoints.overrides.scf``, which may state a
+    spacing instead of a grid. Returned as a plain, symmetry-reducible mesh
+    (unlike :func:`smooth_kpoints_mesh`'s explicit kmesh.pl list, which
+    only wannier90 needs): this step is an independent ground state, not
+    part of the Wannierization chain. The offset follows the DFPT chain's
+    own scf (``kpoints.overrides.scf.offset`` if set, else the top-level
+    ``offset``), so the two ground states agree on where the mesh sits even
+    though their dimensions differ.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        factor: Per-direction densification, one entry per lattice vector.
+
+    Returns:
+        AiiDA KpointsData node with the densified k-point mesh.
+    """
+    scf_override = kpoints.overrides.scf
+    if scf_override is not None and scf_override.offset is not None:
+        offset = scf_override.offset
+    else:
+        offset = kpoints.offset
+    kpts = orm.KpointsData()
+    kpts.set_kpoints_mesh(smooth_grid(kpoints, factor), offset=list(offset))  # type: ignore[no-untyped-call]
+    return kpts
+
+
 def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
     """Convert the mesh the named step samples to AiiDA KpointsData.
 
