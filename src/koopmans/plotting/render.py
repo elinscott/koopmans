@@ -507,7 +507,7 @@ def _split_by_occupancy(
 
 
 def _occupancy_legend_handles() -> list[Any]:
-    """Return the key's two entries: the filled marker and the open one."""
+    """Return the key's two entries: the filled marker and the open one, in the points' color."""
     from matplotlib.lines import Line2D
 
     return [
@@ -516,50 +516,12 @@ def _occupancy_legend_handles() -> list[Any]:
             [],
             linestyle="none",
             marker="o",
-            color="0.3",
-            markerfacecolor="0.3" if fill else "none",
+            color="C0",
+            markerfacecolor="C0" if fill else "none",
             label=name,
         )
         for name, fill in ((OCCUPIED_LABEL, True), (EMPTY_LABEL, False))
     ]
-
-
-#: The fraction of each axis a corner label's own footprint is assumed to
-#: cover, for deciding whether a point would sit under it. Wider than the
-#: label actually draws, since a point right at the true corner would
-#: otherwise count as belonging to whichever wider quadrant is emptiest
-#: while still sitting under the label itself.
-_CORNER_FRACTION = 0.25
-
-
-def _corner_boxes(
-    xlim: tuple[float, float], ylim: tuple[float, float]
-) -> dict[str, tuple[float, float, float, float]]:
-    """Return each corner's own ``(xmin, xmax, ymin, ymax)`` footprint."""
-    xspan = (xlim[1] - xlim[0]) * _CORNER_FRACTION
-    yspan = (ylim[1] - ylim[0]) * _CORNER_FRACTION
-    return {
-        "upper right": (xlim[1] - xspan, xlim[1], ylim[1] - yspan, ylim[1]),
-        "upper left": (xlim[0], xlim[0] + xspan, ylim[1] - yspan, ylim[1]),
-        "lower left": (xlim[0], xlim[0] + xspan, ylim[0], ylim[0] + yspan),
-        "lower right": (xlim[1] - xspan, xlim[1], ylim[0], ylim[0] + yspan),
-    }
-
-
-def _corner_loc(
-    x: np.ndarray, y: np.ndarray, xlim: tuple[float, float], ylim: tuple[float, float]
-) -> str:
-    """Return the axes corner whose own footprint holds the fewest points.
-
-    Counted inside each corner's own small footprint rather than the
-    quadrant it sits in, so a lone point right at an otherwise sparse
-    quadrant's corner still rules that corner out.
-    """
-    counts = {
-        loc: int(np.sum((x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)))
-        for loc, (xmin, xmax, ymin, ymax) in _corner_boxes(xlim, ylim).items()
-    }
-    return min(counts, key=lambda loc: counts[loc])
 
 
 #: The scale and unit the MAE/RMSE annotation reports each quantity in.
@@ -612,7 +574,7 @@ def draw_parity(
     item: ParitySeries,
     residuals: bool = False,
     marginal: Axes | None = None,
-) -> bool:
+) -> None:
     """Draw one panel of a run's predicted values against what it computed.
 
     By default the predicted value is drawn against the computed one, with
@@ -622,17 +584,15 @@ def draw_parity(
     told apart by a filled and an open marker; a run that reports no
     occupancy is drawn filled throughout. Drawing the occupancy key itself
     is left to the caller, since one key serves every panel of a figure;
-    the mean absolute and root-mean-square error are annotated in whichever
-    corner has no point in its own footprint, or the least crowded one if
-    every corner has one.
+    the mean absolute and root-mean-square error are annotated in the upper
+    left, where the identity line (parity mode) or the zero rule (residual
+    mode) leaves it clear.
 
     :param axes: where to draw.
     :param item: the run to draw, holding one quantity.
     :param residuals: draw predicted minus computed instead of predicted.
     :param marginal: where to draw the residual histogram; ``None`` draws
         none. Expected to share this panel's y axis.
-    :return: whether the run's orbitals split by occupancy, so the caller
-        knows whether an occupancy key is worth drawing.
     """
     quantity = item.quantity
     computed = np.asarray(item.computed, dtype=np.float64)
@@ -641,7 +601,6 @@ def draw_parity(
     color = "C0"
 
     groups = _split_by_occupancy(item, computed, vertical)
-    split = len(groups) > 1
     for x, y, fill in groups:
         axes.plot(
             x,
@@ -678,14 +637,11 @@ def draw_parity(
     axes.set_xlabel(parity_axis_label(quantity, "true"))
     axes.set_ylabel(parity_axis_label(quantity, "residual" if residuals else "pred"))
 
-    loc = _corner_loc(computed, vertical, axes.get_xlim(), axes.get_ylim())
-    _annotate_metrics(axes, item, loc)
+    _annotate_metrics(axes, item, "upper left")
 
     if marginal is not None:
         edges = np.histogram_bin_edges(errors, bins="auto") if errors.size else [0.0, 1.0]
         _draw_marginal(marginal, errors, color, list(edges))
-
-    return split
 
 
 def _parity_panels(figure: Any, panels: int, residuals: bool) -> list[tuple[Any, Any]]:
@@ -696,7 +652,7 @@ def _parity_panels(figure: Any, panels: int, residuals: bool) -> list[tuple[Any,
     that mode, so a plain parity panel is not left with an empty gap where
     a histogram would otherwise go.
     """
-    grid = figure.add_gridspec(1, panels, wspace=0.35)
+    grid = figure.add_gridspec(1, panels)
     made: list[tuple[Any, Any]] = []
     for column in range(panels):
         if not residuals:
@@ -708,6 +664,13 @@ def _parity_panels(figure: Any, panels: int, residuals: bool) -> list[tuple[Any,
     return made
 
 
+#: The residual marginal's width relative to its own panel's data axes
+#: (matches ``_parity_panels``' ``width_ratios=(4, 1)``), so the figure can
+#: be sized wide enough that the data axes still come out at the same width
+#: as a parity-mode panel instead of being squeezed to make room.
+_MARGINAL_WIDTH = 4.5 / 4
+
+
 def render_parity(
     panels: Sequence[ParitySeries],
     output_path: Path | None = None,
@@ -717,8 +680,9 @@ def render_parity(
 ) -> None:
     """Draw one run's panels, one per quantity, side by side, and write or show the figure.
 
-    One occupancy key serves every panel, drawn above them rather than
-    inside any one panel's own data area.
+    One occupancy key serves every panel, drawn once above the rightmost
+    panel's own top-right corner rather than inside any one panel's data
+    area.
 
     :param panels: the run's series, one per quantity, in the order the
         panels are drawn.
@@ -727,8 +691,8 @@ def render_parity(
     :param show: open an interactive window.
     :param residuals: draw predicted minus computed, with a histogram of
         the residuals beside each panel.
-    :param legend: draw the occupancy key, or leave it out. ``None`` draws
-        it only when some panel's orbitals split by occupancy.
+    :param legend: draw the occupancy key, or leave it out. ``None`` always
+        draws it.
     """
     import matplotlib
 
@@ -739,22 +703,27 @@ def render_parity(
     import matplotlib.pyplot as plt
 
     width = 4.5 * len(panels)
+    if residuals:
+        width += _MARGINAL_WIDTH * len(panels)
     # Constrained rather than tight: a square parity frame and a marginal
     # sharing its neighbour's y axis are both beyond tight_layout, which
     # says so and lays the figure out wrong.
     figure = plt.figure(figsize=(width, 4.5), layout="constrained")
     made = _parity_panels(figure, len(panels), residuals)
-    split = False
     for (axes, marginal), item in zip(made, panels, strict=True):
-        split = draw_parity(axes, item, residuals=residuals, marginal=marginal) or split
+        draw_parity(axes, item, residuals=residuals, marginal=marginal)
 
-    wanted = split if legend is None else legend
+    wanted = True if legend is None else legend
     if wanted:
-        # "outside upper center" reserves its own row above the panels
-        # under constrained layout, rather than overlapping their data.
-        figure.legend(
-            handles=_occupancy_legend_handles(),
-            loc="outside upper center",
+        # The rightmost panel's own data axes, not its marginal histogram —
+        # anchoring there keeps the key above the plotted points rather than
+        # above the narrow histogram strip.
+        handles = _occupancy_legend_handles()
+        made[-1][0].legend(
+            handles,
+            [handle.get_label() for handle in handles],
+            bbox_to_anchor=(1, 1),
+            loc="lower right",
             ncol=2,
             frameon=False,
             fontsize="small",
