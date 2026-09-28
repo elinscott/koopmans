@@ -80,9 +80,16 @@ def start_daemon(wait: bool = True, cache: bool = True) -> bool:
 
     try:
         client = get_daemon_client()
+        # DaemonClient.start_daemon defaults to a single worker regardless of
+        # the daemon.default_workers config option — that default only gets
+        # applied by the ``verdi daemon start`` CLI command, which we bypass
+        # by calling the client directly. Read the option ourselves.
+        number_workers = config.get_option(  # type: ignore[no-untyped-call]
+            "daemon.default_workers", client.profile.name
+        )
         # DaemonClient.start_daemon is annotated ``-> None`` upstream, but the
         # non-wait path historically inspected its return value; preserve that.
-        response = client.start_daemon()  # type: ignore[func-returns-value]
+        response = client.start_daemon(number_workers=number_workers)  # type: ignore[func-returns-value]
 
         if wait:
             for _ in range(30):
