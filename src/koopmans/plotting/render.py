@@ -715,15 +715,17 @@ def render_parity(
 
     wanted = True if legend is None else legend
     if wanted:
-        # The rightmost panel's own data axes, not its marginal histogram —
-        # anchoring there keeps the key above the plotted points rather than
-        # above the narrow histogram strip.
+        # A figure-level legend, not one attached to the rightmost axes:
+        # attaching it to one axes makes constrained layout shrink that
+        # axes alone to fit the legend above it, leaving the panels
+        # different heights. "outside upper right" reserves one strip
+        # across the whole figure instead, so every panel keeps the same
+        # height and the key still reads as belonging to the rightmost one.
         handles = _occupancy_legend_handles()
-        made[-1][0].legend(
+        figure.legend(
             handles,
             [handle.get_label() for handle in handles],
-            bbox_to_anchor=(1, 1),
-            loc="lower right",
+            loc="outside upper right",
             ncol=2,
             frameon=False,
             fontsize="small",
