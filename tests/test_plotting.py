@@ -24,6 +24,8 @@ from koopmans.plotting import (
     BandSeries,
     EnergyZero,
     NoEnergyZeroError,
+    ParityQuantity,
+    ParitySeries,
     PathMismatchError,
     PlottingError,
     SpectrumSeries,
@@ -34,11 +36,13 @@ from koopmans.plotting import (
     check_style,
     describe_energy_zero,
     draw_band_structures,
+    draw_parity,
     draw_spectra,
     path_distances,
     render_band_structures,
     render_spectra,
     resolve_band_series,
+    resolve_parity_series,
     resolve_spectrum_series,
     write_series_json,
 )
@@ -4332,3 +4336,311 @@ class TestSpectrumCommand:
         assert axes.get_xlim() == pytest.approx((0.0, 1.0))
         bottom, _ = axes.get_ylim()
         assert bottom == pytest.approx(0.0)
+
+
+# ----------------------------------------------------------------------
+# ``koopmans plot parity``
+# ----------------------------------------------------------------------
+
+
+def deltas_payload(
+    alphas: tuple[list[float], list[float]],
+    eigenvalues: tuple[list[list[float]], list[list[float]]],
+) -> dict[str, Any]:
+    """Return one snapshot's entry of a `ml: {mode: test}` run's evaluation.
+
+    Eigenvalues come as a table with one row per spin block, the shape
+    ``compare_final_kis`` writes.
+    """
+    return {
+        quantity: {"computed": computed, "predicted": predicted}
+        for quantity, (computed, predicted) in (
+            ("alphas", alphas),
+            ("eigenvalues", eigenvalues),
+        )
+    }
+
+
+def parity_run(
+    tmp_path: Path,
+    name: str,
+    snapshots: dict[str, dict[str, Any]],
+    occupancy: dict[str, list[bool]] | None = None,
+    evaluation: dict[str, Any] | None = None,
+) -> Path:
+    """Write a run folder holding a `ml: {mode: test}` trajectory's evaluation.
+
+    ``occupancy`` publishes each snapshot's dataset ``filled`` column, the
+    run's own record of which orbitals are occupied; leaving it out is a
+    run that published none. ``evaluation`` replaces the whole evaluation
+    output, for a run of some other mode.
+    """
+    root = make_process(
+        "aiida.workflows:workgraph.engine",
+        process_label="WorkGraph<TrajectoryWorkflow>",
+    )
+    if evaluation is None:
+        evaluation = {"metrics": {"mae": 0.01}, "alpha_and_eigenvalue_deltas": snapshots}
+    attach(root, "evaluation", orm.Dict(evaluation))  # type: ignore[no-untyped-call]
+    for label, filled in (occupancy or {}).items():
+        attach(root, f"datasets__{label}__filled", orm.List(filled))  # type: ignore[no-untyped-call]
+    return write_run_folder(tmp_path, name, root)
+
+
+def parity_series(label: str = "test", **overrides: Any) -> ParitySeries:
+    """Return a parity series with four points straddling the identity line."""
+    fields: dict[str, Any] = {
+        "label": label,
+        "quantity": ParityQuantity.ALPHAS,
+        "computed": [0.30, 0.40, 0.50, 0.60],
+        "predicted": [0.32, 0.39, 0.52, 0.58],
+        "filled": [True, True, False, False],
+    }
+    fields.update(overrides)
+    return ParitySeries(**fields)
+
+
+def point_groups(axes: Any) -> list[Any]:
+    """Return the marker groups drawn on a parity panel, in drawing order."""
+    return [line for line in axes.get_lines() if line.get_marker() == "o"]
+
+
+def reference_lines(axes: Any) -> list[Any]:
+    """Return the panel's identity or zero rules — every line carrying no marker."""
+    return [line for line in axes.get_lines() if line.get_marker() in ("", "None", None)]
+
+
+def histogram_edges(patch: Any) -> np.ndarray:
+    """Return the bin edges a horizontal step histogram's outline sits on."""
+    return np.unique(np.round(np.asarray(patch.get_xy())[:, 1], 12))
+
+
+class TestParityResolver:
+    """Turning a `ml: {mode: test}` run folder into parity series."""
+
+    @pytest.mark.parametrize("with_occupancy", [True, False])
+    def test_snapshots_pool_into_one_series_per_quantity(
+        self, aiida_profile: Any, tmp_path: Path, with_occupancy: bool
+    ) -> None:
+        """Both quantities are pooled in snapshot-name order, occupancy and all.
+
+        The eigenvalue table holds one row per spin block, so its
+        occupancy is the snapshot's own repeated once per block; a run
+        that published no ``filled`` column reports none rather than
+        guessing one.
+        """
+        snapshots = {
+            # Written out of order, to pin that the pooled columns follow
+            # the snapshot names rather than the order the run finished in.
+            "snapshot_2": deltas_payload(
+                alphas=([0.5, 0.6], [0.52, 0.58]),
+                eigenvalues=([[-5.0, 1.0], [-5.0, 1.0]], [[-5.1, 1.2], [-5.1, 1.2]]),
+            ),
+            "snapshot_1": deltas_payload(
+                alphas=([0.3, 0.4], [0.31, 0.42]),
+                eigenvalues=([[-6.0, 2.0], [-6.0, 2.0]], [[-6.2, 2.1], [-6.2, 2.1]]),
+            ),
+        }
+        occupancy = {"snapshot_1": [True, False], "snapshot_2": [True, False]}
+        folder = parity_run(
+            tmp_path, "test", snapshots, occupancy=occupancy if with_occupancy else None
+        )
+
+        panels, warnings = resolve_parity_series(
+            [folder], [ParityQuantity.ALPHAS, ParityQuantity.EIGENVALUES]
+        )
+
+        assert warnings == []
+        alphas, eigenvalues = (panel[0] for panel in panels)
+        assert alphas.label == "TrajectoryWorkflow"
+        assert alphas.computed == pytest.approx([0.3, 0.4, 0.5, 0.6])
+        assert alphas.predicted == pytest.approx([0.31, 0.42, 0.52, 0.58])
+        assert eigenvalues.computed == pytest.approx([-6.0, 2.0, -6.0, 2.0, -5.0, 1.0, -5.0, 1.0])
+        assert eigenvalues.units == "eV"
+        if not with_occupancy:
+            assert alphas.filled is None and eigenvalues.filled is None
+        else:
+            assert alphas.filled == [True, False, True, False]
+            assert eigenvalues.filled == [True, False] * 4
+
+    def test_a_run_that_never_compared_two_final_kis_is_refused(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A `mode: train` run scored a model but recomputed nothing to score against."""
+        folder = parity_run(
+            tmp_path, "train", {}, evaluation={"mae": 0.01, "rmse": 0.02, "n_samples": 6}
+        )
+
+        with pytest.raises(PlottingError) as excinfo:
+            resolve_parity_series([folder], [ParityQuantity.ALPHAS])
+
+        message = str(excinfo.value)
+        assert "TrajectoryWorkflow" in message
+        assert "ml: {mode: test}" in message
+        # The run did publish an evaluation, so the message must not claim
+        # it published none at all.
+        assert "published no screening-model evaluation" not in message
+
+    def test_a_run_with_no_evaluation_at_all_names_both_settings(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A route that never trained anything needs the task set as well as the mode."""
+        root = make_process(
+            "aiida.workflows:workgraph.engine",
+            process_label="WorkGraph<KoopmansDSCFWorkflow>",
+        )
+        folder = write_run_folder(tmp_path, "si-dscf", root)
+
+        with pytest.raises(PlottingError) as excinfo:
+            resolve_parity_series([folder], [ParityQuantity.ALPHAS])
+
+        message = str(excinfo.value)
+        assert "KoopmansDSCFWorkflow" in message
+        assert "task: trajectory" in message
+        assert "ml: {mode: test}" in message
+
+
+class TestParityRenderer:
+    """Drawing the records, straight off ``ParitySeries``, no AiiDA."""
+
+    def test_parity_panel_draws_the_identity_line_and_splits_by_occupancy(self) -> None:
+        """Occupied points are filled, empty ones open, both on one square frame."""
+        axes = blank_axes()
+
+        draw_parity(axes, [parity_series()])
+
+        occupied, empty = point_groups(axes)
+        assert occupied.get_markerfacecolor() != "none"
+        assert empty.get_markerfacecolor() == "none"
+        assert occupied.get_xdata() == pytest.approx([0.30, 0.40])
+        assert empty.get_xdata() == pytest.approx([0.50, 0.60])
+        # One range on both axes, so the identity line runs at 45 degrees.
+        assert axes.get_xlim() == pytest.approx(axes.get_ylim())
+        (identity,) = reference_lines(axes)
+        assert identity.get_xdata() == pytest.approx(identity.get_ydata())
+        assert "MAE" in " ".join(text.get_text() for text in axes.texts)
+
+    def test_residual_panel_bins_every_run_alike(self) -> None:
+        """Two runs' histograms share one binning, so the overlay compares them."""
+        axes = blank_axes()
+        marginal = axes.get_figure().add_subplot(2, 1, 2, sharey=axes)
+        wide = parity_series("wide", predicted=[0.20, 0.55, 0.40, 0.75])
+
+        draw_parity(axes, [parity_series(), wide], residuals=True, marginal=marginal)
+
+        (zero,) = reference_lines(axes)
+        assert zero.get_ydata() == pytest.approx([0.0, 0.0])
+        # Residuals, not the predictions themselves.
+        assert point_groups(axes)[0].get_ydata() == pytest.approx([0.02, -0.01])
+        first, second = marginal.patches
+        assert histogram_edges(first) == pytest.approx(histogram_edges(second))
+
+
+@pytest.fixture
+def drawn_parity_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Return the axes of each panel ``koopmans plot parity`` draws, in order.
+
+    Same rationale as ``drawn_axes``, for ``draw_parity`` instead.
+    """
+    from koopmans.plotting import render
+
+    seen: list[Any] = []
+    original = render.draw_parity
+
+    def record(axes: Any, *args: Any, **kwargs: Any) -> None:
+        """Call through to the renderer, keeping the axes it drew."""
+        seen.append(axes)
+        original(axes, *args, **kwargs)
+
+    monkeypatch.setattr(render, "draw_parity", record)
+    return seen
+
+
+class TestParityCommand:
+    """``koopmans plot parity`` end to end."""
+
+    @pytest.mark.parametrize(
+        ("flags", "titles", "quantities"),
+        [
+            ([], ["Screening parameters", "Eigenvalues"], ["alphas", "eigenvalues"]),
+            (
+                ["--alphas", "--eigenvalues"],
+                ["Screening parameters", "Eigenvalues"],
+                ["alphas", "eigenvalues"],
+            ),
+            (["--alphas"], ["Screening parameters"], ["alphas"]),
+            (["--eigenvalues"], ["Eigenvalues"], ["eigenvalues"]),
+            (
+                ["--residuals"],
+                ["Screening parameters", "Eigenvalues"],
+                ["alphas", "eigenvalues"],
+            ),
+        ],
+    )
+    def test_the_quantity_flags_choose_the_panels(
+        self,
+        aiida_profile: Any,
+        runner: Any,
+        drawn_parity_axes: Any,
+        tmp_path: Path,
+        flags: list[str],
+        titles: list[str],
+        quantities: list[str],
+    ) -> None:
+        """Neither flag, or both, draws both panels; one flag draws that one alone."""
+        from koopmans.cli import cli
+
+        folder = parity_run(
+            tmp_path,
+            "test",
+            {
+                "snapshot_1": deltas_payload(
+                    alphas=([0.3, 0.4], [0.31, 0.42]),
+                    eigenvalues=([[-6.0, 2.0]], [[-6.2, 2.1]]),
+                )
+            },
+            occupancy={"snapshot_1": [True, False]},
+        )
+        data = tmp_path / "parity.json"
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "parity",
+                str(folder),
+                *flags,
+                "-o",
+                str(tmp_path / "a.png"),
+                "--data",
+                str(data),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert [axes.get_title() for axes in drawn_parity_axes] == titles
+        assert (tmp_path / "a.png").is_file()
+        written = json.loads(data.read_text())["series"]
+        assert [item["quantity"] for item in written] == quantities
+        assert all("metrics" in item for item in written)
+
+    def test_a_style_naming_a_marker_is_refused(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The marker is the occupancy's, so --style may only name a color."""
+        from koopmans.cli import cli
+
+        folder = parity_run(
+            tmp_path,
+            "test",
+            {
+                "snapshot_1": deltas_payload(
+                    alphas=([0.3], [0.31]), eigenvalues=([[-6.0]], [[-6.2]])
+                )
+            },
+        )
+
+        result = runner.invoke(cli, ["plot", "parity", str(folder), "--style", "rx"])
+
+        assert result.exit_code == 2
+        assert "may name only its color" in result.output

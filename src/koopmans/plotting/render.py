@@ -17,10 +17,15 @@ from koopmans.plotting.series import (
     BandGap,
     BandSeries,
     EnergyZero,
+    ParitySeries,
     SpectrumSeries,
     _jumps,
     band_gap,
     energy_axis_label,
+    parity_axis_label,
+    parity_metrics,
+    parity_quantity_name,
+    parity_residuals,
     path_distances,
 )
 
@@ -29,13 +34,18 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DIVIDER_LABEL",
+    "EMPTY_LABEL",
+    "OCCUPIED_LABEL",
     "StyleError",
     "check_style",
     "draw_band_structures",
+    "draw_parity",
     "draw_spectra",
     "path_distances",
     "render_band_structures",
+    "render_parity",
     "render_spectra",
+    "style_is_color_only",
 ]
 
 #: Label of the vertical rules drawn at interior special points. The leading
@@ -262,17 +272,25 @@ def _format_parser() -> Any:
     return _process_plot_format
 
 
-def _style_color(style: str) -> object | None:
-    """Return the color a matplotlib format string names, or ``None`` for none.
+def _parse_style(style: str) -> tuple[Any, Any, Any]:
+    """Return the line style, marker and color a matplotlib format string names.
 
     :raises StyleError: if matplotlib cannot read ``style`` as a format string.
     """
     parser = _format_parser()
     try:
-        parsed = parser(style)
+        parsed: tuple[Any, Any, Any] = parser(style)
     except ValueError as exc:
         raise StyleError(str(exc)) from exc
-    color: object | None = parsed[2]
+    return parsed
+
+
+def _style_color(style: str) -> object | None:
+    """Return the color a matplotlib format string names, or ``None`` for none.
+
+    :raises StyleError: if matplotlib cannot read ``style`` as a format string.
+    """
+    color: object | None = _parse_style(style)[2]
     return color
 
 
@@ -282,6 +300,15 @@ def check_style(style: str) -> None:
     :raises StyleError: if matplotlib cannot read it.
     """
     _style_color(style)
+
+
+def style_is_color_only(style: str) -> bool:
+    """Whether a format string names a color and neither a marker nor a line.
+
+    :raises StyleError: if matplotlib cannot read it as a format string.
+    """
+    linestyle, marker, color = _parse_style(style)
+    return linestyle is None and marker is None and color is not None
 
 
 def _cycle_color(style: Sequence[str], index: int) -> str | None:
@@ -448,6 +475,288 @@ def draw_spectra(
     wanted = True if legend is None else legend
     if wanted:
         axes.legend(frameon=False, fontsize="small")
+
+
+#: Legend entries for the two markers, shared across every series so each
+#: appears once however many runs are drawn.
+OCCUPIED_LABEL = "occupied"
+EMPTY_LABEL = "empty"
+
+#: How many points a panel draws before its markers are thinned down and made
+#: translucent, so that a long trajectory reads as a cloud rather than a blot.
+_CROWDED = 400
+
+
+def _marker_size(points: int) -> float:
+    """Return the marker size a panel of this many points is drawn at."""
+    return 4.0 if points > _CROWDED else 6.0
+
+
+def _split_by_occupancy(
+    item: ParitySeries, x: np.ndarray, y: np.ndarray
+) -> list[tuple[np.ndarray, np.ndarray, bool]]:
+    """Return the point groups one series is drawn as, and whether each is filled.
+
+    One group when the run reports no occupancy, otherwise the occupied
+    and the empty orbitals apart, so that a reader can see which of the
+    two the model is getting wrong.
+    """
+    if item.filled is None or len(item.filled) != x.size:
+        return [(x, y, True)]
+    mask = np.asarray(item.filled, dtype=bool)
+    return [
+        (x[selected], y[selected], fill)
+        for selected, fill in ((mask, True), (~mask, False))
+        if selected.any()
+    ]
+
+
+def _parity_legend_handles(
+    series: Sequence[ParitySeries], colors: Sequence[Any], split: bool
+) -> list[Any]:
+    """Return the key's entries: one per run, plus the two markers when they differ.
+
+    Color tells the runs apart and the marker tells occupied orbitals from
+    empty ones, so an overlay of runs that report occupancy needs both read
+    off the key.
+    """
+    from matplotlib.lines import Line2D
+
+    handles = [
+        Line2D([], [], linestyle="none", marker="o", color=color, label=item.label)
+        for item, color in zip(series, colors, strict=True)
+    ]
+    if not split:
+        return handles
+    return handles + [
+        Line2D(
+            [],
+            [],
+            linestyle="none",
+            marker="o",
+            color="0.3",
+            markerfacecolor="0.3" if fill else "none",
+            label=name,
+        )
+        for name, fill in ((OCCUPIED_LABEL, True), (EMPTY_LABEL, False))
+    ]
+
+
+def _annotate_metrics(axes: Axes, entries: Sequence[tuple[str, Any]], units: str) -> None:
+    """Write each series' mean absolute and root-mean-square error on the panel.
+
+    One line per series, in the color its points are drawn in, in the
+    corner the identity line leaves free.
+    """
+    for row, (text, color) in enumerate(entries):
+        axes.annotate(
+            text,
+            xy=(0.97, 0.03),
+            xytext=(0, 12 * (len(entries) - 1 - row)),
+            textcoords="offset points",
+            xycoords="axes fraction",
+            ha="right",
+            va="bottom",
+            fontsize="x-small",
+            color=color,
+        )
+    if entries and units:
+        # The reader needs the units once, not on every line.
+        axes.annotate(
+            f"errors in {units}",
+            xy=(0.97, 0.03),
+            xytext=(0, 12 * len(entries)),
+            textcoords="offset points",
+            xycoords="axes fraction",
+            ha="right",
+            va="bottom",
+            fontsize="x-small",
+            color="0.4",
+        )
+
+
+def _draw_marginal(
+    marginal: Axes,
+    residuals: Sequence[np.ndarray],
+    colors: Sequence[Any],
+    bins: Sequence[float],
+) -> None:
+    """Draw each series' residual histogram beside the panel it belongs to.
+
+    Every series is counted into one set of bins spanning them all, so
+    that two runs' histograms can be read against each other rather than
+    each against its own binning.
+    """
+    for values, color in zip(residuals, colors, strict=True):
+        marginal.hist(
+            values,
+            bins=bins,
+            orientation="horizontal",
+            histtype="step",
+            color=color,
+            linewidth=1.0,
+        )
+    marginal.axhline(0.0, color="0.4", linewidth=0.8, zorder=0)
+    marginal.tick_params(labelleft=False, labelbottom=False, left=False, bottom=False)
+    for side in ("top", "right", "bottom"):
+        marginal.spines[side].set_visible(False)
+
+
+def draw_parity(
+    axes: Axes,
+    series: Sequence[ParitySeries],
+    residuals: bool = False,
+    marginal: Axes | None = None,
+    legend: bool | None = None,
+) -> None:
+    """Draw one panel of predicted-against-computed values.
+
+    Every series on the panel holds the same quantity. By default the
+    predicted value is drawn against the computed one with the identity
+    line a perfect model would sit on; with ``residuals`` the difference
+    is drawn against the computed value instead, with a rule at zero.
+    Occupied and empty orbitals are told apart by a filled and an open
+    marker; a series whose run reports no occupancy is drawn filled
+    throughout. Each series' mean absolute and root-mean-square error is
+    written in the corner.
+
+    :param axes: where to draw.
+    :param series: the runs on this panel, all of one quantity.
+    :param residuals: draw predicted minus computed instead of predicted.
+    :param marginal: where to draw the residual histograms; ``None`` draws
+        none. Expected to share this panel's y axis.
+    :param legend: draw the key, or leave it out. ``None`` draws it for an
+        overlay, or for a single run whose orbitals split by occupancy.
+    """
+    quantity = series[0].quantity
+    entries: list[tuple[str, Any]] = []
+    drawn_residuals: list[np.ndarray] = []
+    colors: list[Any] = []
+    reach: list[np.ndarray] = []
+    split = False
+
+    for index, item in enumerate(series):
+        computed = np.asarray(item.computed, dtype=np.float64)
+        errors = parity_residuals(item)
+        vertical = errors if residuals else np.asarray(item.predicted, dtype=np.float64)
+        color = item.style if item.style else f"C{index % 10}"
+        colors.append(color)
+        drawn_residuals.append(errors)
+        reach += [computed] if residuals else [computed, vertical]
+
+        groups = _split_by_occupancy(item, computed, vertical)
+        split = split or len(groups) > 1
+        for x, y, fill in groups:
+            axes.plot(
+                x,
+                y,
+                linestyle="none",
+                marker="o",
+                markersize=_marker_size(computed.size),
+                markeredgewidth=1.0,
+                color=color,
+                markerfacecolor=color if fill else "none",
+                alpha=0.75 if computed.size > _CROWDED else 1.0,
+            )
+
+        metrics = parity_metrics(item)
+        entries.append((f"{item.label}: MAE {metrics.mae:.4g}, RMSE {metrics.rmse:.4g}", color))
+
+    reached = np.concatenate(reach) if reach else np.zeros(0)
+    if residuals:
+        axes.axhline(0.0, color="0.4", linewidth=0.8, zorder=0)
+    elif reached.size:
+        # One range on both axes, in a square frame: only then does the
+        # identity line run at 45 degrees, which is what a reader judges
+        # the points against.
+        low, high = float(reached.min()), float(reached.max())
+        margin = 0.05 * (high - low) or 1.0
+        frame = (low - margin, high + margin)
+        axes.plot(frame, frame, color="0.4", linewidth=0.8, zorder=0)
+        axes.set_xlim(*frame)
+        axes.set_ylim(*frame)
+        axes.set_box_aspect(1)
+
+    vertical_name = "predicted $-$ computed" if residuals else "predicted"
+    axes.set_title(parity_quantity_name(quantity), fontsize="medium")
+    axes.set_xlabel(parity_axis_label("computed", quantity))
+    axes.set_ylabel(parity_axis_label(vertical_name, quantity))
+    _annotate_metrics(axes, entries, series[0].units)
+
+    if marginal is not None:
+        pooled = np.concatenate(drawn_residuals) if drawn_residuals else np.zeros(0)
+        edges = np.histogram_bin_edges(pooled, bins="auto") if pooled.size else [0.0, 1.0]
+        _draw_marginal(marginal, drawn_residuals, colors, list(edges))
+
+    wanted = (len(series) > 1 or split) if legend is None else legend
+    if wanted:
+        axes.legend(
+            handles=_parity_legend_handles(series, colors, split),
+            frameon=False,
+            fontsize="small",
+            loc="upper left",
+        )
+
+
+def _parity_panels(figure: Any, panels: int, residuals: bool) -> list[tuple[Any, Any]]:
+    """Return one drawing axes per panel, each with its marginal axes or ``None``.
+
+    A residual panel keeps a narrow strip on its right, sharing its y axis,
+    for the histogram of the residuals it drew.
+    """
+    grid = figure.add_gridspec(1, panels, wspace=0.35)
+    made: list[tuple[Any, Any]] = []
+    for column in range(panels):
+        if not residuals:
+            made.append((figure.add_subplot(grid[0, column]), None))
+            continue
+        split = grid[0, column].subgridspec(1, 2, width_ratios=(4, 1), wspace=0.05)
+        axes = figure.add_subplot(split[0, 0])
+        made.append((axes, figure.add_subplot(split[0, 1], sharey=axes)))
+    return made
+
+
+def render_parity(
+    panels: Sequence[Sequence[ParitySeries]],
+    output_path: Path | None = None,
+    show: bool = False,
+    residuals: bool = False,
+    legend: bool | None = None,
+) -> None:
+    """Draw one panel per quantity, side by side, and write or show the figure.
+
+    :param panels: the series of each panel, in the order the panels are
+        drawn; every series within a panel holds one quantity.
+    :param output_path: where to write the figure; the extension sets the
+        format. ``None`` writes nothing.
+    :param show: open an interactive window.
+    :param residuals: draw predicted minus computed, with a histogram of
+        the residuals beside each panel.
+    :param legend: draw the key, or leave it out. ``None`` leaves each
+        panel to decide.
+    """
+    import matplotlib
+
+    if not show:
+        # Chosen before pyplot is imported: a run that only writes a file must
+        # not depend on a display, so that it works over ssh and in CI.
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    width = (5.5 if residuals else 4.5) * len(panels)
+    # Constrained rather than tight: a square parity frame and a marginal
+    # sharing its neighbour's y axis are both beyond tight_layout, which
+    # says so and lays the figure out wrong.
+    figure = plt.figure(figsize=(width, 4.5), layout="constrained")
+    made = _parity_panels(figure, len(panels), residuals)
+    for (axes, marginal), series in zip(made, panels, strict=True):
+        draw_parity(axes, series, residuals=residuals, marginal=marginal, legend=legend)
+
+    if output_path is not None:
+        figure.savefig(output_path, dpi=200)
+    if show:
+        plt.show()
+    plt.close(figure)
 
 
 def render_spectra(

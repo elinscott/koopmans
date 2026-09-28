@@ -21,6 +21,9 @@ __all__ = [
     "BandSeries",
     "EnergyZero",
     "NoEnergyZeroError",
+    "ParityMetrics",
+    "ParityQuantity",
+    "ParitySeries",
     "PathMismatchError",
     "SpectrumSeries",
     "apply_energy_zero",
@@ -28,6 +31,8 @@ __all__ = [
     "check_paths_agree",
     "describe_energy_zero",
     "energy_axis_label",
+    "parity_metrics",
+    "parity_residuals",
     "path_distances",
     "write_series_json",
 ]
@@ -261,6 +266,104 @@ class SpectrumSeries:
     style: str | None = None
 
 
+class ParityQuantity(StrEnum):
+    """Which quantity of a `ml: {mode: test}` run a parity panel compares."""
+
+    ALPHAS = "alphas"
+    EIGENVALUES = "eigenvalues"
+
+
+#: What each quantity is called on a panel, and the units it is measured in.
+_PARITY_NAMES = {
+    ParityQuantity.ALPHAS: ("Screening parameters", ""),
+    ParityQuantity.EIGENVALUES: ("Eigenvalues", "eV"),
+}
+
+
+@dataclass
+class ParitySeries:
+    """One run's model-predicted values against the values it computed.
+
+    ``computed`` and ``predicted`` hold the same quantity, one entry per
+    point, in the run's own order, and must be the same length.
+    ``filled`` says which entries belong to an occupied orbital, and is
+    either the same length again or ``None`` when the run reports no
+    occupancy. ``style`` is a matplotlib format string naming the color
+    the points are drawn in; the marker is the occupancy's, so a string
+    naming one is refused before it reaches here.
+    """
+
+    label: str
+    quantity: ParityQuantity
+    computed: list[float]
+    predicted: list[float]
+    filled: list[bool] | None = None
+    style: str | None = None
+
+    @property
+    def units(self) -> str:
+        """Return the quantity's units, empty for a dimensionless one."""
+        return _PARITY_NAMES[self.quantity][1]
+
+
+def parity_quantity_name(quantity: ParityQuantity) -> str:
+    """Return the name a panel of this quantity carries."""
+    return _PARITY_NAMES[quantity][0]
+
+
+def parity_axis_label(text: str, quantity: ParityQuantity) -> str:
+    """Return an axis label naming the quantity's units, where it has any."""
+    units = _PARITY_NAMES[quantity][1]
+    return f"{text} ({units})" if units else text
+
+
+def parity_residuals(item: ParitySeries) -> np.ndarray:
+    """Return ``predicted - computed``, one entry per point.
+
+    :raises ValueError: if the two columns are of different lengths.
+    """
+    computed = np.asarray(item.computed, dtype=np.float64)
+    predicted = np.asarray(item.predicted, dtype=np.float64)
+    if computed.shape != predicted.shape:
+        raise ValueError(
+            f"'{item.label}' holds {computed.size} computed value(s) and "
+            f"{predicted.size} predicted; the two columns describe the same points, "
+            "so they must be the same length."
+        )
+    return predicted - computed
+
+
+@dataclass
+class ParityMetrics:
+    """How far one series' predictions sit from the values it computed.
+
+    In the series' own units. ``n_samples`` is how many points the errors
+    were taken over.
+    """
+
+    n_samples: int
+    mae: float
+    rmse: float
+    max_abs_error: float
+
+
+def parity_metrics(item: ParitySeries) -> ParityMetrics:
+    """Return the error between a series' predicted and computed values.
+
+    :raises ValueError: if the series holds no points, or its two columns
+        are of different lengths.
+    """
+    errors = parity_residuals(item)
+    if errors.size == 0:
+        raise ValueError(f"'{item.label}' holds no points to measure an error over.")
+    return ParityMetrics(
+        n_samples=int(errors.size),
+        mae=float(np.mean(np.abs(errors))),
+        rmse=float(np.sqrt(np.mean(errors**2))),
+        max_abs_error=float(np.max(np.abs(errors))),
+    )
+
+
 #: How far apart two crystal coordinates may be and still name the same point.
 PATH_TOLERANCE = 1e-4
 
@@ -381,13 +484,14 @@ def describe_energy_zero(
     )
 
 
-def _series_record(item: BandSeries | SpectrumSeries) -> dict[str, Any]:
-    """Return one series' JSON record, with its gap if it is a band structure reporting an edge.
+def _series_record(item: BandSeries | SpectrumSeries | ParitySeries) -> dict[str, Any]:
+    """Return one series' JSON record, with whatever it derives from its own values.
 
-    ``gap`` is written whether or not the figure was asked to draw one, so a
-    script can read the gap off the file without asking for the annotation;
-    ``show_gap`` itself, which only says whether the figure drew it, is left
-    out to keep this key's shape the same either way.
+    A band structure carries its ``gap`` and a parity series its
+    ``metrics``, written whether or not the figure drew them, so a script
+    can read either off the file without asking for the annotation;
+    ``show_gap`` itself, which only says whether the figure drew the gap,
+    is left out to keep that key's shape the same either way.
     """
     record = asdict(item)
     if isinstance(item, BandSeries):
@@ -396,13 +500,18 @@ def _series_record(item: BandSeries | SpectrumSeries) -> dict[str, Any]:
             record["gap"] = asdict(band_gap(item))
         except ValueError:
             record["gap"] = None
+    if isinstance(item, ParitySeries):
+        record["metrics"] = asdict(parity_metrics(item))
     return record
 
 
-def write_series_json(series: Sequence[BandSeries] | Sequence[SpectrumSeries], path: Path) -> None:
+def write_series_json(
+    series: Sequence[BandSeries] | Sequence[SpectrumSeries] | Sequence[ParitySeries],
+    path: Path,
+) -> None:
     """Write the records a figure was drawn from as JSON.
 
-    Works on either a band-structure or a spectrum figure's records alike, both
+    Works on a band-structure, spectrum or parity figure's records alike, all
     being plain dataclasses. Energies are as computed; a ``BandSeries``' zero
     records the shift the figure applied, so the file is enough to redraw the
     figure or to restyle it elsewhere.
