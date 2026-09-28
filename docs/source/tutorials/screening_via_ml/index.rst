@@ -86,8 +86,7 @@ composition and the projections that the rest of the file gives.
 is the model. ``descriptor`` decides what the model sees of an orbital: ``power_spectrum``
 expands each orbital's density on a radial basis out to ``r_max``, with radial channels
 up to ``n_max`` and angular momenta up to ``l_max``, and feeds the model the rotationally
-invariant power spectrum of that expansion — the same construction, at comparable
-detail, as the legacy tutorial's own orbital-density descriptor. (The cheaper
+invariant power spectrum of that expansion. (The cheaper
 alternative, ``self_hartree``, sees only the electrostatic self-interaction energy of
 that density, a single number the calculation prints anyway; see the question below for
 what that costs you.) ``estimator`` decides how the model fits screening parameters to
