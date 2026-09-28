@@ -1182,64 +1182,45 @@ def _parity_columns(
 
 
 def resolve_parity_series(
-    folders: Sequence[Path],
+    folder: Path,
     quantities: Sequence[ParityQuantity],
-    labels: Sequence[str | None] = (),
-    styles: Sequence[str | None] = (),
-) -> tuple[list[list[ParitySeries]], list[str]]:
-    """Return the predicted-versus-computed values of `ml: {mode: test}` runs.
+) -> tuple[list[ParitySeries], list[str]]:
+    """Return one `ml: {mode: test}` run's predicted-versus-computed values.
 
-    One list of series per quantity, in the order ``quantities`` asks for
-    them, each holding one series per folder in the order the folders were
-    given. Every snapshot of a run is pooled into that run's single series,
-    since the model is scored over the trajectory rather than per snapshot.
-    A run is named after the route that produced it unless ``labels`` names
-    it, and prefixed by its folder name when more than one folder is on the
-    axes. ``None`` in ``labels``/``styles`` leaves that folder's own name or
-    appearance as if the option had not been given for it at all — the same
-    convention :func:`resolve_band_series` uses.
+    One series per quantity, in the order ``quantities`` asks for them.
+    Every snapshot of the run is pooled into that series, since the model
+    is scored over the trajectory rather than per snapshot. The series is
+    named after the route that produced it.
 
-    :raises ValueError: if given, ``labels``/``styles`` do not number the
-        folders.
-    :raises PlottingError: if a folder is not a run directory, its run is not
-        in this profile, or any of them published no computed-versus-predicted
+    :raises PlottingError: if ``folder`` is not a run directory, its run is
+        not in this profile, or it published no computed-versus-predicted
         comparison.
     """
-    _check_one_per_folder(labels, len(folders), "--label")
-    _check_one_per_folder(styles, len(folders), "--style")
+    node = run_node(folder)
 
-    nodes = [run_node(folder) for folder in folders]
-
-    panels: list[list[ParitySeries]] = [[] for _ in quantities]
     warnings: list[str] = []
-    for index, (folder, node) in enumerate(zip(folders, nodes, strict=True)):
-        warning = _failure_warning(folder, node)
-        if warning is not None:
-            warnings.append(warning)
+    warning = _failure_warning(folder, node)
+    if warning is not None:
+        warnings.append(warning)
 
-        evaluation = _evaluation_of(node)
-        deltas = (evaluation or {}).get(_DELTAS_KEY)
-        if not deltas:
-            raise _not_a_test_run(folder, node, evaluation)
+    evaluation = _evaluation_of(node)
+    deltas = (evaluation or {}).get(_DELTAS_KEY)
+    if not deltas:
+        raise _not_a_test_run(folder, node, evaluation)
 
-        label = labels[index] if labels else None
-        if label is None:
-            label = _route_name(node) or "trajectory"
-            if len(folders) > 1:
-                prefix = folder.name or folder.resolve().name
-                label = f"{prefix}: {label}"
+    label = _route_name(node) or "trajectory"
 
-        for panel, quantity in zip(panels, quantities, strict=True):
-            computed, predicted, filled = _parity_columns(deltas, node, quantity)
-            panel.append(
-                ParitySeries(
-                    label=label,
-                    quantity=quantity,
-                    computed=computed,
-                    predicted=predicted,
-                    filled=filled,
-                    style=styles[index] if styles else None,
-                )
+    panels: list[ParitySeries] = []
+    for quantity in quantities:
+        computed, predicted, filled = _parity_columns(deltas, node, quantity)
+        panels.append(
+            ParitySeries(
+                label=label,
+                quantity=quantity,
+                computed=computed,
+                predicted=predicted,
+                filled=filled,
             )
+        )
 
     return panels, warnings

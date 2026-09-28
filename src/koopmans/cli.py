@@ -918,28 +918,6 @@ def _check_styles(
     return value
 
 
-def _check_parity_styles(
-    ctx: click.Context, param: click.Parameter, value: tuple[str, ...]
-) -> tuple[str, ...]:
-    """Reject a parity style naming anything but a color, before any run is looked up."""
-    from koopmans.plotting import StyleError, style_is_color_only
-
-    for style in value:
-        try:
-            color_only = style_is_color_only(style)
-        except StyleError as exc:
-            raise click.BadParameter(str(exc), ctx=ctx, param=param) from exc
-        if not color_only:
-            raise click.BadParameter(
-                f"'{style}' names a marker or a line style. On a parity plot the "
-                "marker says whether an orbital is occupied, so a run's --style may "
-                "name only its color: 'k', 'C1' or 'tab:blue'.",
-                ctx=ctx,
-                param=param,
-            )
-    return value
-
-
 ylim_option = click.option(
     "--ylim",
     nargs=2,
@@ -1480,11 +1458,9 @@ def spectrum(
         click.echo(f"Wrote {target} ({len(series)} series)")
 
 
-@plot.command(cls=_FolderPairingCommand)
+@plot.command()
 @click.argument(
-    "folders",
-    nargs=-1,
-    required=True,
+    "folder",
     type=click.Path(exists=True, file_okay=False, path_type=Path),  # type: ignore[type-var]
 )
 @output_option
@@ -1508,50 +1484,27 @@ def spectrum(
     "--residuals",
     "residuals",
     is_flag=True,
-    help="Draw predicted minus computed against computed, with a rule at zero "
-    "and a histogram of the residuals beside each panel.",
-)
-@click.option(
-    "--label",
-    "labels",
-    cls=_PositionalAwareOption,
-    multiple=True,
-    metavar="TEXT",
-    help="Name a folder on the legend. One per folder pairs them in listing "
-    "order; fewer than that, each names the folder it was written just after, "
-    "and a folder with none of its own keeps its derived name.",
-)
-@click.option(
-    "--style",
-    "styles",
-    cls=_PositionalAwareOption,
-    multiple=True,
-    metavar="COLOR",
-    callback=_check_parity_styles,
-    help="Draw a folder's points in this color, such as 'k', 'C1' or "
-    "'tab:blue'. The marker says whether an orbital is occupied, so a format "
-    "string naming a marker or a line style is refused. Pairs with the folders "
-    "the same way --label does.",
+    help="Draw predicted minus computed against computed, with a rule at zero, "
+    "the y axis symmetric about it, and a filled histogram of the residuals "
+    "beside each panel.",
 )
 def parity(
-    folders: tuple[Path, ...],
+    folder: Path,
     output_path: Path | None,
     show: bool,
     data_path: Path | None,
     alphas: bool,
     eigenvalues: bool,
     residuals: bool,
-    labels: tuple[str | None, ...],
-    styles: tuple[str | None, ...],
 ) -> None:
     """Draw what a screening model predicted against what the run computed.
 
-    FOLDERS are directories `koopmans run` wrote for a `task: trajectory`
-    input with `ml: {mode: test}`. That mode runs each snapshot's final KI
-    twice — once at the screening parameters the ΔSCF refinement computed
-    and once at the ones the model predicted — so it is the only run with
-    two results to compare. A folder that ran anything else is refused,
-    naming what to set:
+    FOLDER is the directory `koopmans run` wrote for a `task: trajectory`
+    input with `ml: {mode: test}`, or the run directory itself. That mode
+    runs each snapshot's final KI twice — once at the screening parameters
+    the ΔSCF refinement computed and once at the ones the model predicted —
+    so it is the only run with two results to compare. A folder that ran
+    anything else is refused, naming what to set:
 
     \b
         koopmans plot parity test
@@ -1559,38 +1512,29 @@ def parity(
     Two panels are drawn side by side, the screening parameters and the
     final-KI eigenvalues, each predicted against computed with the identity
     line a perfect model would sit on and its mean absolute and
-    root-mean-square error in the corner. Every snapshot of a run is pooled
-    into one series, since the model is scored over the trajectory rather
-    than per snapshot. --alphas or --eigenvalues draws that panel alone:
+    root-mean-square error annotated clear of the points. Every snapshot of
+    the run is pooled into one series, since the model is scored over the
+    trajectory rather than per snapshot. --alphas or --eigenvalues draws
+    that panel alone:
 
     \b
         koopmans plot parity test --eigenvalues
 
     --residuals draws predicted minus computed against computed instead,
-    with a rule at zero and a histogram of the residuals beside each panel.
-    The histograms of every folder share one set of bins, so an overlay
-    compares them rather than each against its own binning:
+    with a rule at zero and a filled histogram of the residuals beside each
+    panel:
 
     \b
         koopmans plot parity test --residuals
 
     Occupied and empty orbitals are drawn as filled and open markers, read
-    off the run's own per-orbital occupancy. Several folders overlay on the
-    same axes, one color each, named by --label and colored by --style,
-    which pair with the folders the same way `koopmans plot bandstructure`'s
-    do:
-
-    \b
-        koopmans plot parity \\
-            test_a --label "power spectrum" \\
-            test_b --label "self-Hartree" \\
-            --residuals --alphas
+    off the run's own per-orbital occupancy.
 
     --output writes any format matplotlib does, and --data writes the
-    points the figure was drawn from, with each series' error metrics:
+    points the figure was drawn from, with the series' error metrics:
 
     \b
-        koopmans plot parity test --residuals --output parity.svg
+        koopmans plot parity test --residuals --alphas --output parity.svg
     """
     from koopmans.plotting import (
         ParityQuantity,
@@ -1614,22 +1558,21 @@ def parity(
     load_koopmans_profile()
 
     try:
-        panels, warnings = resolve_parity_series(folders, wanted, labels, styles)
+        panels, warnings = resolve_parity_series(folder, wanted)
     except (PlottingError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     for warning in warnings:
         click.echo(f"Warning: {warning}", err=True)
 
-    drawn = [item for panel in panels for item in panel]
     if data_path is not None:
-        write_series_json(drawn, data_path)
-        click.echo(f"Wrote {data_path} ({len(drawn)} series)")
+        write_series_json(panels, data_path)
+        click.echo(f"Wrote {data_path} ({len(panels)} series)")
 
     target = output_path if output_path is not None or show else Path("parity.png")
     render_parity(panels, output_path=target, show=show, residuals=residuals)
     if target is not None:
-        click.echo(f"Wrote {target} ({len(panels)} panel(s), {len(folders)} run(s))")
+        click.echo(f"Wrote {target} ({len(panels)} panel(s))")
 
 
 def main() -> None:

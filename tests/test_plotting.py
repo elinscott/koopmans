@@ -4410,9 +4410,12 @@ def reference_lines(axes: Any) -> list[Any]:
     return [line for line in axes.get_lines() if line.get_marker() in ("", "None", None)]
 
 
-def histogram_edges(patch: Any) -> np.ndarray:
-    """Return the bin edges a horizontal step histogram's outline sits on."""
-    return np.unique(np.round(np.asarray(patch.get_xy())[:, 1], 12))
+def metrics_text(axes: Any) -> str:
+    """Return the MAE/RMSE annotation drawn on a parity panel."""
+    from matplotlib.offsetbox import AnchoredText
+
+    (anchored,) = [artist for artist in axes.artists if isinstance(artist, AnchoredText)]
+    return str(anchored.txt.get_text())
 
 
 class TestParityResolver:
@@ -4447,11 +4450,11 @@ class TestParityResolver:
         )
 
         panels, warnings = resolve_parity_series(
-            [folder], [ParityQuantity.ALPHAS, ParityQuantity.EIGENVALUES]
+            folder, [ParityQuantity.ALPHAS, ParityQuantity.EIGENVALUES]
         )
 
         assert warnings == []
-        alphas, eigenvalues = (panel[0] for panel in panels)
+        alphas, eigenvalues = panels
         assert alphas.label == "TrajectoryWorkflow"
         assert alphas.computed == pytest.approx([0.3, 0.4, 0.5, 0.6])
         assert alphas.predicted == pytest.approx([0.31, 0.42, 0.52, 0.58])
@@ -4472,7 +4475,7 @@ class TestParityResolver:
         )
 
         with pytest.raises(PlottingError) as excinfo:
-            resolve_parity_series([folder], [ParityQuantity.ALPHAS])
+            resolve_parity_series(folder, [ParityQuantity.ALPHAS])
 
         message = str(excinfo.value)
         assert "TrajectoryWorkflow" in message
@@ -4492,7 +4495,7 @@ class TestParityResolver:
         folder = write_run_folder(tmp_path, "si-dscf", root)
 
         with pytest.raises(PlottingError) as excinfo:
-            resolve_parity_series([folder], [ParityQuantity.ALPHAS])
+            resolve_parity_series(folder, [ParityQuantity.ALPHAS])
 
         message = str(excinfo.value)
         assert "KoopmansDSCFWorkflow" in message
@@ -4501,13 +4504,13 @@ class TestParityResolver:
 
 
 class TestParityRenderer:
-    """Drawing the records, straight off ``ParitySeries``, no AiiDA."""
+    """Drawing the record, straight off a ``ParitySeries``, no AiiDA."""
 
     def test_parity_panel_draws_the_identity_line_and_splits_by_occupancy(self) -> None:
-        """Occupied points are filled, empty ones open, both on one square frame."""
+        """Occupied points are filled, empty ones open, both on one square frame, untitled."""
         axes = blank_axes()
 
-        draw_parity(axes, [parity_series()])
+        draw_parity(axes, parity_series())
 
         occupied, empty = point_groups(axes)
         assert occupied.get_markerfacecolor() != "none"
@@ -4518,22 +4521,24 @@ class TestParityRenderer:
         assert axes.get_xlim() == pytest.approx(axes.get_ylim())
         (identity,) = reference_lines(axes)
         assert identity.get_xdata() == pytest.approx(identity.get_ydata())
-        assert "MAE" in " ".join(text.get_text() for text in axes.texts)
+        assert axes.get_title() == ""
+        assert "MAE" in metrics_text(axes)
 
-    def test_residual_panel_bins_every_run_alike(self) -> None:
-        """Two runs' histograms share one binning, so the overlay compares them."""
+    def test_residual_panel_is_filled_and_y_symmetric_about_zero(self) -> None:
+        """Residual mode centres the y axis on zero and fills the marginal histogram."""
         axes = blank_axes()
         marginal = axes.get_figure().add_subplot(2, 1, 2, sharey=axes)
-        wide = parity_series("wide", predicted=[0.20, 0.55, 0.40, 0.75])
 
-        draw_parity(axes, [parity_series(), wide], residuals=True, marginal=marginal)
+        draw_parity(axes, parity_series(), residuals=True, marginal=marginal)
 
         (zero,) = reference_lines(axes)
         assert zero.get_ydata() == pytest.approx([0.0, 0.0])
         # Residuals, not the predictions themselves.
         assert point_groups(axes)[0].get_ydata() == pytest.approx([0.02, -0.01])
-        first, second = marginal.patches
-        assert histogram_edges(first) == pytest.approx(histogram_edges(second))
+        ymin, ymax = axes.get_ylim()
+        assert ymin == pytest.approx(-ymax)
+        (patch,) = marginal.patches
+        assert patch.get_fill()
 
 
 @pytest.fixture
@@ -4560,19 +4565,26 @@ class TestParityCommand:
     """``koopmans plot parity`` end to end."""
 
     @pytest.mark.parametrize(
-        ("flags", "titles", "quantities"),
+        ("flags", "ylabels", "quantities"),
         [
-            ([], ["Screening parameters", "Eigenvalues"], ["alphas", "eigenvalues"]),
             (
-                ["--alphas", "--eigenvalues"],
-                ["Screening parameters", "Eigenvalues"],
+                [],
+                [r"$\alpha_i^{\mathrm{pred}}$", r"$\varepsilon_i^{\mathrm{pred}}$ (eV)"],
                 ["alphas", "eigenvalues"],
             ),
-            (["--alphas"], ["Screening parameters"], ["alphas"]),
-            (["--eigenvalues"], ["Eigenvalues"], ["eigenvalues"]),
+            (
+                ["--alphas", "--eigenvalues"],
+                [r"$\alpha_i^{\mathrm{pred}}$", r"$\varepsilon_i^{\mathrm{pred}}$ (eV)"],
+                ["alphas", "eigenvalues"],
+            ),
+            (["--alphas"], [r"$\alpha_i^{\mathrm{pred}}$"], ["alphas"]),
+            (["--eigenvalues"], [r"$\varepsilon_i^{\mathrm{pred}}$ (eV)"], ["eigenvalues"]),
             (
                 ["--residuals"],
-                ["Screening parameters", "Eigenvalues"],
+                [
+                    r"$\alpha_i^{\mathrm{pred}} - \alpha_i^{\mathrm{true}}$",
+                    r"$\varepsilon_i^{\mathrm{pred}} - \varepsilon_i^{\mathrm{true}}$ (eV)",
+                ],
                 ["alphas", "eigenvalues"],
             ),
         ],
@@ -4584,7 +4596,7 @@ class TestParityCommand:
         drawn_parity_axes: Any,
         tmp_path: Path,
         flags: list[str],
-        titles: list[str],
+        ylabels: list[str],
         quantities: list[str],
     ) -> None:
         """Neither flag, or both, draws both panels; one flag draws that one alone."""
@@ -4618,29 +4630,8 @@ class TestParityCommand:
         )
 
         assert result.exit_code == 0, result.output
-        assert [axes.get_title() for axes in drawn_parity_axes] == titles
+        assert [axes.get_ylabel() for axes in drawn_parity_axes] == ylabels
         assert (tmp_path / "a.png").is_file()
         written = json.loads(data.read_text())["series"]
         assert [item["quantity"] for item in written] == quantities
         assert all("metrics" in item for item in written)
-
-    def test_a_style_naming_a_marker_is_refused(
-        self, aiida_profile: Any, runner: Any, tmp_path: Path
-    ) -> None:
-        """The marker is the occupancy's, so --style may only name a color."""
-        from koopmans.cli import cli
-
-        folder = parity_run(
-            tmp_path,
-            "test",
-            {
-                "snapshot_1": deltas_payload(
-                    alphas=([0.3], [0.31]), eigenvalues=([[-6.0]], [[-6.2]])
-                )
-            },
-        )
-
-        result = runner.invoke(cli, ["plot", "parity", str(folder), "--style", "rx"])
-
-        assert result.exit_code == 2
-        assert "may name only its color" in result.output

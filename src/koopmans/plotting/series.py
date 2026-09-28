@@ -273,10 +273,26 @@ class ParityQuantity(StrEnum):
     EIGENVALUES = "eigenvalues"
 
 
-#: What each quantity is called on a panel, and the units it is measured in.
-_PARITY_NAMES = {
-    ParityQuantity.ALPHAS: ("Screening parameters", ""),
-    ParityQuantity.EIGENVALUES: ("Eigenvalues", "eV"),
+#: The units each quantity is measured in, empty for a dimensionless one.
+_PARITY_UNITS = {
+    ParityQuantity.ALPHAS: "",
+    ParityQuantity.EIGENVALUES: "eV",
+}
+
+#: Each quantity's axis label in mathtext, keyed by which value the axis
+#: reads: the run's own computed value, the model's prediction, or their
+#: difference.
+_PARITY_AXIS_LABELS = {
+    ParityQuantity.ALPHAS: {
+        "true": r"$\alpha_i^{\mathrm{true}}$",
+        "pred": r"$\alpha_i^{\mathrm{pred}}$",
+        "residual": r"$\alpha_i^{\mathrm{pred}} - \alpha_i^{\mathrm{true}}$",
+    },
+    ParityQuantity.EIGENVALUES: {
+        "true": r"$\varepsilon_i^{\mathrm{true}}$ (eV)",
+        "pred": r"$\varepsilon_i^{\mathrm{pred}}$ (eV)",
+        "residual": r"$\varepsilon_i^{\mathrm{pred}} - \varepsilon_i^{\mathrm{true}}$ (eV)",
+    },
 }
 
 
@@ -288,9 +304,7 @@ class ParitySeries:
     point, in the run's own order, and must be the same length.
     ``filled`` says which entries belong to an occupied orbital, and is
     either the same length again or ``None`` when the run reports no
-    occupancy. ``style`` is a matplotlib format string naming the color
-    the points are drawn in; the marker is the occupancy's, so a string
-    naming one is refused before it reaches here.
+    occupancy.
     """
 
     label: str
@@ -298,23 +312,20 @@ class ParitySeries:
     computed: list[float]
     predicted: list[float]
     filled: list[bool] | None = None
-    style: str | None = None
 
     @property
     def units(self) -> str:
         """Return the quantity's units, empty for a dimensionless one."""
-        return _PARITY_NAMES[self.quantity][1]
+        return _PARITY_UNITS[self.quantity]
 
 
-def parity_quantity_name(quantity: ParityQuantity) -> str:
-    """Return the name a panel of this quantity carries."""
-    return _PARITY_NAMES[quantity][0]
+def parity_axis_label(quantity: ParityQuantity, kind: str) -> str:
+    """Return the axis label naming one of ``quantity``'s values.
 
-
-def parity_axis_label(text: str, quantity: ParityQuantity) -> str:
-    """Return an axis label naming the quantity's units, where it has any."""
-    units = _PARITY_NAMES[quantity][1]
-    return f"{text} ({units})" if units else text
+    ``kind`` is ``"true"`` for the run's own computed value, ``"pred"`` for
+    the model's prediction, or ``"residual"`` for predicted minus computed.
+    """
+    return _PARITY_AXIS_LABELS[quantity][kind]
 
 
 def parity_residuals(item: ParitySeries) -> np.ndarray:

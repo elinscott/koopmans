@@ -24,7 +24,6 @@ from koopmans.plotting.series import (
     energy_axis_label,
     parity_axis_label,
     parity_metrics,
-    parity_quantity_name,
     parity_residuals,
     path_distances,
 )
@@ -45,7 +44,6 @@ __all__ = [
     "render_band_structures",
     "render_parity",
     "render_spectra",
-    "style_is_color_only",
 ]
 
 #: Label of the vertical rules drawn at interior special points. The leading
@@ -302,15 +300,6 @@ def check_style(style: str) -> None:
     _style_color(style)
 
 
-def style_is_color_only(style: str) -> bool:
-    """Whether a format string names a color and neither a marker nor a line.
-
-    :raises StyleError: if matplotlib cannot read it as a format string.
-    """
-    linestyle, marker, color = _parse_style(style)
-    return linestyle is None and marker is None and color is not None
-
-
 def _cycle_color(style: Sequence[str], index: int) -> str | None:
     """Return the color to force a plot call to, or ``None`` to keep matplotlib's own.
 
@@ -511,24 +500,11 @@ def _split_by_occupancy(
     ]
 
 
-def _parity_legend_handles(
-    series: Sequence[ParitySeries], colors: Sequence[Any], split: bool
-) -> list[Any]:
-    """Return the key's entries: one per run, plus the two markers when they differ.
-
-    Color tells the runs apart and the marker tells occupied orbitals from
-    empty ones, so an overlay of runs that report occupancy needs both read
-    off the key.
-    """
+def _occupancy_legend_handles() -> list[Any]:
+    """Return the key's two entries: the filled marker and the open one."""
     from matplotlib.lines import Line2D
 
-    handles = [
-        Line2D([], [], linestyle="none", marker="o", color=color, label=item.label)
-        for item, color in zip(series, colors, strict=True)
-    ]
-    if not split:
-        return handles
-    return handles + [
+    return [
         Line2D(
             [],
             [],
@@ -542,60 +518,75 @@ def _parity_legend_handles(
     ]
 
 
-def _annotate_metrics(axes: Axes, entries: Sequence[tuple[str, Any]], units: str) -> None:
-    """Write each series' mean absolute and root-mean-square error on the panel.
+#: Where the occupancy legend sits, so the metrics annotation can steer clear.
+_LEGEND_LOC = "upper left"
 
-    One line per series, in the color its points are drawn in, in the
-    corner the identity line leaves free.
+
+def _corner_loc(
+    x: np.ndarray,
+    y: np.ndarray,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    avoid: str | None = None,
+) -> str:
+    """Return the axes corner with the fewest points near it.
+
+    The frame is split into quadrants at its own centre; whichever quadrant
+    holds the fewest points is where a label can sit without covering data.
+    ``avoid`` drops one corner from consideration, for a label that must not
+    land where something else is already drawn.
     """
-    for row, (text, color) in enumerate(entries):
-        axes.annotate(
-            text,
-            xy=(0.97, 0.03),
-            xytext=(0, 12 * (len(entries) - 1 - row)),
-            textcoords="offset points",
-            xycoords="axes fraction",
-            ha="right",
-            va="bottom",
-            fontsize="x-small",
-            color=color,
-        )
-    if entries and units:
-        # The reader needs the units once, not on every line.
-        axes.annotate(
-            f"errors in {units}",
-            xy=(0.97, 0.03),
-            xytext=(0, 12 * len(entries)),
-            textcoords="offset points",
-            xycoords="axes fraction",
-            ha="right",
-            va="bottom",
-            fontsize="x-small",
-            color="0.4",
-        )
+    xmid = (xlim[0] + xlim[1]) / 2
+    ymid = (ylim[0] + ylim[1]) / 2
+    counts = {
+        "upper right": int(np.sum((x >= xmid) & (y >= ymid))),
+        "upper left": int(np.sum((x < xmid) & (y >= ymid))),
+        "lower left": int(np.sum((x < xmid) & (y < ymid))),
+        "lower right": int(np.sum((x >= xmid) & (y < ymid))),
+    }
+    candidates = {loc: count for loc, count in counts.items() if loc != avoid} or counts
+    return min(candidates, key=lambda loc: candidates[loc])
+
+
+def _metrics_text(item: ParitySeries) -> str:
+    """Return the run's mean absolute and root-mean-square error, as one line."""
+    metrics = parity_metrics(item)
+    suffix = f" {item.units}" if item.units else ""
+    return f"MAE {metrics.mae:.4g}{suffix}, RMSE {metrics.rmse:.4g}{suffix}"
+
+
+def _annotate_metrics(
+    axes: Axes, item: ParitySeries, x: np.ndarray, y: np.ndarray, avoid_legend: bool
+) -> None:
+    """Write the run's mean absolute and root-mean-square error on the panel.
+
+    Placed in whichever corner ``x``/``y`` leave emptiest, so the text never
+    sits on top of the points it summarizes; ``avoid_legend`` also keeps it
+    off the occupancy key, drawn at a fixed corner of its own.
+    """
+    from matplotlib.offsetbox import AnchoredText
+
+    loc = _corner_loc(
+        x, y, axes.get_xlim(), axes.get_ylim(), avoid=_LEGEND_LOC if avoid_legend else None
+    )
+    anchored = AnchoredText(
+        _metrics_text(item), loc=loc, frameon=False, prop={"fontsize": "x-small"}
+    )
+    axes.add_artist(anchored)
 
 
 def _draw_marginal(
-    marginal: Axes,
-    residuals: Sequence[np.ndarray],
-    colors: Sequence[Any],
-    bins: Sequence[float],
+    marginal: Axes, residuals: np.ndarray, color: Any, bins: Sequence[float]
 ) -> None:
-    """Draw each series' residual histogram beside the panel it belongs to.
-
-    Every series is counted into one set of bins spanning them all, so
-    that two runs' histograms can be read against each other rather than
-    each against its own binning.
-    """
-    for values, color in zip(residuals, colors, strict=True):
-        marginal.hist(
-            values,
-            bins=bins,
-            orientation="horizontal",
-            histtype="step",
-            color=color,
-            linewidth=1.0,
-        )
+    """Draw the run's residual histogram beside the panel it belongs to, filled."""
+    marginal.hist(
+        residuals,
+        bins=bins,
+        orientation="horizontal",
+        histtype="stepfilled",
+        color=color,
+        alpha=0.4,
+    )
     marginal.axhline(0.0, color="0.4", linewidth=0.8, zorder=0)
     marginal.tick_params(labelleft=False, labelbottom=False, left=False, bottom=False)
     for side in ("top", "right", "bottom"):
@@ -604,72 +595,64 @@ def _draw_marginal(
 
 def draw_parity(
     axes: Axes,
-    series: Sequence[ParitySeries],
+    item: ParitySeries,
     residuals: bool = False,
     marginal: Axes | None = None,
     legend: bool | None = None,
 ) -> None:
-    """Draw one panel of predicted-against-computed values.
+    """Draw one panel of a run's predicted values against what it computed.
 
-    Every series on the panel holds the same quantity. By default the
-    predicted value is drawn against the computed one with the identity
-    line a perfect model would sit on; with ``residuals`` the difference
-    is drawn against the computed value instead, with a rule at zero.
-    Occupied and empty orbitals are told apart by a filled and an open
-    marker; a series whose run reports no occupancy is drawn filled
-    throughout. Each series' mean absolute and root-mean-square error is
-    written in the corner.
+    By default the predicted value is drawn against the computed one, with
+    the identity line a perfect model would sit on; with ``residuals`` the
+    difference is drawn against the computed value instead, with a rule at
+    zero and the y axis symmetric about it. Occupied and empty orbitals are
+    told apart by a filled and an open marker; a run that reports no
+    occupancy is drawn filled throughout. The mean absolute and
+    root-mean-square error are written in whichever corner the points
+    leave emptiest.
 
     :param axes: where to draw.
-    :param series: the runs on this panel, all of one quantity.
+    :param item: the run to draw, holding one quantity.
     :param residuals: draw predicted minus computed instead of predicted.
-    :param marginal: where to draw the residual histograms; ``None`` draws
+    :param marginal: where to draw the residual histogram; ``None`` draws
         none. Expected to share this panel's y axis.
-    :param legend: draw the key, or leave it out. ``None`` draws it for an
-        overlay, or for a single run whose orbitals split by occupancy.
+    :param legend: draw the occupancy key, or leave it out. ``None`` draws
+        it only when the run's orbitals split by occupancy.
     """
-    quantity = series[0].quantity
-    entries: list[tuple[str, Any]] = []
-    drawn_residuals: list[np.ndarray] = []
-    colors: list[Any] = []
-    reach: list[np.ndarray] = []
-    split = False
+    quantity = item.quantity
+    computed = np.asarray(item.computed, dtype=np.float64)
+    errors = parity_residuals(item)
+    vertical = errors if residuals else np.asarray(item.predicted, dtype=np.float64)
+    color = "C0"
 
-    for index, item in enumerate(series):
-        computed = np.asarray(item.computed, dtype=np.float64)
-        errors = parity_residuals(item)
-        vertical = errors if residuals else np.asarray(item.predicted, dtype=np.float64)
-        color = item.style if item.style else f"C{index % 10}"
-        colors.append(color)
-        drawn_residuals.append(errors)
-        reach += [computed] if residuals else [computed, vertical]
+    groups = _split_by_occupancy(item, computed, vertical)
+    split = len(groups) > 1
+    for x, y, fill in groups:
+        axes.plot(
+            x,
+            y,
+            linestyle="none",
+            marker="o",
+            markersize=_marker_size(computed.size),
+            markeredgewidth=1.0,
+            color=color,
+            markerfacecolor=color if fill else "none",
+            alpha=0.75 if computed.size > _CROWDED else 1.0,
+        )
 
-        groups = _split_by_occupancy(item, computed, vertical)
-        split = split or len(groups) > 1
-        for x, y, fill in groups:
-            axes.plot(
-                x,
-                y,
-                linestyle="none",
-                marker="o",
-                markersize=_marker_size(computed.size),
-                markeredgewidth=1.0,
-                color=color,
-                markerfacecolor=color if fill else "none",
-                alpha=0.75 if computed.size > _CROWDED else 1.0,
-            )
-
-        metrics = parity_metrics(item)
-        entries.append((f"{item.label}: MAE {metrics.mae:.4g}, RMSE {metrics.rmse:.4g}", color))
-
-    reached = np.concatenate(reach) if reach else np.zeros(0)
     if residuals:
         axes.axhline(0.0, color="0.4", linewidth=0.8, zorder=0)
-    elif reached.size:
+        # Symmetric about zero: a residual's sign carries no more weight
+        # than its magnitude, so the rule at zero sits in the middle.
+        limit = float(np.max(np.abs(errors))) if errors.size else 1.0
+        span = limit + (0.05 * limit or 1.0)
+        axes.set_ylim(-span, span)
+    elif computed.size:
         # One range on both axes, in a square frame: only then does the
         # identity line run at 45 degrees, which is what a reader judges
         # the points against.
-        low, high = float(reached.min()), float(reached.max())
+        reach = np.concatenate([computed, vertical])
+        low, high = float(reach.min()), float(reach.max())
         margin = 0.05 * (high - low) or 1.0
         frame = (low - margin, high + margin)
         axes.plot(frame, frame, color="0.4", linewidth=0.8, zorder=0)
@@ -677,24 +660,21 @@ def draw_parity(
         axes.set_ylim(*frame)
         axes.set_box_aspect(1)
 
-    vertical_name = "predicted $-$ computed" if residuals else "predicted"
-    axes.set_title(parity_quantity_name(quantity), fontsize="medium")
-    axes.set_xlabel(parity_axis_label("computed", quantity))
-    axes.set_ylabel(parity_axis_label(vertical_name, quantity))
-    _annotate_metrics(axes, entries, series[0].units)
+    axes.set_xlabel(parity_axis_label(quantity, "true"))
+    axes.set_ylabel(parity_axis_label(quantity, "residual" if residuals else "pred"))
+    wanted = split if legend is None else legend
+    _annotate_metrics(axes, item, computed, vertical, avoid_legend=wanted)
 
     if marginal is not None:
-        pooled = np.concatenate(drawn_residuals) if drawn_residuals else np.zeros(0)
-        edges = np.histogram_bin_edges(pooled, bins="auto") if pooled.size else [0.0, 1.0]
-        _draw_marginal(marginal, drawn_residuals, colors, list(edges))
+        edges = np.histogram_bin_edges(errors, bins="auto") if errors.size else [0.0, 1.0]
+        _draw_marginal(marginal, errors, color, list(edges))
 
-    wanted = (len(series) > 1 or split) if legend is None else legend
     if wanted:
         axes.legend(
-            handles=_parity_legend_handles(series, colors, split),
+            handles=_occupancy_legend_handles(),
             frameon=False,
             fontsize="small",
-            loc="upper left",
+            loc=_LEGEND_LOC,
         )
 
 
@@ -702,7 +682,9 @@ def _parity_panels(figure: Any, panels: int, residuals: bool) -> list[tuple[Any,
     """Return one drawing axes per panel, each with its marginal axes or ``None``.
 
     A residual panel keeps a narrow strip on its right, sharing its y axis,
-    for the histogram of the residuals it drew.
+    for the histogram of the residuals it drew. The strip exists only in
+    that mode, so a plain parity panel is not left with an empty gap where
+    a histogram would otherwise go.
     """
     grid = figure.add_gridspec(1, panels, wspace=0.35)
     made: list[tuple[Any, Any]] = []
@@ -717,23 +699,23 @@ def _parity_panels(figure: Any, panels: int, residuals: bool) -> list[tuple[Any,
 
 
 def render_parity(
-    panels: Sequence[Sequence[ParitySeries]],
+    panels: Sequence[ParitySeries],
     output_path: Path | None = None,
     show: bool = False,
     residuals: bool = False,
     legend: bool | None = None,
 ) -> None:
-    """Draw one panel per quantity, side by side, and write or show the figure.
+    """Draw one run's panels, one per quantity, side by side, and write or show the figure.
 
-    :param panels: the series of each panel, in the order the panels are
-        drawn; every series within a panel holds one quantity.
+    :param panels: the run's series, one per quantity, in the order the
+        panels are drawn.
     :param output_path: where to write the figure; the extension sets the
         format. ``None`` writes nothing.
     :param show: open an interactive window.
     :param residuals: draw predicted minus computed, with a histogram of
         the residuals beside each panel.
-    :param legend: draw the key, or leave it out. ``None`` leaves each
-        panel to decide.
+    :param legend: draw the occupancy key, or leave it out. ``None`` leaves
+        each panel to decide.
     """
     import matplotlib
 
@@ -743,14 +725,14 @@ def render_parity(
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    width = (5.5 if residuals else 4.5) * len(panels)
+    width = 4.5 * len(panels)
     # Constrained rather than tight: a square parity frame and a marginal
     # sharing its neighbour's y axis are both beyond tight_layout, which
     # says so and lays the figure out wrong.
     figure = plt.figure(figsize=(width, 4.5), layout="constrained")
     made = _parity_panels(figure, len(panels), residuals)
-    for (axes, marginal), series in zip(made, panels, strict=True):
-        draw_parity(axes, series, residuals=residuals, marginal=marginal, legend=legend)
+    for (axes, marginal), item in zip(made, panels, strict=True):
+        draw_parity(axes, item, residuals=residuals, marginal=marginal, legend=legend)
 
     if output_path is not None:
         figure.savefig(output_path, dpi=200)

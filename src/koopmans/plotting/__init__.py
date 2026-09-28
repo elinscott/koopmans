@@ -22,7 +22,6 @@ from koopmans.plotting.render import (
     render_band_structures,
     render_parity,
     render_spectra,
-    style_is_color_only,
 )
 from koopmans.plotting.resolve import (
     BAND_PRODUCERS,
@@ -91,6 +90,5 @@ __all__ = [
     "resolve_parity_series",
     "resolve_spectrum_series",
     "run_node",
-    "style_is_color_only",
     "write_series_json",
 ]
