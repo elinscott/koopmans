@@ -701,6 +701,7 @@ def render_parity(
         # not depend on a display, so that it works over ssh and in CI.
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.layout_engine import ConstrainedLayoutEngine
 
     width = 4.5 * len(panels)
     if residuals:
@@ -715,21 +716,22 @@ def render_parity(
 
     wanted = True if legend is None else legend
     if wanted:
-        # A figure-level legend, not one attached to the rightmost axes:
-        # attaching it to one axes makes constrained layout shrink that
-        # axes alone to fit the legend above it, leaving the panels
-        # different heights. "outside upper right" reserves one strip
-        # across the whole figure instead, so every panel keeps the same
-        # height and the key still reads as belonging to the rightmost one.
+        # The key sits just above the top-right corner of the rightmost
+        # panel. It is kept out of the layout computation, which would
+        # otherwise shrink that panel alone to make room for it; the row it
+        # needs is reserved for every panel alike through the layout rect.
         handles = _occupancy_legend_handles()
-        figure.legend(
+        key = made[-1][0].legend(
             handles,
             [handle.get_label() for handle in handles],
-            loc="outside upper right",
+            bbox_to_anchor=(1, 1),
+            loc="lower right",
             ncol=2,
             frameon=False,
             fontsize="small",
         )
+        key.set_in_layout(False)
+        figure.set_layout_engine(ConstrainedLayoutEngine(rect=(0, 0, 1, 0.94)))
 
     if output_path is not None:
         figure.savefig(output_path, dpi=200)
