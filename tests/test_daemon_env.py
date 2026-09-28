@@ -64,6 +64,7 @@ def test_start_daemon_reads_the_configured_worker_count(
             self.start_calls: list[int] = []
 
         def start_daemon(self, number_workers: int) -> object:
+            """Record the requested worker count instead of starting anything."""
             self.start_calls.append(number_workers)
             return object()
 
