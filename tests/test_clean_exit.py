@@ -47,6 +47,35 @@ class TestExitHook:
         assert atexit._ncallbacks() == registered + 1
 
 
+class TestSetDaemonDefaults:
+    """``setup_profile`` sets the runner poll interval and worker count."""
+
+    def test_reused_profile_gets_the_defaults(
+        self, aiida_profile: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rerunning ``setup_profile`` on an existing profile still sets both options.
+
+        ``PROFILE_NAME`` is patched to the test's own throwaway profile so the
+        call takes the "already exists" branch against it, rather than the
+        real ``koopmans`` profile.
+        """
+        from aiida.manage.configuration import get_config
+
+        monkeypatch.setattr(profile, "PROFILE_NAME", aiida_profile.name)
+
+        profile.setup_profile()
+
+        config = get_config()
+        poll_interval = config.get_option(  # type: ignore[no-untyped-call]
+            "runner.poll.interval", scope=aiida_profile.name
+        )
+        default_workers = config.get_option(  # type: ignore[no-untyped-call]
+            "daemon.default_workers", scope=aiida_profile.name
+        )
+        assert poll_interval == 5
+        assert default_workers == 4
+
+
 class TestCloseEngine:
     """The hook releases the loaded profile's resources."""
 

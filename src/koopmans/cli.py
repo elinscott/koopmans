@@ -665,10 +665,6 @@ def _start_daemon_with_caching(cache: bool) -> None:
         click.echo("Daemon is already running.")
         if cache:
             click.echo("Note: Caching is enabled. Restart the daemon for changes to take effect.")
-        click.echo(
-            "Note: the poll interval and worker count set by `koopmans install` take effect "
-            "only after `koopmans backend daemon restart`."
-        )
         return
     click.echo("Starting daemon...")
     if cache:
