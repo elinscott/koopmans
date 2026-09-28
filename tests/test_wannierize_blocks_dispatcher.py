@@ -109,7 +109,7 @@ class TestBlockDerivation:
     Silicon has four occupied bands here, so a block reaching band 5 or
     above spans the occupied/empty boundary. The split route accepts such
     a block — cutting it at the boundary is its whole job — and the
-    derivation marks it as provisional by leaving ``filled`` unset.
+    derivation marks it as provisional by stamping ``filled=None``.
     """
 
     @staticmethod
@@ -144,7 +144,7 @@ class TestBlockDerivation:
         assert blocks[0]["num_bands"] == 8
         assert get_wannier_indices(blocks[0]) == list(range(1, 9))
         assert blocks[0].get("exclude_bands") is None
-        assert "filled" not in blocks[0]
+        assert blocks[0]["filled"] is None
 
     def test_blocks_within_one_manifold_are_stamped(self, silicon_structure: Any) -> None:
         """Blocks that fall on one side of the boundary state their occupancy.
@@ -166,7 +166,7 @@ class TestBlockDerivation:
         """
         blocks = self._blocks(silicon_structure, self._s_block() + self._sp3_block(), nbnd=10)
         assert [b["label"] for b in blocks] == ["occ_1", "block_2"]
-        assert all("filled" not in block for block in blocks)
+        assert all(block["filled"] is None for block in blocks)
 
     def test_disentanglement_crossing_the_boundary_is_provisional(
         self, silicon_structure: Any
@@ -180,7 +180,7 @@ class TestBlockDerivation:
         """
         blocks = self._blocks(silicon_structure, self._s_block() * 2, nbnd=12)
         assert blocks[-1]["num_bands"] > blocks[-1]["num_wann"]
-        assert all("filled" not in block for block in blocks)
+        assert all(block["filled"] is None for block in blocks)
 
     def test_last_block_absorbs_extra_bands(self, silicon_structure: Any) -> None:
         """An nbnd beyond the Wannier count becomes the extra disentanglement bands.
@@ -377,7 +377,7 @@ class TestAutomaticProjections:
         assert get_wannier_indices(block) == list(range(1, 9))
         assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_QE
         assert block.get("exclude_bands") is None
-        assert "filled" not in block
+        assert block["filled"] is None
         assert nbnd == 8
 
     def test_projectors_short_of_occupied_manifold_raise(
@@ -579,7 +579,7 @@ class TestExternalProjectors:
         assert get_wannier_indices(block) == list(range(1, 9))
         assert block["projection_type"] == WannierProjectionType.ATOMIC_PROJECTORS_EXTERNAL
         assert block.get("exclude_bands") is None
-        assert "filled" not in block
+        assert block["filled"] is None
         assert nbnd == 8
 
     @pytest.mark.parametrize("channels", [False, True])
