@@ -83,7 +83,7 @@ def create_explicit_blocks(
     its own bands together with any extra disentanglement bands — stays on one
     side of ``num_occ_bands`` therefore has its occupancy settled here: it
     is stamped ``filled`` and named after its manifold. A block spanning
-    the boundary is provisional instead, left unstamped and named by
+    the boundary is provisional instead, stamped ``filled=None`` and named by
     list position; only a route that cuts blocks at the boundary at runtime can
     finalize it, and a route that cannot must reject it
     (:func:`validate_blocks_separate_occ_and_emp`).
@@ -113,10 +113,12 @@ def create_explicit_blocks(
     suffix = f"_{spin_channel.value}" if spin_channel in (SpinChannel.UP, SpinChannel.DOWN) else ""
     counts = {"occ": 0, "emp": 0}
     occupancy: dict[int, bool] = {}
-    blocks: list[ExplicitProjectionBlock] = []
+    labels: list[str] = []
+    disentangles: list[bool] = []
 
-    for index, (band_range, block) in enumerate(zip(ranges, projection_blocks, strict=True)):
+    for index, band_range in enumerate(ranges):
         disentangle = band_range.num_bands > band_range.num_wann
+        disentangles.append(disentangle)
         # The extra disentanglement bands always reach nbnd, so they are
         # where the block's read window ends; without them the window ends
         # at the block's own bands.
@@ -129,12 +131,19 @@ def create_explicit_blocks(
             filling = None
 
         if filling is None:
-            label = f"block_{index + 1}"
+            labels.append(f"block_{index + 1}")
         else:
             occupancy[index] = filling == "occ"
             counts[filling] += 1
-            label = f"{filling}{suffix}_{counts[filling]}"
+            labels.append(f"{filling}{suffix}_{counts[filling]}")
 
+    # A partition missing even one block's occupancy is unusable downstream,
+    # so every block's final ``filled`` follows the same all-or-nothing call.
+    finalized = len(occupancy) == len(ranges)
+    blocks: list[ExplicitProjectionBlock] = []
+    for index, (band_range, block, label, disentangle) in enumerate(
+        zip(ranges, projection_blocks, labels, disentangles, strict=True)
+    ):
         exclude = (
             list(range(1, band_range.start)) or None
             if disentangle
@@ -144,6 +153,7 @@ def create_explicit_blocks(
             ExplicitProjectionBlock(
                 label=label,
                 spin=spin_channel,
+                filled=occupancy[index] if finalized else None,
                 num_wann=band_range.num_wann,
                 num_bands=band_range.num_bands,
                 exclude_bands=exclude,
@@ -151,10 +161,6 @@ def create_explicit_blocks(
                 projections=[str(p) for p in block],
             )
         )
-
-    if len(occupancy) == len(blocks):
-        for index, block_dict in enumerate(blocks):
-            block_dict["filled"] = occupancy[index]
     return blocks
 
 
@@ -197,7 +203,7 @@ def create_automatic_blocks(
 
     The block requires no disentanglement: the detected groups cover
     only the Wannierized manifold, so a block with bands above it cannot be
-    split. It carries no ``filled`` stamp either — it is the provisional
+    split. It is stamped ``filled=None`` too — it is the provisional
     block par excellence, existing only to be cut into the groups the
     runtime detection finds.
     """
@@ -263,6 +269,7 @@ def create_automatic_blocks(
     block = AutomaticProjectionBlock(
         label="block_1",
         spin=SpinChannel.NONE,
+        filled=None,
         num_wann=num_wann,
         num_bands=num_wann,
         exclude_bands=None,
