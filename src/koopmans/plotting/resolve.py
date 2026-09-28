@@ -1100,11 +1100,13 @@ def _not_a_test_run(
 ) -> PlottingError:
     """Return the error for a run with no computed-versus-predicted comparison.
 
-    Tells apart a run that is no trajectory at all from one that is, but
-    ran a mode that never computes the same quantity twice.
+    Tells apart a run that is no trajectory at all, or ran a mode that
+    published no evaluation (an empty dict, same as none), from one that
+    scored a model but ran a mode that never computes the same quantity
+    twice.
     """
     route = _route_name(node)
-    if evaluation is None:
+    if not evaluation:
         return PlottingError(
             f"{folder} ran {route}, which published no screening-model evaluation. "
             "A parity plot compares what a model predicted against what the same run "

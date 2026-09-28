@@ -9,6 +9,7 @@ run, the calculation type its own inputs declare.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -4484,23 +4485,52 @@ class TestParityResolver:
         # it published none at all.
         assert "published no screening-model evaluation" not in message
 
+    @pytest.mark.parametrize(
+        ("build_folder", "expected_route"),
+        [
+            pytest.param(
+                lambda tmp_path: write_run_folder(
+                    tmp_path,
+                    "si-dscf",
+                    make_process(
+                        "aiida.workflows:workgraph.engine",
+                        process_label="WorkGraph<KoopmansDSCFWorkflow>",
+                    ),
+                ),
+                "KoopmansDSCFWorkflow",
+                id="no-evaluation-output-at-all",
+            ),
+            pytest.param(
+                lambda tmp_path: parity_run(tmp_path, "predict", {}, evaluation={}),
+                "TrajectoryWorkflow",
+                id="empty-evaluation-from-predict-mode",
+            ),
+        ],
+    )
     def test_a_run_with_no_evaluation_at_all_names_both_settings(
-        self, aiida_profile: Any, tmp_path: Path
+        self,
+        aiida_profile: Any,
+        tmp_path: Path,
+        build_folder: Callable[[Path], Path],
+        expected_route: str,
     ) -> None:
-        """A route that never trained anything needs the task set as well as the mode."""
-        root = make_process(
-            "aiida.workflows:workgraph.engine",
-            process_label="WorkGraph<KoopmansDSCFWorkflow>",
-        )
-        folder = write_run_folder(tmp_path, "si-dscf", root)
+        """A route that never trained anything needs the task set as well as the mode.
+
+        A `mode: predict` run publishes an empty evaluation dict rather than
+        omitting the output altogether; it is refused the same way as a run
+        with no evaluation output at all, not read as a run that scored a
+        model.
+        """
+        folder = build_folder(tmp_path)
 
         with pytest.raises(PlottingError) as excinfo:
             resolve_parity_series(folder, [ParityQuantity.ALPHAS])
 
         message = str(excinfo.value)
-        assert "KoopmansDSCFWorkflow" in message
+        assert expected_route in message
         assert "task: trajectory" in message
         assert "ml: {mode: test}" in message
+        assert "scored a model" not in message
 
 
 class TestParityRenderer:
