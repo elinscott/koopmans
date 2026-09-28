@@ -83,15 +83,17 @@ composition and the projections that the rest of the file gives.
     :start-at: mode: train
     :end-at: occ_and_emp_together
 
-is the model. ``descriptor`` decides what the model sees of an orbital: with
-``self_hartree`` it sees a single number, the electrostatic self-interaction energy of
-that orbital's density, which the calculation prints anyway and which therefore costs
-nothing to collect. (The other option, ``power_spectrum``, describes each orbital density
-in far more detail — see the question below.) ``estimator`` decides how the model fits
-screening parameters to that number, and ``occ_and_emp_together: false`` fits the filled
-and the empty orbitals separately — one screening parameter says what happens when an
-electron leaves an orbital, the other what happens when one arrives, and the two need
-not be related.
+is the model. ``descriptor`` decides what the model sees of an orbital: ``power_spectrum``
+expands each orbital's density on a radial basis out to ``r_max``, with radial channels
+up to ``n_max`` and angular momenta up to ``l_max``, and feeds the model the rotationally
+invariant power spectrum of that expansion — the same construction, at comparable
+detail, as the legacy tutorial's own orbital-density descriptor. (The cheaper
+alternative, ``self_hartree``, sees only the electrostatic self-interaction energy of
+that density, a single number the calculation prints anyway; see the question below for
+what that costs you.) ``estimator`` decides how the model fits screening parameters to
+the descriptor, and ``occ_and_emp_together: false`` fits the filled and the empty
+orbitals separately — one screening parameter says what happens when an electron leaves
+an orbital, the other what happens when one arrives, and the two need not be related.
 
 .. warning::
 
@@ -108,7 +110,8 @@ Run the calculation with
     $ koopmans run train.yaml
 
 The progress table now has one branch per configuration, each of them a complete
-Koopmans calculation:
+Koopmans calculation, plus a second branch per configuration that builds the
+``power_spectrum`` dataset the model is fitted to:
 
 .. code-block:: text
 
@@ -128,65 +131,67 @@ Koopmans calculation:
                ...
                Orbital 6                                                     finished
          Final KI                                                            finished
+       Descriptors (snapshot 1)                                              finished
        Snapshot 2                                                            finished
          ...
+       Descriptors (snapshot 2)                                              finished
+       ...
        Snapshot 5                                                            finished
+       Descriptors (snapshot 5)                                              finished
 
     Workflow completed successfully!
     Trained model stored as node 125246 (…) — reference it via `ml: {model: 125246}`.
 
+Each ``Descriptors (snapshot N)`` branch is a ``pw2wannier90.x`` decompose pass over
+that configuration's own Wannierization, paired with the screening parameters the
+``Snapshot N`` branch above it already computed. ``self_hartree`` needs no such
+pass — its descriptor is read straight off the final KI calculation — so it never adds
+this branch.
+
 The last line is the point of the whole run. The model is a node in the engine's
 database, and later runs name it by that id; your own run will print an id of its own.
 The model is also written to ``train/model.json``, which is the same thing in a form you
-can read:
+can read. Most of it is not worth reading by eye — the ``power_spectrum`` descriptor
+expands each orbital over 441 radial-angular channels, so each submodel carries 441
+coefficients — but the stamps at the top are:
 
 .. code-block:: json
 
     {
-      "descriptor": "self_hartree",
+      "descriptor": "power_spectrum",
       "estimator_type": "ridge_regression",
       "occ_and_emp_together": false,
       "correction": "ki",
       "init_orbitals": "mlwfs",
+      "n_max": 6,
+      "l_max": 6,
+      "r_min": 1.0,
+      "r_max": 4.0,
       "submodels": {
         "occ": {
           "estimator_type": "ridge_regression",
-          "x_mean": [11.44355],
-          "x_scale": [0.70535710636528],
-          "coef": [-0.001139277833645],
-          "intercept": 0.54618910176865
+          "intercept": 0.546186
         },
         "emp": {
           "estimator_type": "ridge_regression",
-          "x_mean": [3.8872],
-          "x_scale": [0.87494946139763],
-          "coef": [0.052062930603865],
-          "intercept": 0.50597342953171
+          "intercept": 0.505976
         }
       }
     }
 
-Two submodels, one for the filled orbitals and one for the empty, each a straight line
-through the training data: a screening parameter is ``intercept`` plus ``coef`` times
-the self-Hartree energy, once that energy has been shifted by ``x_mean`` and scaled by
-``x_scale``.
-
-.. question:: What does the filled-orbital submodel actually predict?
-
-    Almost the same number whatever it is given. Its coefficient is small enough that
-    moving the self-Hartree energy across the whole range the training set covers — 10.0
-    to 13.5 eV — only moves the prediction from 0.548 to 0.543, a shift in the third
-    decimal place. In practice the submodel returns close to its intercept, 0.546 — the
-    mean of the filled orbitals' screening parameters in the training set. The
-    empty-orbital submodel, whose coefficient is forty-five times larger, does vary with
-    what it is given. Keep both in mind when reading the next section.
+Two submodels, one for the filled orbitals and one for the empty, each a ridge
+regression through the training data: a screening parameter is ``intercept`` plus a
+dot product of ``coef`` with the 441-entry power spectrum, once that vector has been
+shifted by ``x_mean`` and scaled by ``x_scale`` — the same recipe as ``self_hartree``,
+just with many more numbers standing in for the one.
 
 .. note::
 
     The model records the physics it was fitted under — ``correction``,
-    ``init_orbitals``, ``descriptor``. A later run that asks it to predict screening
-    parameters for a different functional, or for orbitals of a different kind, is
-    refused rather than answered.
+    ``init_orbitals``, ``descriptor`` and, for ``power_spectrum``, the radial basis
+    (``n_max``, ``l_max``, ``r_min``, ``r_max``). A later run that asks it to predict
+    screening parameters for a different functional, orbitals of a different kind, or a
+    different radial basis, is refused rather than answered.
 
 *******************
  Testing the model
@@ -219,82 +224,92 @@ configurations, and its ``ml`` block is
 
 A test run does everything the training run did, computing every screening parameter
 from first principles, and then does two things more: it predicts every screening
-parameter too, and it runs a *second* final KI calculation with the predicted values in
-place of the computed ones. That second calculation shows up at the end of each
-configuration's branch:
+parameter too, from a second decompose pass off the same trial calculation, and it runs
+a *second* final KI calculation with the predicted values in place of the computed ones.
+Both show up inside each configuration's branch:
 
 .. code-block:: text
 
     Snapshot 1                                                             finished
       ...
+      Descriptors                                                         finished
       Final KI                                                             finished
       Final KI (predicted alphas)                                         finished
+    Descriptors (snapshot 1)                                               finished
+    ...
 
-Both start from the same trial calculation and differ only in the screening parameters,
-so whatever separates their orbital energies is the model's doing and nothing else.
+The nested ``Descriptors`` is the model's own input — the decompose pass that feeds the
+predicted alphas above it — and runs alongside the trial KI rather than after it, since
+it takes nothing from that calculation. The ``Descriptors (snapshot N)`` branches
+outside every snapshot are the same dataset-building pass ``train.yaml`` ran: a test run
+also pairs its (real, computed) descriptors with its (real, computed) alphas, so its own
+output can be folded into a later training run as more data.
 
-:download:`plot_screening_accuracy.py <plot_screening_accuracy.py>` reads the two of
-them out of every configuration's output directory and plots the comparison:
+The two final KI calculations both start from the same trial calculation and differ
+only in the screening parameters, so whatever separates their orbital energies is the
+model's doing and nothing else. ``test/outputs/evaluation.json`` carries every orbital's
+computed and predicted screening parameter, and every configuration's pair of final KI
+eigenvalues, for exactly this comparison (see :ref:`ml-verdict` below); a figure
+generated with ``koopmans plot parity`` reads the same file:
 
-.. figure:: screening_accuracy.svg
+.. code-block:: console
+
+    $ koopmans plot parity test --residuals
+
+.. figure:: parity.svg
     :width: 620
     :align: center
 
-    Left: the predicted screening parameters against the computed ones, for the 90
-    orbitals of the fifteen test configurations; a point on the dashed line is predicted
-    perfectly. Right: the difference the prediction makes to the orbital energies of the
-    final KI calculation.
+    Left: the predicted screening parameters minus the computed ones, against the
+    computed value, for the 90 orbitals of the fifteen test configurations, with a
+    marginal histogram of the residual. Right: the same, for the orbital energies of
+    the final KI calculation.
 
-The screening parameters are predicted to about 0.03 — a mean error of 0.000, a spread
-of 0.033, the worst orbital out by 0.097, on parameters that range from 0.33 to 0.59.
-The left-hand panel shows where that error comes from: the empty orbitals follow the
-diagonal loosely, while the filled ones sit on a horizontal line, every one of them
-predicted at 0.546 whatever its true value. This is the constant submodel from the
-previous section, seen from the outside.
+Over the 90 orbitals of the fifteen test configurations, the screening parameters come
+out with a mean absolute error of 0.0075 and a root-mean-square error of 0.0145, the
+worst orbital out by 0.074, on parameters that range from 0.33 to 0.59. That error is
+not shared evenly: the four filled orbitals of each configuration average an error of
+0.0018, the two empty orbitals 0.0188 — an order of magnitude apart.
 
-The right-hand panel is what that costs: a mean offset of +30 meV, a standard deviation
-of 187 meV around it, and individual orbitals off by as much as 0.5 eV.
+What that costs in the final KI: the fifteen configurations' orbital energies move by a
+root-mean-square of 26.7 meV on average, 27.0 meV at the median, and as much as 55 meV
+for the worst configuration; no single orbital in the whole set moves by more than 82
+meV.
 
-.. question:: Why does a 5% error in a screening parameter become a 0.2 eV error in an orbital energy?
+.. question:: Why does a percent-level error in a screening parameter move an orbital energy by tens of meV?
 
     Because the screening parameter scales a correction of several electronvolts — the
-    self-Hartree part of it alone averages 11 eV over these orbitals — an error of a few
-    per cent in the parameter is consistent with an energy error of a few hundred meV,
-    the order of magnitude the histogram shows. A few per cent on a screening parameter
-    is not automatically good enough; what matters is the energy that comes out of it.
+    self-Hartree part of it alone averages 11 eV over these orbitals — even the small
+    error the power-spectrum descriptor leaves is consistent with an energy shift of a
+    few tens of meV. What matters for the final answer is the energy that comes out of
+    the screening parameter, not the parameter's own error in isolation.
 
-.. question:: Does training on ten configurations instead of five do better?
+.. question:: Does the cheaper ``self_hartree`` descriptor do just as well?
 
-    Barely, and not in the direction you would hope. Set ``N_TRAIN = 10`` in
-    ``generate_snapshots.py``, regenerate the two xyz files, and repeat the training and
-    testing runs: the screening parameters come out with a spread of 0.035 and a typical
-    error of 0.028, against 0.033 and 0.027 from five configurations. The extra
-    calculations bought nothing.
+    No. Set ``descriptor: self_hartree`` in the ``ml`` block of every input above,
+    dropping ``n_max``/``l_max``/``r_min``/``r_max`` (``self_hartree`` carries no radial
+    basis), and repeat the training and testing runs. On the same five-configuration
+    training set and fifteen-configuration test set, the screening parameters come out
+    with a mean absolute error of 0.0272, a root-mean-square error of 0.0327, and a
+    worst orbital out by 0.097 — more than twice ``power_spectrum``'s error on every
+    measure. The final KI orbital energies move by a root-mean-square of 186.5 meV on
+    average across the fifteen configurations, and by as much as 495 meV for a single
+    orbital.
 
-    That is consistent with what a one-number descriptor gets you: a straight line in a
-    single variable, which five configurations may already pin down. What looks missing
-    is not data but a description of the orbital rich enough to distinguish orbitals
-    whose screening differs — more training configurations would not obviously supply
-    that.
+    The reason is visible in the model itself: ``self_hartree`` sees one number per
+    orbital, so its filled-orbital submodel has one coefficient to work with. That
+    coefficient is small enough that moving the self-Hartree energy across the whole
+    range the training set covers — 10.0 to 13.5 eV — only moves the prediction from
+    0.548 to 0.543, a shift in the third decimal place; in practice the submodel returns
+    close to its intercept whatever it is asked. ``power_spectrum``'s 441 features give
+    its filled-orbital submodel enough to work with that its error (0.0018) sits an order
+    of magnitude below its own empty-orbital error, rather than collapsing to a
+    constant.
 
-.. question:: Does the ``power_spectrum`` descriptor do better?
-
-    Much better. Add ``descriptor: power_spectrum`` to the ``ml`` block of every input
-    above, plus the radial basis it expands each orbital's density on —
-    ``n_max: 6``, ``l_max: 6``, ``r_min: 1.0``, ``r_max: 4.0`` — and repeat the training
-    and testing runs. The Wannier-seeded initialization this tutorial already runs
-    supplies everything the descriptor needs (the per-block Wannierizations and a
-    ``pw2wannier90.x`` decompose pass); nothing else about the input files changes.
-
-    On the same five-configuration training set and fifteen-configuration test, the
-    screening parameters come out with a mean error of -0.002 and a standard deviation
-    of 0.014 — under half of ``self_hartree``'s 0.033 — and the final KI orbital
-    energies move by a mean of -11 meV and a standard deviation of 27 meV, at most 83
-    meV, against ``self_hartree``'s +30 meV mean, 187 meV standard deviation, and 0.5 eV
-    maximum. That is close to the legacy tutorial's own published error on the same
-    split — mean -3 meV, standard deviation 33 meV — measured with a different
-    orbital-density descriptor of comparable detail. A one-number descriptor is cheap
-    and easy to explain; a richer one is what you would actually use.
+    Training ``self_hartree`` on ten configurations instead of five does not fix this:
+    the screening parameters come out with a root-mean-square error of 0.035, no better
+    than five configurations' 0.033. A one-number descriptor's limit is what it can
+    distinguish between orbitals, not how much data it is fitted to.
 
     Both descriptors work in every ``ml`` mode, including ``predict``.
 
@@ -316,29 +331,31 @@ Its ``ml`` block is
     :start-at: mode: predict
     :end-at: occ_and_emp_together
 
-and this time the screening parameters are never computed. Each configuration runs one
-trial KI calculation, which is where the self-Hartree energies come from, the model
-turns those into screening parameters, and the final KI calculation applies them:
+and this time the screening parameters are never computed. Each configuration runs a
+decompose pass and a trial KI calculation side by side, the model turns the descriptor
+into screening parameters, and the final KI calculation applies them:
 
 .. code-block:: text
 
     Snapshot 1                                                             finished
       Wannier initialization                                              finished
       Predicted screening parameters                                     finished
+        Descriptors                                                       finished
         Trial KI                                                          finished
       Final KI                                                             finished
 
 Compare that with the training run's branch: the whole ``Orbital screening`` fan-out,
 one constrained calculation per orbital, is gone. What remains — the Wannierization,
-the initialization, the trial and the final calculation — is what sets the floor on
-how cheap a predicted Koopmans calculation can be.
+the initialization, the descriptor pass, the trial and the final calculation — is what
+sets the floor on how cheap a predicted Koopmans calculation can be.
 
 .. warning::
 
     And it is worth being clear about what these particular predictions are worth: on
-    this system they moved the orbital energies by a standard deviation of 187 meV.
-    Predict on a system you have tested, and read the test before you trust the
-    prediction.
+    this system, testing this model moved the final KI orbital energies by a
+    root-mean-square of up to 55 meV per configuration, and by as much as 82 meV for a
+    single orbital. Predict on a system you have tested, and read the test before you
+    trust the prediction.
 
 *************
  The outputs
@@ -354,14 +371,18 @@ here with one subdirectory per configuration:
     │   ├── 01-count_electrons_task
     │   ├── 02-wannier_initialization
     │   ├── 03-ComputeScreeningParameters
-    │   ├── 04-RunFinalKI
-    │   ├── 05-run_final_ki_predicted
+    │   ├── 04-predicted_descriptors
+    │   ├── 05-RunFinalKI
+    │   ├── 06-run_final_ki_predicted
     │   └── outputs                            # this snapshot's own alphas, eigenvalues, ...
     ├── ...
     ├── 15-dscf_snapshot_15
-    ├── 16-alpha_and_eigenvalue_deltas_snapshot_1-compare_final_kis
+    ├── 16-alpha_and_eigenvalue_deltas_snapshot_6-compare_final_kis
+    ├── 17-alpha_and_eigenvalue_deltas_snapshot_8-compare_final_kis
+    ├── 18-descriptors_snapshot_6
+    ├── 19-descriptors_snapshot_8
     ├── ...
-    ├── 30-alpha_and_eigenvalue_deltas_snapshot_15-compare_final_kis
+    ├── 45-descriptors_snapshot_9
     ├── model.json
     ├── outputs
     │   ├── datasets.json
@@ -372,11 +393,24 @@ here with one subdirectory per configuration:
     └── README
 
 Each configuration's subdirectory holds the same steps a single Koopmans calculation
-writes, and — in a test run only — the second final KI calculation beside the first. The
-``compare_final_kis`` steps that follow are the per-configuration comparisons the figure
-above summarizes. ``model.json`` at the root is the model the run used; the same content
-sits again inside ``outputs/``, which is where the whole run's own results land —
-including ``evaluation.json``, read below.
+writes, plus — in a test run only — the second final KI calculation beside the first,
+and its own descriptor pass beside that. The ``compare_final_kis`` and
+``descriptors_snapshot_N`` folders that follow are per-configuration: the comparison
+the figure above summarizes, and the dataset-building pass described in the previous
+section.
+
+.. note::
+
+    Those two families are numbered by the order the steps finished in, not by
+    configuration — ``16`` and ``17`` are configurations 6 and 8, not 1 and 2. It is a
+    dump-numbering quirk rather than something to read meaning into; do not expect the
+    suffix and the number in front of it to agree past ``15``.
+
+``model.json`` at the root is the model the run used; the same content sits again
+inside ``outputs/``, which is where the whole run's own results land — including
+``evaluation.json``, read below.
+
+.. _ml-verdict:
 
 **********************
  Reading the verdict
@@ -387,14 +421,15 @@ A test run's verdict on its model is ``outputs/evaluation.json``:
 .. code-block:: console
 
     $ python -c "import json; print(json.load(open('test/outputs/evaluation.json'))['metrics'])"
-    {'n_samples': 90, 'mae': 0.027207865435438, 'rmse': 0.032752078844741, 'max_abs_error': 0.096675353075518}
+    {'n_samples': 90, 'mae': 0.0074679288977794, 'rmse': 0.014536609775422, 'max_abs_error': 0.073690862672465}
 
 Its ``predictions`` key carries every orbital's predicted and computed screening
 parameter, and ``alpha_and_eigenvalue_deltas`` each configuration's pair of final KI
-calculations — the same numbers the plot above is made from. A training run reports
-metrics too, but they are measured on the configurations the model was fitted to, so
-they say how well the line fits, not how well it predicts. A ``predict`` run computes no
-comparison and writes no ``evaluation.json`` — there is nothing to evaluate against.
+calculations — the same numbers the figure above is made from. A training run reports
+metrics too, but they are measured on the configurations the model was fitted to (a mean
+absolute error of 0.0002 here), so they say how well the line fits, not how well it
+predicts. A ``predict`` run computes no comparison and writes no ``evaluation.json`` —
+there is nothing to evaluate against.
 
 The same file loads as a Python dict without going through the output directory at all:
 
@@ -405,4 +440,4 @@ The same file loads as a Python dict without going through the output directory 
     results = run(read_input_file("test.yaml"))
 
     metrics = results["evaluation"]["metrics"]
-    print(f"typical screening-parameter error: {metrics['mae']:.3f}")  # 0.027
+    print(f"typical screening-parameter error: {metrics['mae']:.4f}")  # 0.0075
