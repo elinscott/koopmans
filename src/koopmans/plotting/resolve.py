@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from koopmans.aiida.dumping import NODE_METADATA_FILE
-from koopmans.plotting.series import BandSeries, SpectrumSeries, band_gap
+from koopmans.plotting.series import (
+    BandSeries,
+    ParityQuantity,
+    ParitySeries,
+    SpectrumSeries,
+    band_gap,
+)
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -26,6 +32,7 @@ __all__ = [
     "PlottingError",
     "RunNotInProfileError",
     "resolve_band_series",
+    "resolve_parity_series",
     "resolve_spectrum_series",
     "run_node",
 ]
@@ -1112,3 +1119,153 @@ def resolve_spectrum_series(
         series.append(item)
 
     return series, warnings
+
+
+#: The key a trajectory run's ``evaluation`` output carries only when it ran
+#: `ml: {mode: test}`: that mode runs a second final KI at the model's own
+#: predicted screening parameters, and nothing else has two results to compare.
+_DELTAS_KEY = "alpha_and_eigenvalue_deltas"
+
+
+def _evaluation_of(node: orm.ProcessNode) -> dict[str, Any] | None:
+    """Return a run's ``evaluation`` output as a plain dict, or ``None`` for none."""
+    output = getattr(node.outputs, "evaluation", None)
+    if output is None:
+        return None
+    try:
+        return dict(output.get_dict())
+    except AttributeError:
+        return None
+
+
+def _not_a_test_run(
+    folder: Path, node: orm.ProcessNode, evaluation: dict[str, Any] | None
+) -> PlottingError:
+    """Return the error for a run with no computed-versus-predicted comparison.
+
+    Tells apart a run that is no trajectory at all, or ran a mode that
+    published no evaluation (an empty dict, same as none), from one that
+    scored a model but ran a mode that never computes the same quantity
+    twice.
+    """
+    route = _route_name(node)
+    if not evaluation:
+        return PlottingError(
+            f"{folder} ran {route}, which published no screening-model evaluation. "
+            "A parity plot compares what a model predicted against what the same run "
+            "computed, which only `task: trajectory` with `ml: {mode: test}` produces. "
+            "Set both and rerun."
+        )
+    return PlottingError(
+        f"{folder} ran {route}, which scored a model but never recomputed the "
+        "screening parameters to score it against. Only `ml: {mode: test}` runs the "
+        "final KI twice — once at the computed screening parameters and once at the "
+        "model's — so set `ml: {mode: test}` and rerun."
+    )
+
+
+def _snapshot_occupancy(node: orm.ProcessNode, label: str) -> list[bool] | None:
+    """Return which of a snapshot's orbitals are occupied, or ``None`` for none.
+
+    The trajectory run publishes one dataset row per variational orbital
+    under ``datasets.<snapshot>``, in the order the screening parameters
+    are reported in, so its ``filled`` column indexes the same orbitals as
+    the snapshot's alphas.
+    """
+    datasets = getattr(node.outputs, "datasets", None)
+    snapshot = getattr(datasets, label, None) if datasets is not None else None
+    filled = getattr(snapshot, "filled", None) if snapshot is not None else None
+    values = getattr(filled, "get_list", None)
+    if values is None:
+        return None
+    return [bool(value) for value in values()]
+
+
+def _spread_occupancy(occupancy: list[bool] | None, points: int) -> list[bool] | None:
+    """Return one occupancy flag per point of an eigenvalue table.
+
+    The eigenvalues come as a table with one row per spin block and one
+    column per band, flattened; the occupancy is per variational orbital
+    of one block. They line up when the table is a whole number of blocks
+    of that many orbitals, and ``None`` says they do not.
+    """
+    if occupancy is None or not occupancy or points % len(occupancy):
+        return None
+    return occupancy * (points // len(occupancy))
+
+
+def _parity_columns(
+    deltas: dict[str, Any], node: orm.ProcessNode, quantity: ParityQuantity
+) -> tuple[list[float], list[float], list[bool] | None]:
+    """Return one run's pooled computed/predicted columns and their occupancy.
+
+    Snapshots are pooled in name order, so the columns are the same
+    whichever order the run happened to finish them in. The occupancy is
+    kept only when every snapshot reports one, since half a column of
+    flags cannot be drawn.
+    """
+    computed: list[float] = []
+    predicted: list[float] = []
+    filled: list[bool] = []
+    complete = True
+    for label in sorted(deltas):
+        payload = deltas[label][quantity.value]
+        values = [
+            np.asarray(payload[key], dtype=np.float64).ravel() for key in ("computed", "predicted")
+        ]
+        computed += values[0].tolist()
+        predicted += values[1].tolist()
+
+        occupancy = _snapshot_occupancy(node, label)
+        if quantity == ParityQuantity.EIGENVALUES:
+            occupancy = _spread_occupancy(occupancy, values[0].size)
+        if occupancy is None or len(occupancy) != values[0].size:
+            complete = False
+        else:
+            filled += occupancy
+    return computed, predicted, filled if complete else None
+
+
+def resolve_parity_series(
+    folder: Path,
+    quantities: Sequence[ParityQuantity],
+) -> tuple[list[ParitySeries], list[str]]:
+    """Return one `ml: {mode: test}` run's predicted-versus-computed values.
+
+    One series per quantity, in the order ``quantities`` asks for them.
+    Every snapshot of the run is pooled into that series, since the model
+    is scored over the trajectory rather than per snapshot. The series is
+    named after the route that produced it.
+
+    :raises PlottingError: if ``folder`` is not a run directory, its run is
+        not in this profile, or it published no computed-versus-predicted
+        comparison.
+    """
+    node = run_node(folder)
+
+    warnings: list[str] = []
+    warning = _failure_warning(folder, node)
+    if warning is not None:
+        warnings.append(warning)
+
+    evaluation = _evaluation_of(node)
+    deltas = (evaluation or {}).get(_DELTAS_KEY)
+    if not deltas:
+        raise _not_a_test_run(folder, node, evaluation)
+
+    label = _route_name(node) or "trajectory"
+
+    panels: list[ParitySeries] = []
+    for quantity in quantities:
+        computed, predicted, filled = _parity_columns(deltas, node, quantity)
+        panels.append(
+            ParitySeries(
+                label=label,
+                quantity=quantity,
+                computed=computed,
+                predicted=predicted,
+                filled=filled,
+            )
+        )
+
+    return panels, warnings
