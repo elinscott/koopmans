@@ -268,6 +268,29 @@ class TestUnfoldAndInterpolateBlockRemoved:
             KoopmansInput.model_validate(d)
 
 
+class TestTrajectoryTaskRemoved:
+    """What to compute is the task; which structures to compute it on is ``atoms``."""
+
+    def test_the_removed_task_names_the_replacement(self, tmp_path: Path) -> None:
+        """The message names the task to set and the ``atoms`` field to keep.
+
+        The enum's own error would list the tasks that remain without ever
+        mentioning ``atoms.snapshots``, which is what the task became.
+        """
+        d = _minimal_si_input()
+        _set_keyword(d, "workflow", "task", "trajectory")
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(d))
+
+        with pytest.raises(ValueError) as excinfo:
+            read_input_file(input_file)
+
+        message = str(excinfo.value)
+        assert "`workflow.task: trajectory` no longer exists" in message
+        assert "`atoms.snapshots`" in message
+        assert "singlepoint" in message
+
+
 class TestPeriodicIsOnePerCellVector:
     """``periodic`` is canonical after validation, whichever way it was written."""
 

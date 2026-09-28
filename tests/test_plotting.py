@@ -4467,7 +4467,7 @@ def parity_run(
     occupancy: dict[str, list[bool]] | None = None,
     evaluation: dict[str, Any] | None = None,
 ) -> Path:
-    """Write a run folder holding a `ml: {mode: test}` trajectory's evaluation.
+    """Write a run folder holding a `ml: {mode: test}` snapshots run's evaluation.
 
     ``occupancy`` publishes each snapshot's dataset ``filled`` column, the
     run's own record of which orbitals are occupied; leaving it out is a
@@ -4626,7 +4626,7 @@ class TestParityResolver:
 
         message = str(excinfo.value)
         assert expected_route in message
-        assert "task: trajectory" in message
+        assert "`atoms.snapshots`" in message
         assert "ml: {mode: test}" in message
         assert "scored a model" not in message
 

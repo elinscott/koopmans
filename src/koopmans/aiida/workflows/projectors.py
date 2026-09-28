@@ -185,9 +185,10 @@ def load_external_projectors(
 def reject_unwired_external_projectors(koopmans_input: KoopmansInput, route: str) -> None:
     """Reject ``atom_proj_ext`` on a route that does not consume it.
 
-    The singlepoint and trajectory routes build their Wannierizations
-    without consulting the external projector keywords, so accepting the
-    switch there would silently drop it.
+    The singlepoint route, run on one structure or fanned out over
+    ``atoms.snapshots``, builds its Wannierizations without consulting the
+    external projector keywords, so accepting the switch there would
+    silently drop it.
     """
     if koopmans_input.calculator_parameters.pw2wannier90.atom_proj_ext:
         raise NotImplementedError(

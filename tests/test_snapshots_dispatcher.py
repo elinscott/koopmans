@@ -1,11 +1,11 @@
-"""Tests for multi-snapshot trajectory input (schema, conversion, dispatch).
+"""Tests for the ``atoms.snapshots`` fan-out (schema, conversion, dispatch).
 
 Covers the ``atoms.snapshots`` field (mutually exclusive with explicit
 ``atomic_positions``), path resolution relative to the input file, the
 per-frame ``StructureData`` conversion (including the cell-override rule),
-rejection of a snapshots input by non-trajectory tasks, and a real
-``WorkGraph`` build asserting one ``dscf_snapshot_N`` task per frame
-(throwaway profile, dummy codes, fake pseudos; nothing runs).
+refusal of the retired ``task: trajectory`` and of the tasks no fan-out is
+built for, and a real ``WorkGraph`` build asserting one ``dscf_snapshot_N``
+task per frame (throwaway profile, dummy codes, fake pseudos; nothing runs).
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ def _snapshots_atoms_dict(snapshots: str, *, box: float = 6.0) -> dict[str, Any]
     }
 
 
-def _trajectory_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str, Any]:
-    """Return a minimal molecular-water DSCF trajectory (ml mode=train) input dict."""
+def _snapshots_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str, Any]:
+    """Return a minimal molecular-water DSCF fan-out (ml mode=train) input dict."""
     d: dict[str, Any] = {
         "workflow": {
-            "task": "trajectory",
+            "task": "singlepoint",
             "correction": "ki",
             "screening_method": "dscf",
             "init_orbitals": "kohn-sham",
@@ -122,8 +122,7 @@ class TestPathResolution:
     """``snapshots`` and ``ml.model_file`` resolve against the input file's dir."""
 
     def _write_input(self, directory: Path, model_file: str, snapshots: str) -> Path:
-        d = _trajectory_input_dict(snapshots)
-        d["workflow"]["task"] = "trajectory"
+        d = _snapshots_input_dict(snapshots)
         d["ml"] = {
             "mode": "test",
             "model_file": model_file,
@@ -245,59 +244,85 @@ class TestSnapshotConversion:
             atoms_input_to_structures(atoms)
 
     def test_snapshots_rejected_by_singular_converter(self, aiida_profile: Any) -> None:
-        """The singular converter rejects a snapshots input, naming the trajectory gap."""
+        """The singular converter rejects a snapshots input, naming the positions it wants."""
         from koopmans.aiida.conversion import atoms_input_to_structure
 
         atoms = AtomsInput.model_validate(_snapshots_atoms_dict("frames.xyz"))
-        with pytest.raises(ValueError, match="trajectory"):
+        with pytest.raises(ValueError, match="atomic_positions"):
             atoms_input_to_structure(atoms)
 
 
 @pytest.fixture
-def trajectory_codes(installed_pw_code: Any, installed_kcp_code: Any) -> dict[str, Any]:
-    """Register the dummy codes the trajectory route resolves as ``<name>@localhost``."""
+def snapshots_codes(installed_pw_code: Any, installed_kcp_code: Any) -> dict[str, Any]:
+    """Register the dummy codes the fan-out resolves as ``<name>@localhost``."""
     return {"pw": installed_pw_code, "kcp": installed_kcp_code}
 
 
-class TestTrajectoryDispatcher:
-    """``build_trajectory_workgraph`` fans one DSCF task out per snapshot."""
+class TestSnapshotsDispatcher:
+    """``build_snapshots_workgraph`` fans one DSCF task out per snapshot."""
 
     def test_builds_one_dscf_task_per_snapshot(
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """A 3-frame xyz produces ``dscf_snapshot_1 .. dscf_snapshot_3``."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 3)
-        koopmans_input = KoopmansInput.model_validate(_trajectory_input_dict(str(xyz)))
+        koopmans_input = KoopmansInput.model_validate(_snapshots_input_dict(str(xyz)))
 
-        workgraph = build_trajectory_workgraph(koopmans_input)
+        workgraph = build_snapshots_workgraph(koopmans_input)
 
         names = set(workgraph.get_task_names())
         assert {f"dscf_snapshot_{i}" for i in range(1, 4)} <= names
 
-    def test_non_trajectory_task_rejects_snapshots_block(
+    def test_a_task_with_no_fan_out_is_refused_by_name(
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """A singlepoint task fed a snapshots block fails with a clear ValueError."""
+        """``dft_bands`` with snapshots hears the gap, not a converter's complaint.
+
+        The discriminator against a dispatcher that sends the snapshots
+        input down the single-structure route, where the converter would
+        refuse it in the vocabulary of the ``atoms`` block rather than of
+        the task that cannot fan out.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _snapshots_input_dict(str(xyz), task="dft_bands")
+        d["ml"] = {}
+        d["kpoints"] = {"grid": [2, 2, 2]}
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="not wired into the dft_bands task"):
+            build_workgraph(koopmans_input)
+
+    def test_the_single_structure_route_rejects_a_snapshots_block(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        snapshots_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+    ) -> None:
+        """Called directly, the single-structure builder still refuses many structures."""
         from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
-        d = _trajectory_input_dict(str(xyz), task="singlepoint")
+        d = _snapshots_input_dict(str(xyz))
         d["ml"] = {}
         koopmans_input = KoopmansInput.model_validate(d)
 
-        with pytest.raises(ValueError, match="trajectory"):
+        with pytest.raises(ValueError, match="atomic_positions"):
             build_singlepoint_workgraph(koopmans_input)
 
     def test_external_projectors_rejected(
@@ -305,26 +330,26 @@ class TestTrajectoryDispatcher:
         tmp_path: Path,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """``atom_proj_ext`` is rejected: the trajectory route never consults it."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        """``atom_proj_ext`` is rejected: the fan-out never consults it."""
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
-        d = _trajectory_input_dict(str(xyz))
+        d = _snapshots_input_dict(str(xyz))
         d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
         koopmans_input = KoopmansInput.model_validate(d)
 
-        with pytest.raises(NotImplementedError, match="not wired into the trajectory route"):
-            build_trajectory_workgraph(koopmans_input)
+        with pytest.raises(NotImplementedError, match="not wired into the snapshots route"):
+            build_snapshots_workgraph(koopmans_input)
 
 
-def _wannier_trajectory_input_dict(snapshots: str) -> dict[str, Any]:
-    """Return a periodic Wannier-initialised water trajectory input dict.
+def _wannier_snapshots_input_dict(snapshots: str) -> dict[str, Any]:
+    """Return a periodic Wannier-initialised water fan-out input dict.
 
     Water in a cube: the O ``sp3`` block covers the four occupied bands and
     the H ``s`` block the two lowest empty ones, so the projections span the
     six kcp.x bands.
     """
-    d = _trajectory_input_dict(snapshots, init_orbitals="mlwfs")
+    d = _snapshots_input_dict(snapshots, init_orbitals="mlwfs")
     d["kpoints"] = {"grid": [1, 1, 1], "offset": [0, 0, 0]}
     d["calculator_parameters"]["pw"] = {"system": {"nbnd": 6}}
     d["calculator_parameters"]["wannier90"] = {
@@ -344,7 +369,7 @@ class TestOrbitalDensityDescriptor:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         installed_wannier_codes: dict[str, Any],
         installed_fold_codes: dict[str, Any],
         installed_decompose_code: Any,
@@ -356,14 +381,14 @@ class TestOrbitalDensityDescriptor:
         The discriminator against a dispatcher that accepts the keyword but
         silently keeps building the self-Hartree dataset.
         """
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
-        d = _wannier_trajectory_input_dict(str(xyz))
+        d = _wannier_snapshots_input_dict(str(xyz))
         d["ml"]["descriptor"] = "power_spectrum"
         koopmans_input = KoopmansInput.model_validate(d)
 
-        workgraph = build_trajectory_workgraph(koopmans_input)
+        workgraph = build_snapshots_workgraph(koopmans_input)
 
         names = set(workgraph.get_task_names())
         assert {"descriptors_snapshot_1", "descriptors_snapshot_2"} <= names, names
@@ -373,7 +398,7 @@ class TestOrbitalDensityDescriptor:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         localhost_code: Any,
         installed_fold_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
@@ -387,21 +412,21 @@ class TestOrbitalDensityDescriptor:
         on. Only wannier90 is registered here, so the failure is the
         missing code, not the Wannier route.
         """
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         localhost_code("wannier90", "wannier90.wannier90")
         xyz = write_multiframe_xyz(tmp_path, 1)
-        d = _wannier_trajectory_input_dict(str(xyz))
+        d = _wannier_snapshots_input_dict(str(xyz))
         d["ml"]["descriptor"] = "power_spectrum"
         with pytest.raises(ValueError, match="pw2wannier90") as excinfo:
-            build_trajectory_workgraph(KoopmansInput.model_validate(d))
+            build_snapshots_workgraph(KoopmansInput.model_validate(d))
         assert "koopmans install" in str(excinfo.value)
 
     def test_collinear_rejects_power_spectrum(
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         installed_wannier_codes: dict[str, Any],
         installed_fold_codes: dict[str, Any],
         installed_decompose_code: Any,
@@ -412,14 +437,14 @@ class TestOrbitalDensityDescriptor:
 
         Same discriminator as the route above, run with the one setting
         changed: the descriptor is closed-shell only, so the user hears it
-        at build time rather than from a count mismatch mid-trajectory.
+        at build time rather than from a count mismatch mid-run.
         """
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         o_sp3 = [{"site": "O", "ang_mtm": "sp3"}]
         h_s = [{"site": "H", "ang_mtm": "s"}]
         xyz = write_multiframe_xyz(tmp_path, 2)
-        d = _wannier_trajectory_input_dict(str(xyz))
+        d = _wannier_snapshots_input_dict(str(xyz))
         d["ml"]["descriptor"] = "power_spectrum"
         d["workflow"]["spin"] = "collinear"
         d["calculator_parameters"]["tot_magnetization"] = 0
@@ -429,25 +454,25 @@ class TestOrbitalDensityDescriptor:
         }
 
         with pytest.raises(NotImplementedError, match="spin='collinear'"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d))
+            build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
     def test_self_hartree_keeps_direct_read(
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         installed_wannier_codes: dict[str, Any],
         installed_fold_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """The same Wannier-route input on ``self_hartree`` builds no decompose pass."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
-        koopmans_input = KoopmansInput.model_validate(_wannier_trajectory_input_dict(str(xyz)))
+        koopmans_input = KoopmansInput.model_validate(_wannier_snapshots_input_dict(str(xyz)))
 
-        workgraph = build_trajectory_workgraph(koopmans_input)
+        workgraph = build_snapshots_workgraph(koopmans_input)
 
         names = set(workgraph.get_task_names())
         assert not any(name.startswith("descriptors_") for name in names), names
@@ -457,21 +482,21 @@ class TestOrbitalDensityDescriptor:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         installed_decompose_code: Any,
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """A Kohn-Sham-initialised trajectory cannot feed the decompose pass."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        """A Kohn-Sham-initialised fan-out cannot feed the decompose pass."""
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 2)
-        d = _trajectory_input_dict(str(xyz))
+        d = _snapshots_input_dict(str(xyz))
         d["ml"]["descriptor"] = "power_spectrum"
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match="init_orbitals"):
-            build_trajectory_workgraph(koopmans_input)
+            build_snapshots_workgraph(koopmans_input)
 
     def test_basis_settings_reach_the_namelist(self) -> None:
         """The ``ml`` radial-basis settings become decompose namelist keys.
@@ -479,7 +504,7 @@ class TestOrbitalDensityDescriptor:
         Without this mapping the power spectra would silently be built on
         the CalcJob's default basis rather than the requested one.
         """
-        from koopmans.aiida.workflows.trajectory import _decompose_parameters
+        from koopmans.aiida.workflows.snapshots import _decompose_parameters
         from koopmans.input_file.ml import MLConfig
 
         ml_config = MLConfig(n_max=6, l_max=5, r_min=1.0, r_max=4.5)
@@ -544,7 +569,7 @@ class TestPredictMode:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -556,18 +581,18 @@ class TestPredictMode:
         that routing is asserted in aiida-koopmans' kcp workgraph tests)
         and must not grow a dataset / fit / score layer.
         """
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
         model_path, model = self._write_model(tmp_path)
 
-        d = _trajectory_input_dict(str(xyz))
+        d = _snapshots_input_dict(str(xyz))
         d["ml"] = {}
-        ab_initio = build_trajectory_workgraph(KoopmansInput.model_validate(d))
+        ab_initio = build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
-        d = _trajectory_input_dict(str(xyz))
+        d = _snapshots_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "model_file": str(model_path), "descriptor": "self_hartree"}
-        predict = build_trajectory_workgraph(KoopmansInput.model_validate(d))
+        predict = build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
         def _dscf(workgraph: Any) -> Any:
             names = set(workgraph.get_task_names())
@@ -591,20 +616,20 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``mode: predict`` without a model source fails at build."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
-        d = _trajectory_input_dict(str(xyz))
+        d = _snapshots_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="requires a trained model"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d))
+            build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
     def test_predict_on_power_spectrum_reaches_every_dscf(
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         installed_wannier_codes: dict[str, Any],
         installed_fold_codes: dict[str, Any],
         installed_decompose_code: Any,
@@ -619,13 +644,13 @@ class TestPredictMode:
         """
         from aiida_koopmans.ml import MLDescriptor
 
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         model_path = tmp_path / "ps_model.json"
         model_path.write_text(json.dumps(_fitted_power_spectrum_model()))
 
         xyz = write_multiframe_xyz(tmp_path, 2)
-        d = _wannier_trajectory_input_dict(str(xyz))
+        d = _wannier_snapshots_input_dict(str(xyz))
         d["ml"] = {
             "mode": "predict",
             "descriptor": "power_spectrum",
@@ -633,7 +658,7 @@ class TestPredictMode:
             "n_max": 6,
             "l_max": 6,
         }
-        workgraph = build_trajectory_workgraph(KoopmansInput.model_validate(d))
+        workgraph = build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
         names = set(workgraph.get_task_names())
         assert not any(name.startswith("descriptors_") for name in names), names
@@ -653,33 +678,44 @@ class TestPredictMode:
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
         """``alpha_numsteps > 1`` cannot take effect under ``mode: predict``."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
-        d = _trajectory_input_dict(str(xyz), alpha_numsteps=2)
+        d = _snapshots_input_dict(str(xyz), alpha_numsteps=2)
         d["ml"] = {"mode": "predict", "descriptor": "self_hartree"}
 
         with pytest.raises(ValueError, match="alpha_numsteps cannot take effect"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d))
+            build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
-    def test_non_trajectory_task_rejects_ml_block(
+    def test_one_structure_rejects_the_ml_block(self) -> None:
+        """A singlepoint on explicit positions carrying ``ml`` fails at dispatch.
+
+        Without the guard the full ab-initio graph is built and the model
+        silently never consulted (legacy permitted single-structure
+        prediction; that route is not ported).
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
+
+        d = _si_dscf_dict(init_orbitals="kohn-sham")
+        d["ml"] = {"mode": "predict", "model_file": "model.json", "descriptor": "self_hartree"}
+
+        with pytest.raises(NotImplementedError, match="on a single structure is not yet ported"):
+            build_workgraph(KoopmansInput.model_validate(d))
+
+    def test_a_task_that_computes_no_screening_rejects_the_ml_block(
         self,
         tmp_path: Path,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
-        """A singlepoint carrying an ``ml`` block fails at dispatch.
-
-        Without the guard the full ab-initio graph is built and the model
-        silently never consulted (legacy permitted singlepoint
-        prediction; that route is not ported).
-        """
+        """``ml`` on a task with no screening parameters to model fails at dispatch."""
         from koopmans.aiida.workflows import build_workgraph
 
-        xyz = write_multiframe_xyz(tmp_path, 1)
-        d = _trajectory_input_dict(str(xyz), task="singlepoint")
-        d["ml"] = {"mode": "predict", "model_file": "model.json", "descriptor": "self_hartree"}
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        d = _snapshots_input_dict(str(xyz), task="dft_bands")
+        d["kpoints"] = {"grid": [2, 2, 2]}
 
-        with pytest.raises(NotImplementedError, match="trajectory task only"):
+        with pytest.raises(NotImplementedError, match="task: dft_bands computes none of"):
             build_workgraph(KoopmansInput.model_validate(d))
 
 
@@ -699,12 +735,12 @@ class TestModelNodeRoute:
         tmp_path: Path,
         write_multiframe_xyz: Callable[..., Path],
     ) -> Any:
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
-        d = _trajectory_input_dict(str(xyz))
+        d = _snapshots_input_dict(str(xyz))
         d["ml"] = ml_block
-        return build_trajectory_workgraph(KoopmansInput.model_validate(d))
+        return build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
     @staticmethod
     def _dscf_model_value(workgraph: Any) -> Any:
@@ -715,7 +751,7 @@ class TestModelNodeRoute:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
         identify: str,
@@ -738,7 +774,7 @@ class TestModelNodeRoute:
             tmp_path=tmp_path,
             write_multiframe_xyz=write_multiframe_xyz,
         )
-        # The stored node sits on the trajectory graph's own input (a
+        # The stored node sits on the fan-out graph's own input (a
         # TaggedValue proxy forwards isinstance and attribute access), so
         # the run's provenance links the training artifact; the DSCF
         # sub-graph receives the payload.
@@ -751,7 +787,7 @@ class TestModelNodeRoute:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
         write_multiframe_xyz: Callable[..., Path],
     ) -> None:
@@ -785,15 +821,15 @@ class TestModelNodeRoute:
         """A node of the wrong type fails naming what ml:model must point at."""
         from aiida import orm
 
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         wrong = orm.Int(7).store()  # type: ignore[no-untyped-call]
         xyz = write_multiframe_xyz(tmp_path, 1)
-        d = _trajectory_input_dict(str(xyz))
+        d = _snapshots_input_dict(str(xyz))
         d["ml"] = {"mode": "predict", "model": wrong.pk, "descriptor": "self_hartree"}
 
         with pytest.raises(TypeError, match="must name the stored trained-model Dict"):
-            build_trajectory_workgraph(KoopmansInput.model_validate(d))
+            build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
     def test_model_and_model_file_are_exclusive(self) -> None:
         """Naming both model sources fails at schema validation."""
@@ -828,20 +864,20 @@ class TestFrozenWindowThreading:
         *,
         pw_nbnd: int,
     ) -> Any:
-        """Build the water trajectory and return its DSCF task."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        """Build the water fan-out and return its DSCF task."""
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         xyz = write_multiframe_xyz(tmp_path, 1)
-        d = _wannier_trajectory_input_dict(str(xyz))
+        d = _wannier_snapshots_input_dict(str(xyz))
         d["calculator_parameters"]["pw"] = {"system": {"nbnd": pw_nbnd}}
-        wg = build_trajectory_workgraph(KoopmansInput.model_validate(d))
+        wg = build_snapshots_workgraph(KoopmansInput.model_validate(d))
         return next(t for t in wg.tasks if t.name == "dscf_snapshot_1")
 
     def test_water_empty_block_pools_and_freezes(
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         installed_wannier_codes: dict[str, Any],
         installed_fold_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
@@ -861,7 +897,7 @@ class TestFrozenWindowThreading:
         self,
         aiida_profile_clean: Any,
         tmp_path: Path,
-        trajectory_codes: dict[str, Any],
+        snapshots_codes: dict[str, Any],
         installed_wannier_codes: dict[str, Any],
         installed_fold_codes: dict[str, Any],
         fake_sg15_pseudo_family: Any,
@@ -880,16 +916,26 @@ class TestBandPathRejected:
     """kcp.x screens each snapshot in a supercell; no step interpolates a path."""
 
     def test_a_band_path_is_rejected(self, tmp_path: Path, read_input_dict: Any) -> None:
-        """Refused while the input file is read, before any snapshot is looked for."""
-        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        """The fan-out refuses the path itself, before any snapshot is looked for.
+
+        The parse-time refusal speaks for the task run on one structure,
+        where a periodic ΔSCF singlepoint does interpolate along a path;
+        what makes the path meaningless here is the fan-out, so the
+        discriminator is that the input parses and the wrapper raises.
+        """
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
+
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
 
+        koopmans_input = read_input_dict(d)
+
         with pytest.raises(ValueError) as excinfo:
-            read_input_dict(d)
+            build_snapshots_workgraph(koopmans_input)
 
         message = str(excinfo.value)
-        assert "Errors found in the input file" in message
         assert "`kpoints.path`" in message
+        assert "`atoms.snapshots`" in message
         # `screening_method` does not select this route, so the DFPT
         # alternative the singlepoint route offers must not appear here.
         assert "dfpt" not in message
@@ -897,42 +943,42 @@ class TestBandPathRejected:
     def test_a_gamma_only_input_is_not_rejected(self, tmp_path: Path, read_input_dict: Any) -> None:
         """Negative control: gamma-only's fixed ``path`` names no segment to interpolate.
 
-        Every molecular trajectory carries it, so a refusal that fired on
-        ``path is not None`` would reject the task's main use.
+        Every molecular fan-out carries it, so a refusal that fired on
+        ``path is not None`` would reject the wrapper's main use.
         """
-        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["kpoints"] = {"gamma_only": True}
 
         koopmans_input = read_input_dict(d)
 
         assert koopmans_input.kpoints.path == "G"
 
-    def test_a_dfpt_trajectory_hears_the_screening_method_first(
+    def test_a_dfpt_input_hears_the_screening_method_first(
         self, tmp_path: Path, read_input_dict: Any
     ) -> None:
         """Pins the refusal behind the screening-method blocker.
 
-        The task runs kcp.x whatever the input asks for, so an input asking
-        for DFPT screening has to hear about the method it named rather than
-        about its path — which means parsing, and being refused at build.
+        The fan-out runs kcp.x whatever the input asks for, so an input
+        asking for DFPT screening has to hear about the method it named
+        rather than about its path.
         """
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
-        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"), screening_method="dfpt")
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"), screening_method="dfpt")
         d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
 
         koopmans_input = read_input_dict(d)
 
         with pytest.raises(NotImplementedError) as excinfo:
-            build_trajectory_workgraph(koopmans_input)
+            build_snapshots_workgraph(koopmans_input)
 
         message = str(excinfo.value)
-        assert "only supports DSCF screening" in message
+        assert "only fans out the DSCF screening stream" in message
         assert "`kpoints.path`" not in message
 
 
 class TestPerStepKpointMeshRejected:
-    """The trajectory task screens with kcp.x, which runs every step on one mesh."""
+    """The fan-out screens with kcp.x, which runs every step on one mesh."""
 
     @pytest.mark.parametrize("step", ["scf", "nscf"])
     def test_either_entry_raises_naming_the_grid(self, tmp_path: Path, step: str) -> None:
@@ -941,20 +987,20 @@ class TestPerStepKpointMeshRejected:
         The guard runs before any code or pseudopotential is loaded, so it
         needs no profile.
         """
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
-        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["kpoints"] = {"grid": [2, 2, 2], "overrides": {step: {"grid": [4, 4, 4]}}}
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
-            build_trajectory_workgraph(koopmans_input)
+            build_snapshots_workgraph(koopmans_input)
 
     def test_wannier90_density_raises(self, tmp_path: Path) -> None:
         """No interpolated band structure exists here for a density to describe."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
-        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["kpoints"] = {
             "grid": [2, 2, 2],
             "overrides": {"wannier90": {"path_density": 25.0}},
@@ -962,36 +1008,36 @@ class TestPerStepKpointMeshRejected:
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
-            build_trajectory_workgraph(koopmans_input)
+            build_snapshots_workgraph(koopmans_input)
 
     def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:
         """A route reached whatever the method must not name one back at the reader.
 
-        ``screening_method`` does not select this route — every trajectory
+        ``screening_method`` does not select this route — every fan-out
         runs kcp.x — so quoting ``'dscf'`` would tell someone who wrote
         ``'dfpt'`` to set what they did not set.
         """
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
-        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["workflow"]["screening_method"] = "dfpt"
         d["workflow"]["calculate_alpha"] = False
         d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError) as excinfo:
-            build_trajectory_workgraph(koopmans_input)
+            build_snapshots_workgraph(koopmans_input)
         assert "screening_method" not in str(excinfo.value)
 
     def test_an_unsupported_screening_method_is_reported_first(self, tmp_path: Path) -> None:
         """The mesh is the reader's second problem when the method is the first."""
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
-        d = _trajectory_input_dict(str(tmp_path / "snapshots.xyz"))
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["workflow"]["screening_method"] = "dfpt"
         d["workflow"]["calculate_alpha"] = True
         d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
         koopmans_input = KoopmansInput.model_validate(d)
 
-        with pytest.raises(NotImplementedError, match="only supports DSCF screening"):
-            build_trajectory_workgraph(koopmans_input)
+        with pytest.raises(NotImplementedError, match="only fans out the DSCF screening stream"):
+            build_snapshots_workgraph(koopmans_input)

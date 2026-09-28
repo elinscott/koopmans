@@ -30,14 +30,6 @@ NO_BAND_PATH_ON_MOLECULAR_DSCF = (
     "Remove `kpoints.path`; the ΔSCF eigenvalues are already the molecule's spectrum."
 )
 
-#: What to write instead of a k-path on the trajectory task.
-NO_BAND_PATH_ON_TRAJECTORY = (
-    "`kpoints.path` cannot take effect in a `trajectory` calculation: it screens each "
-    "snapshot and reports screening parameters and eigenvalues, not band structures. "
-    "Remove `kpoints.path`, or run `task: singlepoint` on the structure whose band "
-    "structure you want."
-)
-
 #: What to write instead of a k-path on the bse task.
 NO_BAND_PATH_ON_BSE = (
     "`kpoints.path` cannot take effect in a `bse` calculation: the composed DFPT "
@@ -66,6 +58,10 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool) -> str | None:
     thing standing in its way: an input the task refuses outright must hear
     that refusal instead, or it is sent to fix a keyword and told no again.
 
+    Speaks for the task run on one structure. ``atoms.snapshots`` fans that
+    task out per frame, and the fan-out decides for itself what a path can
+    mean there.
+
     Args:
         workflow: The input's ``workflow`` block.
         periodic: Whether the structure is periodic along any cell vector.
@@ -89,13 +85,6 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool) -> str | None:
             # and interpolates it along the path.
             return None
         return NO_BAND_PATH_ON_MOLECULAR_DSCF
-
-    if workflow.task == Task.TRAJECTORY:
-        if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
-            # The task runs kcp.x whatever the input asks for, and the reader
-            # has to hear about the method they asked for first.
-            return None
-        return NO_BAND_PATH_ON_TRAJECTORY
 
     if workflow.task == Task.BSE:
         return NO_BAND_PATH_ON_BSE

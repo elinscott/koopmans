@@ -313,10 +313,10 @@ _SUPERCELL_REASON = (
     "`kpoints: {path: ...}` and rerun"
 )
 
-#: The same blank on the trajectory route, which runs no interpolation stage.
+#: The same blank on the snapshots fan-out, which runs no interpolation stage.
 _TRAJECTORY_REASON = (
-    "the trajectory route screens each snapshot on a supercell and reports "
-    "screening parameters and eigenvalues, not band structures"
+    "it screens each snapshot on a supercell and reports screening parameters "
+    "and eigenvalues, not band structures"
 )
 
 #: Why a wannierization draws a blank, whether the folder names the koopmans
@@ -1121,7 +1121,7 @@ def resolve_spectrum_series(
     return series, warnings
 
 
-#: The key a trajectory run's ``evaluation`` output carries only when it ran
+#: The key a snapshots run's ``evaluation`` output carries only when it ran
 #: `ml: {mode: test}`: that mode runs a second final KI at the model's own
 #: predicted screening parameters, and nothing else has two results to compare.
 _DELTAS_KEY = "alpha_and_eigenvalue_deltas"
@@ -1143,7 +1143,7 @@ def _not_a_test_run(
 ) -> PlottingError:
     """Return the error for a run with no computed-versus-predicted comparison.
 
-    Tells apart a run that is no trajectory at all, or ran a mode that
+    Tells apart a run that fanned out over no snapshots at all, or ran a mode that
     published no evaluation (an empty dict, same as none), from one that
     scored a model but ran a mode that never computes the same quantity
     twice.
@@ -1153,7 +1153,7 @@ def _not_a_test_run(
         return PlottingError(
             f"{folder} ran {route}, which published no screening-model evaluation. "
             "A parity plot compares what a model predicted against what the same run "
-            "computed, which only `task: trajectory` with `ml: {mode: test}` produces. "
+            "computed, which only `atoms.snapshots` with `ml: {mode: test}` produces. "
             "Set both and rerun."
         )
     return PlottingError(
@@ -1167,7 +1167,7 @@ def _not_a_test_run(
 def _snapshot_occupancy(node: orm.ProcessNode, label: str) -> list[bool] | None:
     """Return which of a snapshot's orbitals are occupied, or ``None`` for none.
 
-    The trajectory run publishes one dataset row per variational orbital
+    The fanned-out run publishes one dataset row per variational orbital
     under ``datasets.<snapshot>``, in the order the screening parameters
     are reported in, so its ``filled`` column indexes the same orbitals as
     the snapshot's alphas.
@@ -1234,7 +1234,7 @@ def resolve_parity_series(
 
     One series per quantity, in the order ``quantities`` asks for them.
     Every snapshot of the run is pooled into that series, since the model
-    is scored over the trajectory rather than per snapshot. The series is
+    is scored over every snapshot at once rather than per snapshot. The series is
     named after the route that produced it.
 
     :raises PlottingError: if ``folder`` is not a run directory, its run is
@@ -1253,7 +1253,7 @@ def resolve_parity_series(
     if not deltas:
         raise _not_a_test_run(folder, node, evaluation)
 
-    label = _route_name(node) or "trajectory"
+    label = _route_name(node) or "snapshots"
 
     panels: list[ParitySeries] = []
     for quantity in quantities:
