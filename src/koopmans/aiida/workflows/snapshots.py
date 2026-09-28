@@ -22,7 +22,6 @@ from koopmans.aiida.workflows.dscf import (
     require_supported_correction,
 )
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
-from koopmans.input_file import names_band_path
 from koopmans.input_file.workflow import CalculateScreeningMethod, Task, VariationalOrbitalType
 
 if TYPE_CHECKING:
@@ -36,16 +35,6 @@ if TYPE_CHECKING:
 #: The tasks this wrapper can run once per frame. Every other task with
 #: ``atoms.snapshots`` set is refused by name.
 _TASKS_THAT_FAN_OUT = frozenset({Task.SINGLEPOINT})
-
-#: What to write instead of a k-path under ``atoms.snapshots``. The fan-out
-#: reports one set of screening parameters and eigenvalues per frame, and no
-#: step of it interpolates a Koopmans Hamiltonian along a path.
-NO_BAND_PATH_ON_SNAPSHOTS = (
-    "`kpoints.path` cannot take effect together with `atoms.snapshots`: each frame is "
-    "screened on a supercell and reports screening parameters and eigenvalues, not a "
-    "band structure. Remove `kpoints.path`, or replace `atoms.snapshots` with the "
-    "`atoms.atomic_positions` of the one structure whose band structure you want."
-)
 
 
 def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
@@ -78,8 +67,9 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         NotImplementedError: If ``workflow.task`` names a task no fan-out
             is built for, or if the singlepoint settings select a stream
             this wrapper does not run per frame.
-        ValueError: If ``kpoints`` states a path or a per-step mesh the
-            per-frame kcp.x stream cannot honour.
+        ValueError: If ``kpoints`` states a per-step mesh the per-frame
+            kcp.x stream cannot honour. A ``kpoints.path`` this fan-out
+            cannot interpolate is refused earlier, at parse time.
     """
     from aiida_koopmans.workgraphs.ml import DscfCodes, TrajectoryWorkflow
 
@@ -103,12 +93,9 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "screening is not yet run per frame."
         )
 
-    # After the screening-method guard: whichever method the input asks for,
-    # this route runs kcp.x, and the reader has to hear about the method they
-    # asked for before they hear about the path or the mesh.
-    if names_band_path(koopmans_input.kpoints):
-        raise ValueError(NO_BAND_PATH_ON_SNAPSHOTS)
-
+    # A `kpoints.path` under `atoms.snapshots` is refused at parse time
+    # (`check_the_task_can_interpolate_along_the_path`), behind this
+    # function's own task and screening-method refusals above.
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_SNAPSHOTS)
 
     require_supported_correction(workflow.correction)

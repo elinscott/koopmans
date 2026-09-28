@@ -703,17 +703,19 @@ class TestPredictMode:
         with pytest.raises(NotImplementedError, match="on a single structure is not yet ported"):
             build_workgraph(KoopmansInput.model_validate(d))
 
-    def test_a_task_that_computes_no_screening_rejects_the_ml_block(
-        self,
-        tmp_path: Path,
-        write_multiframe_xyz: Callable[..., Path],
-    ) -> None:
-        """``ml`` on a task with no screening parameters to model fails at dispatch."""
-        from koopmans.aiida.workflows import build_workgraph
+    def test_a_task_that_computes_no_screening_rejects_the_ml_block(self) -> None:
+        """``ml`` on a task with no screening parameters fails at dispatch.
 
-        xyz = write_multiframe_xyz(tmp_path, 2)
-        d = _snapshots_input_dict(str(xyz), task="dft_bands")
-        d["kpoints"] = {"grid": [2, 2, 2]}
+        No ``atoms.snapshots`` here: with it unset, this input used to hit
+        the parse-time "set atoms.snapshots" refusal first, and only after
+        adding one hit this build-time refusal — two messages for one
+        input. This task-mismatch refusal has to speak first.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+        from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
+
+        d = _si_dscf_dict(task="dft_bands")
+        d["ml"] = {"mode": "train", "descriptor": "self_hartree", "estimator": "ridge_regression"}
 
         with pytest.raises(NotImplementedError, match="task: dft_bands computes none of"):
             build_workgraph(KoopmansInput.model_validate(d))
@@ -916,22 +918,18 @@ class TestBandPathRejected:
     """kcp.x screens each snapshot in a supercell; no step interpolates a path."""
 
     def test_a_band_path_is_rejected(self, tmp_path: Path, read_input_dict: Any) -> None:
-        """The fan-out refuses the path itself, before any snapshot is looked for.
+        """The path is refused at parse time, before any snapshot is looked for.
 
-        The parse-time refusal speaks for the task run on one structure,
-        where a periodic ΔSCF singlepoint does interpolate along a path;
-        what makes the path meaningless here is the fan-out, so the
-        discriminator is that the input parses and the wrapper raises.
+        A periodic ΔSCF singlepoint on one structure does interpolate along
+        a path; what makes the path meaningless here is the fan-out, so the
+        refusal fires while the input is still being read, not once
+        ``koopmans run`` has already built a workgraph out of it.
         """
-        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
-
         d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
 
-        koopmans_input = read_input_dict(d)
-
         with pytest.raises(ValueError) as excinfo:
-            build_snapshots_workgraph(koopmans_input)
+            read_input_dict(d)
 
         message = str(excinfo.value)
         assert "`kpoints.path`" in message

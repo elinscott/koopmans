@@ -39,6 +39,16 @@ NO_BAND_PATH_ON_BSE = (
     "band structure."
 )
 
+#: What to write instead of a k-path under ``atoms.snapshots``. The fan-out
+#: reports one set of screening parameters and eigenvalues per frame, and no
+#: step of it interpolates a Koopmans Hamiltonian along a path.
+NO_BAND_PATH_ON_SNAPSHOTS = (
+    "`kpoints.path` cannot take effect together with `atoms.snapshots`: each frame is "
+    "screened on a supercell and reports screening parameters and eigenvalues, not a "
+    "band structure. Remove `kpoints.path`, or replace `atoms.snapshots` with the "
+    "`atoms.atomic_positions` of the one structure whose band structure you want."
+)
+
 
 def dscf_initialization_is_supported(init_orbitals: VariationalOrbitalType, periodic: bool) -> bool:
     """Report whether the kcp.x singlepoint runs this initialisation route.
@@ -51,21 +61,31 @@ def dscf_initialization_is_supported(init_orbitals: VariationalOrbitalType, peri
     return init_orbitals == VariationalOrbitalType.KOHN_SHAM and not periodic
 
 
-def band_path_refusal(workflow: WorkflowConfig, periodic: bool) -> str | None:
+def band_path_refusal(workflow: WorkflowConfig, periodic: bool, has_snapshots: bool) -> str | None:
     """Return what to tell an input whose task cannot interpolate along its path.
 
     ``None`` for a task that can, and for one whose path is not the first
     thing standing in its way: an input the task refuses outright must hear
     that refusal instead, or it is sent to fix a keyword and told no again.
 
-    Speaks for the task run on one structure. ``atoms.snapshots`` fans that
-    task out per frame, and the fan-out decides for itself what a path can
-    mean there.
+    ``atoms.snapshots`` fans a task out per frame; the fan-out itself only
+    runs ``task: singlepoint`` with ``screening_method: dscf``, so a path
+    under snapshots is refused only there — everywhere else, the fan-out's
+    own task or screening-method refusal names the actual problem, and
+    naming the path too would be a second refusal for one input.
 
     Args:
         workflow: The input's ``workflow`` block.
         periodic: Whether the structure is periodic along any cell vector.
+        has_snapshots: Whether ``atoms.snapshots`` is set.
     """
+    if has_snapshots:
+        if workflow.task != Task.SINGLEPOINT:
+            return None
+        if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
+            return None
+        return NO_BAND_PATH_ON_SNAPSHOTS
+
     if workflow.task == Task.DFT_EPS:
         return NO_BAND_PATH_ON_DFT_EPS
 
