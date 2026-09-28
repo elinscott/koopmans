@@ -713,23 +713,13 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     task = workflow.task
 
     if any(f > 1 for f in koopmans_input.kpoints.smooth_interpolation_factor):
-        performs_band_interpolation = (
-            task == Task.SINGLEPOINT and workflow.screening_method != CalculateScreeningMethod.DFPT
-        )
-        if not performs_band_interpolation:
-            if task == Task.SINGLEPOINT:
-                advisories.append(
-                    "kpoints.smooth_interpolation_factor has no effect on task: "
-                    f"singlepoint (screening_method: {workflow.screening_method.value}; "
-                    "it shapes the ΔSCF band-structure interpolation); it is kept for "
-                    "when you switch screening_method to dscf."
-                )
-            else:
-                advisories.append(
-                    "kpoints.smooth_interpolation_factor has no effect on task: "
-                    f"{task.value} (it shapes the ΔSCF band-structure interpolation); "
-                    "it is kept for when you switch task to singlepoint."
-                )
+        if task != Task.SINGLEPOINT:
+            advisories.append(
+                "kpoints.smooth_interpolation_factor has no effect on task: "
+                f"{task.value} (it shapes the Koopmans band-structure interpolation, "
+                "which a singlepoint computes); it is kept for when you switch task "
+                "to singlepoint."
+            )
 
     if (
         task == Task.SINGLEPOINT
