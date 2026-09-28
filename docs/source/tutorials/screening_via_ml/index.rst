@@ -140,7 +140,7 @@ Koopmans calculation, plus a second branch per configuration that builds the
        Descriptors (snapshot 5)                                              finished
 
     Workflow completed successfully!
-    Trained model stored as node 125246 (…) — reference it via `ml: {model: 125246}`.
+    Trained model stored as node 254978 (…) — reference it via `ml: {model: 254978}`.
 
 Each ``Descriptors (snapshot N)`` branch is a ``pw2wannier90.x`` decompose pass over
 that configuration's own Wannierization, paired with the screening parameters the
@@ -218,7 +218,7 @@ configurations, and its ``ml`` block is
 .. note::
 
     ``model_file`` reads the model out of the JSON file the training run wrote. ``model:
-    125246`` instead names the model node in the database — the id that the training run
+    254978`` instead names the model node in the database — the id that the training run
     printed — which has the advantage that the engine records where the prediction came
     from. The two are alternatives; giving both is an error.
 
