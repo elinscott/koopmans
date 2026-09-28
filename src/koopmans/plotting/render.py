@@ -524,30 +524,42 @@ def _occupancy_legend_handles() -> list[Any]:
     ]
 
 
-def _corner_loc(
-    x: np.ndarray,
-    y: np.ndarray,
-    xlim: tuple[float, float],
-    ylim: tuple[float, float],
-    avoid: str | None = None,
-) -> str:
-    """Return the axes corner with the fewest points near it.
+#: The fraction of each axis a corner label's own footprint is assumed to
+#: cover, for deciding whether a point would sit under it. Wider than the
+#: label actually draws, since a point right at the true corner would
+#: otherwise count as belonging to whichever wider quadrant is emptiest
+#: while still sitting under the label itself.
+_CORNER_FRACTION = 0.25
 
-    The frame is split into quadrants at its own centre; whichever quadrant
-    holds the fewest points is where a label can sit without covering data.
-    ``avoid`` drops one corner from consideration, for a label that must not
-    land where something else is already drawn.
-    """
-    xmid = (xlim[0] + xlim[1]) / 2
-    ymid = (ylim[0] + ylim[1]) / 2
-    counts = {
-        "upper right": int(np.sum((x >= xmid) & (y >= ymid))),
-        "upper left": int(np.sum((x < xmid) & (y >= ymid))),
-        "lower left": int(np.sum((x < xmid) & (y < ymid))),
-        "lower right": int(np.sum((x >= xmid) & (y < ymid))),
+
+def _corner_boxes(
+    xlim: tuple[float, float], ylim: tuple[float, float]
+) -> dict[str, tuple[float, float, float, float]]:
+    """Return each corner's own ``(xmin, xmax, ymin, ymax)`` footprint."""
+    xspan = (xlim[1] - xlim[0]) * _CORNER_FRACTION
+    yspan = (ylim[1] - ylim[0]) * _CORNER_FRACTION
+    return {
+        "upper right": (xlim[1] - xspan, xlim[1], ylim[1] - yspan, ylim[1]),
+        "upper left": (xlim[0], xlim[0] + xspan, ylim[1] - yspan, ylim[1]),
+        "lower left": (xlim[0], xlim[0] + xspan, ylim[0], ylim[0] + yspan),
+        "lower right": (xlim[1] - xspan, xlim[1], ylim[0], ylim[0] + yspan),
     }
-    candidates = {loc: count for loc, count in counts.items() if loc != avoid} or counts
-    return min(candidates, key=lambda loc: candidates[loc])
+
+
+def _corner_loc(
+    x: np.ndarray, y: np.ndarray, xlim: tuple[float, float], ylim: tuple[float, float]
+) -> str:
+    """Return the axes corner whose own footprint holds the fewest points.
+
+    Counted inside each corner's own small footprint rather than the
+    quadrant it sits in, so a lone point right at an otherwise sparse
+    quadrant's corner still rules that corner out.
+    """
+    counts = {
+        loc: int(np.sum((x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)))
+        for loc, (xmin, xmax, ymin, ymax) in _corner_boxes(xlim, ylim).items()
+    }
+    return min(counts, key=lambda loc: counts[loc])
 
 
 #: The scale and unit the MAE/RMSE annotation reports each quantity in.
@@ -600,8 +612,7 @@ def draw_parity(
     item: ParitySeries,
     residuals: bool = False,
     marginal: Axes | None = None,
-    legend: bool | None = None,
-) -> None:
+) -> bool:
     """Draw one panel of a run's predicted values against what it computed.
 
     By default the predicted value is drawn against the computed one, with
@@ -609,17 +620,19 @@ def draw_parity(
     difference is drawn against the computed value instead, with a rule at
     zero and the y axis symmetric about it. Occupied and empty orbitals are
     told apart by a filled and an open marker; a run that reports no
-    occupancy is drawn filled throughout. The occupancy key and the mean
-    absolute and root-mean-square error annotation each take whichever
-    corner the points leave emptiest, the two never sharing one.
+    occupancy is drawn filled throughout. Drawing the occupancy key itself
+    is left to the caller, since one key serves every panel of a figure;
+    the mean absolute and root-mean-square error are annotated in whichever
+    corner has no point in its own footprint, or the least crowded one if
+    every corner has one.
 
     :param axes: where to draw.
     :param item: the run to draw, holding one quantity.
     :param residuals: draw predicted minus computed instead of predicted.
     :param marginal: where to draw the residual histogram; ``None`` draws
         none. Expected to share this panel's y axis.
-    :param legend: draw the occupancy key, or leave it out. ``None`` draws
-        it only when the run's orbitals split by occupancy.
+    :return: whether the run's orbitals split by occupancy, so the caller
+        knows whether an occupancy key is worth drawing.
     """
     quantity = item.quantity
     computed = np.asarray(item.computed, dtype=np.float64)
@@ -665,23 +678,14 @@ def draw_parity(
     axes.set_xlabel(parity_axis_label(quantity, "true"))
     axes.set_ylabel(parity_axis_label(quantity, "residual" if residuals else "pred"))
 
-    wanted = split if legend is None else legend
-    xlim, ylim = axes.get_xlim(), axes.get_ylim()
-    legend_loc = _corner_loc(computed, vertical, xlim, ylim) if wanted else None
-    annotation_loc = _corner_loc(computed, vertical, xlim, ylim, avoid=legend_loc)
-    _annotate_metrics(axes, item, annotation_loc)
+    loc = _corner_loc(computed, vertical, axes.get_xlim(), axes.get_ylim())
+    _annotate_metrics(axes, item, loc)
 
     if marginal is not None:
         edges = np.histogram_bin_edges(errors, bins="auto") if errors.size else [0.0, 1.0]
         _draw_marginal(marginal, errors, color, list(edges))
 
-    if wanted:
-        axes.legend(
-            handles=_occupancy_legend_handles(),
-            frameon=False,
-            fontsize="small",
-            loc=legend_loc,
-        )
+    return split
 
 
 def _parity_panels(figure: Any, panels: int, residuals: bool) -> list[tuple[Any, Any]]:
@@ -713,6 +717,9 @@ def render_parity(
 ) -> None:
     """Draw one run's panels, one per quantity, side by side, and write or show the figure.
 
+    One occupancy key serves every panel, drawn above them rather than
+    inside any one panel's own data area.
+
     :param panels: the run's series, one per quantity, in the order the
         panels are drawn.
     :param output_path: where to write the figure; the extension sets the
@@ -720,8 +727,8 @@ def render_parity(
     :param show: open an interactive window.
     :param residuals: draw predicted minus computed, with a histogram of
         the residuals beside each panel.
-    :param legend: draw the occupancy key, or leave it out. ``None`` leaves
-        each panel to decide.
+    :param legend: draw the occupancy key, or leave it out. ``None`` draws
+        it only when some panel's orbitals split by occupancy.
     """
     import matplotlib
 
@@ -737,8 +744,21 @@ def render_parity(
     # says so and lays the figure out wrong.
     figure = plt.figure(figsize=(width, 4.5), layout="constrained")
     made = _parity_panels(figure, len(panels), residuals)
+    split = False
     for (axes, marginal), item in zip(made, panels, strict=True):
-        draw_parity(axes, item, residuals=residuals, marginal=marginal, legend=legend)
+        split = draw_parity(axes, item, residuals=residuals, marginal=marginal) or split
+
+    wanted = split if legend is None else legend
+    if wanted:
+        # "outside upper center" reserves its own row above the panels
+        # under constrained layout, rather than overlapping their data.
+        figure.legend(
+            handles=_occupancy_legend_handles(),
+            loc="outside upper center",
+            ncol=2,
+            frameon=False,
+            fontsize="small",
+        )
 
     if output_path is not None:
         figure.savefig(output_path, dpi=200)

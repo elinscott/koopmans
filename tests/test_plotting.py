@@ -4552,10 +4552,10 @@ def drawn_parity_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
     seen: list[Any] = []
     original = render.draw_parity
 
-    def record(axes: Any, *args: Any, **kwargs: Any) -> None:
+    def record(axes: Any, *args: Any, **kwargs: Any) -> bool:
         """Call through to the renderer, keeping the axes it drew."""
         seen.append(axes)
-        original(axes, *args, **kwargs)
+        return bool(original(axes, *args, **kwargs))
 
     monkeypatch.setattr(render, "draw_parity", record)
     return seen
