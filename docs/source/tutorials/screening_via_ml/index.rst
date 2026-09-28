@@ -274,7 +274,8 @@ not shared evenly: the four filled orbitals of each configuration average an err
 What that costs in the final KI: the fifteen configurations' orbital energies move by a
 root-mean-square of 26.7 meV on average, 27.0 meV at the median, and as much as 55 meV
 for the worst configuration; no single orbital in the whole set moves by more than 82
-meV.
+meV. The figure pools all 180 orbital energies instead of averaging per configuration,
+which is why it reports 21 meV mean absolute and 29 meV root-mean-square.
 
 .. question:: Why does a percent-level error in a screening parameter move an orbital energy by tens of meV?
 
