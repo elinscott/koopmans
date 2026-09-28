@@ -17,6 +17,7 @@ from koopmans.plotting.series import (
     BandGap,
     BandSeries,
     EnergyZero,
+    ParityQuantity,
     ParitySeries,
     SpectrumSeries,
     _jumps,
@@ -475,6 +476,11 @@ EMPTY_LABEL = "empty"
 #: translucent, so that a long trajectory reads as a cloud rather than a blot.
 _CROWDED = 400
 
+#: The margin a parity panel's frame keeps beyond its furthest point, as a
+#: fraction of the range it spans, so that point sits inside the frame
+#: rather than on it.
+_FRAME_MARGIN = 0.15
+
 
 def _marker_size(points: int) -> float:
     """Return the marker size a panel of this many points is drawn at."""
@@ -518,10 +524,6 @@ def _occupancy_legend_handles() -> list[Any]:
     ]
 
 
-#: Where the occupancy legend sits, so the metrics annotation can steer clear.
-_LEGEND_LOC = "upper left"
-
-
 def _corner_loc(
     x: np.ndarray,
     y: np.ndarray,
@@ -548,27 +550,27 @@ def _corner_loc(
     return min(candidates, key=lambda loc: candidates[loc])
 
 
+#: The scale and unit the MAE/RMSE annotation reports each quantity in.
+#: Eigenvalue errors are a small fraction of an eV, so meV reads more
+#: naturally than a string of leading zeros.
+_ANNOTATION_UNITS = {
+    ParityQuantity.ALPHAS: (1.0, ""),
+    ParityQuantity.EIGENVALUES: (1000.0, "meV"),
+}
+
+
 def _metrics_text(item: ParitySeries) -> str:
     """Return the run's mean absolute and root-mean-square error, as one line."""
     metrics = parity_metrics(item)
-    suffix = f" {item.units}" if item.units else ""
-    return f"MAE {metrics.mae:.4g}{suffix}, RMSE {metrics.rmse:.4g}{suffix}"
+    scale, unit = _ANNOTATION_UNITS[item.quantity]
+    suffix = f" {unit}" if unit else ""
+    return f"MAE {metrics.mae * scale:.2g}{suffix}, RMSE {metrics.rmse * scale:.2g}{suffix}"
 
 
-def _annotate_metrics(
-    axes: Axes, item: ParitySeries, x: np.ndarray, y: np.ndarray, avoid_legend: bool
-) -> None:
-    """Write the run's mean absolute and root-mean-square error on the panel.
-
-    Placed in whichever corner ``x``/``y`` leave emptiest, so the text never
-    sits on top of the points it summarizes; ``avoid_legend`` also keeps it
-    off the occupancy key, drawn at a fixed corner of its own.
-    """
+def _annotate_metrics(axes: Axes, item: ParitySeries, loc: str) -> None:
+    """Write the run's mean absolute and root-mean-square error at ``loc``."""
     from matplotlib.offsetbox import AnchoredText
 
-    loc = _corner_loc(
-        x, y, axes.get_xlim(), axes.get_ylim(), avoid=_LEGEND_LOC if avoid_legend else None
-    )
     anchored = AnchoredText(
         _metrics_text(item), loc=loc, frameon=False, prop={"fontsize": "x-small"}
     )
@@ -607,9 +609,9 @@ def draw_parity(
     difference is drawn against the computed value instead, with a rule at
     zero and the y axis symmetric about it. Occupied and empty orbitals are
     told apart by a filled and an open marker; a run that reports no
-    occupancy is drawn filled throughout. The mean absolute and
-    root-mean-square error are written in whichever corner the points
-    leave emptiest.
+    occupancy is drawn filled throughout. The occupancy key and the mean
+    absolute and root-mean-square error annotation each take whichever
+    corner the points leave emptiest, the two never sharing one.
 
     :param axes: where to draw.
     :param item: the run to draw, holding one quantity.
@@ -645,7 +647,7 @@ def draw_parity(
         # Symmetric about zero: a residual's sign carries no more weight
         # than its magnitude, so the rule at zero sits in the middle.
         limit = float(np.max(np.abs(errors))) if errors.size else 1.0
-        span = limit + (0.05 * limit or 1.0)
+        span = limit + (_FRAME_MARGIN * limit or 1.0)
         axes.set_ylim(-span, span)
     elif computed.size:
         # One range on both axes, in a square frame: only then does the
@@ -653,7 +655,7 @@ def draw_parity(
         # the points against.
         reach = np.concatenate([computed, vertical])
         low, high = float(reach.min()), float(reach.max())
-        margin = 0.05 * (high - low) or 1.0
+        margin = _FRAME_MARGIN * (high - low) or 1.0
         frame = (low - margin, high + margin)
         axes.plot(frame, frame, color="0.4", linewidth=0.8, zorder=0)
         axes.set_xlim(*frame)
@@ -662,8 +664,12 @@ def draw_parity(
 
     axes.set_xlabel(parity_axis_label(quantity, "true"))
     axes.set_ylabel(parity_axis_label(quantity, "residual" if residuals else "pred"))
+
     wanted = split if legend is None else legend
-    _annotate_metrics(axes, item, computed, vertical, avoid_legend=wanted)
+    xlim, ylim = axes.get_xlim(), axes.get_ylim()
+    legend_loc = _corner_loc(computed, vertical, xlim, ylim) if wanted else None
+    annotation_loc = _corner_loc(computed, vertical, xlim, ylim, avoid=legend_loc)
+    _annotate_metrics(axes, item, annotation_loc)
 
     if marginal is not None:
         edges = np.histogram_bin_edges(errors, bins="auto") if errors.size else [0.0, 1.0]
@@ -674,7 +680,7 @@ def draw_parity(
             handles=_occupancy_legend_handles(),
             frameon=False,
             fontsize="small",
-            loc=_LEGEND_LOC,
+            loc=legend_loc,
         )
 
 
