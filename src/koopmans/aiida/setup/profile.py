@@ -42,7 +42,9 @@ def _set_daemon_defaults(config: Config) -> None:
     """Set the profile's runner poll interval and daemon worker count.
 
     Config values, not code, so a profile created before these defaults
-    existed picks them up the next time ``koopmans install`` runs.
+    existed gets them the next time ``koopmans install`` runs. A daemon
+    worker reads both options once, at start, so one already running
+    keeps its old values until ``koopmans backend daemon restart``.
     """
     config.set_option(  # type: ignore[no-untyped-call]
         "runner.poll.interval", _RUNNER_POLL_INTERVAL, scope=PROFILE_NAME
