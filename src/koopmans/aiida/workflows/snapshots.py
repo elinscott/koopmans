@@ -202,12 +202,7 @@ def _resolve_snapshots_ml(
 
 
 def _load_model_node(identifier: int | str) -> orm.Dict:
-    """Load the stored trained-model ``Dict`` node named by PK or UUID.
-
-    The node is set as the ``TrajectoryWorkflow`` graph's ``ml_model`` input, so the
-    run's provenance links back to the training artifact; the DSCF
-    sub-graphs receive its payload.
-    """
+    """Load the stored trained-model ``Dict`` node named by PK or UUID."""
     from aiida import orm
 
     raw = str(identifier)

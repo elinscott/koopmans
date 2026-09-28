@@ -33,15 +33,6 @@ _REMOVED_WORKFLOW_KEYWORDS: dict[str, str] = {
     ),
 }
 
-#: Tasks retired from ``workflow.task``, each with what to write instead.
-_REMOVED_TASKS: dict[str, str] = {
-    "trajectory": (
-        "The task says what to compute and the `atoms` block says which structures "
-        "to compute it on. Set `task` to the calculation you want for each frame "
-        "(`singlepoint`) and keep `atoms.snapshots`, which runs it once per frame."
-    ),
-}
-
 #: Default tolerance per grouping criterion, applied when
 #: ``group_orbitals_by`` is active (explicit or resolved) but
 #: ``group_orbitals_tol`` is unset.
@@ -220,20 +211,16 @@ class WorkflowConfig(BaseModel):
         """Point a retired ``workflow`` keyword or task at what replaced it.
 
         Runs before field validation, so it reports the removed spelling
-        instead of the generic "extra_forbidden" error, and a removed task
-        instead of the enum's list of the ones that remain.
+        instead of the generic "extra_forbidden" error.
 
         Raises:
-            ValueError: If a removed key, or a removed ``task`` value, is present.
+            ValueError: If a removed key is present.
         """
         if not isinstance(data, dict):
             return data
         for key, replacement in _REMOVED_WORKFLOW_KEYWORDS.items():
             if key in data:
                 raise ValueError(f"`workflow.{key}` no longer exists. {replacement}")
-        retired_task = _REMOVED_TASKS.get(str(data.get("task", "")))
-        if retired_task is not None:
-            raise ValueError(f"`workflow.task: {data['task']}` no longer exists. {retired_task}")
         return data
 
     @model_validator(mode="before")
