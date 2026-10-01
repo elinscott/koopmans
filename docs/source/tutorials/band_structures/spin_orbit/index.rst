@@ -184,19 +184,13 @@ bandstructure``:
 .. code-block:: console
 
     $ koopmans plot bandstructure \
-        gaas/<dft-bands-step> --label LDA --style k-- \
-        gaas/<final-ham-step> --label "KI@LDA" --style - --gap \
+        gaas/02-wannierize/01-bands --label LDA --style k-- \
+        gaas/03-dfpt/03-ham --label "KI@LDA" --style - --gap \
         -o gaas_bandstructure.svg
-
-replacing the two step paths with the ones ``koopmans run`` wrote under your own ``gaas/``
-directory (run ``koopmans plot bandstructure --help`` for how folders and calculation
-directories are chosen).
 
 .. figure:: gaas_bandstructure.svg
     :width: 480
     :align: center
 
-    Placeholder: this figure ships once a reader's run has produced it. Regenerate it with
-    the command above — KI@LDA band structure of GaAs along
-    L-:math:`\Gamma`-X-W-L-K-:math:`\Gamma`, against the LDA base functional, with the
-    direct gap at :math:`\Gamma` annotated.
+    KI@LDA band structure of GaAs along L-:math:`\Gamma`-X-W-L-K-:math:`\Gamma`, against
+    the LDA base functional, with the direct gap at :math:`\Gamma` annotated.
