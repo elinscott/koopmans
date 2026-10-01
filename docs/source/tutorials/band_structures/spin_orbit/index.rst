@@ -186,6 +186,7 @@ bandstructure``:
     $ koopmans plot bandstructure \
         gaas/02-wannierize/01-bands --label LDA --style k-- \
         gaas/03-dfpt/03-ham --label "KI@LDA" --style - --gap \
+        --ylim -8 10 \
         -o gaas_bandstructure.svg
 
 .. figure:: gaas_bandstructure.svg
