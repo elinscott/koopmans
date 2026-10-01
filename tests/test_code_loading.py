@@ -178,7 +178,7 @@ class TestPreFlightAdvice:
       ``WannierizeBlocksCodes`` regardless of whether that helper runs.
     * ``aiida_koopmans.workgraphs.kcp.KoopmansDSCFWorkflow``'s ``kcp_code =
       codes["kcp"]`` bind — reached by both the singlepoint and the
-      trajectory routes — is aiida-koopmans#90's own deliberate, permanent
+      snapshots routes — is aiida-koopmans#90's own deliberate, permanent
       choice: ``kcp`` is never route-conditional, so the maintainer judged
       threading a ``ref()`` through 11 sibling functions not worth it for a
       value that never varies.
@@ -211,18 +211,18 @@ class TestPreFlightAdvice:
             build_workgraph(inp)
         assert "koopmans install" in str(excinfo.value)
 
-    def test_trajectory_missing_kcp_earns_preflight_advice(
+    def test_snapshots_missing_kcp_earns_preflight_advice(
         self,
         aiida_profile_clean: Any,
         fake_sg15_pseudo_family: Any,
         tmp_path: Any,
         write_multiframe_xyz: Any,
     ) -> None:
-        """The trajectory route forwards codes into the same eager kcp bind."""
-        from tests.test_trajectory_dispatcher import _trajectory_input_dict
+        """The snapshots fan-out forwards codes into the same eager kcp bind."""
+        from tests.test_snapshots_dispatcher import _snapshots_input_dict
 
         inp = KoopmansInput.model_validate(
-            _trajectory_input_dict(str(write_multiframe_xyz(tmp_path, 1)))
+            _snapshots_input_dict(str(write_multiframe_xyz(tmp_path, 1)))
         )
         with pytest.raises(ValueError, match="`kcp@localhost`") as excinfo:
             build_workgraph(inp)

@@ -230,7 +230,7 @@ Koopmans DFPT
       Orbital 5                                         kcw.x
     Koopmans Hamiltonian                                kcw.x
 
-########## trajectory (ml train)
+########## snapshots (ml train)
 Trajectory
   Snapshot 1
     DFT initialization (nspin=1)                        kcp.x
@@ -301,7 +301,7 @@ Trajectory
     Final KI                                            kcp.x
   Descriptors (snapshot 2)                              pw2wannier90.x
 
-########## trajectory (ml test, power_spectrum)
+########## snapshots (ml test, power_spectrum)
 Trajectory
   Snapshot 1
     Predicted screening parameters
