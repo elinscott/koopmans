@@ -6,7 +6,7 @@ from typing import Annotated, Any, Self
 from aiida_koopmans.functionals import Correction
 from aiida_koopmans.variational_orbitals import VariationalOrbitalType
 from aiida_quantumespresso.common.types import SpinType
-from pydantic import Field, ModelWrapValidatorHandler, PrivateAttr, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
 
@@ -149,11 +149,11 @@ class WorkflowConfig(BaseModel):
         description="a list of integers the same length as the total number of bands, denoting which bands to assign the same screening parameter to",
     )
     group_orbitals_by: GroupOrbitalsBy = Field(
-        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Resolved at parse time from init_orbitals/screening_method when unset: "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent), "none" otherwise; the parsed input always carries the resolved value',
+        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Resolved at parse time from init_orbitals/screening_method when unset: "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent), "none" otherwise; the parsed input always carries the resolved value. Resolves to "none" on an ml:mode=\'predict\', ml:descriptor=\'power_spectrum\' run instead, since that route runs no trial KI for any grouping to apply to',
     )
     group_orbitals_tol: float | None = Field(
         default=None,
-        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree, Angstrom^2 for spread). Left unset, resolved at parse time to the criterion's default (1e-4 for self_hartree, 0.05 for spread) whenever group_orbitals_by is active; stays unset when group_orbitals_by resolves to 'none'",
+        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree, Angstrom^2 for spread). Left unset, resolved at parse time to the criterion's default (1e-4 for self_hartree, 0.05 for spread) whenever group_orbitals_by is active; stays unset when group_orbitals_by resolves to 'none', including on an ml:mode='predict', ml:descriptor='power_spectrum' run",
     )
     dfpt_coarse_grid: tuple[int, int, int] | None = Field(
         default=None,
@@ -180,25 +180,6 @@ class WorkflowConfig(BaseModel):
         default=5,
         description="time in seconds to wait between checking the status of in-progress calculations",
     )
-
-    #: ``resolve_group_orbitals_by`` fills ``group_orbitals_by``/``group_orbitals_tol``
-    #: into the raw input before field validation runs, so both land in
-    #: ``model_fields_set`` whether the user wrote them or the resolution
-    #: defaulted them — ``model_fields_set`` alone cannot tell the two apart.
-    #: These record which case actually happened, read via the properties
-    #: below.
-    _group_orbitals_by_explicit: bool = PrivateAttr(default=False)
-    _group_orbitals_tol_explicit: bool = PrivateAttr(default=False)
-
-    @property
-    def group_orbitals_by_explicit(self) -> bool:
-        """Whether the input file wrote ``group_orbitals_by`` rather than leaving it to resolve."""
-        return self._group_orbitals_by_explicit
-
-    @property
-    def group_orbitals_tol_explicit(self) -> bool:
-        """Whether the input file wrote ``group_orbitals_tol`` rather than leaving it to resolve."""
-        return self._group_orbitals_tol_explicit
 
     @field_validator(
         "task",
@@ -261,9 +242,9 @@ class WorkflowConfig(BaseModel):
                 raise ValueError(f"'orbital_groups' should be of length {target_length}")
         return self
 
-    @model_validator(mode="wrap")
+    @model_validator(mode="before")
     @classmethod
-    def resolve_group_orbitals_by(cls, data: Any, handler: ModelWrapValidatorHandler[Self]) -> Self:
+    def resolve_group_orbitals_by(cls, data: Any) -> Any:
         """Resolve ``group_orbitals_by``/``group_orbitals_tol`` on the raw input.
 
         An explicit ``group_orbitals_by: 'none'`` next to
@@ -281,28 +262,25 @@ class WorkflowConfig(BaseModel):
         :func:`koopmans.aiida.workflows.advisories_for` to flag instead,
         since only the dispatcher knows which routes group orbitals at all.
 
-        Wraps rather than runs before, so it can record whether the raw
-        dict carried each key *before* filling in a default, onto
-        ``_group_orbitals_by_explicit``/``_group_orbitals_tol_explicit`` —
-        ``model_fields_set`` cannot tell a written key from a key this
-        resolution filled in, since both land in the dict ``handler``
-        validates.
+        ``KoopmansInput.default_grouping_to_none_for_power_spectrum_predict``
+        runs ahead of this, on the whole raw input, and injects an explicit
+        ``group_orbitals_by: 'none'`` when the route needs one; by the time
+        this validator sees the ``workflow`` dict, that injected key is
+        indistinguishable from one the input file wrote, which is the
+        point — the resolved value this validator produces is what the
+        parsed input carries either way.
 
         Args:
             data: The raw value pydantic is validating — a dict for a
                 normal parse, but possibly something else on re-validation;
-                passed through untouched when it is not a dict.
-            handler: Runs the rest of validation (other validators, then
-                field validation) on the resolved dict.
+                returned untouched when it is not a dict.
 
         Raises:
             ValueError: If an explicit group_orbitals_by == 'none' accompanies group_orbitals_tol.
         """
         if not isinstance(data, dict):
-            return handler(data)
+            return data
         data = dict(data)
-        by_explicit = data.get("group_orbitals_by") is not None
-        tol_explicit = data.get("group_orbitals_tol") is not None
 
         def _value(v: Any, default: str) -> str:
             if v is None:
@@ -333,8 +311,4 @@ class WorkflowConfig(BaseModel):
 
         if raw_tol is None and criterion in _ORBITAL_GROUPING_DEFAULT_TOLERANCE:
             data["group_orbitals_tol"] = _ORBITAL_GROUPING_DEFAULT_TOLERANCE[criterion]
-
-        instance = handler(data)
-        instance._group_orbitals_by_explicit = by_explicit
-        instance._group_orbitals_tol_explicit = tol_explicit
-        return instance
+        return data

@@ -34,6 +34,7 @@ from koopmans.aiida.workflows.projectors import reject_unwired_external_projecto
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
+    GroupOrbitalsBy,
     VariationalOrbitalType,
     WorkflowConfig,
 )
@@ -532,16 +533,19 @@ def _reject_trial_only_knobs_for_predict_no_trial(workflow: WorkflowConfig) -> N
     screening parameters come straight from the model, so no trial KI runs
     for ``workflow.group_orbitals_by``/``workflow.group_orbitals_tol`` to
     group by self-Hartree energy, or for ``workflow.alpha_guess`` to seed.
-    Left at their parse-time defaults, none of the three was written by the
-    input file, so there is nothing to refuse.
+    ``KoopmansInput.default_grouping_to_none_for_power_spectrum_predict``
+    already resolves the grouping to ``'none'``/``None`` on this route
+    whenever the input file leaves it unset, so a resolved
+    ``group_orbitals_by`` other than ``'none'``, or a non-``None``
+    ``group_orbitals_tol``, only happens when the input file wrote one.
 
     Raises:
         ValueError: If any of the three keys was written explicitly.
     """
     explicit = []
-    if workflow.group_orbitals_by_explicit:
+    if workflow.group_orbitals_by != GroupOrbitalsBy.NONE:
         explicit.append("workflow:group_orbitals_by")
-    if workflow.group_orbitals_tol_explicit:
+    if workflow.group_orbitals_tol is not None:
         explicit.append("workflow:group_orbitals_tol")
     if "alpha_guess" in workflow.model_fields_set:
         explicit.append("workflow:alpha_guess")
@@ -559,13 +563,17 @@ def _reject_trial_only_knobs_for_predict_no_trial(workflow: WorkflowConfig) -> N
 def dscf_inputs_for_predict_no_trial(
     workflow: WorkflowConfig, inputs: _KcpDscfInputs
 ) -> _KcpDscfInputs:
-    """Null out the trial-only knobs of ``inputs`` for the no-trial power_spectrum predict route.
+    """Null out ``initial_alpha`` of ``inputs`` for the no-trial power_spectrum predict route.
 
     Call after :func:`kcp_dscf_inputs` when ``ml:mode='predict'`` and
     ``ml:descriptor='power_spectrum'``: that route runs no trial KI, so
-    ``initial_alpha``/``orbital_groups_self_hartree_tol`` reach no
-    calculation and are forwarded as ``None`` instead of the values
-    :func:`kcp_dscf_inputs` filled in from workflow defaults.
+    ``initial_alpha`` reaches no calculation and is forwarded as ``None``
+    instead of the value :func:`kcp_dscf_inputs` filled in from
+    ``workflow.alpha_guess``. ``orbital_groups_self_hartree_tol`` needs no
+    override here — ``KoopmansInput``'s parse-time resolution already
+    defaults the grouping to ``'none'`` on this route, so
+    :func:`kcp_dscf_inputs`'s call to :func:`~koopmans.aiida.workflows.grouping.grouping_tol`
+    has already filled it in as ``None``.
 
     Raises:
         ValueError: If ``workflow.group_orbitals_by``, ``workflow.group_orbitals_tol``,
@@ -573,4 +581,4 @@ def dscf_inputs_for_predict_no_trial(
             :func:`_reject_trial_only_knobs_for_predict_no_trial`).
     """
     _reject_trial_only_knobs_for_predict_no_trial(workflow)
-    return {**inputs, "initial_alpha": None, "orbital_groups_self_hartree_tol": None}
+    return {**inputs, "initial_alpha": None}

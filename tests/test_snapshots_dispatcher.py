@@ -19,6 +19,7 @@ import pytest
 
 from koopmans.input_file import AtomsInput, KoopmansInput, read_input_file
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
+from koopmans.input_file.workflow import GroupOrbitalsBy
 
 
 def _snapshots_atoms_dict(snapshots: str, *, box: float = 6.0) -> dict[str, Any]:
@@ -675,11 +676,37 @@ class TestPredictMode:
         # Wannier route's resolved grouping tolerance stay off the DSCF.
         assert dscf.inputs["initial_alpha"].value is None
         assert dscf.inputs["orbital_groups_self_hartree_tol"].value is None
+        # The parsed input itself carries the resolved 'none'/None, not just
+        # the value forwarded into the graph call.
+        parsed = KoopmansInput.model_validate(d)
+        assert parsed.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
+        assert parsed.workflow.group_orbitals_tol is None
+        # Switching mode or descriptor off this route restores the ordinary
+        # Wannier-init default (self-Hartree grouping at 1e-4 eV) — this
+        # route's resolution is not a general override.
+        test_mode = KoopmansInput.model_validate({**d, "ml": {**d["ml"], "mode": "test"}})
+        assert test_mode.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
+        assert test_mode.workflow.group_orbitals_tol == pytest.approx(1e-4)
+        self_hartree_descriptor = KoopmansInput.model_validate(
+            {**d, "ml": {**d["ml"], "descriptor": "self_hartree"}}
+        )
+        assert self_hartree_descriptor.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
+        assert self_hartree_descriptor.workflow.group_orbitals_tol == pytest.approx(1e-4)
         # A typed grouping tolerance has no trial to group, so it is refused.
         d["workflow"]["group_orbitals_tol"] = 2e-4
         with pytest.raises(ValueError, match="workflow:group_orbitals_tol cannot take effect"):
             build_snapshots_workgraph(KoopmansInput.model_validate(d))
         del d["workflow"]["group_orbitals_tol"]
+        # A typed grouping criterion has no trial to group either, so it is
+        # refused too — naming it, and the tolerance it defaults alongside
+        # it once a criterion is active.
+        d["workflow"]["group_orbitals_by"] = "self_hartree"
+        with pytest.raises(
+            ValueError,
+            match="workflow:group_orbitals_by, workflow:group_orbitals_tol cannot take effect",
+        ):
+            build_snapshots_workgraph(KoopmansInput.model_validate(d))
+        del d["workflow"]["group_orbitals_by"]
         # A typed starting alpha cannot take effect, so it is refused.
         d["workflow"]["alpha_guess"] = 0.5
         with pytest.raises(ValueError, match="workflow:alpha_guess cannot take effect"):
