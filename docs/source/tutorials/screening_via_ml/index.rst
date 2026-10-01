@@ -108,8 +108,8 @@ Koopmans calculation, plus a second branch per configuration that builds the
 .. code-block:: text
 
      Step                                                                      Status
-     Trajectory                                                               finished
-       Snapshot 1                                                             finished
+     Trajectory                                                              finished
+       Snapshot 1                                                            finished
          Wannier initialization                                              finished
            Wannierization                                                    finished
            Supercell folding                                                 finished
@@ -222,12 +222,12 @@ Both show up inside each configuration's branch:
 
 .. code-block:: text
 
-    Snapshot 1                                                             finished
+    Snapshot 1                                                               finished
       ...
-      Descriptors                                                         finished
-      Final KI                                                             finished
-      Final KI (predicted alphas)                                         finished
-    Descriptors (snapshot 1)                                               finished
+      Descriptors                                                            finished
+      Final KI                                                               finished
+      Final KI (predicted alphas)                                            finished
+    Descriptors (snapshot 1)                                                 finished
     ...
 
 The nested ``Descriptors`` is the model's own input — the decompose pass that feeds the
@@ -330,12 +330,12 @@ into screening parameters, and the final KI calculation applies them:
 
 .. code-block:: text
 
-    Snapshot 1                                                             finished
-      Wannier initialization                                              finished
-      Predicted screening parameters                                     finished
-        Descriptors                                                       finished
-        Trial KI                                                          finished
-      Final KI                                                             finished
+    Snapshot 1                                                               finished
+      Wannier initialization                                                 finished
+      Predicted screening parameters                                         finished
+        Descriptors                                                          finished
+        Trial KI                                                             finished
+      Final KI                                                               finished
 
 Compare that with the training run's branch: the whole ``Orbital screening`` fan-out,
 one constrained calculation per orbital, is gone. What remains — the Wannierization,
