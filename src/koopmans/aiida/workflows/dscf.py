@@ -35,6 +35,7 @@ from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
     VariationalOrbitalType,
+    WorkflowConfig,
 )
 
 if TYPE_CHECKING:
@@ -522,3 +523,54 @@ def kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         spin_polarized=workflow.spin == SpinType.COLLINEAR,
         orbital_groups_self_hartree_tol=grouping_tol(workflow),
     )
+
+
+def _reject_trial_only_knobs_for_predict_no_trial(workflow: WorkflowConfig) -> None:
+    """Reject grouping/alpha-guess keys the no-trial power_spectrum predict route cannot apply.
+
+    Under ``ml:mode='predict'`` with ``ml:descriptor='power_spectrum'`` the
+    screening parameters come straight from the model, so no trial KI runs
+    for ``workflow.group_orbitals_by``/``workflow.group_orbitals_tol`` to
+    group by self-Hartree energy, or for ``workflow.alpha_guess`` to seed.
+    Left at their parse-time defaults, none of the three was written by the
+    input file, so there is nothing to refuse.
+
+    Raises:
+        ValueError: If any of the three keys was written explicitly.
+    """
+    explicit = []
+    if workflow.group_orbitals_by_explicit:
+        explicit.append("workflow:group_orbitals_by")
+    if workflow.group_orbitals_tol_explicit:
+        explicit.append("workflow:group_orbitals_tol")
+    if "alpha_guess" in workflow.model_fields_set:
+        explicit.append("workflow:alpha_guess")
+    if not explicit:
+        return
+    raise ValueError(
+        f"{', '.join(explicit)} cannot take effect under ml:mode='predict' with "
+        "ml:descriptor='power_spectrum': this route predicts every orbital's "
+        "screening parameter straight from its descriptor and runs no trial KI "
+        "to group orbitals by self-Hartree energy or seed with a starting alpha. "
+        f"Remove {'it' if len(explicit) == 1 else 'them'} from the input file."
+    )
+
+
+def dscf_inputs_for_predict_no_trial(
+    workflow: WorkflowConfig, inputs: _KcpDscfInputs
+) -> _KcpDscfInputs:
+    """Null out the trial-only knobs of ``inputs`` for the no-trial power_spectrum predict route.
+
+    Call after :func:`kcp_dscf_inputs` when ``ml:mode='predict'`` and
+    ``ml:descriptor='power_spectrum'``: that route runs no trial KI, so
+    ``initial_alpha``/``orbital_groups_self_hartree_tol`` reach no
+    calculation and are forwarded as ``None`` instead of the values
+    :func:`kcp_dscf_inputs` filled in from workflow defaults.
+
+    Raises:
+        ValueError: If ``workflow.group_orbitals_by``, ``workflow.group_orbitals_tol``,
+            or ``workflow.alpha_guess`` was written explicitly (see
+            :func:`_reject_trial_only_knobs_for_predict_no_trial`).
+    """
+    _reject_trial_only_knobs_for_predict_no_trial(workflow)
+    return {**inputs, "initial_alpha": None, "orbital_groups_self_hartree_tol": None}

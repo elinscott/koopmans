@@ -17,6 +17,7 @@ from koopmans.aiida.workflows import (
 )
 from koopmans.aiida.workflows.dscf import (
     KPOINT_OVERRIDES_ON_SNAPSHOTS,
+    dscf_inputs_for_predict_no_trial,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
     require_supported_correction,
@@ -118,18 +119,10 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     if ml_mode == MLMode.PREDICT and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         # A power_spectrum prediction runs no trial KI, the only step a
-        # starting alpha or a grouping tolerance acts on, and aiida-koopmans
-        # refuses both on that route. ``group_orbitals_tol`` is resolved at
-        # parse time, so a typed tolerance cannot be told apart from the
-        # resolved default here and is not forwarded either way.
-        if "alpha_guess" in workflow.model_fields_set:
-            raise ValueError(
-                "ml:descriptor='power_spectrum' under ml:mode='predict' runs no trial "
-                "KI, so workflow:alpha_guess cannot take effect. Remove it, or use "
-                "ml:descriptor='self_hartree'."
-            )
-        inputs["initial_alpha"] = None
-        inputs["orbital_groups_self_hartree_tol"] = None
+        # starting alpha or a grouping tolerance acts on, so neither is
+        # forwarded on this route. dscf_inputs_for_predict_no_trial refuses
+        # instead of silently dropping one the input file actually wrote.
+        inputs = dscf_inputs_for_predict_no_trial(workflow, inputs)
 
     wannier_init = workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,

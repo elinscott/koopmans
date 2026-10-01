@@ -675,6 +675,11 @@ class TestPredictMode:
         # Wannier route's resolved grouping tolerance stay off the DSCF.
         assert dscf.inputs["initial_alpha"].value is None
         assert dscf.inputs["orbital_groups_self_hartree_tol"].value is None
+        # A typed grouping tolerance has no trial to group, so it is refused.
+        d["workflow"]["group_orbitals_tol"] = 2e-4
+        with pytest.raises(ValueError, match="workflow:group_orbitals_tol cannot take effect"):
+            build_snapshots_workgraph(KoopmansInput.model_validate(d))
+        del d["workflow"]["group_orbitals_tol"]
         # A typed starting alpha cannot take effect, so it is refused.
         d["workflow"]["alpha_guess"] = 0.5
         with pytest.raises(ValueError, match="workflow:alpha_guess cannot take effect"):

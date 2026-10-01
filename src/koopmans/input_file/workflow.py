@@ -6,7 +6,7 @@ from typing import Annotated, Any, Self
 from aiida_koopmans.functionals import Correction
 from aiida_koopmans.variational_orbitals import VariationalOrbitalType
 from aiida_quantumespresso.common.types import SpinType
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ModelWrapValidatorHandler, PrivateAttr, field_validator, model_validator
 
 from koopmans.base import BaseModel
 
@@ -181,6 +181,25 @@ class WorkflowConfig(BaseModel):
         description="time in seconds to wait between checking the status of in-progress calculations",
     )
 
+    #: ``resolve_group_orbitals_by`` fills ``group_orbitals_by``/``group_orbitals_tol``
+    #: into the raw input before field validation runs, so both land in
+    #: ``model_fields_set`` whether the user wrote them or the resolution
+    #: defaulted them — ``model_fields_set`` alone cannot tell the two apart.
+    #: These record which case actually happened, read via the properties
+    #: below.
+    _group_orbitals_by_explicit: bool = PrivateAttr(default=False)
+    _group_orbitals_tol_explicit: bool = PrivateAttr(default=False)
+
+    @property
+    def group_orbitals_by_explicit(self) -> bool:
+        """Whether the input file wrote ``group_orbitals_by`` rather than leaving it to resolve."""
+        return self._group_orbitals_by_explicit
+
+    @property
+    def group_orbitals_tol_explicit(self) -> bool:
+        """Whether the input file wrote ``group_orbitals_tol`` rather than leaving it to resolve."""
+        return self._group_orbitals_tol_explicit
+
     @field_validator(
         "task",
         "correction",
@@ -242,9 +261,9 @@ class WorkflowConfig(BaseModel):
                 raise ValueError(f"'orbital_groups' should be of length {target_length}")
         return self
 
-    @model_validator(mode="before")
+    @model_validator(mode="wrap")
     @classmethod
-    def resolve_group_orbitals_by(cls, data: Any) -> Any:
+    def resolve_group_orbitals_by(cls, data: Any, handler: ModelWrapValidatorHandler[Self]) -> Self:
         """Resolve ``group_orbitals_by``/``group_orbitals_tol`` on the raw input.
 
         An explicit ``group_orbitals_by: 'none'`` next to
@@ -262,17 +281,28 @@ class WorkflowConfig(BaseModel):
         :func:`koopmans.aiida.workflows.advisories_for` to flag instead,
         since only the dispatcher knows which routes group orbitals at all.
 
+        Wraps rather than runs before, so it can record whether the raw
+        dict carried each key *before* filling in a default, onto
+        ``_group_orbitals_by_explicit``/``_group_orbitals_tol_explicit`` —
+        ``model_fields_set`` cannot tell a written key from a key this
+        resolution filled in, since both land in the dict ``handler``
+        validates.
+
         Args:
             data: The raw value pydantic is validating — a dict for a
                 normal parse, but possibly something else on re-validation;
-                returned untouched when it is not a dict.
+                passed through untouched when it is not a dict.
+            handler: Runs the rest of validation (other validators, then
+                field validation) on the resolved dict.
 
         Raises:
             ValueError: If an explicit group_orbitals_by == 'none' accompanies group_orbitals_tol.
         """
         if not isinstance(data, dict):
-            return data
+            return handler(data)
         data = dict(data)
+        by_explicit = data.get("group_orbitals_by") is not None
+        tol_explicit = data.get("group_orbitals_tol") is not None
 
         def _value(v: Any, default: str) -> str:
             if v is None:
@@ -303,4 +333,8 @@ class WorkflowConfig(BaseModel):
 
         if raw_tol is None and criterion in _ORBITAL_GROUPING_DEFAULT_TOLERANCE:
             data["group_orbitals_tol"] = _ORBITAL_GROUPING_DEFAULT_TOLERANCE[criterion]
-        return data
+
+        instance = handler(data)
+        instance._group_orbitals_by_explicit = by_explicit
+        instance._group_orbitals_tol_explicit = tol_explicit
+        return instance
