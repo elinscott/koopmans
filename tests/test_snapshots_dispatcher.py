@@ -703,21 +703,45 @@ class TestPredictMode:
         with pytest.raises(NotImplementedError, match="on a single structure is not yet ported"):
             build_workgraph(KoopmansInput.model_validate(d))
 
-    def test_a_task_that_computes_no_screening_rejects_the_ml_block(self) -> None:
-        """``ml`` on a task with no screening parameters fails at dispatch.
+    @pytest.mark.parametrize(
+        "task, exception, match",
+        [
+            pytest.param(
+                "dft_bands",
+                NotImplementedError,
+                "task: dft_bands computes none of",
+                id="non-singlepoint-task-fails-at-dispatch",
+            ),
+            pytest.param(
+                "singlepoint",
+                ValueError,
+                "reads a dataset of structures",
+                id="singlepoint-with-no-dataset-fails-at-parse",
+            ),
+        ],
+    )
+    def test_a_task_that_computes_no_screening_rejects_the_ml_block(
+        self, task: str, exception: type[Exception], match: str
+    ) -> None:
+        """``ml`` with no data to train or score on fails, naming the actual gap.
 
-        No ``atoms.snapshots`` here: with it unset, this input used to hit
-        the parse-time "set atoms.snapshots" refusal first, and only after
-        adding one hit this build-time refusal — two messages for one
-        input. This task-mismatch refusal has to speak first.
+        No ``atoms.snapshots`` here. ``dft_bands`` computes no screening
+        parameters at all, and that task-mismatch refusal has to speak
+        before any snapshots-related one — with ``atoms.snapshots`` unset,
+        this input used to hit the parse-time "set atoms.snapshots" refusal
+        first, and only after adding one hit this build-time refusal, two
+        messages for one input. ``singlepoint`` does compute screening
+        parameters, so its negative control hears about the missing
+        dataset instead, and hears it at parse, before a workgraph is
+        ever built.
         """
         from koopmans.aiida.workflows import build_workgraph
         from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
 
-        d = _si_dscf_dict(task="dft_bands")
+        d = _si_dscf_dict(task=task)
         d["ml"] = {"mode": "train", "descriptor": "self_hartree", "estimator": "ridge_regression"}
 
-        with pytest.raises(NotImplementedError, match="task: dft_bands computes none of"):
+        with pytest.raises(exception, match=match):
             build_workgraph(KoopmansInput.model_validate(d))
 
 
@@ -917,16 +941,50 @@ class TestFrozenWindowThreading:
 class TestBandPathRejected:
     """kcp.x screens each snapshot in a supercell; no step interpolates a path."""
 
-    def test_a_band_path_is_rejected(self, tmp_path: Path, read_input_dict: Any) -> None:
+    @pytest.mark.parametrize(
+        "workflow_updates, rejected",
+        [
+            pytest.param({}, True, id="dscf-default"),
+            pytest.param(
+                {"screening_method": "dfpt", "calculate_alpha": False},
+                True,
+                id="dfpt-without-alpha",
+            ),
+            pytest.param({"task": "dft_bands"}, False, id="non-singlepoint-task"),
+        ],
+    )
+    def test_a_band_path_is_rejected(
+        self,
+        tmp_path: Path,
+        read_input_dict: Any,
+        workflow_updates: dict[str, Any],
+        rejected: bool,
+    ) -> None:
         """The path is refused at parse time, before any snapshot is looked for.
 
         A periodic ΔSCF singlepoint on one structure does interpolate along
         a path; what makes the path meaningless here is the fan-out, so the
         refusal fires while the input is still being read, not once
         ``koopmans run`` has already built a workgraph out of it.
+
+        The ``dfpt-without-alpha`` case pins the fall-through for a DFPT
+        singlepoint that is not also computing alphas: the early return
+        ``test_a_dfpt_input_hears_the_screening_method_first`` exercises
+        needs ``calculate_alpha`` true, so this is its negative control.
+
+        The ``non-singlepoint-task`` case is a second negative control:
+        ``dft_bands`` with ``atoms.snapshots`` fails elsewhere by name (see
+        ``TestSnapshotsDispatcher.test_a_task_with_no_fan_out_is_refused_by_name``),
+        so naming the path too would be a second refusal for one input —
+        ``band_path_refusal`` stays silent here instead.
         """
-        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"), **workflow_updates)
         d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
+
+        if not rejected:
+            koopmans_input = read_input_dict(d)
+            assert koopmans_input.kpoints.path == "GX"
+            return
 
         with pytest.raises(ValueError) as excinfo:
             read_input_dict(d)
