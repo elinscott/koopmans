@@ -153,12 +153,13 @@ Download :download:`test.yaml <test.yaml>` and :download:`testing_snapshots.xyz
     $ koopmans run test.yaml
 
 The input file differs from ``train.yaml`` in two places — it reads the other fifteen
-configurations, and its ``ml`` block is
+configurations (i.e. configurations not seen during training), and its ``ml`` block
+only differs in its choice of mode and in naming the model to use:
 
 .. literalinclude:: test.yaml
     :language: yaml
     :start-at: ml:
-    :end-at: occ_and_emp_together
+    :end-at: model_file
 
 A test run does everything the training run did, computing every screening parameter
 from first principles, and then does two things more: it predicts every screening
@@ -227,18 +228,18 @@ for the worst configuration.
 *****************
 
 Download :download:`predict.yaml <predict.yaml>` into the same directory as
-``train.yaml``, for the same reason as ``test.yaml`` above, and run
+``train.yaml``, and run
 
 .. code-block:: console
 
     $ koopmans run predict.yaml
 
-Its ``ml`` block is
+Again, its ``ml`` block only differs in its choice of mode and in naming the model:
 
 .. literalinclude:: predict.yaml
     :language: yaml
     :start-at: ml:
-    :end-at: occ_and_emp_together
+    :end-at: model_file
 
 In this mode, the screening parameters are never computed. Each configuration runs a
 decompose pass and a trial KI calculation side by side, the model turns the descriptor
