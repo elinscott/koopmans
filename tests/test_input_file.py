@@ -1481,7 +1481,7 @@ class TestKcwScreenNeedsAScreeningStep:
 
     def test_the_zno_tutorial_still_parses(self, tutorials_dir: Path) -> None:
         """The shipped ZnO input runs at ``calculate_alpha: false`` with no screen block."""
-        inp = read_input_file(tutorials_dir / "band_structures/zno/zno.json")
+        inp = read_input_file(tutorials_dir / "band_structures/zno/zno.yaml")
 
         assert inp.workflow.calculate_alpha is False
         assert inp.calculator_parameters.kcw.screen.model_fields_set == set()
