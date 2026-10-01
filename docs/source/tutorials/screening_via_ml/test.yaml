@@ -3,7 +3,7 @@
 # model's predictions.
 
 workflow:
-  task: trajectory                # one Koopmans calculation per configuration
+  task: singlepoint             # fans out per snapshot via atoms.snapshots
   correction: ki
   screening_method: dscf          # screening from total-energy differences
   init_orbitals: mlwfs            # maximally localized Wannier functions
