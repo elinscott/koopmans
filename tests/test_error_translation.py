@@ -19,7 +19,7 @@ from koopmans.input_file import KoopmansInput
 from tests.fixtures import silicon_pw_input as _pw_input
 from tests.test_dfpt_dispatcher import _si_dfpt_dict
 from tests.test_dscf_mlwf_dispatcher import _si_dscf_dict
-from tests.test_trajectory_dispatcher import _trajectory_input_dict
+from tests.test_snapshots_dispatcher import _snapshots_input_dict
 from tests.test_wannierize_blocks_dispatcher import _si_split_dict
 
 
@@ -462,7 +462,7 @@ class TestDispatchTranslation:
             )
 
         monkeypatch.setattr(ml_module.TrajectoryWorkflow, "build", build_with_bad_model)
-        d = _trajectory_input_dict(str(write_multiframe_xyz(tmp_path, 1)))
+        d = _snapshots_input_dict(str(write_multiframe_xyz(tmp_path, 1)))
         excinfo = _build_expecting(d, ModelMismatchError, "descriptor")
         assert any(
             "ml.model_file" in note and "'descriptor' stamp" in note

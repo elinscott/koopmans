@@ -7,6 +7,7 @@ from json import load
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from aiida_koopmans.ml import MLMode
 from aiida_quantumespresso.common.types import SpinType
 from pydantic import (
     AfterValidator,
@@ -596,7 +597,9 @@ class KoopmansInput(BaseModel):
         atoms = info.data.get("atoms")
         if workflow is None or atoms is None or not names_band_path(kpoints):
             return kpoints
-        message = band_path_refusal(workflow, any(atoms.cell_parameters.periodic))
+        message = band_path_refusal(
+            workflow, any(atoms.cell_parameters.periodic), atoms.snapshots is not None
+        )
         if message is not None:
             raise ValueError(message)
         return kpoints
@@ -723,6 +726,38 @@ class KoopmansInput(BaseModel):
                 "`workflow.calculate_alpha: false`: no screening step runs, so nothing "
                 "reads that namelist. Remove the block, or set "
                 "`workflow.calculate_alpha: true`."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_ml_mode_has_the_structures_it_needs(self) -> KoopmansInput:
+        """Require ``atoms.snapshots`` for the ``ml`` modes that read many structures.
+
+        ``train`` fits a screening model and ``test`` scores one, both over a
+        dataset of structures; a single structure gives them one row.
+        ``predict`` reads one structure at a time and so needs no dataset.
+
+        Silent on any task but ``singlepoint``: a task that computes no
+        screening parameters at all is refused by name at build time
+        (``build_workgraph``), and that refusal must speak first rather than
+        send the reader to add snapshots to a task ``ml`` can never run on.
+
+        Raises:
+            ValueError: If ``ml.mode`` is ``train`` or ``test``,
+                ``workflow.task`` is ``singlepoint``, and the ``atoms``
+                block states explicit ``atomic_positions``.
+        """
+        if (
+            self.workflow.task == Task.SINGLEPOINT
+            and self.ml.mode in (MLMode.TRAIN, MLMode.TEST)
+            and self.atoms.snapshots is None
+        ):
+            raise ValueError(
+                f"`ml.mode: {self.ml.mode.value}` reads a dataset of structures: it "
+                f"{'fits' if self.ml.mode == MLMode.TRAIN else 'scores'} a screening "
+                "model over the screening parameters computed for every one of them. "
+                "Set `atoms.snapshots` to a multi-frame xyz in place of "
+                "`atoms.atomic_positions`."
             )
         return self
 

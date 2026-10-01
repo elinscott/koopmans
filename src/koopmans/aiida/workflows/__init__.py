@@ -741,8 +741,8 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
             advisories.append(
                 "workflow.group_orbitals_tol has no effect on task: "
                 f"{task.value} (it groups orbitals to share a screening parameter, "
-                "computed only within a singlepoint or trajectory); it is kept for "
-                "when you switch task to singlepoint."
+                "computed only within a singlepoint); it is kept for when you switch "
+                "task to singlepoint."
             )
         else:
             advisories.append(
@@ -760,12 +760,21 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
 def _build_route(task: Task, koopmans_input: KoopmansInput) -> WorkGraph:
     """Dispatch to one task's route builder, importing its module lazily.
 
+    ``atoms.snapshots`` names many structures rather than one, so it is the
+    fan-out wrapper that runs the task, once per frame; the wrapper reports
+    which tasks it runs that way.
+
     Split out of :func:`build_workgraph` so that function's own advice
     boundary carries none of this dispatch's branching.
 
     Raises:
         ValueError: If ``task`` names no implemented route.
     """
+    if koopmans_input.atoms.snapshots is not None:
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
+
+        return build_snapshots_workgraph(koopmans_input)
+
     if task == Task.DFT_BANDS:
         from koopmans.aiida.workflows.dft import build_dft_bands_workgraph
 
@@ -778,10 +787,6 @@ def _build_route(task: Task, koopmans_input: KoopmansInput) -> WorkGraph:
         from koopmans.aiida.workflows.dscf import build_singlepoint_workgraph
 
         return build_singlepoint_workgraph(koopmans_input)
-    elif task == Task.TRAJECTORY:
-        from koopmans.aiida.workflows.trajectory import build_trajectory_workgraph
-
-        return build_trajectory_workgraph(koopmans_input)
     elif task == Task.DFT_EPS:
         from koopmans.aiida.workflows.eps import build_dft_eps_workgraph
 
@@ -794,8 +799,7 @@ def _build_route(task: Task, koopmans_input: KoopmansInput) -> WorkGraph:
         raise ValueError(
             f"Task '{task.value}' is not yet implemented. "
             f"Supported tasks: {Task.DFT_BANDS.value}, {Task.WANNIERIZE.value}, "
-            f"{Task.SINGLEPOINT.value}, {Task.TRAJECTORY.value}, {Task.DFT_EPS.value}, "
-            f"{Task.BSE.value}"
+            f"{Task.SINGLEPOINT.value}, {Task.DFT_EPS.value}, {Task.BSE.value}"
         )
 
 
@@ -820,11 +824,18 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         )
 
     ml_config = koopmans_input.ml
-    if ml_config.mode != MLMode.NONE and task != Task.TRAJECTORY:
-        raise NotImplementedError(
-            f"`ml` is wired into the trajectory task only, not {task.value!r}; legacy "
-            "permitted singlepoint prediction — not yet ported."
-        )
+    if ml_config.mode != MLMode.NONE:
+        if task != Task.SINGLEPOINT:
+            raise NotImplementedError(
+                f"`ml` models the screening parameters, which task: {task.value} "
+                "computes none of; it is wired into task: singlepoint only."
+            )
+        if koopmans_input.atoms.snapshots is None:
+            raise NotImplementedError(
+                f"`ml.mode: {ml_config.mode.value}` on a single structure is not yet "
+                "ported: prediction currently runs only as part of the "
+                "`atoms.snapshots` fan-out. Name a multi-frame xyz there."
+            )
 
     computer_name = koopmans_input.computer.name
     require_computer_configured(computer_name)
