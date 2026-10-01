@@ -203,7 +203,6 @@ root-mean-square of 26.7 meV on average, 27.0 meV at the median, and as much as 
 for the worst configuration.
 
 .. question:: Does the cheaper ``self_hartree`` descriptor do just as well?
-
     (To test this, set ``descriptor: self_hartree`` in the ``ml`` block of every input above,
     dropping ``n_max``/``l_max``/``r_min``/``r_max`` — ``self_hartree`` carries no radial
     basis — and repeat the training and testing runs.)
