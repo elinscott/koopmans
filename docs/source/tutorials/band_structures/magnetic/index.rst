@@ -388,18 +388,32 @@ whichever holds the lowest empty state, and those need not be the same channel.
     inter-spin gap. These are the ``KS`` lines of each channel's ``outputs/aiida.kho``.
 
 KI opens both channels: to 2.53 eV in the up channel and 3.03 eV in the down one, read
-off the ``KI[2nd]`` lines of the same two files. How far it opens them is decided by the
-screening parameters, which are computed rather than assumed — which is the point of
-the calculation. The up channel's 42 orbitals group into 6 distinct values, from 0.10 to
-0.21; the down channel's 42 group into 5, from 0.05 to 0.21.
+off the ``KI[2nd]`` lines of the same two files, which report the gap on the k-point
+grid; along the path drawn below, the down channel's gap comes out at 3.00 eV. How far
+it opens them is decided by the screening parameters, which are computed rather than
+assumed — which is the point of the calculation. The up channel's 42 orbitals group into
+6 distinct values, from 0.10 to 0.21; the down channel's 42 group into 5, from 0.05 to
+0.21.
+
+Draw both channels on one set of axes with
+
+.. code-block:: console
+
+    $ koopmans plot bandstructure \
+        cri3/04-dfpt_up/04-ham --label "KI@LDA (up)" --style r- --gap \
+        cri3/05-dfpt_down/04-ham --label "KI@LDA (down)" --style b- --gap \
+        cri3/03-wannierize_up/01-bands --label "LDA (both channels)" --style k-- \
+        --ylim -2 6 \
+        -o ki_bandstructure.svg
 
 .. figure:: ki_bandstructure.svg
     :align: center
     :width: 80%
 
-    The KI band structure of each channel (solid), against the shared LDA reference
-    (dashed black, both channels together). Up in red, down in blue; the arrows mark
-    each channel's own band gap along the k-path.
+    The KI band structure of each channel (solid), against the LDA reference (dashed
+    black, both channels together). Up in red, down in blue; the arrows mark each
+    channel's own band gap along the k-path. Energies are relative to the valence band
+    maximum of the first series listed, the KI up channel.
 
 .. question:: What happens to the fundamental gap?
 
