@@ -1409,7 +1409,7 @@ ROUTES: dict[str, FakeNode] = {
             _dfpt("_down", " (spin down)"),
         ],
     ),
-    "trajectory (ml train)": FakeNode(
+    "snapshots (ml train)": FakeNode(
         process_label="WorkGraph<TrajectoryWorkflow>",
         label="Trajectory",
         kind="workgraph",
@@ -1431,7 +1431,7 @@ ROUTES: dict[str, FakeNode] = {
             _func("train_screening_model"),
         ],
     ),
-    "trajectory (ml test, power_spectrum)": FakeNode(
+    "snapshots (ml test, power_spectrum)": FakeNode(
         process_label="WorkGraph<TrajectoryWorkflow>",
         label="Trajectory",
         kind="workgraph",
