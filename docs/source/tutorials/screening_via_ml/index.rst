@@ -2,12 +2,20 @@
  Screening parameters from a trained model
 ###########################################
 
+
 Computing the screening parameters is the expensive part of a Koopmans calculation. When
-you have many similar systems to get through — snapshots along a molecular-dynamics
-trajectory, say — you can train a model on a few of them and predict the rest. This
-tutorial trains a model on a handful of water configurations, checks it against
-configurations it has never seen, and then runs a calculation with the model's
-prediction in place of the step it replaces.
+you have many similar systems — snapshots along a molecular-dynamics
+trajectory, say — it is a waste of time to repeatedly compute screening parameters
+for what are ultimately very similar orbitals and screening environments. In this case,
+you can train a model on a few systems and use it to predict the screening parameters for
+the rest. This tutorial trains a model on a handful of water molecules, checks it against
+configurations it has never seen, and then runs a calculation with the model's predictions
+in place of explicit screening parameter calculations.
+
+.. note::
+
+    This machine-learning approach was first published in :cite:`Schubert2024` --- read that
+    paper for all of the details!
 
 The twenty configurations are one water molecule with its atoms displaced at random.
 :download:`generate_snapshots.py <generate_snapshots.py>` writes them as two multi-frame
@@ -21,12 +29,14 @@ xyz files: five to train on, and fifteen to test and predict with.
 
 .. note::
 
-    A model like this earns its keep in liquids and solids, so the tutorial works the
-    way a calculation on one would: the molecule sits in a periodic box, and the
-    variational orbitals are maximally localized Wannier functions rather than Kohn-Sham
-    orbitals. This toy system is of course neither periodic nor extended.
+    A model like this earns its keep for liquids and solids, while here we apply
+    it to a molecule for demonstration purposes. For this reason, we will treat
+    the system like a liquid or a solid:
 
-The ``ml`` block of the input file picks one of three modes:
+    - the molecule sits in a box with periodic boundary conditions
+    - we use maximally localized Wannier functions for the variational orbitals rather than Kohn-Sham orbitals.
+
+The key settings are found in the ``ml`` block. We can choose one of three modes:
 
 ``train``
     computes the screening parameters of every configuration and fits a model to them;
@@ -37,9 +47,7 @@ The ``ml`` block of the input file picks one of three modes:
 ``predict``
     predicts them, and never computes them.
 
-They are presented in that order deliberately. The prediction is only worth having if
-you know what it costs you in accuracy, and for this system that turns out to be the
-interesting part.
+We will go through each of these in turn.
 
 ******************
  Training a model
@@ -59,48 +67,33 @@ Download :download:`train.yaml <train.yaml>` and :download:`training_snapshots.x
     work.
 
 Most of this file describes an ordinary Koopmans calculation, of the kind :doc:`the
-ozone tutorial <../orbital_energies/ozone/automatically>` walks through. Three things
+ozone tutorial <../orbital_energies/ozone/automatically>` walks through. Two things
 are new.
-
-.. literalinclude:: train.yaml
-    :language: yaml
-    :start-at: task: trajectory
-    :end-at: task: trajectory
-
-runs one such calculation per configuration rather than one in total.
 
 .. literalinclude:: train.yaml
     :language: yaml
     :start-at: snapshots:
     :end-at: snapshots:
 
-names the configurations, as a multi-frame xyz file in place of the ``atomic_positions``
-block a single-structure calculation carries. Every frame shares the cell, the
-composition and the projections that the rest of the file gives.
+means we run one calculation on each of the configurations found in this multi-frame xyz
+file in place of the ``atomic_positions`` block we have been using for single-structure
+calculations. Every frame shares the same cell, composition, and so on. Meanwhile, the
+``ml`` block:
 
 .. literalinclude:: train.yaml
     :language: yaml
-    :start-at: mode: train
+    :start-at: ml:
     :end-at: occ_and_emp_together
 
-is the model. ``descriptor`` decides what the model sees of an orbital: ``power_spectrum``
+defines the model. ``descriptor`` decides what the model sees of an orbital: ``power_spectrum``
 expands each orbital's density on a radial basis out to ``r_max``, with radial channels
 up to ``n_max`` and angular momenta up to ``l_max``, and feeds the model the rotationally
 invariant power spectrum of that expansion. (The cheaper
 alternative, ``self_hartree``, sees only the electrostatic self-interaction energy of
-that density, a single number the calculation prints anyway; see the question below for
-what that costs you.) ``estimator`` decides how the model fits screening parameters to
+that density; we will discuss it later.) ``estimator`` decides how the model fits screening parameters to
 the descriptor, and ``occ_and_emp_together: false`` fits the filled and the empty
 orbitals separately — one screening parameter says what happens when an electron leaves
 an orbital, the other what happens when one arrives, and the two need not be related.
-
-.. warning::
-
-    Make sure you have installed ``koopmans``: see :doc:`here <../../installation>` for
-    more details.
-
-    This workflow needs ``pw.x``, ``wannier90.x``, ``pw2wannier90.x``, ``wann2kcp.x``,
-    ``merge_evc.x`` and ``kcp.x``.
 
 Run the calculation with
 
@@ -108,7 +101,7 @@ Run the calculation with
 
     $ koopmans run train.yaml
 
-The progress table now has one branch per configuration, each of them a complete
+The progress table has one branch per configuration, each of them a complete
 Koopmans calculation, plus a second branch per configuration that builds the
 ``power_spectrum`` dataset the model is fitted to:
 
