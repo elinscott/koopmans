@@ -163,6 +163,92 @@ class TestPerStepKpointMesh:
             _build(d)
 
 
+class TestEpsInfFactor:
+    """``kpoints.eps_inf_factor`` densifies the ``eps_inf: auto`` dielectric step's own mesh."""
+
+    def test_factor_densifies_the_dielectric_scf_mesh(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """The dielectric step samples ``kpoints.grid`` densified by the factor.
+
+        A mutant that ignores ``eps_inf_factor`` would leave this on the
+        chain's own 2x2x2 mesh instead — the negative control below.
+        """
+        d = _si_dfpt_dict(eps_inf="auto")
+        d["kpoints"]["eps_inf_factor"] = 2
+        wg = _build(d)
+        dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        assert list(dielectric_kpoints.get_kpoints_mesh()[0]) == [4, 4, 4]
+        # The DFPT chain's own ground state keeps sampling kpoints.grid, unaffected.
+        scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
+        assert list(scf_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
+
+        from aiida_workgraph import WorkGraph
+
+        WorkGraph.from_dict(wg.to_dict())
+
+    def test_factor_densifies_kpoints_grid_not_a_different_scf_override(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """The base is always ``kpoints.grid``, never ``overrides.scf``, which may be a spacing.
+
+        A mutant that densifies the chain's own (possibly overridden) scf
+        mesh instead of the top-level ``grid`` would produce 12x12x12 here
+        (2x the ``overrides.scf.grid``), not the expected 4x4x4.
+        """
+        d = _si_dfpt_dict(eps_inf="auto")
+        d["kpoints"]["eps_inf_factor"] = 2
+        d["kpoints"]["overrides"] = {"scf": {"grid": [6, 6, 6]}}
+        wg = _build(d)
+        dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        assert list(dielectric_kpoints.get_kpoints_mesh()[0]) == [4, 4, 4]
+        # The chain's own ground state samples the overridden mesh, unaffected.
+        scf_kpoints = wg.tasks["scf_nscf"].inputs["scf_kpoints"].value
+        assert list(scf_kpoints.get_kpoints_mesh()[0]) == [6, 6, 6]
+
+    def test_factor_keeps_the_chains_own_scf_offset(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """The densified mesh's offset follows ``overrides.scf.offset``, not the top-level default.
+
+        A mutant that always used the top-level ``kpoints.offset`` would
+        leave this unshifted.
+        """
+        d = _si_dfpt_dict(eps_inf="auto")
+        d["kpoints"]["eps_inf_factor"] = 2
+        d["kpoints"]["overrides"] = {"scf": {"offset": [0.5, 0.5, 0.5]}}
+        wg = _build(d)
+        dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        mesh, offset = dielectric_kpoints.get_kpoints_mesh()
+        assert list(mesh) == [4, 4, 4]
+        assert list(offset) == [0.5, 0.5, 0.5]
+
+    def test_without_a_factor_the_dielectric_scf_keeps_the_chain_mesh(
+        self,
+        aiida_profile: Any,
+        dfpt_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+    ) -> None:
+        """The negative control: the default factor keeps today's fallback mesh."""
+        d = _si_dfpt_dict(eps_inf="auto")
+        wg = _build(d)
+        dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        assert list(dielectric_kpoints.get_kpoints_mesh()[0]) == [2, 2, 2]
+
+
 class TestScopeGuardOrdering:
     """A scope blocker (correction, init_orbitals, ...) is reported before the override.
 
@@ -558,3 +644,58 @@ class TestProjwfcQualityCheck:
         assert not wg.tasks["wannierize"].inputs["interpolation_kpoints"]._links
         assert not wg.tasks["dfpt"].inputs["wannierize_bands"]._links
         assert not wg.tasks["dfpt"].inputs["projwfc"]._links
+
+
+class TestSmoothInterpolationFactor:
+    """``kpoints.smooth_interpolation_factor`` densifies the Wannierization mesh."""
+
+    def test_the_factor_densifies_the_mesh_the_second_wannierization_samples(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """A factor of 4 on a 2x2x2 grid Wannierizes 8x8x8, as an explicit list.
+
+        Checks the two halves agree: wannier90 cannot re-derive the mesh
+        dimensions from an explicit k-point list, so a ``mp_grid`` that
+        disagreed with the list would describe a different mesh than the
+        one sampled.
+        """
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        d["kpoints"]["smooth_interpolation_factor"] = 4
+        wg = _build(d)
+
+        smooth = wg.tasks["wannierize_smooth"].inputs
+        assert smooth["mp_grid"].value == [8, 8, 8]
+        assert len(smooth["kpoints"].value.get_kpoints()) == 8 * 8 * 8
+
+    def test_the_factor_may_differ_per_direction(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Each direction densifies on its own, so a slab can densify in-plane only."""
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        d["kpoints"]["smooth_interpolation_factor"] = [4, 2, 1]
+        wg = _build(d)
+
+        assert wg.tasks["wannierize_smooth"].inputs["mp_grid"].value == [8, 4, 2]
+
+    def test_the_default_factor_adds_no_second_wannierization(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """Negative control: with the factor unset the graph is the one that ran before."""
+        d = _si_dfpt_dict()
+        d["kpoints"]["path"] = "GX"
+        wg = _build(d)
+
+        assert "wannierize_smooth" not in wg.get_task_names()
+        assert not wg.tasks["dfpt"].inputs["smooth_block_wannier"]._links
+
+    def test_a_factor_without_a_path_is_refused(
+        self, aiida_profile_clean: Any, dfpt_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """The method shapes a band structure; an input asking for none is a contradiction."""
+        d = _si_dfpt_dict()
+        d["kpoints"]["smooth_interpolation_factor"] = 4
+
+        with pytest.raises(ValueError, match=r"kpoints: \{path"):
+            _build(d)
