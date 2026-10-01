@@ -162,10 +162,16 @@ coefficients — but the stamps at the top are:
       "submodels": {
         "occ": {
           "estimator_type": "ridge_regression",
+          "x_mean": [...],
+          "x_scale": [...],
+          "coef": [...],
           "intercept": 0.546186
         },
         "emp": {
           "estimator_type": "ridge_regression",
+          "x_mean": [...],
+          "x_scale": [...],
+          "coef": [...],
           "intercept": 0.505976
         }
       }
