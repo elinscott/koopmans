@@ -116,6 +116,21 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     inputs = kcp_dscf_inputs(koopmans_input)
 
+    if ml_mode == MLMode.PREDICT and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
+        # A power_spectrum prediction runs no trial KI, the only step a
+        # starting alpha or a grouping tolerance acts on, and aiida-koopmans
+        # refuses both on that route. ``group_orbitals_tol`` is resolved at
+        # parse time, so a typed tolerance cannot be told apart from the
+        # resolved default here and is not forwarded either way.
+        if "alpha_guess" in workflow.model_fields_set:
+            raise ValueError(
+                "ml:descriptor='power_spectrum' under ml:mode='predict' runs no trial "
+                "KI, so workflow:alpha_guess cannot take effect. Remove it, or use "
+                "ml:descriptor='self_hartree'."
+            )
+        inputs["initial_alpha"] = None
+        inputs["orbital_groups_self_hartree_tol"] = None
+
     wannier_init = workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,

@@ -671,6 +671,14 @@ class TestPredictMode:
             "decompose_r_min": 0.5,
             "decompose_r_max": 4.0,
         }
+        # No trial KI runs on this route: the default starting alpha and the
+        # Wannier route's resolved grouping tolerance stay off the DSCF.
+        assert dscf.inputs["initial_alpha"].value is None
+        assert dscf.inputs["orbital_groups_self_hartree_tol"].value is None
+        # A typed starting alpha cannot take effect, so it is refused.
+        d["workflow"]["alpha_guess"] = 0.5
+        with pytest.raises(ValueError, match="workflow:alpha_guess cannot take effect"):
+            build_snapshots_workgraph(KoopmansInput.model_validate(d))
 
     def test_predict_rejects_alpha_numsteps(
         self,

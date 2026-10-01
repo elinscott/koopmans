@@ -453,7 +453,7 @@ class _KcpDscfInputs(TypedDict):
     init_orbitals: VariationalOrbitalType
     alpha_numsteps: int
     fix_spin_contamination: bool
-    initial_alpha: float
+    initial_alpha: float | None
     spin_polarized: bool
     orbital_groups_self_hartree_tol: float | None
 
