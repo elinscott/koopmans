@@ -45,9 +45,11 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     ``ml`` configuration, trains a screening-parameter model on the computed
     alphas (``ml: {mode: train}``), scores an existing model against them
     (``mode: test``), or applies an existing model in place of the Delta-SCF
-    refinement (``mode: predict`` — each snapshot runs one trial KI at the
-    guess alphas, the model predicts every screening parameter from that
-    snapshot's descriptors, and the final KI applies the predictions).
+    refinement (``mode: predict`` — the model predicts every screening
+    parameter from that snapshot's descriptors and the final KI applies the
+    predictions; ``self_hartree`` first runs one trial KI at the guess alphas
+    to supply them, ``power_spectrum`` runs no kcp.x step before the final
+    KI).
 
     ``self_hartree`` needs nothing beyond the kcp.x runs themselves.
     ``power_spectrum`` builds its power spectra from a pw2wannier90.x
@@ -181,7 +183,7 @@ def _resolve_snapshots_ml(
     if ml_mode == MLMode.PREDICT and workflow.alpha_numsteps != 1:
         raise ValueError(
             "ml:mode='predict' replaces the Delta-SCF refinement with a single "
-            "trial-KI prediction, so workflow:alpha_numsteps cannot take effect; "
+            "prediction, so workflow:alpha_numsteps cannot take effect; "
             "set it to 1."
         )
 

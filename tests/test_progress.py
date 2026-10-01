@@ -1440,9 +1440,8 @@ ROUTES: dict[str, FakeNode] = {
                 "dscf_snapshot_1",
                 "Snapshot 1",
                 _graph(
-                    "PredictScreeningParameters",
+                    "PredictScreeningParametersFromPowerSpectrum",
                     "Predicted screening parameters",
-                    _calc("ki_trial", "Trial KI", "kcp.x"),
                     _graph(
                         "predicted_descriptors",
                         "Descriptors",

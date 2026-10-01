@@ -304,7 +304,5 @@ Trajectory
 ########## snapshots (ml test, power_spectrum)
 Trajectory
   Snapshot 1
-    Predicted screening parameters
-      Trial KI                                          kcp.x
-      Descriptors                                       pw2wannier90.x
+    Predicted screening parameters                      pw2wannier90.x
     Final KI (predicted alphas)                         kcp.x
