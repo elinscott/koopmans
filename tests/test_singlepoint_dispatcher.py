@@ -223,7 +223,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         with pytest.raises(NotImplementedError, match="not wired into the singlepoint route"):
             build_singlepoint_workgraph(inp)
 
-    @pytest.mark.parametrize("task", ["singlepoint", "dft_bands", "trajectory", "dft_eps"])
+    @pytest.mark.parametrize("task", ["singlepoint", "dft_bands", "dft_eps"])
     def test_auto_projections_rejected_outside_wannierize(
         self, ozone_input: KoopmansInput, task: str
     ) -> None:

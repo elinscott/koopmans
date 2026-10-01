@@ -74,12 +74,12 @@ KPOINT_OVERRIDES_ON_DSCF = {
 }
 KPOINT_OVERRIDES_ON_DSCF["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 
-#: The same rejection without the DFPT alternative, which the trajectory task
-#: does not offer.
-KPOINT_OVERRIDES_ON_TRAJECTORY = {
+#: The same rejection without the DFPT alternative, which the per-frame
+#: ``atoms.snapshots`` fan-out does not offer.
+KPOINT_OVERRIDES_ON_SNAPSHOTS = {
     step: _KCP_TAKES_ONE_MESH.format(step=step, alternative="") for step in ("scf", "nscf")
 }
-KPOINT_OVERRIDES_ON_TRAJECTORY["wannier90"] = _KCP_HAS_NO_INTERPOLATION
+KPOINT_OVERRIDES_ON_SNAPSHOTS["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 
 
 def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
@@ -441,7 +441,7 @@ def require_supported_correction(correction: Correction) -> None:
 
 
 class _KcpDscfInputs(TypedDict):
-    """Scalar inputs shared by the kcp.x DSCF builders (singlepoint and trajectory)."""
+    """Scalar inputs shared by the kcp.x DSCF builders (one structure, and per frame)."""
 
     pseudo_family: str
     ecutwfc: float

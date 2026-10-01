@@ -50,7 +50,6 @@ class Task(Enum):
     WANNIERIZE = "wannierize"
     DFT_BANDS = "dft_bands"
     DFT_EPS = "dft_eps"
-    TRAJECTORY = "trajectory"
     BSE = "bse"
 
 
@@ -209,7 +208,7 @@ class WorkflowConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def reject_removed_workflow_keywords(cls, data: Any) -> Any:
-        """Point a retired ``workflow`` keyword at what replaced it.
+        """Point a retired ``workflow`` keyword or task at what replaced it.
 
         Runs before field validation, so it reports the removed spelling
         instead of the generic "extra_forbidden" error.

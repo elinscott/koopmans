@@ -318,8 +318,8 @@ def atoms_input_to_structure(atoms: AtomsInput) -> orm.StructureData:
 
     if positions is None:
         raise ValueError(
-            "`atoms.snapshots` (a multi-frame xyz path) is only supported by the "
-            "`trajectory` task; this task expects explicit `atomic_positions`."
+            "`atoms.snapshots` (a multi-frame xyz path) names many structures, and "
+            "this route runs on one; it expects explicit `atomic_positions`."
         )
 
     cell = cell_in_angstrom(cell_params)
@@ -374,8 +374,8 @@ def atoms_input_to_structures(atoms: AtomsInput) -> dict[str, orm.StructureData]
 
     if atoms.snapshots is None:
         raise ValueError(
-            "the `trajectory` task requires `atoms.snapshots` (a multi-frame xyz path); "
-            "got explicit `atomic_positions`."
+            "fanning a calculation out over frames requires `atoms.snapshots` (a "
+            "multi-frame xyz path); got explicit `atomic_positions`."
         )
 
     frames = ase_read(atoms.snapshots, index=":")

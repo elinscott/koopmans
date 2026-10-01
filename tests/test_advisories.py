@@ -200,7 +200,7 @@ class TestEpsInfFactorAdvisory:
 
 
 class TestOrbitalGroupingAdvisory:
-    """``group_orbitals_by``/``group_orbitals_tol`` only apply to singlepoint/trajectory.
+    """``group_orbitals_by``/``group_orbitals_tol`` only apply to the singlepoint task.
 
     ``group_orbitals_by`` is resolved at parse time (never ``None`` on the
     parsed model — see ``WorkflowConfig.resolve_group_orbitals_by``), so
@@ -246,7 +246,7 @@ class TestOrbitalGroupingAdvisory:
         assert advisories_for(inp) == [
             "workflow.group_orbitals_tol has no effect on task: wannierize (it "
             "groups orbitals to share a screening parameter, computed only within a "
-            "singlepoint or trajectory); it is kept for when you switch task to "
+            "singlepoint); it is kept for when you switch task to "
             "singlepoint."
         ]
 
@@ -439,7 +439,7 @@ class TestResolveGroupOrbitalsByDoesNotMutateCaller:
         assert advisories_for(second) == [
             "workflow.group_orbitals_tol has no effect on task: wannierize (it "
             "groups orbitals to share a screening parameter, computed only within a "
-            "singlepoint or trajectory); it is kept for when you switch task to "
+            "singlepoint); it is kept for when you switch task to "
             "singlepoint."
         ]
 

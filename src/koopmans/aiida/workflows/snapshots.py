@@ -1,4 +1,4 @@
-"""The trajectory (machine-learning) route."""
+"""The ``atoms.snapshots`` fan-out: one run of the chosen task per frame."""
 
 from __future__ import annotations
 
@@ -16,13 +16,13 @@ from koopmans.aiida.workflows import (
     require_configured_codes,
 )
 from koopmans.aiida.workflows.dscf import (
-    KPOINT_OVERRIDES_ON_TRAJECTORY,
+    KPOINT_OVERRIDES_ON_SNAPSHOTS,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
     require_supported_correction,
 )
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
-from koopmans.input_file.workflow import CalculateScreeningMethod, VariationalOrbitalType
+from koopmans.input_file.workflow import CalculateScreeningMethod, Task, VariationalOrbitalType
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -32,9 +32,13 @@ if TYPE_CHECKING:
     from koopmans.input_file.ml import MLConfig
     from koopmans.input_file.workflow import WorkflowConfig
 
+#: The tasks this wrapper can run once per frame. Every other task with
+#: ``atoms.snapshots`` set is refused by name.
+_TASKS_THAT_FAN_OUT = frozenset({Task.SINGLEPOINT})
 
-def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
-    """Build a workgraph for a trajectory (machine-learning) task.
+
+def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
+    """Build a workgraph running ``workflow.task`` once per ``atoms.snapshots`` frame.
 
     Fans the snapshots out over per-snapshot ``KoopmansDSCFWorkflow`` runs via
     ``aiida_koopmans.workgraphs.ml.TrajectoryWorkflow`` and, depending on the
@@ -58,6 +62,14 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     structure fed to the dynamic snapshots namespace. All frames share one
     cell, composition and projection set, so the Wannier-route inputs are
     derived once from the first frame.
+
+    Raises:
+        NotImplementedError: If ``workflow.task`` names a task no fan-out
+            is built for, or if the singlepoint settings select a stream
+            this wrapper does not run per frame.
+        ValueError: If ``kpoints`` states a per-step mesh the per-frame
+            kcp.x stream cannot honour. A ``kpoints.path`` this fan-out
+            cannot interpolate is refused earlier, at parse time.
     """
     from aiida_koopmans.workgraphs.ml import DscfCodes, TrajectoryWorkflow
 
@@ -65,29 +77,37 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     workflow = koopmans_input.workflow
 
-    reject_unwired_external_projectors(koopmans_input, "trajectory")
+    if workflow.task not in _TASKS_THAT_FAN_OUT:
+        raise NotImplementedError(
+            f"`atoms.snapshots` is not wired into the {workflow.task.value} task: only "
+            f"{', '.join(sorted(t.value for t in _TASKS_THAT_FAN_OUT))} is run once per "
+            "frame so far. Set `atoms.atomic_positions` to run this task on one "
+            "structure."
+        )
+
+    reject_unwired_external_projectors(koopmans_input, "snapshots")
 
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(
-            "The trajectory task only supports DSCF screening (kcp.x); DFPT screening "
-            "is not yet implemented for trajectories."
+            "`atoms.snapshots` only fans out the DSCF screening stream (kcp.x); DFPT "
+            "screening is not yet run per frame."
         )
 
-    # After the screening-method guard: whichever method the input asks for,
-    # this route runs kcp.x, and the reader has to hear about the method they
-    # asked for before they hear about the mesh.
-    reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_TRAJECTORY)
+    # A `kpoints.path` under `atoms.snapshots` is refused at parse time
+    # (`check_the_task_can_interpolate_along_the_path`), behind this
+    # function's own task and screening-method refusals above.
+    reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_SNAPSHOTS)
 
     require_supported_correction(workflow.correction)
 
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
         raise NotImplementedError(
-            f"spin={workflow.spin.value!r} is not supported by the trajectory (kcp.x) "
+            f"spin={workflow.spin.value!r} is not supported by the per-frame kcp.x "
             "stream: kcp.x has no noncollinear mode."
         )
 
     ml_config = koopmans_input.ml
-    ml_mode, ml_model = _resolve_trajectory_ml(ml_config, workflow)
+    ml_mode, ml_model = _resolve_snapshots_ml(ml_config, workflow)
 
     snapshots = atoms_input_to_structures(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
@@ -142,10 +162,10 @@ def build_trajectory_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     )
 
 
-def _resolve_trajectory_ml(
+def _resolve_snapshots_ml(
     ml_config: MLConfig, workflow: WorkflowConfig
 ) -> tuple[MLMode, dict[str, Any] | orm.Dict | None]:
-    """Map the ``ml`` block onto a trajectory mode and its loaded model.
+    """Map the ``ml`` block onto a fan-out mode and its loaded model.
 
     ``test`` and ``predict`` modes take the model from exactly one of two
     sources: the stored node named by ``ml:model`` (set as the graph input
@@ -182,12 +202,7 @@ def _resolve_trajectory_ml(
 
 
 def _load_model_node(identifier: int | str) -> orm.Dict:
-    """Load the stored trained-model ``Dict`` node named by PK or UUID.
-
-    The node is set as the trajectory graph's ``ml_model`` input, so the
-    run's provenance links back to the training artifact; the DSCF
-    sub-graphs receive its payload.
-    """
+    """Load the stored trained-model ``Dict`` node named by PK or UUID."""
     from aiida import orm
 
     raw = str(identifier)
