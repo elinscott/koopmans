@@ -7,6 +7,7 @@ from importlib import import_module
 from pathlib import Path
 
 import pytest
+import yaml
 from aiida_koopmans.owned_keywords import OWNED
 
 from koopmans.base import BaseModel
@@ -23,7 +24,7 @@ from koopmans.input_file._codegen import MODULES, REASONS, UNREACHABLE
 from koopmans.input_file.workflow import Task
 
 # The silicon tutorial input file, relative to the tutorials directory.
-SI_JSON = "band_structures/silicon_finite_differences/si.json"
+SI_INPUT = "band_structures/silicon_finite_differences/si.yaml"
 
 
 class TestInputFileParsing:
@@ -31,7 +32,7 @@ class TestInputFileParsing:
 
     def test_parse_si_tutorial(self, tutorials_dir: Path) -> None:
         """Test that the silicon tutorial input file parses successfully."""
-        input_file = tutorials_dir / SI_JSON
+        input_file = tutorials_dir / SI_INPUT
         assert input_file.exists(), f"Tutorial file not found: {input_file}"
 
         koopmans_input = read_input_file(input_file)
@@ -44,7 +45,7 @@ class TestInputFileParsing:
 
     def test_parse_si_tutorial_via_classmethod(self, tutorials_dir: Path) -> None:
         """Test parsing via the KoopmansInput.from_file classmethod."""
-        input_file = tutorials_dir / SI_JSON
+        input_file = tutorials_dir / SI_INPUT
 
         koopmans_input = KoopmansInput.from_file(input_file)
 
@@ -65,12 +66,12 @@ class TestInputFileVersioning:
 
     def test_missing_version_treated_as_version_1(self, tutorials_dir: Path) -> None:
         """Test that a file without a `version` key parses as the current version."""
-        koopmans_input = read_input_file(tutorials_dir / SI_JSON)
+        koopmans_input = read_input_file(tutorials_dir / SI_INPUT)
         assert koopmans_input.version == INPUT_FILE_FORMAT_VERSION
 
     def test_explicit_current_version(self, tutorials_dir: Path, tmp_path: Path) -> None:
         """Test that a file with an explicit current `version` parses."""
-        input_dict = json.loads((tutorials_dir / SI_JSON).read_text())
+        input_dict = yaml.safe_load((tutorials_dir / SI_INPUT).read_text())
         input_dict["version"] = INPUT_FILE_FORMAT_VERSION
         input_file = tmp_path / "si.json"
         input_file.write_text(json.dumps(input_dict))
@@ -80,7 +81,7 @@ class TestInputFileVersioning:
 
     def test_future_version_raises(self, tutorials_dir: Path, tmp_path: Path) -> None:
         """Test that a file from a newer format version raises a clear error."""
-        input_dict = json.loads((tutorials_dir / SI_JSON).read_text())
+        input_dict = yaml.safe_load((tutorials_dir / SI_INPUT).read_text())
         input_dict["version"] = INPUT_FILE_FORMAT_VERSION + 1
         input_file = tmp_path / "si.json"
         input_file.write_text(json.dumps(input_dict))
@@ -882,6 +883,140 @@ class TestSmoothInterpolationFactor:
         assert GammaOnlyKpointsInput().smooth_interpolation_factor == (1, 1, 1)
         with pytest.raises(ValueError, match="greater than or equal to 1"):
             GammaOnlyKpointsInput(smooth_interpolation_factor=0)
+
+
+class TestEpsInfFactor:
+    """``eps_inf_factor`` densifies ``grid`` for the DFPT ``eps_inf: auto`` dielectric step."""
+
+    def test_default_is_one_in_every_direction(self) -> None:
+        """Leaving the keyword out asks for no densification."""
+        from koopmans.input_file import GridKpointsInput
+
+        assert GridKpointsInput(grid=(2, 2, 2)).eps_inf_factor == (1, 1, 1)
+
+    def test_a_bare_integer_broadcasts_to_every_direction(self) -> None:
+        """A scalar factor is shorthand for the same factor on every axis."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=4)
+        assert inp.eps_inf_factor == (4, 4, 4)
+
+    def test_a_triple_scales_each_direction_independently(self) -> None:
+        """A three-entry factor densifies the directions independently."""
+        from koopmans.input_file import GridKpointsInput
+
+        inp = GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=[1, 2, 3])
+        assert inp.eps_inf_factor == (1, 2, 3)
+
+    def test_a_factor_below_one_is_rejected(self) -> None:
+        """The factor multiplies the grid, so it cannot coarsen it."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=0)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=[1, 0, 1])
+
+    def test_a_boolean_is_rejected(self) -> None:
+        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1)."""
+        from koopmans.input_file import GridKpointsInput
+
+        with pytest.raises(ValueError, match="valid integer"):
+            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=True)
+
+    def test_gamma_only_carries_the_same_field(self) -> None:
+        """Gamma-only kpoints carry the field too, at the same default."""
+        from koopmans.input_file import GammaOnlyKpointsInput
+
+        assert GammaOnlyKpointsInput().eps_inf_factor == (1, 1, 1)
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            GammaOnlyKpointsInput(eps_inf_factor=0)
+
+    @staticmethod
+    def _dfpt_input(factor: object = None) -> dict[str, object]:
+        d = _minimal_si_input()
+        d["workflow"]["screening_method"] = "dfpt"  # type: ignore[index]
+        d["workflow"]["correction"] = "ki"  # type: ignore[index]
+        d["workflow"]["init_orbitals"] = "mlwfs"  # type: ignore[index]
+        d["workflow"]["eps_inf"] = "auto"  # type: ignore[index]
+        if factor is not None:
+            d["kpoints"]["eps_inf_factor"] = factor  # type: ignore[index]
+        return d
+
+    def test_reaches_the_dielectric_step(self) -> None:
+        """The one situation where it takes effect: parses and keeps the value."""
+        inp = KoopmansInput.model_validate(self._dfpt_input(2))
+        assert inp.kpoints.eps_inf_factor == (2, 2, 2)
+
+    def test_refused_with_a_numeric_eps_inf(self) -> None:
+        """A mutant that ignores ``eps_inf`` would accept this: it must not.
+
+        ``eps_inf_factor`` densifies a dielectric step that a numeric
+        ``eps_inf`` never runs.
+        """
+        d = self._dfpt_input(2)
+        d["workflow"]["eps_inf"] = 11.7  # type: ignore[index]
+        with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_without_eps_inf_set(self) -> None:
+        """The unset default (no dielectric run at all) is refused the same way."""
+        d = self._dfpt_input(2)
+        del d["workflow"]["eps_inf"]  # type: ignore[attr-defined]
+        with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_with_dscf_screening(self) -> None:
+        """A mutant that ignores ``screening_method`` would accept this: it must not.
+
+        ``eps_inf_factor`` densifies the DFPT dielectric step; DSCF never
+        wires ``eps_inf: auto`` to a dielectric step at all.
+        """
+        d = self._dfpt_input(2)
+        d["workflow"]["screening_method"] = "dscf"  # type: ignore[index]
+        with pytest.raises(ValueError, match="DSCF route has no dielectric-constant step yet"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_on_wannierize(self) -> None:
+        """A mutant that ignores ``task`` would accept this: it must not.
+
+        ``task: wannierize`` runs no DFPT chain and so no dielectric step.
+        """
+        d = self._dfpt_input(2)
+        d["workflow"]["task"] = "wannierize"  # type: ignore[index]
+        with pytest.raises(ValueError, match="task: wannierize"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_on_bse(self) -> None:
+        """``bse`` composes the same DFPT chain but does not yet thread ``eps_inf_factor``."""
+        d = self._dfpt_input(2)
+        d["workflow"]["task"] = "bse"  # type: ignore[index]
+        d["calculator_parameters"]["yambo"] = {  # type: ignore[index]
+            "BndsRnXs": [1, 100],
+            "NGsBlkXs": 2,
+            "BSEBands": [1, 4],
+            "BEnRange": [0, 10],
+        }
+        with pytest.raises(ValueError, match="task: bse"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_on_dft_eps_names_grid_instead(self) -> None:
+        """``task: dft_eps`` already samples its dielectric scf via ``kpoints.grid``.
+
+        The message points at the keyword that actually reaches it, not a
+        generic "no effect" line.
+        """
+        d = self._dfpt_input(2)
+        d["workflow"]["task"] = "dft_eps"  # type: ignore[index]
+        with pytest.raises(ValueError, match=r"task: dft_eps.*`kpoints\.grid`"):
+            KoopmansInput.model_validate(d)
+
+    def test_refused_on_gamma_only(self) -> None:
+        """A gamma-only run has no k-point grid to densify."""
+        d = self._dfpt_input()
+        d["kpoints"] = {"gamma_only": True, "eps_inf_factor": 2}
+        with pytest.raises(ValueError, match=r"eps_inf_factor.*gamma_only"):
+            KoopmansInput.model_validate(d)
 
 
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:

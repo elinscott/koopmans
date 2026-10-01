@@ -9,6 +9,7 @@ run, the calculation type its own inputs declare.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -24,24 +25,29 @@ from koopmans.plotting import (
     BandSeries,
     EnergyZero,
     NoEnergyZeroError,
+    ParityQuantity,
+    ParitySeries,
     PathMismatchError,
     PlottingError,
     SpectrumSeries,
     StyleError,
     apply_energy_zero,
+    band_gap,
     check_paths_agree,
     check_style,
     describe_energy_zero,
     draw_band_structures,
+    draw_parity,
     draw_spectra,
     path_distances,
     render_band_structures,
     render_spectra,
     resolve_band_series,
+    resolve_parity_series,
     resolve_spectrum_series,
     write_series_json,
 )
-from koopmans.plotting.resolve import SUGGESTION_LIMIT
+from koopmans.plotting.resolve import BAND_PRODUCERS, SUGGESTION_LIMIT
 from tests.fixtures import attach, make_process
 
 PW_BANDS = "aiida.workflows:quantumespresso.pw.bands"
@@ -52,7 +58,14 @@ W90_CALC = "aiida_wannier90.calculations.wannier90.Wannier90Calculation"
 PW_CALC = "aiida.calculations:quantumespresso.pw"
 W90_OPTIMIZE = "aiida.workflows:wannier90_workflows.optimize"
 MERGE_INTERPOLATED_BANDS = "aiida_koopmans.workgraphs.auto_wannierize.merge_interpolated_bands"
-BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.dscf.build_band_structure"
+
+
+#: The name AiiDA stores for the step that attaches interpolated
+#: eigenvalues to their k-path. Spelled out rather than imported: importing
+#: aiida-koopmans at collection time loads the AiiDA configuration, which a
+#: fresh CI checkout has none of yet. ``TestProcessTypeNames`` reads the
+#: real name off the function and fails if this drifts from it.
+BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.band_structure.build_band_structure"
 
 #: A cubic cell, so that reciprocal-space distances are easy to reason about.
 CUBIC = [[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]]
@@ -162,6 +175,15 @@ def blank_axes() -> Any:
     return plt.subplots()[1]
 
 
+def gap_labels(axes: Any) -> list[str]:
+    """Return the gap-value labels ``_draw_gap`` wrote on ``axes``, in draw order.
+
+    The arrow half of each annotation carries no text, so filtering out the
+    empty ones leaves only the labels.
+    """
+    return [text.get_text() for text in axes.texts if text.get_text()]
+
+
 @pytest.fixture(autouse=True)
 def close_figures() -> Any:
     """Close every figure a test opened.
@@ -221,6 +243,105 @@ def series(label: str = "DFT", **overrides: Any) -> BandSeries:
     }
     fields.update(overrides)
     return BandSeries(**fields)
+
+
+def indirect_gap_series(label: str = "indirect") -> BandSeries:
+    """Return a series whose VBM sits at Γ and CBM at X, 1.5 eV apart."""
+    return series(
+        label,
+        energies=[[-1.0, 2.0], [-1.2, 1.0], [-1.5, 0.5]],
+        vbm=-1.0,
+    )
+
+
+def direct_gap_series(label: str = "direct") -> BandSeries:
+    """Return a series whose VBM and CBM both sit at X, 1.2 eV apart."""
+    return series(
+        label,
+        energies=[[-2.0, 3.0], [-1.5, 2.0], [-1.0, 0.2]],
+        vbm=-1.0,
+    )
+
+
+def repeated_high_symmetry_series(label: str = "repeated") -> BandSeries:
+    """Return a series whose path visits Γ three times: G-X-G-X-G.
+
+    The valence band edge sits at every Γ; the conduction band minimum sits
+    one step from the middle Γ, far closer to it than to the first or the
+    last — so a VBM/CBM pairing that always took the first or the last
+    occurrence would draw the gap across most of the path instead of at the
+    edge it belongs to.
+    """
+    return series(
+        label,
+        kpoints=[
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+        energies=[
+            [-1.0, 2.0],
+            [-1.1, 1.8],
+            [-1.3, 1.5],
+            [-1.1, 1.8],
+            [-1.0, 2.0],
+            [-1.1, 0.3],
+            [-1.3, 1.5],
+            [-1.1, 1.8],
+            [-1.0, 2.0],
+        ],
+        path_labels=[(0, "G"), (2, "X"), (4, "G"), (6, "X"), (8, "G")],
+        vbm=-1.0,
+    )
+
+
+def tied_pair_series(label: str = "tied") -> BandSeries:
+    """Return a series with two VBM/CBM pairs exactly as far apart as each other.
+
+    Five k-points at binary-fraction steps (0, 0.25, 0.5, 0.75, 1.0) along a
+    cubic cell's x axis put the valence edge at the two ends (0 and 4) and the
+    conduction minimum at the two points next to them (1 and 3): pairing
+    (0, 1) and pairing (4, 3) are exactly one step apart, tied. The
+    ascending scan meets (0, 1) first.
+    """
+    return series(
+        label,
+        kpoints=[
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.75, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ],
+        energies=[
+            [-1.0, 5.0],
+            [-2.0, 1.0],
+            [-3.0, 5.0],
+            [-2.0, 1.0],
+            [-1.0, 5.0],
+        ],
+        vbm=-1.0,
+    )
+
+
+def metallic_series(label: str = "metal") -> BandSeries:
+    """Return a series whose reported edge sits inside a partially filled band.
+
+    The state just above the edge is the same band's own dispersion at a
+    neighbouring k-point, half a meV away — a metal's Fermi surface, not a
+    real gap.
+    """
+    return series(
+        label,
+        energies=[[-5.0, -0.9995], [-5.0, -1.0], [-5.0, 5.0]],
+        vbm=-1.0,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -325,6 +446,92 @@ class TestSeriesRecords:
         assert record["energies"] == [[-5.0, 5.0], [-4.5, 5.5], [-4.0, 6.0]]
         assert record["path_labels"] == [[0, "G"], [2, "X"]]
 
+    def test_the_gap_is_written_whether_or_not_it_is_drawn(self, tmp_path: Path) -> None:
+        """A script can read a series' gap off the file without asking for --gap."""
+        target = tmp_path / "bands.json"
+        write_series_json([indirect_gap_series()], target)
+        payload = json.loads(target.read_text())
+
+        (record,) = payload["series"]
+        assert record["gap"]["value"] == pytest.approx(1.5)
+        assert record["gap"]["direct"] is False
+        assert record["gap"]["vbm_distance"] == pytest.approx(0.0)
+        assert record["gap"]["cbm_distance"] == pytest.approx(np.pi / 4)
+
+    def test_a_series_without_an_edge_omits_the_gap(self, tmp_path: Path) -> None:
+        """Nothing to measure a gap from is recorded as ``None``, not left out."""
+        target = tmp_path / "bands.json"
+        write_series_json([series("DFT")], target)
+        payload = json.loads(target.read_text())
+
+        (record,) = payload["series"]
+        assert record["gap"] is None
+
+
+# ----------------------------------------------------------------------
+# The band gap
+# ----------------------------------------------------------------------
+
+
+class TestBandGap:
+    """The valence-to-conduction gap computed from a series' reported edge."""
+
+    def test_indirect_gap_reports_value_positions_and_direct_flag(self) -> None:
+        """VBM at Γ, CBM at X: an indirect gap, not at the same k-point."""
+        gap = band_gap(indirect_gap_series())
+
+        assert gap.value == pytest.approx(1.5)
+        assert gap.vbm == pytest.approx(-1.0)
+        assert gap.cbm == pytest.approx(0.5)
+        assert gap.vbm_kpoint_index == 0
+        assert gap.cbm_kpoint_index == 2
+        assert gap.vbm_distance == pytest.approx(0.0)
+        assert gap.cbm_distance == pytest.approx(np.pi / 4)
+        assert gap.direct is False
+
+    def test_direct_gap_sits_at_one_k_point(self) -> None:
+        """VBM and CBM both at X: a direct gap."""
+        gap = band_gap(direct_gap_series())
+
+        assert gap.value == pytest.approx(1.2)
+        assert gap.vbm_kpoint_index == gap.cbm_kpoint_index == 2
+        assert gap.direct is True
+
+    def test_a_series_without_an_edge_raises(self) -> None:
+        """Nothing to measure a gap from is refused, not silently skipped."""
+        with pytest.raises(ValueError, match="DFT"):
+            band_gap(series("DFT"))
+
+    def test_a_repeated_high_symmetry_point_picks_the_nearest_pair(self) -> None:
+        """Of three Γ's carrying the edge, the one nearest the CBM is chosen.
+
+        Picking the first or the last Γ instead would still report the right
+        gap value (every Γ carries the same energy) but the wrong k-point,
+        so the assertion is on the index, not the value.
+        """
+        gap = band_gap(repeated_high_symmetry_series())
+
+        assert gap.vbm_kpoint_index == 4
+        assert gap.cbm_kpoint_index == 5
+        assert gap.value == pytest.approx(1.3)
+        assert gap.direct is False
+
+    def test_a_tie_keeps_the_pair_the_ascending_scan_meets_first(self) -> None:
+        """Two pairs exactly as far apart as each other: the first one visited stands.
+
+        A ``<`` mutated to ``<=`` would instead keep the last pair the nested
+        scan visits, (4, 3), since a tie would then overwrite the earlier one.
+        """
+        gap = band_gap(tied_pair_series())
+
+        assert gap.vbm_kpoint_index == 0
+        assert gap.cbm_kpoint_index == 1
+
+    def test_a_metal_reports_no_band_gap(self) -> None:
+        """A state within the minimum gap of the edge is the same band, not a conduction state."""
+        with pytest.raises(ValueError, match="metal"):
+            band_gap(metallic_series())
+
 
 # ----------------------------------------------------------------------
 # The path axis
@@ -365,6 +572,31 @@ class TestPathDistances:
 # ----------------------------------------------------------------------
 # The resolver
 # ----------------------------------------------------------------------
+
+
+class TestProcessTypeNames:
+    """The names this module spells out are the ones AiiDA actually stores."""
+
+    def test_the_band_structure_step_is_registered_under_the_name_it_writes(self) -> None:
+        """Moving the calcfunction must fail here, not go unnoticed in a figure.
+
+        The resolver matches a stored ``process_type`` string, and nothing
+        else ties that string to the function it names: a move renames
+        every node written afterwards and leaves the resolver matching a
+        name nothing writes any more.
+        """
+        from aiida_koopmans.workgraphs.ui.band_structure import build_band_structure
+
+        process_class = build_band_structure._callable.process_class
+        stored = f"{process_class.__module__}.{process_class.__name__}"
+
+        assert stored == BUILD_BAND_STRUCTURE
+
+    def test_the_name_is_registered(self) -> None:
+        """The resolver's producer table matches the name AiiDA stores."""
+        registered = {producer.process_type for producer in BAND_PRODUCERS}
+
+        assert BUILD_BAND_STRUCTURE in registered
 
 
 class TestResolver:
@@ -475,6 +707,72 @@ class TestResolver:
         )
         attach(ham, "output_parameters", orm.Dict({"ki_homo_energy": 5.2}))  # type: ignore[no-untyped-call]
         folder = write_run_folder(tmp_path, "si_ki", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert [item.label for item in found] == ["KI"]
+        assert found[0].vbm == pytest.approx(5.2)
+
+    def test_a_smooth_dfpt_run_plots_both_ki_curves(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A smooth DFPT run answers ``KI`` twice, and both curves plot.
+
+        kcw.x interpolated the Koopmans Hamiltonian from the coarse grid,
+        and the smooth stage interpolated it again with a denser-grid DFT
+        Hamiltonian; nothing decides which one the user wants, so both
+        plot, told apart by which stage produced them.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
+        ham = make_process(
+            KCW_HAM, caller=root, link_label="ham", calcjob=True, computer=aiida_localhost
+        )
+        attach(ham, "bands", make_bands([[0.0, 0.0, 0.0]], [[-5.4, 5.2]]))
+        attach(ham, "output_parameters", orm.Dict({"ki_homo_energy": 5.2}))  # type: ignore[no-untyped-call]
+        built = make_process(
+            BUILD_BAND_STRUCTURE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(4.8).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 4.8]]))
+        folder = write_run_folder(tmp_path, "si_ki_smooth", root)
+
+        found, _ = resolve_band_series([folder])
+
+        by_label = {item.label: item for item in found}
+        assert set(by_label) == {"KI (kcw.x)", "KI (smooth interpolation)"}
+        assert by_label["KI (kcw.x)"].vbm == pytest.approx(5.2)
+        assert by_label["KI (smooth interpolation)"].vbm == pytest.approx(4.8)
+
+    def test_kcw_own_bands_still_plot_from_their_own_step_folder(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A folder naming the ham step alone sees only what that step produced.
+
+        The smooth stage lives elsewhere in the same run's call tree; a
+        folder scoped to the ham calculation itself never reaches it, and
+        plots kcw.x's own interpolation unqualified, same as it would with
+        no smooth stage in the run at all.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="SinglepointDFPTWorkflow")
+        ham = make_process(
+            KCW_HAM, caller=root, link_label="ham", calcjob=True, computer=aiida_localhost
+        )
+        attach(ham, "bands", make_bands([[0.0, 0.0, 0.0]], [[-5.4, 5.2]]))
+        attach(ham, "output_parameters", orm.Dict({"ki_homo_energy": 5.2}))  # type: ignore[no-untyped-call]
+        built = make_process(
+            BUILD_BAND_STRUCTURE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(4.8).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 4.8]]))
+        folder = write_run_folder(tmp_path, "ham", ham)
 
         found, _ = resolve_band_series([folder])
 
@@ -660,6 +958,111 @@ class TestResolver:
 
         assert [item.label for item in found] == ["KI"]
         assert found[0].vbm == pytest.approx(1.25)
+
+    def test_a_dscf_run_with_a_path_shows_both_dft_and_ki(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """A ΔSCF run given ``kpoints.path`` carries both bands from one folder.
+
+        The pw.x quality-check bands run the Wannier initialization samples
+        along ``kpoints.path`` (nested arbitrarily deep under the run) and
+        the ΔSCF interpolation's own Koopmans bands are declared,
+        unrelated producers; the whole-run folder resolves both, one
+        curve per producer, with no special-casing for the route.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="KoopmansDSCFWorkflow")
+        wannier_initialization = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannier_initialization"
+        )
+        wannierize = make_process(
+            "aiida.workflows:workgraph.engine",
+            caller=wannier_initialization,
+            link_label="wannierize",
+        )
+        dft_bands = make_process(
+            PW_BASE,
+            caller=wannierize,
+            link_label="bands",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"pw__parameters": orm.Dict({"CONTROL": {"calculation": "bands"}})},  # type: ignore[no-untyped-call]
+        )
+        attach(dft_bands, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 5.0]]))
+        built = make_process(
+            BUILD_BAND_STRUCTURE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(1.25).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 1.25, 4.0]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == ["DFT", "KI"]
+
+    def test_a_smooth_dscf_run_shows_both_dft_bands_told_apart(
+        self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
+    ) -> None:
+        """With smooth interpolation on, both Wannierizations sample the path.
+
+        The coarse initialization mesh and the denser smooth mesh each run
+        their own pw.x quality-check bands, so one folder now carries two
+        "DFT" producers; the existing call-chain disambiguation (the same
+        mechanism a per-block fan-out uses) must tell them apart by the
+        step that ran them, or the legend would key two different curves
+        to the same name.
+        """
+        root = make_process("aiida.workflows:workgraph.engine", label="KoopmansDSCFWorkflow")
+        wannier_initialization = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannier_initialization"
+        )
+        wannierize = make_process(
+            "aiida.workflows:workgraph.engine",
+            caller=wannier_initialization,
+            link_label="wannierize",
+        )
+        coarse_bands = make_process(
+            PW_BASE,
+            caller=wannierize,
+            link_label="bands",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"pw__parameters": orm.Dict({"CONTROL": {"calculation": "bands"}})},  # type: ignore[no-untyped-call]
+        )
+        attach(coarse_bands, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 5.0]]))
+        wannierize_smooth = make_process(
+            "aiida.workflows:workgraph.engine", caller=root, link_label="wannierize_smooth"
+        )
+        smooth_bands = make_process(
+            PW_BASE,
+            caller=wannierize_smooth,
+            link_label="bands",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"pw__parameters": orm.Dict({"CONTROL": {"calculation": "bands"}})},  # type: ignore[no-untyped-call]
+        )
+        attach(smooth_bands, "output_band", make_bands([[0.0, 0.0, 0.0]], [[-5.1, 5.1]]))
+        built = make_process(
+            BUILD_BAND_STRUCTURE,
+            caller=root,
+            link_label="build_band_structure",
+            calcjob=True,
+            computer=aiida_localhost,
+            inputs={"reference": orm.Float(1.25).store()},  # type: ignore[no-untyped-call]
+        )
+        attach(built, "result", make_bands([[0.0, 0.0, 0.0]], [[-5.0, 1.25, 4.0]]))
+        folder = write_run_folder(tmp_path, "si", root)
+
+        found, _ = resolve_band_series([folder])
+
+        assert sorted(item.label for item in found) == [
+            "DFT (wannierize smooth)",
+            "DFT (wannierize)",
+            "KI",
+        ]
 
     def test_split_mode_names_the_gauge_fragments_and_merge(
         self, aiida_profile: Any, aiida_localhost: orm.Computer, tmp_path: Path
@@ -1199,6 +1602,144 @@ class TestRenderer:
 
 
 # ----------------------------------------------------------------------
+# The band-gap annotation
+# ----------------------------------------------------------------------
+
+
+def arrow_annotations(axes: Any) -> list[Any]:
+    """Return the arrow halves ``_draw_gap`` wrote on ``axes``, in draw order.
+
+    The label half carries text; the arrow half is an empty-text annotation
+    whose ``xy`` is the arrow's head, at the conduction band minimum.
+    """
+    return [text for text in axes.texts if not text.get_text()]
+
+
+def dashed_lines(axes: Any) -> list[Any]:
+    """Return the dashed valence-level rules an indirect gap draws."""
+    return [line for line in axes.get_lines() if line.get_linestyle() == "--"]
+
+
+class TestGapAnnotation:
+    """``show_gap=True`` draws a series' band gap in the conventional textbook form.
+
+    A dashed rule at the valence band maximum's energy reaches from its own
+    k-point to a vertical double-headed arrow at the conduction band
+    minimum's, labelled with the gap's value; a direct gap needs no rule,
+    since the arrow's own foot already sits at the valence band maximum.
+    """
+
+    def test_off_by_default_draws_nothing(self) -> None:
+        """The default figure carries no annotation at all."""
+        axes = blank_axes()
+
+        draw_band_structures(axes, [indirect_gap_series()])
+
+        assert gap_labels(axes) == []
+        assert arrow_annotations(axes) == []
+
+    def test_indirect_gap_draws_a_dashed_line_and_a_vertical_arrow(self) -> None:
+        """The rule reaches from the VBM's k-point to the arrow at the CBM's."""
+        axes = blank_axes()
+        item = indirect_gap_series()
+        item.show_gap = True
+
+        draw_band_structures(axes, [item])
+
+        assert gap_labels(axes) == ["1.50 eV"]
+        [line] = dashed_lines(axes)
+        [arrow] = arrow_annotations(axes)
+        assert line.get_xdata()[0] == pytest.approx(0.0)  # the VBM's own k-point
+        assert line.get_xdata()[1] == pytest.approx(arrow.xy[0])  # meets the arrow
+        assert arrow.xy[0] == pytest.approx(np.pi / 4)  # the CBM's own k-point
+
+    def test_direct_gap_draws_only_the_arrow(self) -> None:
+        """VBM and CBM share a k-point, so there is nowhere for a rule to reach from."""
+        axes = blank_axes()
+        item = direct_gap_series()
+        item.show_gap = True
+
+        draw_band_structures(axes, [item])
+
+        assert gap_labels(axes) == ["1.20 eV"]
+        assert dashed_lines(axes) == []
+        assert len(arrow_annotations(axes)) == 1
+
+    def test_a_series_without_an_edge_is_skipped_not_errored(self) -> None:
+        """No valence band edge is a reason to skip the series, not to fail the figure."""
+        axes = blank_axes()
+        item = series("no edge")
+        item.show_gap = True
+
+        draw_band_structures(axes, [item])
+
+        assert gap_labels(axes) == []
+        assert arrow_annotations(axes) == []
+
+    def test_a_metal_is_skipped_not_errored(self) -> None:
+        """A partially filled band reporting no real gap is skipped like one with no edge."""
+        axes = blank_axes()
+        item = metallic_series()
+        item.show_gap = True
+
+        draw_band_structures(axes, [item])
+
+        assert gap_labels(axes) == []
+        assert arrow_annotations(axes) == []
+
+    def test_a_series_not_asking_for_one_draws_no_annotation(self) -> None:
+        """A series left with ``show_gap`` unset draws no gap even on an overlay."""
+        axes = blank_axes()
+        annotated = indirect_gap_series("annotated")
+        annotated.show_gap = True
+        plain = series("plain")
+
+        draw_band_structures(axes, [annotated, plain])
+
+        assert gap_labels(axes) == ["1.50 eV"]
+
+    def test_two_arrows_sharing_a_cbm_position_both_land_there(self) -> None:
+        """Two gaps whose conduction-band-minimum k-point coincides both draw there.
+
+        A displaced arrow would claim the conduction band minimum sits
+        somewhere it does not, so the arrows are left to overlap rather than
+        spread apart.
+        """
+        axes = blank_axes()
+        first = indirect_gap_series("first")
+        first.show_gap = True
+        second = series("second", energies=first.energies, vbm=first.vbm, show_gap=True)
+
+        draw_band_structures(axes, [first, second])
+
+        arrow_x = [arrow.xy[0] for arrow in arrow_annotations(axes)]
+        true_x = np.pi / 4
+        assert arrow_x == pytest.approx([true_x, true_x])
+
+    def test_the_annotation_clips_to_the_axes(self) -> None:
+        """The arrow and its label clip to the axes, so a narrow --ylim cuts them off there.
+
+        Before this, both were drawn with ``annotation_clip=False`` and no
+        clip path of their own, so a y-range narrower than the gap ran the
+        arrow through the top spine and put the label outside the figure.
+        """
+        axes = blank_axes()
+        item = indirect_gap_series()
+        item.show_gap = True
+
+        draw_band_structures(axes, [item], ylim=(-2.0, 0.0))  # excludes the 0.5 eV CBM
+
+        [arrow] = arrow_annotations(axes)
+        [label] = [text for text in axes.texts if text.get_text()]
+        # ``axes.patch`` is a Rectangle, which matplotlib clips to via
+        # ``clip_box`` rather than ``clip_path`` (its documented shortcut).
+        assert arrow.get_clip_box() is not None
+        assert arrow.arrow_patch is not None
+        assert arrow.arrow_patch.get_clip_box() is not None
+        assert label.get_clip_box() is not None
+
+
+# ----------------------------------------------------------------------
 # How a series is drawn
 # ----------------------------------------------------------------------
 
@@ -1373,6 +1914,51 @@ def dft_run(tmp_path: Path, name: str, vbm: float, energies: list[list[float]]) 
     return write_run_folder(tmp_path, name, root)
 
 
+def dft_run_no_edge(tmp_path: Path, name: str, energies: list[list[float]]) -> Path:
+    """Write a run folder holding a pw.x band structure with no reported edge.
+
+    No occupations means ``_vbm_from_occupations`` finds none to read a
+    valence band maximum from.
+    """
+    root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+    chain = make_process(PW_BANDS, caller=root, link_label="bands")
+    attach(
+        chain,
+        "band_structure",
+        make_bands(
+            [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            energies,
+            cell=CUBIC,
+            labels=[(0, "G"), (2, "X")],
+        ),
+    )
+    return write_run_folder(tmp_path, name, root)
+
+
+def dft_run_metal(
+    tmp_path: Path, name: str, energies: list[list[float]], occupations: list[list[float]]
+) -> Path:
+    """Write a run folder holding a pw.x band structure with a partially filled band.
+
+    Explicit ``occupations`` let a caller put the reported edge inside a
+    metal's own band, unlike ``dft_run``'s single-threshold derivation.
+    """
+    root = make_process("aiida.workflows:workgraph.engine", label="RunPwBands")
+    chain = make_process(PW_BANDS, caller=root, link_label="bands")
+    attach(
+        chain,
+        "band_structure",
+        make_bands(
+            [[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            energies,
+            cell=CUBIC,
+            labels=[(0, "G"), (2, "X")],
+            occupations=occupations,
+        ),
+    )
+    return write_run_folder(tmp_path, name, root)
+
+
 class TestCommand:
     """``koopmans plot bandstructure`` end to end."""
 
@@ -1456,6 +2042,270 @@ class TestCommand:
         # Clipping frames the figure; it does not discard the bands behind it.
         payload = json.loads((tmp_path / "zno.json").read_text())
         assert payload["series"][0]["energies"][0][0] == pytest.approx(-130.0)
+
+    def test_gap_draws_the_annotation(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gap draws the run's band gap on the figure."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "--gap", "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert gap_labels(drawn_axes[-1]) != []
+
+    def test_gap_is_off_by_default(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """No --gap draws no annotation, even though the run reports an edge."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert gap_labels(drawn_axes[-1]) == []
+
+    def test_gap_written_after_one_folder_annotates_only_that_series(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gap pairs with the folder it follows, the same way --style does."""
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        ki = dft_run(tmp_path, "ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", str(lda), str(ki), "--gap", "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(gap_labels(drawn_axes[-1])) == 1
+
+    def test_gap_before_any_folder_is_a_usage_error(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--gap must follow the folder it applies to, the same way --style does."""
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        ki = dft_run(tmp_path, "ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", "--gap", str(lda), str(ki), "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code != 0
+        assert "must follow the folder it applies to" in result.output
+
+    def test_gap_with_gaps_is_a_usage_error(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--gap and --gaps do not mix."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--gap",
+                "--gaps",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "--gap and --gaps do not mix" in result.output
+
+    def test_gaps_annotates_every_series(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gaps annotates every series with an edge."""
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        ki = dft_run(tmp_path, "ki", 5.4, [[-6.0, 5.4], [-5.5, 8.0], [-5.0, 8.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", "--gaps", str(lda), str(ki), "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(gap_labels(drawn_axes[-1])) == 2
+
+    def test_gaps_skips_an_edgeless_folder(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gaps leaves an edgeless folder out silently, drawing the rest.
+
+        Unlike --gap named on a folder by hand, --gaps never refuses: a
+        folder with no gap to draw is just skipped, and the command still
+        exits 0.
+        """
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        flat = dft_run_no_edge(tmp_path, "flat", [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            ["plot", "bandstructure", "--gaps", str(lda), str(flat), "-o", str(tmp_path / "a.png")],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(gap_labels(drawn_axes[-1])) == 1
+
+    def test_gap_named_on_an_edgeless_folder_is_refused_by_name(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """Asking --gap for a folder that reports no edge is refused, not skipped.
+
+        Naming the folder was asking for its gap on purpose, unlike --gaps,
+        which leaves an edgeless folder out silently. The assertion is on
+        the --gap refusal itself: --zero none keeps a missing valence band
+        edge from also failing the energy zero, which would pass this test
+        for the wrong reason on a lone folder.
+        """
+        from koopmans.cli import cli
+
+        folder = dft_run_no_edge(tmp_path, "flat", [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "--gap",
+                "--zero",
+                "none",
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert str(folder) in result.output
+
+    def test_gap_named_on_a_metallic_folder_is_refused_by_name(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """A folder whose edge sits inside a metal's own band is refused like an edgeless one."""
+        from koopmans.cli import cli
+
+        folder = dft_run_metal(
+            tmp_path,
+            "metal",
+            energies=[[-5.0, -0.9995], [-5.0, -1.0], [-5.0, 5.0]],
+            occupations=[[2.0, 0.0], [2.0, 1.5], [2.0, 0.0]],
+        )
+
+        result = runner.invoke(
+            cli, ["plot", "bandstructure", str(folder), "--gap", "-o", str(tmp_path / "a.png")]
+        )
+
+        assert result.exit_code != 0
+        assert str(folder) in result.output
+
+    def test_gaps_skips_a_metallic_folder(
+        self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
+    ) -> None:
+        """--gaps leaves a metallic folder out, drawing the rest."""
+        from koopmans.cli import cli
+
+        lda = dft_run(tmp_path, "lda", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+        metal = dft_run_metal(
+            tmp_path,
+            "metal",
+            energies=[[-5.0, -0.9995], [-5.0, -1.0], [-5.0, 5.0]],
+            occupations=[[2.0, 0.0], [2.0, 1.5], [2.0, 0.0]],
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                "--gaps",
+                str(lda),
+                str(metal),
+                "-o",
+                str(tmp_path / "a.png"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert len(gap_labels(drawn_axes[-1])) == 1
+
+    def test_the_gap_json_is_null_for_a_metallic_series(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """The JSON record's gap is null for a folder with no real gap, a metal included."""
+        from koopmans.cli import cli
+
+        folder = dft_run_metal(
+            tmp_path,
+            "metal",
+            energies=[[-5.0, -0.9995], [-5.0, -1.0], [-5.0, 5.0]],
+            occupations=[[2.0, 0.0], [2.0, 1.5], [2.0, 0.0]],
+        )
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "-o",
+                str(tmp_path / "a.png"),
+                "--data",
+                str(tmp_path / "a.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "a.json").read_text())
+        assert payload["series"][0]["gap"] is None
+
+    def test_the_gap_json_is_written_whether_or_not_drawn(
+        self, aiida_profile: Any, runner: Any, tmp_path: Path
+    ) -> None:
+        """--data carries the gap even without --gap, so a script can read it."""
+        from koopmans.cli import cli
+
+        folder = dft_run(tmp_path, "zno", 6.0, [[-5.0, 6.0], [-4.5, 7.0], [-4.0, 7.5]])
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "bandstructure",
+                str(folder),
+                "-o",
+                str(tmp_path / "a.png"),
+                "--data",
+                str(tmp_path / "a.json"),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads((tmp_path / "a.json").read_text())
+        assert payload["series"][0]["gap"] is not None
 
     def test_a_label_names_the_curve_and_brings_the_legend_back(
         self, aiida_profile: Any, runner: Any, drawn_axes: Any, tmp_path: Path
@@ -3585,3 +4435,331 @@ class TestSpectrumCommand:
         assert axes.get_xlim() == pytest.approx((0.0, 1.0))
         bottom, _ = axes.get_ylim()
         assert bottom == pytest.approx(0.0)
+
+
+# ----------------------------------------------------------------------
+# ``koopmans plot parity``
+# ----------------------------------------------------------------------
+
+
+def deltas_payload(
+    alphas: tuple[list[float], list[float]],
+    eigenvalues: tuple[list[list[float]], list[list[float]]],
+) -> dict[str, Any]:
+    """Return one snapshot's entry of a `ml: {mode: test}` run's evaluation.
+
+    Eigenvalues come as a table with one row per spin block, the shape
+    ``compare_final_kis`` writes.
+    """
+    return {
+        quantity: {"computed": computed, "predicted": predicted}
+        for quantity, (computed, predicted) in (
+            ("alphas", alphas),
+            ("eigenvalues", eigenvalues),
+        )
+    }
+
+
+def parity_run(
+    tmp_path: Path,
+    name: str,
+    snapshots: dict[str, dict[str, Any]],
+    occupancy: dict[str, list[bool]] | None = None,
+    evaluation: dict[str, Any] | None = None,
+) -> Path:
+    """Write a run folder holding a `ml: {mode: test}` trajectory's evaluation.
+
+    ``occupancy`` publishes each snapshot's dataset ``filled`` column, the
+    run's own record of which orbitals are occupied; leaving it out is a
+    run that published none. ``evaluation`` replaces the whole evaluation
+    output, for a run of some other mode.
+    """
+    root = make_process(
+        "aiida.workflows:workgraph.engine",
+        process_label="WorkGraph<TrajectoryWorkflow>",
+    )
+    if evaluation is None:
+        evaluation = {"metrics": {"mae": 0.01}, "alpha_and_eigenvalue_deltas": snapshots}
+    attach(root, "evaluation", orm.Dict(evaluation))  # type: ignore[no-untyped-call]
+    for label, filled in (occupancy or {}).items():
+        attach(root, f"datasets__{label}__filled", orm.List(filled))  # type: ignore[no-untyped-call]
+    return write_run_folder(tmp_path, name, root)
+
+
+def parity_series(label: str = "test", **overrides: Any) -> ParitySeries:
+    """Return a parity series with four points straddling the identity line."""
+    fields: dict[str, Any] = {
+        "label": label,
+        "quantity": ParityQuantity.ALPHAS,
+        "computed": [0.30, 0.40, 0.50, 0.60],
+        "predicted": [0.32, 0.39, 0.52, 0.58],
+        "filled": [True, True, False, False],
+    }
+    fields.update(overrides)
+    return ParitySeries(**fields)
+
+
+def point_groups(axes: Any) -> list[Any]:
+    """Return the marker groups drawn on a parity panel, in drawing order."""
+    return [line for line in axes.get_lines() if line.get_marker() == "o"]
+
+
+def reference_lines(axes: Any) -> list[Any]:
+    """Return the panel's identity or zero rules — every line carrying no marker."""
+    return [line for line in axes.get_lines() if line.get_marker() in ("", "None", None)]
+
+
+def metrics_text(axes: Any) -> str:
+    """Return the MAE/RMSE annotation drawn on a parity panel."""
+    from matplotlib.offsetbox import AnchoredText
+
+    (anchored,) = [artist for artist in axes.artists if isinstance(artist, AnchoredText)]
+    return str(anchored.txt.get_text())
+
+
+class TestParityResolver:
+    """Turning a `ml: {mode: test}` run folder into parity series."""
+
+    @pytest.mark.parametrize("with_occupancy", [True, False])
+    def test_snapshots_pool_into_one_series_per_quantity(
+        self, aiida_profile: Any, tmp_path: Path, with_occupancy: bool
+    ) -> None:
+        """Both quantities are pooled in snapshot-name order, occupancy and all.
+
+        The eigenvalue table holds one row per spin block, so its
+        occupancy is the snapshot's own repeated once per block; a run
+        that published no ``filled`` column reports none rather than
+        guessing one.
+        """
+        snapshots = {
+            # Written out of order, to pin that the pooled columns follow
+            # the snapshot names rather than the order the run finished in.
+            "snapshot_2": deltas_payload(
+                alphas=([0.5, 0.6], [0.52, 0.58]),
+                eigenvalues=([[-5.0, 1.0], [-5.0, 1.0]], [[-5.1, 1.2], [-5.1, 1.2]]),
+            ),
+            "snapshot_1": deltas_payload(
+                alphas=([0.3, 0.4], [0.31, 0.42]),
+                eigenvalues=([[-6.0, 2.0], [-6.0, 2.0]], [[-6.2, 2.1], [-6.2, 2.1]]),
+            ),
+        }
+        occupancy = {"snapshot_1": [True, False], "snapshot_2": [True, False]}
+        folder = parity_run(
+            tmp_path, "test", snapshots, occupancy=occupancy if with_occupancy else None
+        )
+
+        panels, warnings = resolve_parity_series(
+            folder, [ParityQuantity.ALPHAS, ParityQuantity.EIGENVALUES]
+        )
+
+        assert warnings == []
+        alphas, eigenvalues = panels
+        assert alphas.label == "TrajectoryWorkflow"
+        assert alphas.computed == pytest.approx([0.3, 0.4, 0.5, 0.6])
+        assert alphas.predicted == pytest.approx([0.31, 0.42, 0.52, 0.58])
+        assert eigenvalues.computed == pytest.approx([-6.0, 2.0, -6.0, 2.0, -5.0, 1.0, -5.0, 1.0])
+        assert eigenvalues.units == "eV"
+        if not with_occupancy:
+            assert alphas.filled is None and eigenvalues.filled is None
+        else:
+            assert alphas.filled == [True, False, True, False]
+            assert eigenvalues.filled == [True, False] * 4
+
+    def test_a_run_that_never_compared_two_final_kis_is_refused(
+        self, aiida_profile: Any, tmp_path: Path
+    ) -> None:
+        """A `mode: train` run scored a model but recomputed nothing to score against."""
+        folder = parity_run(
+            tmp_path, "train", {}, evaluation={"mae": 0.01, "rmse": 0.02, "n_samples": 6}
+        )
+
+        with pytest.raises(PlottingError) as excinfo:
+            resolve_parity_series(folder, [ParityQuantity.ALPHAS])
+
+        message = str(excinfo.value)
+        assert "TrajectoryWorkflow" in message
+        assert "ml: {mode: test}" in message
+        # The run did publish an evaluation, so the message must not claim
+        # it published none at all.
+        assert "published no screening-model evaluation" not in message
+
+    @pytest.mark.parametrize(
+        ("build_folder", "expected_route"),
+        [
+            pytest.param(
+                lambda tmp_path: write_run_folder(
+                    tmp_path,
+                    "si-dscf",
+                    make_process(
+                        "aiida.workflows:workgraph.engine",
+                        process_label="WorkGraph<KoopmansDSCFWorkflow>",
+                    ),
+                ),
+                "KoopmansDSCFWorkflow",
+                id="no-evaluation-output-at-all",
+            ),
+            pytest.param(
+                lambda tmp_path: parity_run(tmp_path, "predict", {}, evaluation={}),
+                "TrajectoryWorkflow",
+                id="empty-evaluation-from-predict-mode",
+            ),
+        ],
+    )
+    def test_a_run_with_no_evaluation_at_all_names_both_settings(
+        self,
+        aiida_profile: Any,
+        tmp_path: Path,
+        build_folder: Callable[[Path], Path],
+        expected_route: str,
+    ) -> None:
+        """A route that never trained anything needs the task set as well as the mode.
+
+        A `mode: predict` run publishes an empty evaluation dict rather than
+        omitting the output altogether; it is refused the same way as a run
+        with no evaluation output at all, not read as a run that scored a
+        model.
+        """
+        folder = build_folder(tmp_path)
+
+        with pytest.raises(PlottingError) as excinfo:
+            resolve_parity_series(folder, [ParityQuantity.ALPHAS])
+
+        message = str(excinfo.value)
+        assert expected_route in message
+        assert "task: trajectory" in message
+        assert "ml: {mode: test}" in message
+        assert "scored a model" not in message
+
+
+class TestParityRenderer:
+    """Drawing the record, straight off a ``ParitySeries``, no AiiDA."""
+
+    def test_parity_panel_draws_the_identity_line_and_splits_by_occupancy(self) -> None:
+        """Occupied points are filled, empty ones open, both on one square frame, untitled."""
+        axes = blank_axes()
+
+        draw_parity(axes, parity_series())
+
+        occupied, empty = point_groups(axes)
+        assert occupied.get_markerfacecolor() != "none"
+        assert empty.get_markerfacecolor() == "none"
+        assert occupied.get_xdata() == pytest.approx([0.30, 0.40])
+        assert empty.get_xdata() == pytest.approx([0.50, 0.60])
+        # One range on both axes, so the identity line runs at 45 degrees.
+        assert axes.get_xlim() == pytest.approx(axes.get_ylim())
+        (identity,) = reference_lines(axes)
+        assert identity.get_xdata() == pytest.approx(identity.get_ydata())
+        assert axes.get_title() == ""
+        assert "MAE" in metrics_text(axes)
+
+    def test_residual_panel_is_filled_and_y_symmetric_about_zero(self) -> None:
+        """Residual mode centres the y axis on zero and fills the marginal histogram."""
+        axes = blank_axes()
+        marginal = axes.get_figure().add_subplot(2, 1, 2, sharey=axes)
+
+        draw_parity(axes, parity_series(), residuals=True, marginal=marginal)
+
+        (zero,) = reference_lines(axes)
+        assert zero.get_ydata() == pytest.approx([0.0, 0.0])
+        # Residuals, not the predictions themselves.
+        assert point_groups(axes)[0].get_ydata() == pytest.approx([0.02, -0.01])
+        ymin, ymax = axes.get_ylim()
+        assert ymin == pytest.approx(-ymax)
+        (patch,) = marginal.patches
+        assert patch.get_fill()
+
+
+@pytest.fixture
+def drawn_parity_axes(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Return the axes of each panel ``koopmans plot parity`` draws, in order.
+
+    Same rationale as ``drawn_axes``, for ``draw_parity`` instead.
+    """
+    from koopmans.plotting import render
+
+    seen: list[Any] = []
+    original = render.draw_parity
+
+    def record(axes: Any, *args: Any, **kwargs: Any) -> bool:
+        """Call through to the renderer, keeping the axes it drew."""
+        seen.append(axes)
+        return bool(original(axes, *args, **kwargs))
+
+    monkeypatch.setattr(render, "draw_parity", record)
+    return seen
+
+
+class TestParityCommand:
+    """``koopmans plot parity`` end to end."""
+
+    @pytest.mark.parametrize(
+        ("flags", "ylabels", "quantities"),
+        [
+            (
+                [],
+                [r"$\alpha_i^{\mathrm{pred}}$", r"$\varepsilon_i^{\mathrm{pred}}$ (eV)"],
+                ["alphas", "eigenvalues"],
+            ),
+            (
+                ["--alphas", "--eigenvalues"],
+                [r"$\alpha_i^{\mathrm{pred}}$", r"$\varepsilon_i^{\mathrm{pred}}$ (eV)"],
+                ["alphas", "eigenvalues"],
+            ),
+            (["--alphas"], [r"$\alpha_i^{\mathrm{pred}}$"], ["alphas"]),
+            (["--eigenvalues"], [r"$\varepsilon_i^{\mathrm{pred}}$ (eV)"], ["eigenvalues"]),
+            (
+                ["--residuals"],
+                [
+                    r"$\alpha_i^{\mathrm{pred}} - \alpha_i^{\mathrm{true}}$",
+                    r"$\varepsilon_i^{\mathrm{pred}} - \varepsilon_i^{\mathrm{true}}$ (eV)",
+                ],
+                ["alphas", "eigenvalues"],
+            ),
+        ],
+    )
+    def test_the_quantity_flags_choose_the_panels(
+        self,
+        aiida_profile: Any,
+        runner: Any,
+        drawn_parity_axes: Any,
+        tmp_path: Path,
+        flags: list[str],
+        ylabels: list[str],
+        quantities: list[str],
+    ) -> None:
+        """Neither flag, or both, draws both panels; one flag draws that one alone."""
+        from koopmans.cli import cli
+
+        folder = parity_run(
+            tmp_path,
+            "test",
+            {
+                "snapshot_1": deltas_payload(
+                    alphas=([0.3, 0.4], [0.31, 0.42]),
+                    eigenvalues=([[-6.0, 2.0]], [[-6.2, 2.1]]),
+                )
+            },
+            occupancy={"snapshot_1": [True, False]},
+        )
+        data = tmp_path / "parity.json"
+
+        result = runner.invoke(
+            cli,
+            [
+                "plot",
+                "parity",
+                str(folder),
+                *flags,
+                "-o",
+                str(tmp_path / "a.png"),
+                "--data",
+                str(data),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert [axes.get_ylabel() for axes in drawn_parity_axes] == ylabels
+        assert (tmp_path / "a.png").is_file()
+        written = json.loads(data.read_text())["series"]
+        assert [item["quantity"] for item in written] == quantities
+        assert all("metrics" in item for item in written)

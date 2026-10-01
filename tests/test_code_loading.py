@@ -86,9 +86,9 @@ class TestCodesSpecRequiredness:
             WannierizeBlockCodes: (wannier, set()),
             WannierizeBlocksCodes: (wannier, {"wannierjl", "projwfc"}),
             SplitBlockCodes: (wannier | {"wannierjl"}, set()),
-            MlwfInitCodes: (wannier | {"wann2kcp", "merge_evc", "kcp"}, set()),
+            MlwfInitCodes: (wannier | {"wann2kcp", "merge_evc", "kcp"}, {"projwfc"}),
             FoldingCodes: ({"wann2kcp", "merge_evc"}, set()),
-            DscfCodes: ({"kcp"}, wannier | {"wann2kcp", "merge_evc"}),
+            DscfCodes: ({"kcp"}, wannier | {"wann2kcp", "merge_evc", "projwfc"}),
             DfptCodes: (wannier | {"kcw"}, {"ph", "projwfc"}),
             PdosCodes: ({"pw", "dos", "projwfc"}, set()),
         }

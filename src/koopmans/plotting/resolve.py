@@ -10,12 +10,18 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from koopmans.aiida.dumping import NODE_METADATA_FILE
-from koopmans.plotting.series import BandSeries, SpectrumSeries
+from koopmans.plotting.series import (
+    BandSeries,
+    ParityQuantity,
+    ParitySeries,
+    SpectrumSeries,
+    band_gap,
+)
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -26,6 +32,7 @@ __all__ = [
     "PlottingError",
     "RunNotInProfileError",
     "resolve_band_series",
+    "resolve_parity_series",
     "resolve_spectrum_series",
     "run_node",
 ]
@@ -114,8 +121,8 @@ def _unfolded_band_references(
 ) -> tuple[float | None, float | None]:
     """Return the valence band edge the unfold-and-interpolate stage computed.
 
-    A ΔSCF interpolation carries no occupations, so the edge cannot be read
-    off the bands; it travels as an input of the step that built them.
+    An interpolation carries no occupations, so the edge cannot be read off
+    the bands; it travels as an input of the step that built them.
     """
     reference = getattr(node.inputs, "reference", None)
     return (None if reference is None else float(reference.value)), None
@@ -162,6 +169,13 @@ class BandProducer:
 
     ``socket`` is a dotted output path, so a workflow that publishes its result
     under a namespace can name it.
+
+    ``qualifier`` names this producer's own step, for a series that more than
+    one producer can contribute to a single run (kcw.x's own interpolation
+    and the smooth stage that re-interpolates it both report ``KI``). It
+    reaches the legend only when the run in fact produced more than one
+    series of that name; a producer that never shares its series with
+    another carries none.
     """
 
     process_type: str
@@ -169,6 +183,7 @@ class BandProducer:
     series: str
     references: References
     applies: Callable[[orm.ProcessNode], bool] | None = None
+    qualifier: str | None = None
 
 
 #: The optimize workchain's own wannierization outputs, and the series each
@@ -184,6 +199,12 @@ _OPTIMIZE_OUTPUTS = (
     ("wannier90_optimal_down", "Wannier interpolation (down)"),
     ("wannier90_plot_down", "Wannier interpolation (down)"),
 )
+
+#: The calcfunction that attaches interpolated eigenvalues to their k-path,
+#: shared by both Koopmans routes. AiiDA stores a calcfunction's module path
+#: in ``process_type``, so a run made before this module existed stores no
+#: node under this name and simply has no KI band structure to plot.
+_BUILD_BAND_STRUCTURE = "aiida_koopmans.workgraphs.ui.band_structure.build_band_structure"
 
 BAND_PRODUCERS: tuple[BandProducer, ...] = (
     BandProducer(
@@ -212,11 +233,16 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         references=_pw_base_bands_references,
         applies=_is_path_bands_run,
     ),
+    # kcw.x interpolates the Koopmans Hamiltonian from the grid the Wannier
+    # functions were built on. A run that also ran the smooth interpolation
+    # reports a second, denser-grid answer to the same question; both plot,
+    # told apart by which stage produced them.
     BandProducer(
         process_type="aiida.calculations:koopmans.kcw_ham",
         socket="bands",
         series="KI",
         references=_kcw_ham_references,
+        qualifier="kcw.x",
     ),
     BandProducer(
         process_type="aiida.workflows:wannier90_workflows.base.wannier90",
@@ -254,14 +280,17 @@ BAND_PRODUCERS: tuple[BandProducer, ...] = (
         series="Wannier interpolation",
         references=_no_references,
     ),
-    # The ΔSCF route's unfold-and-interpolate stage: the step that attaches
-    # the interpolated eigenvalues to their k-path is the one that names a
-    # band structure, and it carries the valence band edge as an input.
+    # The unfold-and-interpolate stage both Koopmans routes end in: the step
+    # that attaches the interpolated eigenvalues to their k-path is the one
+    # that names a band structure, and it carries the valence band edge as
+    # an input. On a DFPT run with the smooth-interpolation correction on,
+    # this is the second, denser-grid answer alongside kcw.x's own.
     BandProducer(
-        process_type="aiida_koopmans.workgraphs.ui.dscf.build_band_structure",
+        process_type=_BUILD_BAND_STRUCTURE,
         socket="result",
         series="KI",
         references=_unfolded_band_references,
+        qualifier="smooth interpolation",
     ),
 )
 
@@ -760,6 +789,28 @@ def _producing_steps(root: orm.ProcessNode) -> list[orm.ProcessNode]:
     return sorted(found, key=lambda step: (step.ctime, step.pk))
 
 
+Match = tuple["orm.ProcessNode", BandProducer, "orm.BandsData"]
+
+
+def _tied_group_qualifiers(
+    indices: list[int], matches: Sequence[Match], node: orm.ProcessNode
+) -> dict[int, str]:
+    """Return the parenthesised legend suffix for one tied group of matches.
+
+    Each producer's own declared ``qualifier`` is used when every match in
+    the group names one; that is the case for two different producers
+    reporting the same series (kcw.x's own interpolation and the smooth
+    stage that re-interpolates it). Otherwise the tied steps all come from
+    one producer repeated at different points of the run (a per-spin or
+    per-block fan-out), told apart by the call chain that led there instead.
+    """
+    names = [matches[i][1].qualifier for i in indices]
+    if all(name is not None for name in names):
+        return {i: f" ({name})" for i, name in zip(indices, cast("list[str]", names), strict=True)}
+    suffixes = _disambiguating_labels([matches[i][0] for i in indices], node)
+    return {i: f" ({suffix})" for i, suffix in zip(indices, suffixes, strict=True)}
+
+
 def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
     """Return every declared band structure a run produced, in run order.
 
@@ -767,15 +818,15 @@ def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
     it from the other series of the same run, empty when the run produced only
     one.
     """
-    matches = []
+    matches: list[Match] = []
     for step in _producing_steps(node):
         for producer in _producers_for(step):
             bands = _output_at(step, producer.socket)
             if bands is not None:
                 matches.append((step, producer, bands))
 
-    # One step per series name needs no disambiguation; several — a per-spin
-    # or per-block fan-out — are told apart by the call chain that led there.
+    # One step per series name needs no disambiguation; several are told
+    # apart by _tied_group_qualifiers.
     grouped: dict[str, list[int]] = {}
     for index, (_, producer, _) in enumerate(matches):
         grouped.setdefault(producer.series, []).append(index)
@@ -784,9 +835,8 @@ def _series_from_node(node: orm.ProcessNode) -> list[tuple[BandSeries, str]]:
     for indices in grouped.values():
         if len(indices) < 2:
             continue
-        suffixes = _disambiguating_labels([matches[i][0] for i in indices], node)
-        for index, suffix in zip(indices, suffixes, strict=True):
-            qualifiers[index] = f" ({suffix})"
+        for index, qualifier in _tied_group_qualifiers(indices, matches, node).items():
+            qualifiers[index] = qualifier
 
     series: list[tuple[BandSeries, str]] = []
     for (step, producer, bands), qualifier in zip(matches, qualifiers, strict=True):
@@ -832,7 +882,7 @@ def _name_after_folder(found: Sequence[tuple[BandSeries, str]], label: str) -> N
         item.label = f"{label}{qualifier}"
 
 
-def _check_one_per_folder(values: Sequence[str | None], folders: int, option: str) -> None:
+def _check_one_per_folder(values: Sequence[Any], folders: int, option: str) -> None:
     """Reject a per-folder option given for some but not all of the folders.
 
     :raises ValueError: if any values were given and they do not number ``folders``.
@@ -845,10 +895,59 @@ def _check_one_per_folder(values: Sequence[str | None], folders: int, option: st
         )
 
 
+def _has_gap(item: BandSeries) -> bool:
+    """Whether ``band_gap`` can compute a real gap for this series.
+
+    False for a series with no valence band edge, none above it, and one
+    whose "edge" is a metal's own partially filled band, not an insulating
+    gap — the same cases :func:`band_gap` itself refuses.
+    """
+    try:
+        band_gap(item)
+    except ValueError:
+        return False
+    return True
+
+
+def _folder_has_edge(found: Sequence[tuple[BandSeries, str]]) -> bool:
+    """Whether any series a folder contributed has a real band gap to draw."""
+    return any(_has_gap(item) for item, _ in found)
+
+
+def _apply_gap_request(
+    folder: Path, found: Sequence[tuple[BandSeries, str]], gap_value: bool | None, gap_all: bool
+) -> None:
+    """Mark a folder's series for gap annotation, per ``gaps``/``gap_all`` above.
+
+    A folder ``gap_value`` names explicitly is refused if none of its series
+    has a real band gap; ``gap_all`` on its own leaves such a folder out
+    silently, and a folder contributing several series draws only the ones
+    among them that have a gap.
+
+    :raises PlottingError: if ``gap_value`` names this folder and it reports
+        no band gap.
+    """
+    if not (gap_all or gap_value):
+        return
+    if not _folder_has_edge(found):
+        if gap_value:
+            raise PlottingError(
+                f"'{folder}' reports no band gap, so --gap has no gap to draw "
+                "for it. Leave --gap off this folder, or point it at a run "
+                "that reports one."
+            )
+        return
+    for item, _ in found:
+        if _has_gap(item):
+            item.show_gap = True
+
+
 def resolve_band_series(
     folders: Sequence[Path],
     labels: Sequence[str | None] = (),
     styles: Sequence[str | None] = (),
+    gaps: Sequence[bool | None] = (),
+    gap_all: bool = False,
 ) -> tuple[list[BandSeries], list[str]]:
     """Return the band structures of the given runs, and any warnings.
 
@@ -867,13 +966,21 @@ def resolve_band_series(
     folder must carry a band structure: drawing fewer curves than folders
     asked for reads as a figure of them all.
 
-    :raises ValueError: if given, ``labels``/``styles`` do not number the
-        folders.
+    ``gaps`` asks specific folders to draw their band gap; a folder asked for
+    by name that has no real gap to draw — no valence band edge, none above
+    it, or a metal's own partially filled band standing in for one — is
+    refused, since the caller named it on purpose. ``gap_all`` asks every
+    folder instead, silently leaving out the ones with no gap to draw.
+
+    :raises ValueError: if given, ``labels``/``styles``/``gaps`` do not
+        number the folders.
     :raises PlottingError: if a folder is not a run directory, its run is not
-        in this profile, or any of them holds nothing plottable.
+        in this profile, any of them holds nothing plottable, or ``gaps``
+        names a folder with no band gap.
     """
     _check_one_per_folder(labels, len(folders), "--label")
     _check_one_per_folder(styles, len(folders), "--style")
+    _check_one_per_folder(gaps, len(folders), "--gap")
 
     nodes = [run_node(folder) for folder in folders]
 
@@ -891,6 +998,9 @@ def resolve_band_series(
         if style_value is not None:
             for item, _ in found:
                 item.style = style_value
+
+        gap_value = gaps[index] if gaps else None
+        _apply_gap_request(folder, found, gap_value, gap_all)
 
         label_value = labels[index] if labels else None
         if label_value is not None:
@@ -1009,3 +1119,153 @@ def resolve_spectrum_series(
         series.append(item)
 
     return series, warnings
+
+
+#: The key a trajectory run's ``evaluation`` output carries only when it ran
+#: `ml: {mode: test}`: that mode runs a second final KI at the model's own
+#: predicted screening parameters, and nothing else has two results to compare.
+_DELTAS_KEY = "alpha_and_eigenvalue_deltas"
+
+
+def _evaluation_of(node: orm.ProcessNode) -> dict[str, Any] | None:
+    """Return a run's ``evaluation`` output as a plain dict, or ``None`` for none."""
+    output = getattr(node.outputs, "evaluation", None)
+    if output is None:
+        return None
+    try:
+        return dict(output.get_dict())
+    except AttributeError:
+        return None
+
+
+def _not_a_test_run(
+    folder: Path, node: orm.ProcessNode, evaluation: dict[str, Any] | None
+) -> PlottingError:
+    """Return the error for a run with no computed-versus-predicted comparison.
+
+    Tells apart a run that is no trajectory at all, or ran a mode that
+    published no evaluation (an empty dict, same as none), from one that
+    scored a model but ran a mode that never computes the same quantity
+    twice.
+    """
+    route = _route_name(node)
+    if not evaluation:
+        return PlottingError(
+            f"{folder} ran {route}, which published no screening-model evaluation. "
+            "A parity plot compares what a model predicted against what the same run "
+            "computed, which only `task: trajectory` with `ml: {mode: test}` produces. "
+            "Set both and rerun."
+        )
+    return PlottingError(
+        f"{folder} ran {route}, which scored a model but never recomputed the "
+        "screening parameters to score it against. Only `ml: {mode: test}` runs the "
+        "final KI twice — once at the computed screening parameters and once at the "
+        "model's — so set `ml: {mode: test}` and rerun."
+    )
+
+
+def _snapshot_occupancy(node: orm.ProcessNode, label: str) -> list[bool] | None:
+    """Return which of a snapshot's orbitals are occupied, or ``None`` for none.
+
+    The trajectory run publishes one dataset row per variational orbital
+    under ``datasets.<snapshot>``, in the order the screening parameters
+    are reported in, so its ``filled`` column indexes the same orbitals as
+    the snapshot's alphas.
+    """
+    datasets = getattr(node.outputs, "datasets", None)
+    snapshot = getattr(datasets, label, None) if datasets is not None else None
+    filled = getattr(snapshot, "filled", None) if snapshot is not None else None
+    values = getattr(filled, "get_list", None)
+    if values is None:
+        return None
+    return [bool(value) for value in values()]
+
+
+def _spread_occupancy(occupancy: list[bool] | None, points: int) -> list[bool] | None:
+    """Return one occupancy flag per point of an eigenvalue table.
+
+    The eigenvalues come as a table with one row per spin block and one
+    column per band, flattened; the occupancy is per variational orbital
+    of one block. They line up when the table is a whole number of blocks
+    of that many orbitals, and ``None`` says they do not.
+    """
+    if occupancy is None or not occupancy or points % len(occupancy):
+        return None
+    return occupancy * (points // len(occupancy))
+
+
+def _parity_columns(
+    deltas: dict[str, Any], node: orm.ProcessNode, quantity: ParityQuantity
+) -> tuple[list[float], list[float], list[bool] | None]:
+    """Return one run's pooled computed/predicted columns and their occupancy.
+
+    Snapshots are pooled in name order, so the columns are the same
+    whichever order the run happened to finish them in. The occupancy is
+    kept only when every snapshot reports one, since half a column of
+    flags cannot be drawn.
+    """
+    computed: list[float] = []
+    predicted: list[float] = []
+    filled: list[bool] = []
+    complete = True
+    for label in sorted(deltas):
+        payload = deltas[label][quantity.value]
+        values = [
+            np.asarray(payload[key], dtype=np.float64).ravel() for key in ("computed", "predicted")
+        ]
+        computed += values[0].tolist()
+        predicted += values[1].tolist()
+
+        occupancy = _snapshot_occupancy(node, label)
+        if quantity == ParityQuantity.EIGENVALUES:
+            occupancy = _spread_occupancy(occupancy, values[0].size)
+        if occupancy is None or len(occupancy) != values[0].size:
+            complete = False
+        else:
+            filled += occupancy
+    return computed, predicted, filled if complete else None
+
+
+def resolve_parity_series(
+    folder: Path,
+    quantities: Sequence[ParityQuantity],
+) -> tuple[list[ParitySeries], list[str]]:
+    """Return one `ml: {mode: test}` run's predicted-versus-computed values.
+
+    One series per quantity, in the order ``quantities`` asks for them.
+    Every snapshot of the run is pooled into that series, since the model
+    is scored over the trajectory rather than per snapshot. The series is
+    named after the route that produced it.
+
+    :raises PlottingError: if ``folder`` is not a run directory, its run is
+        not in this profile, or it published no computed-versus-predicted
+        comparison.
+    """
+    node = run_node(folder)
+
+    warnings: list[str] = []
+    warning = _failure_warning(folder, node)
+    if warning is not None:
+        warnings.append(warning)
+
+    evaluation = _evaluation_of(node)
+    deltas = (evaluation or {}).get(_DELTAS_KEY)
+    if not deltas:
+        raise _not_a_test_run(folder, node, evaluation)
+
+    label = _route_name(node) or "trajectory"
+
+    panels: list[ParitySeries] = []
+    for quantity in quantities:
+        computed, predicted, filled = _parity_columns(deltas, node, quantity)
+        panels.append(
+            ParitySeries(
+                label=label,
+                quantity=quantity,
+                computed=computed,
+                predicted=predicted,
+                filled=filled,
+            )
+        )
+
+    return panels, warnings

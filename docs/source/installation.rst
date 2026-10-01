@@ -116,6 +116,13 @@ for any other reason, start it again with
 
 and stop it with ``koopmans backend daemon stop``.
 
+``koopmans install`` also sets the engine to poll for finished calculations every 5
+seconds, rather than AiiDA's default of 60, and to run 4 daemon workers in parallel,
+rather than AiiDA's default of 1, so that many calculations in flight at once do not
+queue up behind each other waiting for a worker to free up. A daemon that is already
+running does not pick up either change until you restart it with ``koopmans backend
+daemon restart``.
+
 The scheduler that hands your calculations onto the machine's cores has its own worker
 process, managed the same way:
 

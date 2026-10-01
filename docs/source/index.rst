@@ -46,8 +46,8 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
     .. container:: capability-cell
 
-        .. image:: _static/capabilities/zno_bands.png
-            :alt: The LDA and Koopmans band structures of ZnO, with the band gap marked
+        .. image:: tutorials/band_structures/silicon_finite_differences/ki_bandstructure.png
+            :alt: The LDA and KI@LDA band structures of silicon, with the band gap marked
 
         Band structures of solids, with screening parameters from :doc:`finite
         differences <tutorials/band_structures/silicon_finite_differences/index>` or
