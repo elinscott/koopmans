@@ -30,14 +30,6 @@ NO_BAND_PATH_ON_MOLECULAR_DSCF = (
     "Remove `kpoints.path`; the ΔSCF eigenvalues are already the molecule's spectrum."
 )
 
-#: What to write instead of a k-path on the trajectory task.
-NO_BAND_PATH_ON_TRAJECTORY = (
-    "`kpoints.path` cannot take effect in a `trajectory` calculation: it screens each "
-    "snapshot and reports screening parameters and eigenvalues, not band structures. "
-    "Remove `kpoints.path`, or run `task: singlepoint` on the structure whose band "
-    "structure you want."
-)
-
 #: What to write instead of a k-path on the bse task.
 NO_BAND_PATH_ON_BSE = (
     "`kpoints.path` cannot take effect in a `bse` calculation: the composed DFPT "
@@ -45,6 +37,16 @@ NO_BAND_PATH_ON_BSE = (
     "step reports an exciton spectrum, not a band structure. Remove `kpoints.path`, or "
     "run `task: singlepoint` with `screening_method: dfpt` to get the interpolated "
     "band structure."
+)
+
+#: What to write instead of a k-path under ``atoms.snapshots``. The fan-out
+#: reports one set of screening parameters and eigenvalues per frame, and no
+#: step of it interpolates a Koopmans Hamiltonian along a path.
+NO_BAND_PATH_ON_SNAPSHOTS = (
+    "`kpoints.path` cannot take effect together with `atoms.snapshots`: each frame is "
+    "screened on a supercell and reports screening parameters and eigenvalues, not a "
+    "band structure. Remove `kpoints.path`, or replace `atoms.snapshots` with the "
+    "`atoms.atomic_positions` of the one structure whose band structure you want."
 )
 
 
@@ -59,17 +61,31 @@ def dscf_initialization_is_supported(init_orbitals: VariationalOrbitalType, peri
     return init_orbitals == VariationalOrbitalType.KOHN_SHAM and not periodic
 
 
-def band_path_refusal(workflow: WorkflowConfig, periodic: bool) -> str | None:
+def band_path_refusal(workflow: WorkflowConfig, periodic: bool, has_snapshots: bool) -> str | None:
     """Return what to tell an input whose task cannot interpolate along its path.
 
     ``None`` for a task that can, and for one whose path is not the first
     thing standing in its way: an input the task refuses outright must hear
     that refusal instead, or it is sent to fix a keyword and told no again.
 
+    ``atoms.snapshots`` fans a task out per frame; the fan-out itself only
+    runs ``task: singlepoint`` with ``screening_method: dscf``, so a path
+    under snapshots is refused only there — everywhere else, the fan-out's
+    own task or screening-method refusal names the actual problem, and
+    naming the path too would be a second refusal for one input.
+
     Args:
         workflow: The input's ``workflow`` block.
         periodic: Whether the structure is periodic along any cell vector.
+        has_snapshots: Whether ``atoms.snapshots`` is set.
     """
+    if has_snapshots:
+        if workflow.task != Task.SINGLEPOINT:
+            return None
+        if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
+            return None
+        return NO_BAND_PATH_ON_SNAPSHOTS
+
     if workflow.task == Task.DFT_EPS:
         return NO_BAND_PATH_ON_DFT_EPS
 
@@ -89,13 +105,6 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool) -> str | None:
             # and interpolates it along the path.
             return None
         return NO_BAND_PATH_ON_MOLECULAR_DSCF
-
-    if workflow.task == Task.TRAJECTORY:
-        if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
-            # The task runs kcp.x whatever the input asks for, and the reader
-            # has to hear about the method they asked for first.
-            return None
-        return NO_BAND_PATH_ON_TRAJECTORY
 
     if workflow.task == Task.BSE:
         return NO_BAND_PATH_ON_BSE
