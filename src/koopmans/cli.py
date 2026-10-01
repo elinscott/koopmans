@@ -1499,7 +1499,7 @@ def parity(
 ) -> None:
     """Draw what a screening model predicted against what the run computed.
 
-    FOLDER is the directory `koopmans run` wrote for a `task: trajectory`
+    FOLDER is the directory `koopmans run` wrote for an `atoms.snapshots`
     input with `ml: {mode: test}`, or the run directory itself. That mode
     runs each snapshot's final KI twice — once at the screening parameters
     the ΔSCF refinement computed and once at the ones the model predicted —
@@ -1513,8 +1513,8 @@ def parity(
     final-KI eigenvalues, each predicted against computed with the identity
     line a perfect model would sit on and its mean absolute and
     root-mean-square error annotated clear of the points. Every snapshot of
-    the run is pooled into one series, since the model is scored over the
-    trajectory rather than per snapshot. --alphas or --eigenvalues draws
+    the run is pooled into one series, since the model is scored over all of
+    them at once rather than per snapshot. --alphas or --eigenvalues draws
     that panel alone:
 
     \b
