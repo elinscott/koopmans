@@ -224,7 +224,92 @@ two channels have in common, since a single spin-polarized calculation produces 
 densities at once. Everything after it comes in twos: a Wannierization of each channel,
 block by block, then a ``kcw.x`` chain per channel that converts the Wannier functions
 into the form ``kcw.x`` reads, computes that channel's screening parameters, and finally
-builds and diagonalizes the Koopmans Hamiltonian along the k-path.
+builds and diagonalizes the Koopmans Hamiltonian along the k-path. The finished table
+reads
+
+.. code-block:: text
+
+     Step                                                      Code              Status
+     Koopmans DFPT                                                             finished
+       Ground state                                                            finished
+         SCF                                                   pw.x            finished
+         NSCF                                                  pw.x            finished
+       Wannierization (spin down)                                              finished
+         Band structure                                        pw.x            finished
+         Wannierization (empty block 1, spin down)                             finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (empty block 2, spin down)                             finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (occupied block 1, spin down)                          finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (occupied block 2, spin down)                          finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (occupied block 3, spin down)                          finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (occupied block 4, spin down)                          finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Atomic projections                                    projwfc.x       finished
+       Wannierization (spin up)                                                finished
+         Band structure                                        pw.x            finished
+         Wannierization (empty block, spin up)                                 finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (occupied block 1, spin up)                            finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (occupied block 2, spin up)                            finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (occupied block 3, spin up)                            finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Wannierization (occupied block 4, spin up)                            finished
+           Preprocessing                                       wannier90.x     finished
+           Overlaps                                            pw2wannier90.x  finished
+           Minimization                                        wannier90.x     finished
+         Atomic projections                                    projwfc.x       finished
+       DFPT screening (spin up)                                                finished
+         Wannier gauge                                         kcw.x           finished
+         Orbital screening                                                     finished
+           Orbital 8                                           kcw.x           finished
+           Orbital 14                                          kcw.x           finished
+           Orbital 31                                          kcw.x           finished
+           Orbital 32                                          kcw.x           finished
+           Orbital 38                                          kcw.x           finished
+           Orbital 39                                          kcw.x           finished
+         Koopmans Hamiltonian                                  kcw.x           finished
+       DFPT screening (spin down)                                              finished
+         Wannier gauge                                         kcw.x           finished
+         Orbital screening                                                     finished
+           Orbital 8                                           kcw.x           finished
+           Orbital 14                                          kcw.x           finished
+           Orbital 32                                          kcw.x           finished
+           Orbital 33                                          kcw.x           finished
+           Orbital 39                                          kcw.x           finished
+         Koopmans Hamiltonian                                  kcw.x           finished
+
+    Workflow completed successfully!
+
+Each channel Wannierizes a different number of blocks — five for the up channel, six
+for the down one, matching the projection lists above — and each channel's screening
+step runs one ``kcw.x`` calculation per *group* of orbitals rather than one per orbital:
+six representatives for the up channel's 42 orbitals, five for the down channel's 42.
 
 *************
  The outputs
@@ -232,9 +317,51 @@ builds and diagonalizes the Koopmans Hamiltonian along the k-path.
 
 The results land in a directory named after the input file — here ``cri3/`` — one
 directory per step, numbered in the order the steps ran, laid out as the :doc:`ozone
-tutorial <../../orbital_energies/ozone/automatically>` describes. What is new is that
-there are two of nearly everything: a Wannierization and a ``kcw.x`` chain for the up
-channel, and another pair for the down one.
+tutorial <../../orbital_energies/ozone/automatically>` describes:
+
+.. code-block:: text
+
+    cri3
+    ├── 01-scf_nscf
+    │   ├── 01-scf
+    │   ├── 02-nscf
+    │   └── outputs
+    ├── 02-wannierize_down
+    │   ├── 01-bands
+    │   ├── 02-wannierize_emp_down_1
+    │   ├── 03-wannierize_emp_down_2
+    │   ├── 04-wannierize_occ_down_1
+    │   ├── 05-wannierize_occ_down_2
+    │   ├── 06-wannierize_occ_down_3
+    │   ├── 07-wannierize_occ_down_4
+    │   ├── 08-projwfc
+    │   └── outputs
+    ├── 03-wannierize_up
+    │   ├── 01-bands
+    │   ├── 02-wannierize_emp_up
+    │   ├── 03-wannierize_occ_up_1
+    │   ├── 04-wannierize_occ_up_2
+    │   ├── 05-wannierize_occ_up_3
+    │   ├── 06-wannierize_occ_up_4
+    │   ├── 07-projwfc
+    │   └── outputs
+    ├── 04-dfpt_up
+    │   ├── 01-prepare_kcw_wannier_files
+    │   ├── 02-wann2kc
+    │   ├── 03-grouped_screen
+    │   ├── 04-ham
+    │   └── outputs
+    ├── 05-dfpt_down
+    │   ├── 01-prepare_kcw_wannier_files
+    │   ├── 02-wann2kc
+    │   ├── 03-grouped_screen
+    │   ├── 04-ham
+    │   └── outputs
+    └── outputs
+
+What is new compared to the ozone layout is that there are two of nearly everything: a
+Wannierization and a ``kcw.x`` chain (``dfpt_up``/``dfpt_down``) for each channel, run
+in the order the progress table shows — down before up.
 
 Each channel's chain ends in a ``ham`` step, which holds the two results worth reading.
 Its ``inputs/file_alpharef.txt`` lists the screening parameters that were used, one line
@@ -254,20 +381,54 @@ whichever holds the lowest empty state, and those need not be the same channel.
 
 .. question:: What does the underlying LDA calculation give?
 
-    Gaps of about 1.14 eV in the up channel and 1.9 eV in the down one — but the
-    fundamental gap is neither of those, because the valence band maximum lies in the up
-    channel and the conduction band minimum in the down. It is about 1.13 eV, and it is
-    an inter-spin gap.
+    Gaps of 1.14 eV in the up channel and 1.91 eV in the down one — but the fundamental
+    gap is neither of those, because the valence band maximum lies in the up channel
+    (5.30 eV) and the conduction band minimum in the down channel (6.43 eV), on the same
+    eigenvalue scale. The fundamental gap is their difference, 1.13 eV, and it is an
+    inter-spin gap. These are the ``KS`` lines of each channel's ``outputs/aiida.kho``.
 
-KI opens both channels. How far it opens them is what the screening parameters decide,
-and they are computed rather than assumed — which is the point of the calculation, so
-the answer is best read off your own run rather than quoted here. For a sense of scale,
-a reference calculation on this system with every screening parameter fixed at 0.122
-instead of computed put the up-channel gap at 2.0 eV and the down-channel gap at 2.7 eV,
-and moved the conduction band minimum into the up channel.
+KI opens both channels: to 2.53 eV in the up channel and 3.03 eV in the down one, read
+off the ``KI[2nd]`` lines of the same two files. How far it opens them is decided by the
+screening parameters, which are computed rather than assumed — which is the point of
+the calculation. The up channel's 42 orbitals group into 6 distinct values, from 0.10 to
+0.21; the down channel's 42 group into 5, from 0.05 to 0.21.
+
+.. figure:: ki_bandstructure.svg
+    :align: center
+    :width: 80%
+
+    The KI band structure of each channel (solid), against the shared LDA reference
+    (dashed black, both channels together). Up in red, down in blue; the arrows mark
+    each channel's own band gap along the k-path.
+
+.. question:: What happens to the fundamental gap?
+
+    It opens from 1.13 eV to 2.38 eV, and the channels keep their roles: the valence
+    band maximum is still in the up channel and the conduction band minimum still in the
+    down one, the same assignment LDA gave. KI pushes both channels' occupied states down
+    and both channels' empty states up, by different amounts because the two channels
+    screen differently — it does not reshuffle which channel holds which edge.
 
 .. warning::
 
     Qualitatively this is the right picture, but the calculation is a long way from
     converged: the cutoff and the k-point grid both need raising before any of these
     numbers means anything quantitatively.
+
+*************
+ From python
+*************
+
+:func:`koopmans.outputs` cannot read this workflow's results back yet. It hands
+everything to ``aiida_pythonjob``'s deserializer, which dispatches on exact type, and
+the k-path band structure this route produces is stored as an
+:class:`~aiida.orm.nodes.data.array.xy.XyData`, which the deserializer has no case for:
+
+.. code-block:: text
+
+    ValueError: Cannot deserialize AiiDA data of type
+    `aiida.orm.nodes.data.array.xy.XyData`. This type does not define a `.value`
+    attribute, and no matching deserializer was provided in `deserializers` for key
+    `aiida.orm.nodes.data.array.xy.XyData`.
+
+Reading the numbers above out of ``cri3/`` is the only route until that gap closes.
