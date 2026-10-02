@@ -682,6 +682,14 @@ class TestPredictMode:
         parsed = KoopmansInput.model_validate(d)
         assert parsed.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
         assert parsed.workflow.group_orbitals_tol is None
+        # Nothing typed, nothing to warn about.
+        assert advisories_for(parsed) == []
+        # The resolver leaves anything it cannot read alone: a non-dict input
+        # and a workflow block that is not a mapping pass through untouched.
+        resolve = KoopmansInput.default_grouping_to_none_for_power_spectrum_predict
+        assert resolve("not a dict") == "not a dict"
+        odd = {**d, "workflow": "not a mapping"}
+        assert resolve(odd) == odd
         # Switching mode or descriptor off this route restores the ordinary
         # Wannier-init default (self-Hartree grouping at 1e-4 eV) — this
         # route's resolution is not a general override.
