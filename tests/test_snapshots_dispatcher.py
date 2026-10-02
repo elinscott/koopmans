@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from koopmans.aiida.workflows import advisories_for
 from koopmans.input_file import AtomsInput, KoopmansInput, read_input_file
@@ -684,12 +685,13 @@ class TestPredictMode:
         assert parsed.workflow.group_orbitals_tol is None
         # Nothing typed, nothing to warn about.
         assert advisories_for(parsed) == []
-        # The resolver leaves anything it cannot read alone: a non-dict input
-        # and a workflow block that is not a mapping pass through untouched.
-        resolve = KoopmansInput.default_grouping_to_none_for_power_spectrum_predict
-        assert resolve("not a dict") == "not a dict"
-        odd = {**d, "workflow": "not a mapping"}
-        assert resolve(odd) == odd
+        # The resolver leaves anything it cannot read alone, so a non-dict
+        # input and a workflow block that is not a mapping reach pydantic's
+        # own validation and fail there, not inside the resolver.
+        with pytest.raises(ValidationError):
+            KoopmansInput.model_validate("not a dict")
+        with pytest.raises(ValidationError):
+            KoopmansInput.model_validate({**d, "workflow": "not a mapping"})
         # Switching mode or descriptor off this route restores the ordinary
         # Wannier-init default (self-Hartree grouping at 1e-4 eV) — this
         # route's resolution is not a general override.
