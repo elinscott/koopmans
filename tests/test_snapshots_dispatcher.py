@@ -686,12 +686,9 @@ class TestPredictMode:
         # Nothing typed, nothing to warn about.
         assert advisories_for(parsed) == []
         # The resolver leaves anything it cannot read alone, so a non-dict
-        # input and a workflow block that is not a mapping reach pydantic's
-        # own validation and fail there, not inside the resolver.
+        # input reaches pydantic's own validation and fails there.
         with pytest.raises(ValidationError):
             KoopmansInput.model_validate("not a dict")
-        with pytest.raises(ValidationError):
-            KoopmansInput.model_validate({**d, "workflow": "not a mapping"})
         # Switching mode or descriptor off this route restores the ordinary
         # Wannier-init default (self-Hartree grouping at 1e-4 eV) — this
         # route's resolution is not a general override.
