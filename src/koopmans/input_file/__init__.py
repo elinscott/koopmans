@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from enum import Enum
 from json import load
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from aiida_koopmans.ml import MLMode
+from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 from pydantic import (
     AfterValidator,
@@ -46,7 +47,12 @@ from koopmans.input_file.ph import PHInputParameters
 from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
-from koopmans.input_file.workflow import CalculateScreeningMethod, Task, WorkflowConfig
+from koopmans.input_file.workflow import (
+    CalculateScreeningMethod,
+    GroupOrbitalsBy,
+    Task,
+    WorkflowConfig,
+)
 from koopmans.input_file.yambo import YamboBseParameters
 
 # The public schema surface. The documentation renders this list, so a name
@@ -543,6 +549,60 @@ class KoopmansInput(BaseModel):
         description="the AiiDA computer the calculation runs on: a block naming "
         "``name``, ``account``, ``queue``, and a default ``walltime``",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_grouping_to_none_for_power_spectrum_predict(cls, data: Any) -> Any:
+        """Default ``workflow.group_orbitals_by`` to ``'none'`` for a power_spectrum prediction.
+
+        ``ml:mode='predict'`` with ``ml:descriptor='power_spectrum'`` runs
+        no trial KI, so the self-Hartree grouping ``WorkflowConfig`` would
+        otherwise default to (for a Wannier-initialized DSCF run) has
+        nothing to group. Runs on the whole raw input, ahead of
+        ``WorkflowConfig.resolve_group_orbitals_by``, and injects an
+        explicit ``group_orbitals_by: 'none'`` into the raw ``workflow``
+        dict whenever that dict carries neither ``group_orbitals_by`` nor
+        ``group_orbitals_tol`` — so the parsed input carries the value
+        this route actually honours, not one it silently drops. A
+        ``group_orbitals_by`` or ``group_orbitals_tol`` the input file did
+        write is left untouched and resolves under the user's own value,
+        same as on any other route.
+
+        A missing ``ml:descriptor`` defaults to ``power_spectrum``
+        (``MLConfig``'s own default), so this also fires on a bare
+        ``ml: {mode: predict}``.
+
+        Args:
+            data: The raw value pydantic is validating — a dict for a
+                normal parse, but possibly something else on
+                re-validation; returned untouched when it is not a dict,
+                or when ``workflow`` is not a plain dict.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        def _value(v: Any) -> str | None:
+            if v is None:
+                return None
+            return v.value if isinstance(v, Enum) else str(v).lower()
+
+        ml = data.get("ml")
+        mode = _value(ml.get("mode")) if isinstance(ml, dict) else None
+        descriptor = _value(ml.get("descriptor")) if isinstance(ml, dict) else None
+        if mode != MLMode.PREDICT.value:
+            return data
+        if (descriptor or MLDescriptor.POWER_SPECTRUM.value) != MLDescriptor.POWER_SPECTRUM.value:
+            return data
+
+        workflow = data.get("workflow")
+        if not isinstance(workflow, dict):
+            return data
+        if "group_orbitals_by" in workflow or "group_orbitals_tol" in workflow:
+            return data
+
+        data = dict(data)
+        data["workflow"] = {**workflow, "group_orbitals_by": GroupOrbitalsBy.NONE.value}
+        return data
 
     @field_validator("calculator_parameters", mode="before")
     @classmethod
