@@ -18,7 +18,7 @@ from typing import (
 )
 
 from aiida import orm
-from aiida_koopmans.ml import MLMode
+from aiida_koopmans.ml import MLDescriptor, MLMode
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.conversion import (
@@ -753,6 +753,16 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 "group_orbitals_by to a criterion this run implements (self_hartree for "
                 "DSCF, spread for DFPT)."
             )
+
+    if (
+        task == Task.SINGLEPOINT
+        and koopmans_input.atoms.snapshots is not None
+        and koopmans_input.ml.mode == MLMode.PREDICT
+        and koopmans_input.ml.descriptor == MLDescriptor.POWER_SPECTRUM
+    ):
+        from koopmans.aiida.workflows.dscf import predict_no_trial_advisories
+
+        advisories.extend(predict_no_trial_advisories(workflow))
 
     return advisories
 

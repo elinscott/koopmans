@@ -34,7 +34,9 @@ from koopmans.aiida.workflows.projectors import reject_unwired_external_projecto
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     Correction,
+    GroupOrbitalsBy,
     VariationalOrbitalType,
+    WorkflowConfig,
 )
 
 if TYPE_CHECKING:
@@ -453,7 +455,7 @@ class _KcpDscfInputs(TypedDict):
     init_orbitals: VariationalOrbitalType
     alpha_numsteps: int
     fix_spin_contamination: bool
-    initial_alpha: float
+    initial_alpha: float | None
     spin_polarized: bool
     orbital_groups_self_hartree_tol: float | None
 
@@ -522,3 +524,57 @@ def kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
         spin_polarized=workflow.spin == SpinType.COLLINEAR,
         orbital_groups_self_hartree_tol=grouping_tol(workflow),
     )
+
+
+def predict_no_trial_advisories(workflow: WorkflowConfig) -> list[str]:
+    """Flag grouping/alpha-guess keys the no-trial power_spectrum predict route cannot apply.
+
+    Under ``ml:mode='predict'`` with ``ml:descriptor='power_spectrum'`` the
+    screening parameters come straight from the model, so no trial KI runs
+    for ``workflow.group_orbitals_by``/``workflow.group_orbitals_tol`` to
+    group by self-Hartree energy, or for ``workflow.alpha_guess`` to seed.
+    ``KoopmansInput.default_grouping_to_none_for_power_spectrum_predict``
+    already resolves the grouping to ``'none'``/``None`` on this route
+    whenever the input file leaves it unset, so a resolved
+    ``group_orbitals_by`` other than ``'none'``, or a non-``None``
+    ``group_orbitals_tol``, only happens when the input file wrote one.
+    These keys are valid on ``ml:mode='train'``/``'test'``, which do run a
+    trial KI, so a model trained with grouping and then applied by only
+    adding ``model_file`` keeps a graph that builds.
+
+    Returns:
+        One advisory naming every key written explicitly; empty if none were.
+    """
+    explicit = []
+    if workflow.group_orbitals_by != GroupOrbitalsBy.NONE:
+        explicit.append("workflow:group_orbitals_by")
+    if workflow.group_orbitals_tol is not None:
+        explicit.append("workflow:group_orbitals_tol")
+    if "alpha_guess" in workflow.model_fields_set:
+        explicit.append("workflow:alpha_guess")
+    if not explicit:
+        return []
+    return [
+        f"{', '.join(explicit)} take no effect under ml:mode='predict' with "
+        "ml:descriptor='power_spectrum': this route predicts every orbital's "
+        "screening parameter straight from its descriptor and runs no trial KI "
+        "to group orbitals by self-Hartree energy or seed with a starting alpha; "
+        f"{'it is' if len(explicit) == 1 else 'they are'} kept for when you switch "
+        "ml:mode to 'train' or 'test', which run a trial KI these feed."
+    ]
+
+
+def dscf_inputs_for_predict_no_trial(
+    workflow: WorkflowConfig, inputs: _KcpDscfInputs
+) -> _KcpDscfInputs:
+    """Null out ``initial_alpha``/``orbital_groups_self_hartree_tol`` for the no-trial route.
+
+    Call after :func:`kcp_dscf_inputs` when ``ml:mode='predict'`` and
+    ``ml:descriptor='power_spectrum'``: that route runs no trial KI, so
+    neither value reaches a calculation and both are forwarded as ``None``
+    regardless of what :func:`kcp_dscf_inputs` filled in from
+    ``workflow.alpha_guess``/``workflow.group_orbitals_by``+``group_orbitals_tol``
+    (see :func:`predict_no_trial_advisories` for the advisory this silently
+    overridden case earns).
+    """
+    return {**inputs, "initial_alpha": None, "orbital_groups_self_hartree_tol": None}
