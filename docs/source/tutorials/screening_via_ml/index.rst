@@ -106,29 +106,59 @@ Koopmans calculation, plus a second branch per configuration that builds the
 
 .. code-block:: text
 
-     Step                                                                      Status
-     Trajectory                                                              finished
-       Snapshot 1                                                            finished
-         Wannier initialization                                              finished
-           Wannierization                                                    finished
-           Supercell folding                                                 finished
-           DFT staging                                                       finished
-           DFT initialization                                                finished
-         Screening parameters                                                finished
-           Iteration 1                                                       finished
-             Trial KI                                                        finished
-             Orbital screening                                               finished
-               Orbital 1                                                     finished
-               ...
-               Orbital 6                                                     finished
-         Final KI                                                            finished
-       Descriptors (snapshot 1)                                              finished
-       Snapshot 2                                                            finished
+     Step                                                      Code              Status
+     Snapshots                                                                finished
+       Snapshot 1                                                              finished
+         Wannier initialization                                                finished
+           dft_dummy                                           kcp.x           finished
+           Wannierization                                                      finished
+             Ground state                                                      finished
+               SCF                                             pw.x            finished
+               NSCF                                            pw.x            finished
+             Wannierization (empty block 1)                                    finished
+               Preprocessing                                   wannier90.x     finished
+               Overlaps                                        pw2wannier90.x  finished
+               Minimization                                    wannier90.x     finished
+             Wannierization (occupied block 1)                                 finished
+               Preprocessing                                   wannier90.x     finished
+               Overlaps                                        pw2wannier90.x  finished
+               Minimization                                    wannier90.x     finished
+           Supercell folding                                                   finished
+             Supercell Wannier functions (empty block 1)       wann2kcp.x      finished
+             Supercell Wannier functions (occupied block 1)    wann2kcp.x      finished
+             Merged Wannier manifold (empty, spin 1)           merge_evc.x     finished
+             Merged Wannier manifold (empty, spin 2)           merge_evc.x     finished
+             Merged Wannier manifold (occupied, spin 1)        merge_evc.x     finished
+             Merged Wannier manifold (occupied, spin 2)        merge_evc.x     finished
+           DFT initialization                                  kcp.x           finished
+         Screening parameters                                                  finished
+           Iteration 1                                                         finished
+             Trial KI                                          kcp.x           finished
+             Orbital screening                                                 finished
+               Orbital 1                                       kcp.x           finished
+               Orbital 2                                       kcp.x           finished
+               Orbital 3                                       kcp.x           finished
+               Orbital 4                                       kcp.x           finished
+               Orbital 5                                                       finished
+                 dft_n_plus_1_dummy                            kcp.x           finished
+                 PZ staging                                    kcp.x           finished
+                 DFT (N+1)                                     kcp.x           finished
+               Orbital 6                                                       finished
+                 dft_n_plus_1_dummy                            kcp.x           finished
+                 PZ staging                                    kcp.x           finished
+                 DFT (N+1)                                     kcp.x           finished
+         Final KI                                              kcp.x           finished
+       Snapshot 2                                                              finished
          ...
-       Descriptors (snapshot 2)                                              finished
        ...
-       Snapshot 5                                                            finished
-       Descriptors (snapshot 5)                                              finished
+       Snapshot 5                                                              finished
+       Descriptors (snapshot 1)                                                finished
+         Decomposition (occupied block 1)                      pw2wannier90.x  finished
+         Decomposition (empty block 1)                         pw2wannier90.x  finished
+       Descriptors (snapshot 2)                                                finished
+         ...
+       ...
+       Descriptors (snapshot 5)                                                finished
 
     Workflow completed successfully!
     Trained model stored as node <id number> (…) — reference it via `ml: {model: <id number>}`.
@@ -154,7 +184,7 @@ Download :download:`test.yaml <test.yaml>` and :download:`testing_snapshots.xyz
 
 The input file differs from ``train.yaml`` in two places — it reads the other fifteen
 configurations (i.e. configurations not seen during training), and its ``ml`` block
-only differs in its choice of mode and in naming the model to use:
+sets a different mode and names the model to use:
 
 .. literalinclude:: test.yaml
     :language: yaml
@@ -168,13 +198,63 @@ Both show up inside each configuration's branch:
 
 .. code-block:: text
 
-    Snapshot 1                                                               finished
-      ...
-      Descriptors                                                            finished
-      Final KI                                                               finished
-      Final KI (predicted alphas)                                            finished
-    Descriptors (snapshot 1)                                                 finished
-    ...
+     Step                                                      Code              Status
+     Snapshots                                                                 finished
+       Snapshot 1                                                              finished
+         Wannier initialization                                                finished
+           dft_dummy                                           kcp.x           finished
+           Wannierization                                                      finished
+             Ground state                                                      finished
+               SCF                                             pw.x            finished
+               NSCF                                            pw.x            finished
+             Wannierization (empty block 1)                                    finished
+               Preprocessing                                   wannier90.x     finished
+               Overlaps                                        pw2wannier90.x  finished
+               Minimization                                    wannier90.x     finished
+             Wannierization (occupied block 1)                                 finished
+               Preprocessing                                   wannier90.x     finished
+               Overlaps                                        pw2wannier90.x  finished
+               Minimization                                    wannier90.x     finished
+           Supercell folding                                                   finished
+             Supercell Wannier functions (empty block 1)       wann2kcp.x      finished
+             Supercell Wannier functions (occupied block 1)    wann2kcp.x      finished
+             Merged Wannier manifold (empty, spin 1)           merge_evc.x     finished
+             Merged Wannier manifold (empty, spin 2)           merge_evc.x     finished
+             Merged Wannier manifold (occupied, spin 1)        merge_evc.x     finished
+             Merged Wannier manifold (occupied, spin 2)        merge_evc.x     finished
+           DFT initialization                                  kcp.x           finished
+         Screening parameters                                                  finished
+           Iteration 1                                                         finished
+             Trial KI                                          kcp.x           finished
+             Orbital screening                                                 finished
+               Orbital 1                                       kcp.x           finished
+               Orbital 2                                       kcp.x           finished
+               Orbital 3                                       kcp.x           finished
+               Orbital 4                                       kcp.x           finished
+               Orbital 5                                                       finished
+                 dft_n_plus_1_dummy                            kcp.x           finished
+                 PZ staging                                    kcp.x           finished
+                 DFT (N+1)                                     kcp.x           finished
+               Orbital 6                                                       finished
+                 dft_n_plus_1_dummy                            kcp.x           finished
+                 PZ staging                                    kcp.x           finished
+                 DFT (N+1)                                     kcp.x           finished
+         Descriptors                                                           finished
+           Decomposition (occupied block 1)                    pw2wannier90.x  finished
+           Decomposition (empty block 1)                       pw2wannier90.x  finished
+         Final KI                                              kcp.x           finished
+         Final KI (predicted alphas)                           kcp.x           finished
+       Snapshot 2                                                              finished
+         ...
+       ...
+       Snapshot 15                                                             finished
+       Descriptors (snapshot 1)                                                finished
+         Decomposition (occupied block 1)                      pw2wannier90.x  finished
+         Decomposition (empty block 1)                         pw2wannier90.x  finished
+       Descriptors (snapshot 2)                                                finished
+         ...
+       ...
+       Descriptors (snapshot 15)                                               finished
 
 The two final KI calculations both start from the same trial calculation and differ
 only in the screening parameters, so whatever separates their orbital energies is purely
@@ -242,19 +322,47 @@ Again, its ``ml`` block only differs in its choice of mode and in naming the mod
     :end-at: model_file
 
 In this mode, the screening parameters are never computed. Each configuration runs a
-decompose pass and a trial KI calculation side by side, the model turns the descriptor
-into screening parameters, and the final KI calculation applies them:
+decompose pass, the model turns the descriptor into screening parameters, and the final
+KI calculation applies them:
 
 .. code-block:: text
 
-    Snapshot 1                                                               finished
-      Wannier initialization                                                 finished
-      Predicted screening parameters                                         finished
-        Descriptors                                                          finished
-        Trial KI                                                             finished
-      Final KI                                                               finished
+     Step                                                      Code              Status
+     Snapshots                                                                 finished
+       Snapshot 1                                                              finished
+         Wannier initialization                                                finished
+           dft_dummy                                           kcp.x           finished
+           Wannierization                                                      finished
+             Ground state                                                      finished
+               SCF                                             pw.x            finished
+               NSCF                                            pw.x            finished
+             Wannierization (empty block 1)                                    finished
+               Preprocessing                                   wannier90.x     finished
+               Overlaps                                        pw2wannier90.x  finished
+               Minimization                                    wannier90.x     finished
+             Wannierization (occupied block 1)                                 finished
+               Preprocessing                                   wannier90.x     finished
+               Overlaps                                        pw2wannier90.x  finished
+               Minimization                                    wannier90.x     finished
+           Supercell folding                                                   finished
+             Supercell Wannier functions (empty block 1)       wann2kcp.x      finished
+             Supercell Wannier functions (occupied block 1)    wann2kcp.x      finished
+             Merged Wannier manifold (empty, spin 1)           merge_evc.x     finished
+             Merged Wannier manifold (empty, spin 2)           merge_evc.x     finished
+             Merged Wannier manifold (occupied, spin 1)        merge_evc.x     finished
+             Merged Wannier manifold (occupied, spin 2)        merge_evc.x     finished
+           DFT initialization                                  kcp.x           finished
+         Predicted screening parameters                                        finished
+           Descriptors                                                         finished
+             Decomposition (occupied block 1)                  pw2wannier90.x  finished
+             Decomposition (empty block 1)                     pw2wannier90.x  finished
+         Final KI                                              kcp.x           finished
+       Snapshot 2                                                              finished
+         ...
+       ...
+       Snapshot 15                                                             finished
 
 Compare that with the training run's branch: the whole ``Orbital screening`` fan-out,
 one constrained calculation per orbital, is gone. What remains — the Wannierization,
-the initialization, the descriptor pass, the trial and the final calculation — is what
+the initialization, the descriptor pass, and the final calculation — is what
 sets the floor on how cheap a predicted Koopmans calculation can be.
