@@ -1,0 +1,51 @@
+# The Bethe-Salpeter absorption spectrum of bulk silicon on KI quasiparticle
+# energies: a DFPT singlepoint supplies the QP corrections, yambo the BSE.
+
+workflow:
+  task: bse                       # a DFPT singlepoint, then a yambo BSE run seeded by its eigenvalues
+  correction: ki
+  screening_method: dfpt          # the only screening method this route reads from
+  init_orbitals: mlwfs            # maximally localized Wannier functions
+  mp_correction: false            # as in the earlier silicon tutorials
+  pseudo_library: PseudoDojo/0.4/LDA/SR/standard/upf
+
+atoms:
+  cell_parameters:
+    periodic: true                # a crystal, not an isolated molecule
+    ibrav: 2                      # face-centered cubic
+    celldms:
+      1: 10.2622                  # the lattice parameter, in bohr
+  atomic_positions:
+    units: crystal
+    positions:                    # the two-atom diamond basis
+      - [Si, 0.00, 0.00, 0.00]
+      - [Si, 0.25, 0.25, 0.25]
+
+kpoints:
+  grid: [2, 2, 2]                 # the koopmans nscf mesh; yambo's ground state uses the same
+
+calculator_parameters:
+  ecutwfc: 60.0                   # wavefunction cutoff (Ry)
+  nbnd: 20                        # 4 filled bands, and empties to disentangle among
+  wannier90:
+    projections:                  # one block per manifold: filled, then empty
+      - [{fractional_site: [0.25, 0.25, 0.25], ang_mtm: sp3}]
+      - [{fractional_site: [0.25, 0.25, 0.25], ang_mtm: sp3}]
+    dis_win_max: 16.9             # the states the empty block may mix
+    dis_froz_max: 10.6            # the states it must keep whole
+  yambo:                          # yambo's own runcard variables, under their own names
+    BndsRnXs: [1, 100]            # bands building the screening function W
+    NGsBlkXs: 2                   # G-vector cutoff for W, Ry
+    BSEBands: [1, 8]              # bands the BSE kernel is built over: the whole KI-corrected manifold
+    BEnRange: [0, 10]             # absorption energy window, eV
+    BEnSteps: 1000                # energy points sampling that window
+    BDmRange: [0.1, 0.1]          # artificial linewidth broadening each exciton peak, eV
+    LongDrXs: [1, 1, 1]           # light polarization for the screening function
+    BLongDir: [1, 1, 1]           # light polarization for the BSE spectrum
+
+parallelization:
+  pw: {ntasks: 4, npool: 2}       # pw.x parallelizes well over k-points
+  kcw: {ntasks: 4}
+  yambo:
+    ntasks: 4
+    bethe_salpeter: {k: 2, eh: 2}   # yambo cannot split a 4-rank BSE run for this system on its own
