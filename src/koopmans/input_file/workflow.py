@@ -149,11 +149,11 @@ class WorkflowConfig(BaseModel):
         description="a list of integers the same length as the total number of bands, denoting which bands to assign the same screening parameter to",
     )
     group_orbitals_by: GroupOrbitalsBy = Field(
-        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Resolved at parse time from init_orbitals/screening_method when unset: "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent), "none" otherwise; the parsed input always carries the resolved value',
+        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Resolved at parse time from init_orbitals/screening_method when unset: "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent), "none" otherwise; the parsed input always carries the resolved value. Resolves to "none" on an ml:mode=\'predict\', ml:descriptor=\'power_spectrum\' run instead, since that route runs no trial KI for any grouping to apply to',
     )
     group_orbitals_tol: float | None = Field(
         default=None,
-        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree, Angstrom^2 for spread). Left unset, resolved at parse time to the criterion's default (1e-4 for self_hartree, 0.05 for spread) whenever group_orbitals_by is active; stays unset when group_orbitals_by resolves to 'none'",
+        description="tolerance for the group_orbitals_by criterion (units set by the criterion, e.g. eV for self_hartree, Angstrom^2 for spread). Left unset, resolved at parse time to the criterion's default (1e-4 for self_hartree, 0.05 for spread) whenever group_orbitals_by is active; stays unset when group_orbitals_by resolves to 'none', including on an ml:mode='predict', ml:descriptor='power_spectrum' run",
     )
     dfpt_coarse_grid: tuple[int, int, int] | None = Field(
         default=None,
@@ -261,6 +261,14 @@ class WorkflowConfig(BaseModel):
         typed as) ``none`` survives for
         :func:`koopmans.aiida.workflows.advisories_for` to flag instead,
         since only the dispatcher knows which routes group orbitals at all.
+
+        ``KoopmansInput.default_grouping_to_none_for_power_spectrum_predict``
+        runs ahead of this, on the whole raw input, and injects an explicit
+        ``group_orbitals_by: 'none'`` when the route needs one; by the time
+        this validator sees the ``workflow`` dict, that injected key is
+        indistinguishable from one the input file wrote, which is the
+        point — the resolved value this validator produces is what the
+        parsed input carries either way.
 
         Args:
             data: The raw value pydantic is validating — a dict for a

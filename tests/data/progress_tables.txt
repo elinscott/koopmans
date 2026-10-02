@@ -231,7 +231,7 @@ Koopmans DFPT
     Koopmans Hamiltonian                                kcw.x
 
 ########## snapshots (ml train)
-Trajectory
+Snapshots
   Snapshot 1
     DFT initialization (nspin=1)                        kcp.x
     DFT initialization (nspin=2, staging)               kcp.x
@@ -302,9 +302,7 @@ Trajectory
   Descriptors (snapshot 2)                              pw2wannier90.x
 
 ########## snapshots (ml test, power_spectrum)
-Trajectory
+Snapshots
   Snapshot 1
-    Predicted screening parameters
-      Trial KI                                          kcp.x
-      Descriptors                                       pw2wannier90.x
+    Predicted screening parameters                      pw2wannier90.x
     Final KI (predicted alphas)                         kcp.x

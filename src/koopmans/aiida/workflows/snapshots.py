@@ -17,6 +17,7 @@ from koopmans.aiida.workflows import (
 )
 from koopmans.aiida.workflows.dscf import (
     KPOINT_OVERRIDES_ON_SNAPSHOTS,
+    dscf_inputs_for_predict_no_trial,
     dscf_wannier_init_inputs,
     kcp_dscf_inputs,
     require_supported_correction,
@@ -45,9 +46,11 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     ``ml`` configuration, trains a screening-parameter model on the computed
     alphas (``ml: {mode: train}``), scores an existing model against them
     (``mode: test``), or applies an existing model in place of the Delta-SCF
-    refinement (``mode: predict`` — each snapshot runs one trial KI at the
-    guess alphas, the model predicts every screening parameter from that
-    snapshot's descriptors, and the final KI applies the predictions).
+    refinement (``mode: predict`` — the model predicts every screening
+    parameter from that snapshot's descriptors and the final KI applies the
+    predictions; ``self_hartree`` first runs one trial KI at the guess alphas
+    to supply them, ``power_spectrum`` runs no kcp.x step before the final
+    KI).
 
     ``self_hartree`` needs nothing beyond the kcp.x runs themselves.
     ``power_spectrum`` builds its power spectra from a pw2wannier90.x
@@ -114,6 +117,15 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     inputs = kcp_dscf_inputs(koopmans_input)
 
+    if ml_mode == MLMode.PREDICT and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
+        # A power_spectrum prediction runs no trial KI, the only step a
+        # starting alpha or a grouping tolerance acts on, so neither is
+        # forwarded on this route. advisories_for flags, rather than
+        # refuses, a group_orbitals_by/group_orbitals_tol/alpha_guess the
+        # input file wrote explicitly, since those keys are valid on
+        # ml:mode='train'/'test'.
+        inputs = dscf_inputs_for_predict_no_trial(workflow, inputs)
+
     wannier_init = workflow.init_orbitals in (
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
@@ -158,7 +170,7 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             descriptor=ml_config.descriptor,
             occ_and_emp_together=ml_config.occ_and_emp_together,
         ),
-        "Trajectory",
+        "Snapshots",
     )
 
 
@@ -181,7 +193,7 @@ def _resolve_snapshots_ml(
     if ml_mode == MLMode.PREDICT and workflow.alpha_numsteps != 1:
         raise ValueError(
             "ml:mode='predict' replaces the Delta-SCF refinement with a single "
-            "trial-KI prediction, so workflow:alpha_numsteps cannot take effect; "
+            "prediction, so workflow:alpha_numsteps cannot take effect; "
             "set it to 1."
         )
 
