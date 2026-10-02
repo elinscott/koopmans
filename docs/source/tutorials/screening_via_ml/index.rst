@@ -110,7 +110,7 @@ Koopmans calculation, plus a second branch per configuration that builds the
      Snapshots                                                                finished
        Snapshot 1                                                              finished
          Wannier initialization                                                finished
-           dft_dummy                                           kcp.x           finished
+           DFT staging                                         kcp.x           finished
            Wannierization                                                      finished
              Ground state                                                      finished
                SCF                                             pw.x            finished
@@ -140,11 +140,11 @@ Koopmans calculation, plus a second branch per configuration that builds the
                Orbital 3                                       kcp.x           finished
                Orbital 4                                       kcp.x           finished
                Orbital 5                                                       finished
-                 dft_n_plus_1_dummy                            kcp.x           finished
+                 DFT (N+1, staging)                            kcp.x           finished
                  PZ staging                                    kcp.x           finished
                  DFT (N+1)                                     kcp.x           finished
                Orbital 6                                                       finished
-                 dft_n_plus_1_dummy                            kcp.x           finished
+                 DFT (N+1, staging)                            kcp.x           finished
                  PZ staging                                    kcp.x           finished
                  DFT (N+1)                                     kcp.x           finished
          Final KI                                              kcp.x           finished
@@ -202,7 +202,7 @@ Both show up inside each configuration's branch:
      Snapshots                                                                 finished
        Snapshot 1                                                              finished
          Wannier initialization                                                finished
-           dft_dummy                                           kcp.x           finished
+           DFT staging                                         kcp.x           finished
            Wannierization                                                      finished
              Ground state                                                      finished
                SCF                                             pw.x            finished
@@ -232,11 +232,11 @@ Both show up inside each configuration's branch:
                Orbital 3                                       kcp.x           finished
                Orbital 4                                       kcp.x           finished
                Orbital 5                                                       finished
-                 dft_n_plus_1_dummy                            kcp.x           finished
+                 DFT (N+1, staging)                            kcp.x           finished
                  PZ staging                                    kcp.x           finished
                  DFT (N+1)                                     kcp.x           finished
                Orbital 6                                                       finished
-                 dft_n_plus_1_dummy                            kcp.x           finished
+                 DFT (N+1, staging)                            kcp.x           finished
                  PZ staging                                    kcp.x           finished
                  DFT (N+1)                                     kcp.x           finished
          Descriptors                                                           finished
@@ -331,7 +331,7 @@ KI calculation applies them:
      Snapshots                                                                 finished
        Snapshot 1                                                              finished
          Wannier initialization                                                finished
-           dft_dummy                                           kcp.x           finished
+           DFT staging                                         kcp.x           finished
            Wannierization                                                      finished
              Ground state                                                      finished
                SCF                                             pw.x            finished
