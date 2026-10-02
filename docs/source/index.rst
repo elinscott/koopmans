@@ -59,9 +59,10 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
     .. container:: capability-cell
 
-        .. image:: _static/capabilities/ml_screening.png
-            :alt: Predicted against calculated orbital energies, and their error
-                distribution
+        .. image:: tutorials/screening_via_ml/parity_alphas.svg
+            :alt: Predicted-minus-computed screening parameters against the computed
+                value, for a trained model checked against configurations it has not
+                seen
 
         Screening parameters via :doc:`machine learning
         <tutorials/screening_via_ml/index>`
