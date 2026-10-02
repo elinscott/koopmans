@@ -168,7 +168,7 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             descriptor=ml_config.descriptor,
             occ_and_emp_together=ml_config.occ_and_emp_together,
         ),
-        "Trajectory",
+        "Snapshots",
     )
 
 

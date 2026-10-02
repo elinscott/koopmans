@@ -1411,7 +1411,7 @@ ROUTES: dict[str, FakeNode] = {
     ),
     "snapshots (ml train)": FakeNode(
         process_label="WorkGraph<TrajectoryWorkflow>",
-        label="Trajectory",
+        label="Snapshots",
         kind="workgraph",
         children=[
             _graph("dscf_snapshot_1", "Snapshot 1", *_dscf_body(mlwf=False)),
@@ -1433,7 +1433,7 @@ ROUTES: dict[str, FakeNode] = {
     ),
     "snapshots (ml test, power_spectrum)": FakeNode(
         process_label="WorkGraph<TrajectoryWorkflow>",
-        label="Trajectory",
+        label="Snapshots",
         kind="workgraph",
         children=[
             _graph(
