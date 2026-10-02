@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from koopmans.aiida.workflows import advisories_for
 from koopmans.input_file import AtomsInput, KoopmansInput, read_input_file
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
 from koopmans.input_file.workflow import GroupOrbitalsBy
@@ -692,25 +693,42 @@ class TestPredictMode:
         )
         assert self_hartree_descriptor.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
         assert self_hartree_descriptor.workflow.group_orbitals_tol == pytest.approx(1e-4)
-        # A typed grouping tolerance has no trial to group, so it is refused.
+        # A typed grouping tolerance has no trial to group, so the route
+        # still builds — the tolerance is forwarded as None regardless —
+        # but the dispatcher flags it by name.
         d["workflow"]["group_orbitals_tol"] = 2e-4
-        with pytest.raises(ValueError, match="workflow:group_orbitals_tol cannot take effect"):
-            build_snapshots_workgraph(KoopmansInput.model_validate(d))
+        tol_parsed = KoopmansInput.model_validate(d)
+        assert any(
+            "workflow:group_orbitals_tol take no effect" in a for a in advisories_for(tol_parsed)
+        ), advisories_for(tol_parsed)
+        tol_workgraph = build_snapshots_workgraph(tol_parsed)
+        tol_dscf = next(t for t in tol_workgraph.tasks if t.name == "dscf_snapshot_1")
+        assert tol_dscf.inputs["orbital_groups_self_hartree_tol"].value is None
         del d["workflow"]["group_orbitals_tol"]
         # A typed grouping criterion has no trial to group either, so it is
-        # refused too — naming it, and the tolerance it defaults alongside
-        # it once a criterion is active.
+        # flagged too — naming it, and the tolerance it defaults alongside
+        # it once a criterion is active — while the route still builds with
+        # both forwarded as None.
         d["workflow"]["group_orbitals_by"] = "self_hartree"
-        with pytest.raises(
-            ValueError,
-            match="workflow:group_orbitals_by, workflow:group_orbitals_tol cannot take effect",
-        ):
-            build_snapshots_workgraph(KoopmansInput.model_validate(d))
+        by_parsed = KoopmansInput.model_validate(d)
+        assert any(
+            "workflow:group_orbitals_by, workflow:group_orbitals_tol take no effect" in a
+            for a in advisories_for(by_parsed)
+        ), advisories_for(by_parsed)
+        by_workgraph = build_snapshots_workgraph(by_parsed)
+        by_dscf = next(t for t in by_workgraph.tasks if t.name == "dscf_snapshot_1")
+        assert by_dscf.inputs["orbital_groups_self_hartree_tol"].value is None
         del d["workflow"]["group_orbitals_by"]
-        # A typed starting alpha cannot take effect, so it is refused.
+        # A typed starting alpha cannot take effect either; flagged by name,
+        # forwarded as None, the route still builds.
         d["workflow"]["alpha_guess"] = 0.5
-        with pytest.raises(ValueError, match="workflow:alpha_guess cannot take effect"):
-            build_snapshots_workgraph(KoopmansInput.model_validate(d))
+        alpha_parsed = KoopmansInput.model_validate(d)
+        assert any(
+            "workflow:alpha_guess take no effect" in a for a in advisories_for(alpha_parsed)
+        ), advisories_for(alpha_parsed)
+        alpha_workgraph = build_snapshots_workgraph(alpha_parsed)
+        alpha_dscf = next(t for t in alpha_workgraph.tasks if t.name == "dscf_snapshot_1")
+        assert alpha_dscf.inputs["initial_alpha"].value is None
 
     def test_predict_rejects_alpha_numsteps(
         self,

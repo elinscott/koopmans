@@ -120,8 +120,10 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     if ml_mode == MLMode.PREDICT and ml_config.descriptor == MLDescriptor.POWER_SPECTRUM:
         # A power_spectrum prediction runs no trial KI, the only step a
         # starting alpha or a grouping tolerance acts on, so neither is
-        # forwarded on this route. dscf_inputs_for_predict_no_trial refuses
-        # instead of silently dropping one the input file actually wrote.
+        # forwarded on this route. advisories_for flags, rather than
+        # refuses, a group_orbitals_by/group_orbitals_tol/alpha_guess the
+        # input file wrote explicitly, since those keys are valid on
+        # ml:mode='train'/'test'.
         inputs = dscf_inputs_for_predict_no_trial(workflow, inputs)
 
     wannier_init = workflow.init_orbitals in (

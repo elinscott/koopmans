@@ -526,8 +526,8 @@ def kcp_dscf_inputs(koopmans_input: KoopmansInput) -> _KcpDscfInputs:
     )
 
 
-def _reject_trial_only_knobs_for_predict_no_trial(workflow: WorkflowConfig) -> None:
-    """Reject grouping/alpha-guess keys the no-trial power_spectrum predict route cannot apply.
+def predict_no_trial_advisories(workflow: WorkflowConfig) -> list[str]:
+    """Flag grouping/alpha-guess keys the no-trial power_spectrum predict route cannot apply.
 
     Under ``ml:mode='predict'`` with ``ml:descriptor='power_spectrum'`` the
     screening parameters come straight from the model, so no trial KI runs
@@ -538,9 +538,12 @@ def _reject_trial_only_knobs_for_predict_no_trial(workflow: WorkflowConfig) -> N
     whenever the input file leaves it unset, so a resolved
     ``group_orbitals_by`` other than ``'none'``, or a non-``None``
     ``group_orbitals_tol``, only happens when the input file wrote one.
+    These keys are valid on ``ml:mode='train'``/``'test'``, which do run a
+    trial KI, so a model trained with grouping and then applied by only
+    adding ``model_file`` keeps a graph that builds.
 
-    Raises:
-        ValueError: If any of the three keys was written explicitly.
+    Returns:
+        One advisory naming every key written explicitly; empty if none were.
     """
     explicit = []
     if workflow.group_orbitals_by != GroupOrbitalsBy.NONE:
@@ -550,35 +553,28 @@ def _reject_trial_only_knobs_for_predict_no_trial(workflow: WorkflowConfig) -> N
     if "alpha_guess" in workflow.model_fields_set:
         explicit.append("workflow:alpha_guess")
     if not explicit:
-        return
-    raise ValueError(
-        f"{', '.join(explicit)} cannot take effect under ml:mode='predict' with "
+        return []
+    return [
+        f"{', '.join(explicit)} take no effect under ml:mode='predict' with "
         "ml:descriptor='power_spectrum': this route predicts every orbital's "
         "screening parameter straight from its descriptor and runs no trial KI "
-        "to group orbitals by self-Hartree energy or seed with a starting alpha. "
-        f"Remove {'it' if len(explicit) == 1 else 'them'} from the input file."
-    )
+        "to group orbitals by self-Hartree energy or seed with a starting alpha; "
+        f"{'it is' if len(explicit) == 1 else 'they are'} kept for when you switch "
+        "ml:mode to 'train' or 'test', which run a trial KI these feed."
+    ]
 
 
 def dscf_inputs_for_predict_no_trial(
     workflow: WorkflowConfig, inputs: _KcpDscfInputs
 ) -> _KcpDscfInputs:
-    """Null out ``initial_alpha`` of ``inputs`` for the no-trial power_spectrum predict route.
+    """Null out ``initial_alpha``/``orbital_groups_self_hartree_tol`` for the no-trial route.
 
     Call after :func:`kcp_dscf_inputs` when ``ml:mode='predict'`` and
     ``ml:descriptor='power_spectrum'``: that route runs no trial KI, so
-    ``initial_alpha`` reaches no calculation and is forwarded as ``None``
-    instead of the value :func:`kcp_dscf_inputs` filled in from
-    ``workflow.alpha_guess``. ``orbital_groups_self_hartree_tol`` needs no
-    override here — ``KoopmansInput``'s parse-time resolution already
-    defaults the grouping to ``'none'`` on this route, so
-    :func:`kcp_dscf_inputs`'s call to :func:`~koopmans.aiida.workflows.grouping.grouping_tol`
-    has already filled it in as ``None``.
-
-    Raises:
-        ValueError: If ``workflow.group_orbitals_by``, ``workflow.group_orbitals_tol``,
-            or ``workflow.alpha_guess`` was written explicitly (see
-            :func:`_reject_trial_only_knobs_for_predict_no_trial`).
+    neither value reaches a calculation and both are forwarded as ``None``
+    regardless of what :func:`kcp_dscf_inputs` filled in from
+    ``workflow.alpha_guess``/``workflow.group_orbitals_by``+``group_orbitals_tol``
+    (see :func:`predict_no_trial_advisories` for the advisory this silently
+    overridden case earns).
     """
-    _reject_trial_only_knobs_for_predict_no_trial(workflow)
-    return {**inputs, "initial_alpha": None}
+    return {**inputs, "initial_alpha": None, "orbital_groups_self_hartree_tol": None}
