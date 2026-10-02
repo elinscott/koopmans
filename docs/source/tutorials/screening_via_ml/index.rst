@@ -107,7 +107,7 @@ Koopmans calculation, plus a second branch per configuration that builds the
 .. code-block:: text
 
      Step                                                      Code              Status
-     Snapshots                                                                finished
+     Snapshots                                                                 finished
        Snapshot 1                                                              finished
          Wannier initialization                                                finished
            DFT staging                                         kcp.x           finished
