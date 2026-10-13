@@ -571,6 +571,15 @@ class TestYamboInputToBseParameters:
         with pytest.raises(ValueError, match=keyword):
             KoopmansInput.model_validate(d)
 
+    def test_bseprop_names_only_spectra_yambo_computes(self, aiida_profile: Any) -> None:
+        """``BSEprop`` takes yambo's spectrum names, space-separated, and refuses any other."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input(BSEprop="abs jdos"))
+        assert yambo_input_to_bse_parameters(inp)["variables"]["BSEprop"] == "abs jdos"
+        with pytest.raises(ValueError, match=r"BSEprop.*'eels'"):
+            KoopmansInput.model_validate(_bse_pw_input(BSEprop="abs eels"))
+
     def test_unset_optional_keywords_are_not_emitted(self, aiida_profile: Any) -> None:
         """An optional yambo keyword left unset is left out of the runcard."""
         from koopmans.input_file import KoopmansInput
