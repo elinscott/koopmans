@@ -126,7 +126,7 @@ class YamboBseParameters(BaseModel):
     DmRngeXs: tuple[float, float] | None = Field(
         default=None,
         description="damping range, in eV, of the screening function W. Left unset, "
-        "yambo's default `[0.1, 0.1]` applies.",
+        "yambo's default `[0.001, 0.001]` applies.",
         json_schema_extra={"unit": "eV"},
     )
     FFTGvecs: float | None = Field(
@@ -154,10 +154,10 @@ class YamboBseParameters(BaseModel):
         "aiida-yambo BSE protocol's `SEX` applies.",
         json_schema_extra={"unit": ""},
     )
-    Lkind: Literal["bar", "full", "tilde"] | None = Field(
+    Lkind: Literal["bar", "full"] | None = Field(
         default=None,
         description="Coulomb potential in the exchange term of the BSE kernel: `bar` "
-        "(without the G=0 component), `full` or `tilde`. Left unset, the aiida-yambo BSE "
+        "(without the G=0 component) or `full`. Left unset, the aiida-yambo BSE "
         "protocol's `full` applies (yambo's own default is `bar`).",
         json_schema_extra={"unit": ""},
     )
@@ -165,7 +165,7 @@ class YamboBseParameters(BaseModel):
         default=None,
         gt=0.0,
         description="G-vector cutoff, in Ry, for the exchange term of the BSE kernel. "
-        "Left unset, yambo uses every G-vector of the wavefunction database.",
+        "Left unset, yambo uses its full charge-density G-vector set.",
         json_schema_extra={"unit": "Ry"},
     )
     BSEEhEny: tuple[float, float] | None = Field(
@@ -184,10 +184,12 @@ class YamboBseParameters(BaseModel):
     )
     KfnQP_E: tuple[float, float, float] | None = Field(
         default=None,
-        description="[rigid shift in eV, conduction-band stretch, valence-band stretch] "
+        description="[conduction-band shift in eV, conduction-band stretch, valence-band stretch] "
         "applied to the quasiparticle energies in the BSE kernel and spectrum, on top of "
-        "the Koopmans quasiparticle database. Left unset, yambo's default `[0, 1, 1]` "
-        "applies (no change).",
+        "the Koopmans quasiparticle database. The shift moves the conduction bands only "
+        "and the stretches scale each manifold about its band edge, both before the "
+        "database correction is applied. Left unset, yambo's default `[0, 1, 1]` applies "
+        "(no change).",
         json_schema_extra={"unit": ""},
     )
 
@@ -358,18 +360,23 @@ class YamboBseParameters(BaseModel):
             )
         return self
 
-    def to_runcard_variables(self) -> dict[str, list[Any]]:
+    def to_runcard_variables(self) -> dict[str, Any]:
         """Return this block's valued fields as a yambo runcard ``variables`` mapping.
 
         Each field's unit travels on its own ``Field(json_schema_extra={"unit": ...})``:
-        a tuple field becomes ``[list(value), unit]``, a scalar ``[value, unit]``.
-        Optional fields left at ``None`` and flag fields (see
+        a tuple field becomes ``[list(value), unit]``, a numeric scalar
+        ``[value, unit]``, and a string field its bare string (yambopy renders
+        a ``[value, unit]`` pair as an array block, which yambo ignores for a
+        string variable). Optional fields left at ``None`` and flag fields (see
         :meth:`to_runcard_arguments`) are skipped.
         """
-        variables: dict[str, list[Any]] = {}
+        variables: dict[str, Any] = {}
         for name, field in type(self).model_fields.items():
             value = getattr(self, name)
             if value is None or isinstance(value, bool):
+                continue
+            if isinstance(value, str):
+                variables[name] = value
                 continue
             if isinstance(value, tuple):
                 value = list(value)

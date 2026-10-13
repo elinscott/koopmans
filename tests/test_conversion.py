@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -504,11 +505,18 @@ class TestYamboInputToBseParameters:
                 "BEnSteps": [1000, ""],
                 "BDmRange": [[0.1, 0.1], "eV"],
                 "FFTGvecs": [20, "Ry"],
-                "BSSmod": ["h", ""],
+                "BSSmod": "h",
                 "BSEEhEny": [[-1, 5], "eV"],
                 "RandQpts": [1000000, ""],
             },
         }
+
+        # A string variable must render as a scalar assignment: an array block
+        # (`% BSSmod ... %`) is ignored by yambo, which then keeps its default.
+        from yambopy.io.inputfile import YamboIn
+
+        runcard = str(YamboIn().from_dictionary(parameters))
+        assert re.search(r"^BSSmod\s*=\s*'h'$", runcard, re.MULTILINE)
 
     def test_defaults(self, aiida_profile: Any) -> None:
         """``BEnSteps``, ``BDmRange`` and ``BSENGBlk`` take their documented defaults."""
