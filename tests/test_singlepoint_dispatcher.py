@@ -248,7 +248,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         """``workflow.dfpt_coarse_grid`` is rejected before dispatch on every task.
 
         No route reads it, so accepting it would silently run the dense grid
-        alone. The message names the two-run workaround.
+        alone.
         """
         from koopmans.aiida.workflows import build_workgraph
 
@@ -257,7 +257,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         d["workflow"]["dfpt_coarse_grid"] = (2, 2, 2)
         inp = KoopmansInput.model_validate(d)
 
-        with pytest.raises(NotImplementedError, match=r"dfpt_coarse_grid.*alpha_guess"):
+        with pytest.raises(NotImplementedError, match=r"dfpt_coarse_grid.*not wired"):
             build_workgraph(inp)
 
 
