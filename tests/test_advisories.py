@@ -45,6 +45,8 @@ def _bse_dict(**workflow_updates: Any) -> dict[str, Any]:
         "NGsBlkXs": 2,
         "BSEBands": [1, 4],
         "BEnRange": [0, 10],
+        "LongDrXs": [1, 0, 0],
+        "BLongDir": [1, 0, 0],
     }
     return d
 

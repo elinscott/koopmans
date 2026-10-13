@@ -17,9 +17,9 @@ must agree with ``aiida_koopmans.owned_keywords.OWNED["yambo"]`` (see
 ``parallelization.yambo`` (see :class:`~koopmans.input_file.parallelization.YamboParallelization`).
 """
 
-from typing import Any, Self
+from typing import Any, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from koopmans.base import BaseModel
 from koopmans.input_file._utils import raise_for_owned_keywords
@@ -45,7 +45,10 @@ _YAMBO_REASONS: dict[str, str] = {
     "X_and_IO_ROLEs": ("set the split under `parallelization.yambo.static_screening`."),
     "DIP_CPU": ("set the split under `parallelization.yambo.dipoles`."),
     "DIP_ROLEs": ("set the split under `parallelization.yambo.dipoles`."),
-    "rim_cut": "koopmans always turns on yambo's random-integration-method Coulomb-divergence treatment.",
+    "rim_cut": (
+        "the `rim_cut` runlevel is always on; its integration is set by `RandQpts` and `RandGvec`, "
+        "which are zero (nothing is integrated) until you set them."
+    ),
     "WRbsWF": "koopmans always asks yambo to write the excitonic wavefunctions the exciton-brightness output reads.",
     "NLCC": "koopmans always turns on yambo's non-linear core correction support.",
 }
@@ -102,20 +105,220 @@ class YamboBseParameters(BaseModel):
         "a physical property of the system.",
         json_schema_extra={"unit": "eV"},
     )
-    LongDrXs: tuple[float, float, float] | None = Field(
-        default=None,
+    LongDrXs: tuple[float, float, float] = Field(
         description="direction of the light polarization for the screening function W, "
-        "as a vector in Cartesian components. Left unset, yambo's own default "
-        "(x-polarized) applies.",
+        "as a vector in Cartesian components.",
         json_schema_extra={"unit": ""},
     )
-    BLongDir: tuple[float, float, float] | None = Field(
-        default=None,
+    BLongDir: tuple[float, float, float] = Field(
         description="direction of the light polarization for the BSE spectrum, as a "
-        "vector in Cartesian components. Left unset, yambo's own default (x-polarized) "
-        "applies.",
+        "vector in Cartesian components.",
         json_schema_extra={"unit": ""},
     )
+
+    # Screening function W (runlevel `em1s`)
+    Chimod: Literal["IP", "Hartree", "ALDA", "LRC", "PF", "BSfxc"] | None = Field(
+        default=None,
+        description="approximation to the response function that screens W. Left unset, "
+        "the aiida-yambo BSE protocol's `Hartree` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    DmRngeXs: tuple[float, float] | None = Field(
+        default=None,
+        description="damping range, in eV, of the screening function W. Left unset, "
+        "yambo's default `[0.1, 0.1]` applies.",
+        json_schema_extra={"unit": "eV"},
+    )
+    FFTGvecs: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="plane-wave cutoff, in Ry, of the FFT grid yambo builds the "
+        "oscillators on. Left unset, yambo sizes the grid from the wavefunction "
+        "database; the aiida-yambo protocol's value is dropped.",
+        json_schema_extra={"unit": "Ry"},
+    )
+
+    # BSE kernel (runlevel `bse`)
+    BSEmod: Literal["resonant", "retarded", "coupling"] | None = Field(
+        default=None,
+        description="BSE Hamiltonian blocks included: `resonant`, `retarded` (resonant "
+        "plus the antiresonant block of the retarded response) or `coupling` (full "
+        "resonant-antiresonant coupling). Left unset, the aiida-yambo BSE protocol's "
+        "`resonant` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    BSKmod: Literal["IP", "Hartree", "HF", "ALDA", "SEX", "BSfxc"] | None = Field(
+        default=None,
+        description="approximation to the BSE kernel: independent particle, Hartree, "
+        "Hartree-Fock, ALDA, statically screened exchange or BSfxc. Left unset, the "
+        "aiida-yambo BSE protocol's `SEX` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    Lkind: Literal["bar", "full", "tilde"] | None = Field(
+        default=None,
+        description="Coulomb potential in the exchange term of the BSE kernel: `bar` "
+        "(without the G=0 component), `full` or `tilde`. Left unset, the aiida-yambo BSE "
+        "protocol's `full` applies (yambo's own default is `bar`).",
+        json_schema_extra={"unit": ""},
+    )
+    BSENGexx: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="G-vector cutoff, in Ry, for the exchange term of the BSE kernel. "
+        "Left unset, yambo uses every G-vector of the wavefunction database.",
+        json_schema_extra={"unit": "Ry"},
+    )
+    BSEEhEny: tuple[float, float] | None = Field(
+        default=None,
+        description="[min, max] energy window, in eV, of the electron-hole transitions "
+        "included in the kernel. Left unset, yambo applies no window (`[-1, -1]`).",
+        json_schema_extra={"unit": "eV"},
+    )
+    BSKCut: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="cutoff on the BSE kernel: 0 keeps it whole, 1 drops it. Left unset, "
+        "yambo's default `0` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    KfnQP_E: tuple[float, float, float] | None = Field(
+        default=None,
+        description="[rigid shift in eV, conduction-band stretch, valence-band stretch] "
+        "applied to the quasiparticle energies in the BSE kernel and spectrum, on top of "
+        "the Koopmans quasiparticle database. Left unset, yambo's default `[0, 1, 1]` "
+        "applies (no change).",
+        json_schema_extra={"unit": ""},
+    )
+
+    # Spectrum (runlevels `bss`, `optics`)
+    BSSmod: Literal["h", "d", "s", "i", "t"] | None = Field(
+        default=None,
+        description="solver for the BSE spectrum: `h` (Haydock), `d` (diagonalization), "
+        "`s` (SLEPc), `i` (inversion) or `t` (TDDFT). Left unset, the aiida-yambo BSE "
+        "protocol's `d` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    BSEprop: str | None = Field(
+        default=None,
+        description="space-separated list of spectra to compute, from `abs`, `jdos`, "
+        "`kerr`, `asymm`, `anHAll`, `magn`, `dich`, `photolum` and `esrt`. Left unset, "
+        "yambo's default `abs` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    BSHayTrs: float | None = Field(
+        default=None,
+        description="Haydock convergence threshold, in percent: positive values require "
+        "every spectral point to converge, negative values the average. Left unset, "
+        "yambo's default `-0.02` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    BSHayItrMAX: int | None = Field(
+        default=None,
+        gt=0,
+        description="maximum number of Haydock iterations. Left unset, yambo's default "
+        "`1000` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    BSHayItrIO: int | None = Field(
+        default=None,
+        gt=0,
+        description="number of Haydock iterations between restart writes. Left unset, "
+        "yambo's default `100` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    BSHayTer: bool = Field(
+        default=False,
+        description="if True, terminate the Haydock continued fraction. Left unset, "
+        "yambo does not terminate it.",
+    )
+    WehDiag: bool = Field(
+        default=False,
+        description="if True, make the electron-hole interaction diagonal in G-space. "
+        "Left unset, yambo does not.",
+    )
+    WehCpl: bool = Field(
+        default=False,
+        description="if True, include the electron-hole interaction in the coupling "
+        "block as well. Left unset, yambo does not.",
+    )
+
+    # Dipoles (runlevel `dipoles`)
+    DipApproach: Literal["G-space v", "R-space x", "Covariant", "Shifted grids"] | None = Field(
+        default=None,
+        description="method for the dipole matrix elements. Left unset, yambo's default "
+        "`G-space v` applies.",
+        json_schema_extra={"unit": ""},
+    )
+
+    # Coulomb-divergence treatment (runlevel `rim_cut`)
+    RandQpts: int | None = Field(
+        default=None,
+        ge=0,
+        description="number of random q-points in the Brillouin zone the random "
+        "integration method samples. Left unset, yambo's default `0` applies, which "
+        "integrates nothing.",
+        json_schema_extra={"unit": ""},
+    )
+    RandGvec: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="cutoff, in Ry, of the Coulomb-interaction components the random "
+        "integration method treats. Left unset, yambo's default `0` applies, which "
+        "integrates nothing.",
+        json_schema_extra={"unit": "Ry"},
+    )
+    QpgFull: bool = Field(
+        default=False,
+        description="if True, build the full Coulomb-interaction matrix in the random "
+        "integration method. Left unset, yambo does not.",
+    )
+    CUTGeo: str | None = Field(
+        default=None,
+        description="Coulomb cutoff geometry: `box`, `cylinder`, `sphere`, `ws` or "
+        "`slab`, followed by the directions it applies to (for example `slab z`). Left "
+        "unset, yambo's default `none` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    CUTBox: tuple[float, float, float] | None = Field(
+        default=None,
+        description="side lengths, in bohr, of the Coulomb cutoff box. Left unset, "
+        "yambo's default `[0, 0, 0]` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    CUTRadius: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="radius, in bohr, of the Coulomb cutoff sphere or cylinder. Left "
+        "unset, yambo's default `0` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    CUTCylLen: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="length, in bohr, of the Coulomb cutoff cylinder. Left unset, "
+        "yambo's default `0` applies.",
+        json_schema_extra={"unit": ""},
+    )
+    CUTwsGvec: float | None = Field(
+        default=None,
+        description="number of G-vectors modified by the Wigner-Seitz Coulomb cutoff. "
+        "Left unset, yambo's default `0.7` applies.",
+        json_schema_extra={"unit": ""},
+    )
+
+    @field_validator("BSEprop")
+    @classmethod
+    def check_bseprop_spectra(cls, value: str | None) -> str | None:
+        """Require every name in ``BSEprop`` to be a spectrum yambo computes."""
+        known = {"abs", "jdos", "kerr", "asymm", "anHAll", "magn", "dich", "photolum", "esrt"}
+        unknown = set(value.split()) - known if value else set()
+        if unknown:
+            raise ValueError(
+                f"`calculator_parameters.yambo.BSEprop` names {sorted(unknown)}; "
+                f"choose from {sorted(known)}."
+            )
+        return value
 
     @model_validator(mode="after")
     def default_bsengblk_to_ngsblkxs(self) -> Self:
@@ -156,21 +359,24 @@ class YamboBseParameters(BaseModel):
         return self
 
     def to_runcard_variables(self) -> dict[str, list[Any]]:
-        """Return this block's own fields as a yambo runcard ``variables`` mapping.
+        """Return this block's valued fields as a yambo runcard ``variables`` mapping.
 
-        Each field's unit travels on its own ``Field(json_schema_extra={"unit": ...})``,
-        so this reads generically off every field rather than hand-listing them: a
-        tuple field becomes ``[list(value), unit]``, a scalar ``[value, unit]``. A
-        field left at its ``None`` default (the optional light-polarization
-        directions) is skipped, matching yambo's own compiled-in default.
+        Each field's unit travels on its own ``Field(json_schema_extra={"unit": ...})``:
+        a tuple field becomes ``[list(value), unit]``, a scalar ``[value, unit]``.
+        Optional fields left at ``None`` and flag fields (see
+        :meth:`to_runcard_arguments`) are skipped.
         """
         variables: dict[str, list[Any]] = {}
         for name, field in type(self).model_fields.items():
             value = getattr(self, name)
-            if value is None:
+            if value is None or isinstance(value, bool):
                 continue
             if isinstance(value, tuple):
                 value = list(value)
             unit = field.json_schema_extra["unit"]  # type: ignore[index]
             variables[name] = [value, unit]
         return variables
+
+    def to_runcard_arguments(self) -> list[str]:
+        """Return the names of this block's flag fields that are set, as runcard ``arguments``."""
+        return [name for name in type(self).model_fields if getattr(self, name) is True]

@@ -458,6 +458,8 @@ def _bse_pw_input(**yambo_updates: Any) -> dict[str, Any]:
         "NGsBlkXs": 2,
         "BSEBands": [4, 5],
         "BEnRange": [0, 10],
+        "LongDrXs": [1, 0, 0],
+        "BLongDir": [1, 0, 0],
         **yambo_updates,
     }
     return d
@@ -477,12 +479,20 @@ class TestYamboInputToBseParameters:
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(
-            _bse_pw_input(LongDrXs=[1.0, 1.0, 1.0], BLongDir=[1.0, 1.0, 1.0])
+            _bse_pw_input(
+                LongDrXs=[1.0, 1.0, 1.0],
+                BLongDir=[1.0, 1.0, 1.0],
+                FFTGvecs=20,
+                BSSmod="h",
+                BSEEhEny=[-1, 5],
+                RandQpts=1000000,
+                BSHayTer=True,
+            )
         )
         parameters = yambo_input_to_bse_parameters(inp)
 
         assert parameters == {
-            "arguments": ["rim_cut", "WRbsWF", "NLCC"],
+            "arguments": ["rim_cut", "WRbsWF", "NLCC", "BSHayTer"],
             "variables": {
                 "BndsRnXs": [[1, 100], ""],
                 "NGsBlkXs": [2, "Ry"],
@@ -493,6 +503,10 @@ class TestYamboInputToBseParameters:
                 "BEnRange": [[0, 10], "eV"],
                 "BEnSteps": [1000, ""],
                 "BDmRange": [[0.1, 0.1], "eV"],
+                "FFTGvecs": [20, "Ry"],
+                "BSSmod": ["h", ""],
+                "BSEEhEny": [[-1, 5], "eV"],
+                "RandQpts": [1000000, ""],
             },
         }
 
@@ -539,19 +553,25 @@ class TestYamboInputToBseParameters:
         for keyword in ("KfnQPdb", "BSEQptR", "BS_CPU", "BS_ROLEs"):
             assert keyword not in variables
 
-    def test_unset_light_polarization_is_not_emitted(self, aiida_profile: Any) -> None:
-        """``LongDrXs``/``BLongDir`` are ordinary optional fields, left out when unset.
+    @pytest.mark.parametrize("keyword", ["LongDrXs", "BLongDir"])
+    def test_light_polarization_is_required(self, keyword: str) -> None:
+        """Leaving out a polarization direction is refused: no value is assumed for it."""
+        from koopmans.input_file import KoopmansInput
 
-        Unlike the route-owned keywords above, a caller may set these; the
-        input file default is simply unset, leaving yambo's own compiled-in
-        (x-polarized) default to apply.
-        """
+        d = _bse_pw_input()
+        del d["calculator_parameters"]["yambo"][keyword]
+        with pytest.raises(ValueError, match=keyword):
+            KoopmansInput.model_validate(d)
+
+    def test_unset_optional_keywords_are_not_emitted(self, aiida_profile: Any) -> None:
+        """An optional yambo keyword left unset is left out of the runcard."""
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_bse_pw_input())
-        variables = yambo_input_to_bse_parameters(inp)["variables"]
-        assert "LongDrXs" not in variables
-        assert "BLongDir" not in variables
+        parameters = yambo_input_to_bse_parameters(inp)
+        for keyword in ("FFTGvecs", "BSSmod", "RandQpts", "BSHayTer"):
+            assert keyword not in parameters["variables"]
+        assert parameters["arguments"] == ["rim_cut", "WRbsWF", "NLCC"]
 
 
 class TestPwNamelistDumpSurvivesDefaultValues:

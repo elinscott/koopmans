@@ -996,6 +996,8 @@ class TestEpsInfFactor:
             "NGsBlkXs": 2,
             "BSEBands": [1, 4],
             "BEnRange": [0, 10],
+            "LongDrXs": [1, 0, 0],
+            "BLongDir": [1, 0, 0],
         }
         with pytest.raises(ValueError, match="task: bse"):
             KoopmansInput.model_validate(d)
@@ -1558,6 +1560,8 @@ def _bse_input(**yambo_updates: object) -> dict[str, object]:
         "NGsBlkXs": 2,
         "BSEBands": [4, 5],
         "BEnRange": [0, 10],
+        "LongDrXs": [1, 0, 0],
+        "BLongDir": [1, 0, 0],
         **yambo_updates,
     }
     return d
@@ -1619,7 +1623,7 @@ class TestYamboSchema:
             ("BSEQptR", "optical"),
             ("BS_CPU", "parallelization.yambo"),
             ("BS_ROLEs", "parallelization.yambo"),
-            ("rim_cut", "Coulomb-divergence"),
+            ("rim_cut", "RandQpts"),
             ("WRbsWF", "excitonic wavefunctions"),
             ("NLCC", "non-linear core correction"),
         ],

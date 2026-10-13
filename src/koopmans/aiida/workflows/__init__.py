@@ -833,6 +833,14 @@ def build_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "automatic projections are currently supported by the `wannierize` task only."
         )
 
+    if koopmans_input.workflow.dfpt_coarse_grid is not None:
+        raise NotImplementedError(
+            "`workflow.dfpt_coarse_grid` is not wired into any route yet: screening on a "
+            "coarse grid and then running the dense-grid chain with the coarse alphas is not "
+            "supported. Run `singlepoint` on the coarse grid, then the dense run with "
+            "`calculate_alpha: false` and `alpha_guess`."
+        )
+
     ml_config = koopmans_input.ml
     if ml_config.mode != MLMode.NONE:
         if task != Task.SINGLEPOINT:
