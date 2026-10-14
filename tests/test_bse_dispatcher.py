@@ -35,6 +35,8 @@ def _si_bse_dict(**yambo_updates: Any) -> dict[str, Any]:
     """
     d = _si_dfpt_dict()
     d["workflow"]["task"] = "bse"
+    # `bse` implies DFPT screening, so the input leaves the key out.
+    d["workflow"].pop("screening_method", None)
     d["calculator_parameters"]["yambo"] = {
         "BndsRnXs": [1, 100],
         "NGsBlkXs": 2,
@@ -88,6 +90,10 @@ class TestBuild:
         assert "dfpt" in names
         assert "select_channel" in names
         assert "bse" in names
+
+        explicit = _si_bse_dict()
+        explicit["workflow"]["screening_method"] = "dfpt"
+        assert "dfpt" in _build(explicit).get_task_names()
 
     def test_bse_parameters_match_the_schema_mapping(
         self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
@@ -243,9 +249,7 @@ class TestRouteRefusals:
             KoopmansInput.model_validate(d)
         for stated in (None, "dfpt"):
             d = _si_bse_dict()
-            if stated is None:
-                del d["workflow"]["screening_method"]
-            else:
+            if stated is not None:
                 d["workflow"]["screening_method"] = stated
             parsed = KoopmansInput.model_validate(d)
             assert parsed.workflow.screening_method == CalculateScreeningMethod.DFPT

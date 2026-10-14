@@ -233,32 +233,6 @@ class WorkflowConfig(BaseModel):
             values["init_empty_orbitals"] = values.get("init_orbitals", VariationalOrbitalType.PZ)
         return values
 
-    @model_validator(mode="before")
-    @classmethod
-    def bse_implies_dfpt_screening(cls, data: Any) -> Any:
-        """Resolve an unset ``screening_method`` to ``dfpt`` for ``task: bse``.
-
-        Raises:
-            ValueError: If ``task: bse`` states ``screening_method: dscf``.
-        """
-        if not isinstance(data, dict):
-            return data
-        task = data.get("task")
-        if (task.value if isinstance(task, Enum) else str(task).lower()) != Task.BSE.value:
-            return data
-        method = data.get("screening_method")
-        if method is None:
-            return {**data, "screening_method": CalculateScreeningMethod.DFPT.value}
-        if (method.value if isinstance(method, Enum) else str(method).lower()) != (
-            CalculateScreeningMethod.DFPT.value
-        ):
-            raise ValueError(
-                "`task: bse` is built on linear-response (DFPT) screening, whose kcw.x "
-                "eigenvalues on the k-point grid feed yambo. Remove `screening_method`, "
-                "or set it to `dfpt`."
-            )
-        return data
-
     @model_validator(mode="after")
     def check_orbital_groups_length(self) -> Self:
         """Make the spin-dimension of ``orbital_groups`` is consistent with ``spin``."""
@@ -337,4 +311,32 @@ class WorkflowConfig(BaseModel):
 
         if raw_tol is None and criterion in _ORBITAL_GROUPING_DEFAULT_TOLERANCE:
             data["group_orbitals_tol"] = _ORBITAL_GROUPING_DEFAULT_TOLERANCE[criterion]
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def bse_implies_dfpt_screening(cls, data: Any) -> Any:
+        """Resolve an unset ``screening_method`` to ``dfpt`` for ``task: bse``.
+
+        Raises:
+            ValueError: If ``task: bse`` states ``screening_method: dscf``.
+        """
+        # Pydantic runs "before" validators last-defined first: this one is defined
+        # after `resolve_group_orbitals_by` so grouping sees the resolved method.
+        if not isinstance(data, dict):
+            return data
+        task = data.get("task")
+        if (task.value if isinstance(task, Enum) else str(task).lower()) != Task.BSE.value:
+            return data
+        method = data.get("screening_method")
+        if method is None:
+            return {**data, "screening_method": CalculateScreeningMethod.DFPT.value}
+        if (method.value if isinstance(method, Enum) else str(method).lower()) != (
+            CalculateScreeningMethod.DFPT.value
+        ):
+            raise ValueError(
+                "`task: bse` is built on linear-response (DFPT) screening, whose kcw.x "
+                "eigenvalues on the k-point grid feed yambo. Remove `screening_method`, "
+                "or set it to `dfpt`."
+            )
         return data
