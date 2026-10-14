@@ -192,8 +192,13 @@ class YamboParallelization(CodeParallelization):
     is rejected here instead, at parse time, so a mismatched split is never
     passed through unnoticed. A driver named without ``ntasks`` set cannot
     be checked this way, so it is rejected too. A driver left unset means
-    yambo distributes that work over the ranks itself; a driver whose model
-    omits a role in its own vocabulary is also fine — yambo appends any
+    yambo distributes that work over the ranks itself.
+    The exception is ``bethe_salpeter``: with ``ntasks`` above 1 and no
+    entry, all ranks go on the electron-hole role (``BS_CPU = "<ntasks>"``,
+    ``BS_ROLEs = "eh"``), because yambo's own proposal for the kernel aborts
+    when the irreducible k-points and electron-hole pairs cannot absorb the
+    rank count. A driver whose model omits a role in its own vocabulary is
+    also fine — yambo appends any
     missing ``q``/``k`` role as 1 itself (``PARALLEL_get_user_structure.F``).
 
     Example::
@@ -212,7 +217,7 @@ class YamboParallelization(CodeParallelization):
     bethe_salpeter: BetheSalpeterRoles | None = Field(
         default=None,
         description="MPI role split for the Bethe-Salpeter kernel (yambo's ``BS_CPU``/"
-        "``BS_ROLEs``).",
+        "``BS_ROLEs``). Defaults to all ranks on ``eh`` when ``ntasks`` exceeds 1.",
     )
     static_screening: StaticScreeningRoles | None = Field(
         default=None,
