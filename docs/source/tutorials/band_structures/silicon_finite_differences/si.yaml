@@ -27,7 +27,9 @@ atoms:
 kpoints:
   grid: [2, 2, 2]                 # the Brillouin-zone sampling
   path: LGXKG                     # the path a band structure is plotted along
-  smooth_interpolation_factor: 4  # swap in the DFT Hamiltonian from a 4x denser mesh
+  overrides:
+    wannierize_smooth:
+      factor: 4                   # swap in the DFT Hamiltonian from a 4x denser mesh
 
 calculator_parameters:
   ecutwfc: 60.0                   # wavefunction cutoff (Ry)

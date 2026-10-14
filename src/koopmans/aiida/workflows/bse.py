@@ -118,6 +118,7 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             # does.
             eigenvalues="ki",
             eps_inf=chain_inputs["eps_inf"],
+            eps_kpoints=chain_inputs["eps_kpoints"],
             l_vcut=chain_inputs["l_vcut"],
             group_orbitals_tol=chain_inputs["group_orbitals_tol"],
             kcw_overrides=chain_inputs["kcw_overrides"],
