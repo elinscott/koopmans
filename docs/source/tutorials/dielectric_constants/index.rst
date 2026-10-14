@@ -111,14 +111,16 @@ calculation wants: the isotropic average of that tensor.
 
        \varepsilon_\infty - 1 \propto \sum_{\mathbf{k}} \sum_{v, c}
        \frac{|\langle c\mathbf{k} | \hat{\mathbf{r}} | v\mathbf{k} \rangle|^2}
-            {\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}}.
+            {\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}},
 
-   The summand is largest where the direct gap
-   :math:`\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}` is smallest, which in
-   silicon is at :math:`\Gamma`, so it peaks sharply there. A :math:`\Gamma`-centred
-   mesh has a sample sitting exactly on that peak, and the sum gives it the same weight as
-   every other point, so the peak is counted far too heavily until the mesh is dense enough
-   for its neighbours to dilute it. A half-shifted mesh has no sample at :math:`\Gamma`:
+   where the sum over :math:`\mathbf{k}` stands for an integral over the whole Brillouin
+   zone, which the calculation approximates by a sum over the points of the
+   :math:`k`-point grid, each with the same weight. The summand is largest where the direct
+   gap :math:`\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}` is smallest, which
+   in silicon is at :math:`\Gamma`, so it peaks sharply there. A :math:`\Gamma`-centred
+   mesh has a sample sitting exactly on that peak and counts it like any other point, so
+   the peak is weighted far too heavily until the mesh is dense enough for its neighbours
+   to dilute it. A half-shifted mesh has no sample at :math:`\Gamma`:
    its nearest points sit half a step away on every side, where the summand has already
    come down, so the sum sees the peak only through its surroundings and settles with far
    fewer points.
@@ -127,7 +129,7 @@ calculation wants: the isotropic average of that tensor.
  Using the value in a Koopmans calculation
 *******************************************
 
-To use this value, set it as ``eps_inf`` in the ``workflow`` block of a
+Set the converged value, 13.28, as ``eps_inf`` in the ``workflow`` block of a
 ``singlepoint`` input:
 
 .. code-block:: yaml
