@@ -27,9 +27,6 @@ FloatGE1 = Annotated[float, Field(ge=1.0)]
 
 #: Keywords retired from ``workflow``, each with what to write instead.
 _REMOVED_WORKFLOW_KEYWORDS: dict[str, str] = {
-    "screening_method": (
-        "Write `formalism: dscf` (ΔSCF) or `formalism: dfpt` (linear response) instead."
-    ),
     "calculate_bands": (
         "A band structure is computed whenever `kpoints.path` names a path and the "
         "task can interpolate along it; set `kpoints.path`."

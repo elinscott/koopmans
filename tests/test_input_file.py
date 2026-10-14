@@ -140,15 +140,6 @@ class TestFormalism:
         d["workflow"]["formalism"] = "dfpt"  # type: ignore[index]
         KoopmansInput.model_validate(d)
 
-    def test_the_retired_name_is_refused_by_name(self) -> None:
-        """``screening_method`` points at ``formalism``."""
-        d = _minimal_si_input()
-        d["workflow"]["screening_method"] = "dscf"  # type: ignore[index]
-        with pytest.raises(
-            ValueError, match=r"`workflow\.screening_method` no longer exists.*formalism"
-        ):
-            KoopmansInput.model_validate(d)
-
 
 def _minimal_si_input() -> dict[str, object]:
     """Return a minimal, valid silicon ``KoopmansInput`` dict."""
