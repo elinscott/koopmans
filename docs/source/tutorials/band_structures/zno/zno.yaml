@@ -1,0 +1,75 @@
+# The KI band structure of bulk ZnO, with the screening parameters obtained
+# from linear response in the primitive cell.
+
+workflow:
+  task: singlepoint               # spectral properties at fixed geometry
+  correction: ki                  # the KI flavor of the correction, not KIPZ
+  screening_method: dfpt          # screening from linear response
+  init_orbitals: mlwfs            # Wannier functions as the variational orbitals
+  calculate_alpha: false          # take the screening parameters below as given
+  alpha_guess:                    # one per Wannier function: 26 filled, then 2 empty
+    - 0.3580
+    - 0.3641
+    - 0.3640
+    - 0.3641
+    - 0.3571
+    - 0.3577
+    - 0.3577
+    - 0.3573
+    - 0.3573
+    - 0.3580
+    - 0.3641
+    - 0.3640
+    - 0.3641
+    - 0.3571
+    - 0.3577
+    - 0.3577
+    - 0.3573
+    - 0.3573
+    - 0.2158
+    - 0.2323
+    - 0.2344
+    - 0.2343
+    - 0.2158
+    - 0.2323
+    - 0.2344
+    - 0.2343
+    - 0.2231
+    - 0.2231
+  pseudo_library: PseudoDojo/0.4/LDA/SR/standard/upf  # LDA is the base functional
+  gb_correction: true             # Gygi-Baldereschi treatment of the q -> 0 divergence
+  eps_inf: 5.3                    # the dielectric constant that correction needs
+
+atoms:
+  cell_parameters:
+    periodic: true
+    ibrav: 4                      # a hexagonal cell, in Quantum ESPRESSO's numbering
+    celldms:
+      1: 6.14057                  # a, in Bohr
+      3: 1.60204                  # c/a
+  atomic_positions:
+    units: crystal
+    positions:                    # wurtzite: two ZnO units per cell
+      - [Zn, 0.33330, 0.66670, 0.50000]
+      - [Zn, 0.66670, 0.33330, 0.00000]
+      - [O, 0.33330, 0.66670, 0.11725]
+      - [O, 0.66670, 0.33330, 0.61725]
+
+kpoints:
+  grid: [4, 4, 4]                 # the mesh the Wannier functions are built on
+  path: ALMGAHK                   # the band path, G being Gamma
+
+calculator_parameters:
+  ecutwfc: 50.0                   # wavefunction cutoff (Ry)
+  pw:
+    system:
+      nbnd: 52                    # 26 filled bands, and 26 empty ones to select from
+  wannier90:
+    projections:                  # one entry per block of bands
+      - [{site: Zn, ang_mtm: "l=0"}]                          # Zn 3s
+      - [{site: Zn, ang_mtm: "l=1"}]                          # Zn 3p
+      - [{site: O, ang_mtm: "l=0"}]                           # O 2s
+      - [{site: Zn, ang_mtm: "l=2"}, {site: O, ang_mtm: "l=1"}]  # Zn 3d with O 2p
+      - [{site: Zn, ang_mtm: "l=0"}]                          # Zn 4s, the empty block
+    dis_froz_max: 14.5            # frozen window, applied to the empty block only
+    dis_win_max: 17.0             # disentanglement window, likewise
