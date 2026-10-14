@@ -154,6 +154,9 @@ below serves that goal; where they conflict, clarity wins.
 **Documentation** decouples orthogonal choices: never present a default
 pairing (grouping criterion ↔ screening method) as an equivalence.
 
+**Tutorials** have their own guide, loaded on demand when a tutorial page is
+edited: `docs/source/tutorials/CLAUDE.md`.
+
 ## Current status (update as work progresses)
 
 - Input file parsing (`input_file/`): ~95% ported.
