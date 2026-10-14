@@ -265,7 +265,9 @@ class StepKpointsOverridesInput(BaseModel):
     """Largest spacing between neighbouring k-points, in inverse angstrom.
 
     The cell fixes the mesh dimensions, so a converged value carries from
-    one structure to the next. Excludes ``grid`` and ``offset``.
+    one structure to the next. Excludes ``grid`` and ``offset``: a mesh
+    built from a spacing carries no offset, and takes none from ``scf`` or
+    the top level.
     """
 
     @model_validator(mode="after")
@@ -310,8 +312,9 @@ class SmoothWannierizeKpointsOverridesInput(WannierizeKpointsOverridesInput):
     ]
     """Per-direction densification of ``grid`` for the smooth-interpolation method.
 
-    Above 1 (in any direction), a singlepoint's band-structure
-    interpolation swaps the DFT part of the Koopmans Hamiltonian for one
+    Multiplies the top-level ``grid``, whatever ``overrides.nscf`` gives
+    the main Wannierization. Above 1 (in any direction), a singlepoint's
+    band-structure interpolation swaps the DFT part of the Koopmans Hamiltonian for one
     Wannierized on a mesh this many times denser than ``grid``:
     ``[a, b, c]`` densifies each direction independently, and a bare
     integer ``a`` is shorthand for ``[a, a, a]``. Needs ``path`` to
@@ -322,9 +325,10 @@ class SmoothWannierizeKpointsOverridesInput(WannierizeKpointsOverridesInput):
 class KpointsOverridesInput(BaseModel):
     """K-point sampling for individual steps, in place of the top-level values.
 
-    Each key names a step as it appears in the run's output tree. Steps left
-    out sample the top-level ``grid`` and ``offset``, and so does every
-    attribute an entry leaves unset, except where an entry says otherwise.
+    Each key names a step family: the name the output folders carry, before
+    any per-block, per-spin or route prefix or suffix. Steps left out sample
+    the top-level ``grid`` and ``offset``, and so does every attribute an
+    entry leaves unset, except where an entry says otherwise.
     """
 
     scf: StepKpointsOverridesInput | None = None
@@ -351,38 +355,12 @@ class KpointsOverridesInput(BaseModel):
 
     Unset, it samples the same mesh as ``scf``. Each attribute an entry
     leaves unset is taken from ``scf`` where that entry states it, and from
-    the top level otherwise. The dielectric constant converges far more
-    slowly with k-points than the rest of the run, so a coarse ``grid``
-    usually undersamples it.
+    the top level otherwise. The exception is ``offset`` beside a
+    ``grid_spacing``: a mesh built from a spacing carries no offset, so the
+    ``scf`` and top-level offsets are dropped. The dielectric constant
+    converges far more slowly with k-points than the rest of the run, so a
+    coarse ``grid`` usually undersamples it.
     """
-
-    @model_validator(mode="before")
-    @classmethod
-    def _wannier90_was_renamed(cls, data: Any) -> Any:
-        """Reject the former ``wannier90`` entry by name."""
-        if isinstance(data, dict) and "wannier90" in data:
-            raise ValueError(
-                "`kpoints.overrides.wannier90` has been renamed "
-                "`kpoints.overrides.wannierize`, after the step it configures. Rename it."
-            )
-        return data
-
-    @model_validator(mode="after")
-    def _dielectric_offset_has_a_grid(self) -> KpointsOverridesInput:
-        """Reject a dielectric offset whose mesh would come from an scf spacing."""
-        dielectric, scf = self.dielectric, self.scf
-        if (
-            dielectric is not None
-            and dielectric.offset is not None
-            and dielectric.grid is None
-            and scf is not None
-            and scf.grid_spacing is not None
-        ):
-            raise ValueError(
-                "`dielectric.offset` needs a grid to shift: `dielectric` takes its mesh "
-                "from `scf`, which states a `grid_spacing`. Give `dielectric.grid` too."
-            )
-        return self
 
     @model_validator(mode="after")
     def _nscf_states_a_mesh_koopmans_builds(self) -> KpointsOverridesInput:
@@ -425,15 +403,15 @@ class GammaOnlyKpointsInput(BaseModel):
     """
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
-    """Per-step k-point sampling, which a gamma-only calculation cannot have."""
+    """Per-step k-point sampling; a gamma-only calculation takes no ``scf`` or ``nscf`` entry."""
 
     @field_validator("overrides")
     @classmethod
     def check_no_step_is_given_a_mesh(
         cls, overrides: KpointsOverridesInput
     ) -> KpointsOverridesInput:
-        """Reject a per-step entry: every step of a gamma-only run samples Gamma."""
-        for step in KpointsOverridesInput.model_fields:
+        """Reject an ``scf`` or ``nscf`` entry: those steps of a gamma-only run sample Gamma alone."""
+        for step in ("scf", "nscf"):
             if getattr(overrides, step) is not None:
                 raise ValueError(
                     f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
@@ -649,11 +627,14 @@ class KoopmansInput(BaseModel):
     @field_validator("kpoints", mode="before")
     @classmethod
     def check_factors_moved_to_overrides(cls, kpoints: Any) -> Any:
-        """Reject the former per-step densification factors by name.
+        """Reject the former per-step keywords by name, and two contradictory overrides.
 
-        Each now lives on the ``kpoints.overrides`` entry of the step it
-        shapes. Checked here rather than in either ``KpointsInput`` member,
-        for the reason :meth:`check_density_was_renamed` gives.
+        The densification factors now live on the ``kpoints.overrides`` entry
+        of the step they shape, and ``overrides.wannier90`` is now
+        ``overrides.wannierize``. A ``dielectric.offset`` beside an ``scf``
+        spacing is refused too. Checked here rather than in either
+        ``KpointsInput`` member, for the reason
+        :meth:`check_density_was_renamed` gives.
         """
         if not isinstance(kpoints, dict):
             return kpoints
@@ -669,6 +650,26 @@ class KoopmansInput(BaseModel):
                 "`kpoints.overrides.dielectric`, which states the dielectric-constant "
                 "step's mesh outright: write `dielectric: {grid: [...]}`, with `grid` "
                 "multiplied by the factor you had."
+            )
+        overrides = kpoints.get("overrides")
+        if not isinstance(overrides, dict):
+            return kpoints
+        if "wannier90" in overrides:
+            raise ValueError(
+                "`kpoints.overrides.wannier90` has been renamed "
+                "`kpoints.overrides.wannierize`, after the step it configures. Rename it."
+            )
+        scf, dielectric = overrides.get("scf"), overrides.get("dielectric")
+        if (
+            isinstance(scf, dict)
+            and isinstance(dielectric, dict)
+            and scf.get("grid_spacing") is not None
+            and dielectric.get("offset") is not None
+            and dielectric.get("grid") is None
+        ):
+            raise ValueError(
+                "`dielectric.offset` needs a grid to shift: `dielectric` takes its mesh "
+                "from `scf`, which states a `grid_spacing`. Give `dielectric.grid` too."
             )
         return kpoints
 

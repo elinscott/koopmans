@@ -27,11 +27,13 @@ from koopmans.aiida.conversion import (
     code_parallelization,
     input_to_pw_parameters,
     smooth_factor,
+    smooth_grid,
     step_grid_spacing,
     step_kpoints_mesh,
     validate_computer_scheduler_support,
 )
 from koopmans.input_file import names_band_path
+from koopmans.input_file._band_path import band_path_refusal
 from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     GroupOrbitalsBy,
@@ -408,10 +410,11 @@ def dielectric_kpoints(koopmans_input: KoopmansInput) -> DielectricKpoints:
     """Return the mesh, or spacing, the ``eps_inf: auto`` dielectric step samples.
 
     Both are ``None`` without a ``kpoints.overrides.dielectric`` entry: the
-    step then samples what the route's own scf does.
+    step then samples what the route's own scf does. A gamma-only run has
+    no mesh to give it, so the entry is ignored there.
     """
     kpoints = koopmans_input.kpoints
-    if kpoints.overrides.dielectric is None:
+    if kpoints.gamma_only or kpoints.overrides.dielectric is None:
         return DielectricKpoints(eps_kpoints=None, eps_kpoints_distance=None)
     spacing = step_grid_spacing(kpoints, "dielectric")
     if spacing is not None:
@@ -754,6 +757,26 @@ def _dielectric_inert_reason(koopmans_input: KoopmansInput) -> str | None:
     return None
 
 
+def _path_is_refused(koopmans_input: KoopmansInput) -> bool:
+    """Report whether the run refuses a ``kpoints.path``, so none can be added to it."""
+    atoms = koopmans_input.atoms
+    return (
+        band_path_refusal(
+            koopmans_input.workflow,
+            any(atoms.cell_parameters.periodic),
+            atoms.snapshots is not None,
+        )
+        is not None
+    )
+
+
+_PATH_IS_REFUSED = (
+    "because this run refuses a kpoints.path, so it interpolates no band structure; "
+    "it is kept for when you switch to a task that does, such as task: wannierize or a "
+    "singlepoint without atoms.snapshots"
+)
+
+
 def _wannierize_inert_reason(koopmans_input: KoopmansInput) -> str | None:
     """Say why ``kpoints.overrides.wannierize`` reaches no step, or return ``None``."""
     workflow = koopmans_input.workflow
@@ -766,6 +789,8 @@ def _wannierize_inert_reason(koopmans_input: KoopmansInput) -> str | None:
             "a run that does"
         )
     if not names_band_path(koopmans_input.kpoints):
+        if _path_is_refused(koopmans_input):
+            return _PATH_IS_REFUSED
         return (
             "without a kpoints.path: it sets the density of the band structure "
             "wannier90 interpolates along that path; it is kept for when you add one"
@@ -782,6 +807,8 @@ def _wannierize_smooth_inert_reason(koopmans_input: KoopmansInput) -> str | None
             "kept for when you switch to one"
         )
     if not names_band_path(koopmans_input.kpoints):
+        if _path_is_refused(koopmans_input):
+            return _PATH_IS_REFUSED
         return (
             "without a kpoints.path: the smooth Wannierization serves only the band "
             "structure interpolated along it; it is kept for when you add one"
@@ -793,8 +820,44 @@ def _wannierize_smooth_inert_reason(koopmans_input: KoopmansInput) -> str | None
     return None
 
 
+def _smooth_mesh_advisory(koopmans_input: KoopmansInput) -> str | None:
+    """Return the notice for a smooth mesh no denser than the Wannier mesh, if it is one.
+
+    Only a direction the factor densifies is checked: a factor of 1 keeps
+    that direction on purpose.
+    """
+    kpoints = koopmans_input.kpoints
+    factor = smooth_factor(kpoints)
+    if factor is None or _wannierize_smooth_inert_reason(koopmans_input) is not None:
+        return None
+    nscf = kpoints.overrides.nscf
+    wannier_mesh = tuple(nscf.grid) if nscf is not None and nscf.grid is not None else kpoints.grid
+    smooth_mesh = tuple(smooth_grid(kpoints, factor))
+    if all(s > w for s, w, f in zip(smooth_mesh, wannier_mesh, factor, strict=True) if f > 1):
+        return None
+    return (
+        "kpoints.overrides.wannierize_smooth densifies kpoints.grid "
+        f"{tuple(kpoints.grid)} to a {smooth_mesh} mesh, which is no denser than the "
+        f"{wannier_mesh} mesh of the main Wannierization in every direction the factor "
+        "densifies; raise the factor or lower kpoints.overrides.nscf.grid."
+    )
+
+
+def _gamma_only_override_advisories(koopmans_input: KoopmansInput) -> list[str]:
+    """Return a notice for each override entry a gamma-only run has no use for."""
+    overrides = koopmans_input.kpoints.overrides
+    return [
+        f"kpoints.overrides.{step} has no effect on a gamma-only run, which samples Gamma "
+        "alone; it is kept for when you switch to a k-point grid."
+        for step in ("wannierize", "wannierize_smooth", "dielectric")
+        if getattr(overrides, step) is not None
+    ]
+
+
 def _kpoint_override_advisories(koopmans_input: KoopmansInput) -> list[str]:
     """Return a notice for each ``kpoints.overrides`` entry naming a step the run lacks."""
+    if koopmans_input.kpoints.gamma_only:
+        return _gamma_only_override_advisories(koopmans_input)
     overrides = koopmans_input.kpoints.overrides
     task = koopmans_input.workflow.task
     advisories: list[str] = []
@@ -816,6 +879,10 @@ def _kpoint_override_advisories(koopmans_input: KoopmansInput) -> list[str]:
         reason = inert_reason(koopmans_input)
         if reason is not None:
             advisories.append(f"kpoints.overrides.{step} has no effect {reason}.")
+
+    smooth_mesh = _smooth_mesh_advisory(koopmans_input)
+    if smooth_mesh is not None:
+        advisories.append(smooth_mesh)
 
     return advisories
 
@@ -892,8 +959,7 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     workflow = koopmans_input.workflow
     task = workflow.task
 
-    if not getattr(koopmans_input.kpoints, "gamma_only", False):
-        advisories.extend(_kpoint_override_advisories(koopmans_input))
+    advisories.extend(_kpoint_override_advisories(koopmans_input))
 
     eps_inf_inert = _eps_inf_inert_advisory(koopmans_input)
     if eps_inf_inert is not None:

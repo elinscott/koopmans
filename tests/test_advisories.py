@@ -127,6 +127,68 @@ class TestKpointOverrideAdvisory:
             "kept for when you add one."
         ]
 
+    def test_wannierize_density_on_bse_names_a_task_that_interpolates(self) -> None:
+        """A bse run refuses a kpoints.path, so adding one is not the fix."""
+        d = _with_overrides(
+            _bse_dict(screening_method="dfpt", correction="ki", init_orbitals="mlwfs"),
+            wannierize={"path_density": 80.0},
+            wannierize_smooth={"factor": 2},
+        )
+        reason = (
+            "because this run refuses a kpoints.path, so it interpolates no band structure; "
+            "it is kept for when you switch to a task that does, such as task: wannierize or "
+            "a singlepoint without atoms.snapshots."
+        )
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            f"kpoints.overrides.wannierize has no effect {reason}",
+            "kpoints.overrides.wannierize_smooth has no effect on this run: only a "
+            "singlepoint initialized from Wannier functions (init_orbitals: mlwfs or "
+            "projwfs) runs the smooth Wannierization; it is kept for when you switch to one.",
+        ]
+
+    def test_gamma_only_entries_other_than_scf_and_nscf_are_advised(self) -> None:
+        """Gamma-only keeps the entries it can ignore and refuses the ones it cannot."""
+        d = _with_overrides(
+            _si_dict("wannierize"),
+            wannierize={"path_density": 80.0},
+            wannierize_smooth={"factor": 2},
+            dielectric={"grid": [4, 4, 4]},
+        )
+        d["kpoints"] = {"gamma_only": True, "overrides": d["kpoints"]["overrides"]}
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            f"kpoints.overrides.{step} has no effect on a gamma-only run, which samples Gamma "
+            "alone; it is kept for when you switch to a k-point grid."
+            for step in ("wannierize", "wannierize_smooth", "dielectric")
+        ]
+
+    @pytest.mark.parametrize(
+        ("nscf", "factor", "advised"),
+        [
+            ([4, 4, 4], 2, True),
+            ([4, 4, 4], 4, False),
+            (None, 2, False),
+            ([4, 4, 4], [2, 2, 1], True),
+        ],
+    )
+    def test_a_smooth_mesh_no_denser_than_the_wannier_mesh_is_advised(
+        self, nscf: list[int] | None, factor: Any, advised: bool
+    ) -> None:
+        """The smooth mesh is the top-level grid times the factor, whatever nscf states."""
+        d = _si_dict("singlepoint", screening_method="dfpt", correction="ki", init_orbitals="mlwfs")
+        d["kpoints"]["grid"] = [2, 2, 2]
+        d["kpoints"]["path"] = "GXG"
+        overrides: dict[str, Any] = {"wannierize_smooth": {"factor": factor}}
+        if nscf is not None:
+            overrides["nscf"] = {"grid": nscf}
+        _with_overrides(d, **overrides)
+        messages = advisories_for(KoopmansInput.model_validate(d))
+        if not advised:
+            assert messages == []
+            return
+        assert len(messages) == 1
+        assert "(2, 2, 2)" in messages[0]
+        assert "(4, 4, 4) mesh of the main Wannierization" in messages[0]
+
     @pytest.mark.parametrize("task", ["dft_bands", "dft_eps"])
     def test_nscf_mesh_without_an_nscf_step_is_advised(self, task: str) -> None:
         """Neither task runs an nscf step."""

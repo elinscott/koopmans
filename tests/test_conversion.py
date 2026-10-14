@@ -1345,6 +1345,17 @@ class TestStepKpointsMesh:
         mesh, mesh_offset = step_kpoints_mesh(kpoints, "dielectric").get_kpoints_mesh()  # type: ignore[no-untyped-call]
         assert ([int(x) for x in mesh], list(mesh_offset)) == expected
 
+    def test_a_spacing_cannot_stand_for_a_mesh_and_offset(self, aiida_profile: Any) -> None:
+        """A spacing-built mesh carries no offset, so the mesh call refuses it by name."""
+        from koopmans.aiida.conversion import step_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput.model_validate(
+            {"grid": [2, 2, 2], "overrides": {"scf": {"grid_spacing": 0.2}}}
+        )
+        with pytest.raises(ValueError, match=r"carries no offset.*overrides\.scf\.grid`"):
+            step_kpoints_mesh(kpoints, "scf")
+
 
 class TestGridSpacingReachesTheBuilder:
     """The last hop a per-step spacing takes, which no graph socket shows.

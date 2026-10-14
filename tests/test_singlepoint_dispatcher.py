@@ -340,12 +340,19 @@ class TestSmoothWannierizationAdvisedOffSinglepoint:
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == []
 
-    def test_gamma_only_dscf_route_refuses_the_entry(self, ozone_input: KoopmansInput) -> None:
-        """A gamma-only run has no mesh to densify, which no switch of task changes."""
+    def test_gamma_only_dscf_route_advises_the_entry(self, ozone_input: KoopmansInput) -> None:
+        """A gamma-only run has no mesh to densify; the entry waits for a k-point grid."""
+        from koopmans.aiida.conversion import smooth_factor
+        from koopmans.aiida.workflows import advisories_for
+
         d = ozone_input.model_dump()
         d["kpoints"]["overrides"]["wannierize_smooth"] = {"factor": 2}
-        with pytest.raises(ValueError, match=r"overrides\.wannierize_smooth.*gamma_only"):
-            KoopmansInput.model_validate(d)
+        inp = KoopmansInput.model_validate(d)
+        assert smooth_factor(inp.kpoints) is None
+        assert advisories_for(inp) == [
+            "kpoints.overrides.wannierize_smooth has no effect on a gamma-only run, which "
+            "samples Gamma alone; it is kept for when you switch to a k-point grid."
+        ]
 
 
 class TestEpsInfOnAMolecule:

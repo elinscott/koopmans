@@ -913,6 +913,7 @@ class TestRetiredKpointKeywords:
         with pytest.raises(ValueError, match=expected) as excinfo:
             read_input_file(input_file)
         assert "is not a valid keyword" not in str(excinfo.value)
+        assert str(excinfo.value).count("Value error") == 1
 
 
 class TestDielectricOverride:
@@ -930,7 +931,7 @@ class TestDielectricOverride:
 
     def test_an_offset_cannot_shift_an_scf_spacing(self) -> None:
         """A spacing builds a mesh no offset can be attached to."""
-        with pytest.raises(ValueError, match=r"`dielectric\.offset` needs a grid"):
+        with pytest.raises(ValueError, match=r"`dielectric\.offset` needs a grid") as excinfo:
             KoopmansInput.model_validate(
                 _si_input_with_kpoints(
                     grid=[2, 2, 2],
@@ -940,15 +941,14 @@ class TestDielectricOverride:
                     },
                 )
             )
+        assert excinfo.value.error_count() == 1  # type: ignore[attr-defined]
 
-    def test_refused_on_gamma_only(self) -> None:
-        """A gamma-only run has no k-point mesh to give the step."""
-        with pytest.raises(ValueError, match=r"overrides\.dielectric.*gamma_only"):
-            KoopmansInput.model_validate(
-                _si_input_with_kpoints(
-                    gamma_only=True, overrides={"dielectric": {"grid": [4, 4, 4]}}
-                )
-            )
+    def test_kept_on_gamma_only(self) -> None:
+        """A gamma-only run has no mesh to give the step, so the entry is kept inert."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(gamma_only=True, overrides={"dielectric": {"grid": [4, 4, 4]}})
+        )
+        assert inp.kpoints.overrides.dielectric is not None
 
 
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:
@@ -1068,14 +1068,14 @@ class TestPerStepKpoints:
                 _si_input_with_kpoints(gamma_only=True, overrides={"scf": {"grid": [4, 4, 4]}})
             )
 
-    def test_gamma_only_rejects_a_stated_wannierize_density(self) -> None:
-        """Gamma-only samples one point, so there is no band structure to interpolate."""
-        with pytest.raises(ValueError, match=r"overrides\.wannierize.*gamma_only"):
-            KoopmansInput.model_validate(
-                _si_input_with_kpoints(
-                    gamma_only=True, overrides={"wannierize": {"path_density": 80.0}}
-                )
+    def test_gamma_only_keeps_a_stated_wannierize_density(self) -> None:
+        """Gamma-only interpolates no band structure, so the entry is kept inert."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(
+                gamma_only=True, overrides={"wannierize": {"path_density": 80.0}}
             )
+        )
+        assert inp.kpoints.overrides.wannierize is not None
 
     def test_gamma_only_rejects_a_mesh_built_as_a_model(self) -> None:
         """The rejection belongs to the field, not to one way of reaching it.

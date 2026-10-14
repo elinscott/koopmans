@@ -453,16 +453,18 @@ def smooth_factor(kpoints: KpointsInput) -> tuple[int, int, int] | None:
     """Return the densification the smooth Wannierization runs at, if it runs.
 
     ``None`` unless ``kpoints.overrides.wannierize_smooth`` states a factor
-    above 1 in some direction.
+    above 1 in some direction, and always ``None`` on a gamma-only run.
     """
+    if kpoints.gamma_only:
+        return None
     entry = kpoints.overrides.wannierize_smooth
     if entry is None or not any(f > 1 for f in entry.factor):
         return None
     return entry.factor
 
 
-#: The ``kpoints.overrides`` entry a step takes an attribute it leaves unset
-#: from, ahead of the top level.
+#: Maps a step to the entry it reads after its own: an attribute the step's
+#: entry leaves unset comes from this entry before the top level.
 _STEP_FALLBACK = {"dielectric": "scf"}
 
 
@@ -496,9 +498,9 @@ def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
         return kpoints_input_to_kpoints_mesh(kpoints)
     if step_grid_spacing(kpoints, step) is not None:
         raise ValueError(
-            f"`kpoints.overrides.{step}.grid_spacing` leaves the mesh to the cell, so "
-            f"the {step} mesh is not known before the calculation runs. Write "
-            f"`kpoints.overrides.{step}.grid` instead."
+            f"`kpoints.overrides.{step}.grid_spacing` states a spacing, and a mesh built "
+            "from a spacing carries no offset, so it cannot stand for the mesh and "
+            f"offset this step needs. Write `kpoints.overrides.{step}.grid` instead."
         )
     grid = next((e.grid for e in entries if e.grid is not None), kpoints.grid)
     offset = next((e.offset for e in entries if e.offset is not None), kpoints.offset)
