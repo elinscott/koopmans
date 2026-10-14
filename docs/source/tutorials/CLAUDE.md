@@ -9,10 +9,12 @@ see, then why. Write for someone arriving cold with the domain basics, and
 answer their questions in the order they arise.
 
 - Let a figure carry the result where one can: a convergence series is a
-  labelled plot, not a table plus a paragraph restating it, and an
-  exercise is a `question` dropdown whose answer is the figure. A number
-  the figure does not show (a peak position on a spectrum) is quoted once
-  in the prose; the plotting commands draw what they draw.
+  plot, not a table plus a paragraph restating it, and an exercise is a
+  `question` dropdown whose answer is the figure. A value need not be
+  printed anywhere if the reader can read it off the axes well enough, or
+  if its precise digits teach nothing; quote a number once, in the prose,
+  when the argument depends on it. The plotting commands draw what they
+  draw.
 - Every number comes from a run of the shipped input, read off that run's
   own outputs — never hand-rolled, estimated, or taken from a note. Prose
   quotes to two decimals; program output is quoted verbatim.
