@@ -770,6 +770,13 @@ raw:
             extras:
               py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
+        eps_kpoints_distance:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
         fix_spin_contamination:
           default: false
           dynamic: false
@@ -825,6 +832,15 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
+            required: false
+        interpolation_kpoints:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
         kgrid:
           dynamic: false
@@ -1280,6 +1296,15 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
+            required: false
+        smooth_interpolation_kpoints:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
         smooth_kpoints:
           dynamic: false
@@ -2201,6 +2226,13 @@ raw:
                 extras:
                   py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
+            eps_kpoints_distance:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
             fix_spin_contamination:
               default: false
               dynamic: false
@@ -2256,6 +2288,15 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                required: false
+            interpolation_kpoints:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             kgrid:
               dynamic: false
@@ -2711,6 +2752,15 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                required: false
+            smooth_interpolation_kpoints:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             smooth_kpoints:
               dynamic: false

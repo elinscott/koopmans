@@ -48,10 +48,8 @@ from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
     GroupOrbitalsBy,
     Task,
-    VariationalOrbitalType,
     WorkflowConfig,
 )
 from koopmans.input_file.yambo import YamboBseParameters
@@ -88,11 +86,12 @@ __all__ = [
     "ParallelizationInput",
     "Projection",
     "RestrictedWannier90InputParameters",
+    "SmoothWannierizeKpointsOverridesInput",
     "SpinSpecificWannierInput",
     "StaticScreeningRoles",
     "StepKpointsOverridesInput",
     "Wannier90InputParametersWithUpDown",
-    "WannierKpointsOverridesInput",
+    "WannierizeKpointsOverridesInput",
     "WorkflowConfig",
     "YamboBseParameters",
     "YamboParallelization",
@@ -229,11 +228,10 @@ NoOffset = Annotated[float, AfterValidator(_no_shift)]
 def _broadcast_densification_factor(v: Any) -> Any:
     """Convert a bare integer or list to the per-direction tuple.
 
-    Shared by every per-direction densification factor (``smooth_interpolation_factor``,
-    ``eps_inf_factor``): a bare integer or list broadcasts or reshapes into
-    the triple that then runs through the strict, ``>= 1`` per-axis check
-    below — a bool included, since Python's ``int`` accepts ``True``/
-    ``False`` and gets no special case here.
+    A bare integer or list broadcasts or reshapes into the triple that then
+    runs through the strict, ``>= 1`` per-axis check below — a bool
+    included, since Python's ``int`` accepts ``True``/``False`` and gets no
+    special case here.
     """
     if isinstance(v, list):
         return tuple(v)
@@ -260,7 +258,7 @@ class StepKpointsOverridesInput(BaseModel):
     offset: tuple[KpointOffset, KpointOffset, KpointOffset] | None = None
     """Per-axis fraction of a grid step to shift this step's mesh by.
 
-    Available on the ``scf`` entry alone.
+    Available on the ``scf`` and ``dielectric`` entries alone.
     """
 
     grid_spacing: float | None = Field(default=None, gt=0.0)
@@ -285,15 +283,15 @@ class StepKpointsOverridesInput(BaseModel):
         return self
 
 
-class WannierKpointsOverridesInput(BaseModel):
-    """The k-point path wannier90 interpolates its band structure along.
+class WannierizeKpointsOverridesInput(BaseModel):
+    """The k-point path a Wannierization interpolates its band structure along.
 
     Carries a density alone: the path itself, and its special points, are
     the same ones the route's own k-path uses, so the interpolated bands
     stay lined up against the diagonalized ones the plot overlays them with.
     """
 
-    path_density: float = 50.0
+    path_density: float = Field(default=50.0, gt=0.0)
     """Number of k-points per inverse angstrom (2π convention) wannier90
     interpolates its band structure at.
 
@@ -303,10 +301,30 @@ class WannierKpointsOverridesInput(BaseModel):
     """
 
 
+class SmoothWannierizeKpointsOverridesInput(WannierizeKpointsOverridesInput):
+    """The denser mesh the smooth-interpolation method Wannierizes, and its path density."""
+
+    factor: Annotated[
+        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
+        BeforeValidator(_broadcast_densification_factor),
+    ]
+    """Per-direction densification of ``grid`` for the smooth-interpolation method.
+
+    Above 1 (in any direction), a singlepoint's band-structure
+    interpolation swaps the DFT part of the Koopmans Hamiltonian for one
+    Wannierized on a mesh this many times denser than ``grid``:
+    ``[a, b, c]`` densifies each direction independently, and a bare
+    integer ``a`` is shorthand for ``[a, a, a]``. Needs ``path`` to
+    interpolate along; ``[1, 1, 1]`` runs no smooth Wannierization.
+    """
+
+
 class KpointsOverridesInput(BaseModel):
     """K-point sampling for individual steps, in place of the top-level values.
 
-    Steps left out sample the top-level ``grid`` and ``offset``.
+    Each key names a step as it appears in the run's output tree. Steps left
+    out sample the top-level ``grid`` and ``offset``, and so does every
+    attribute an entry leaves unset, except where an entry says otherwise.
     """
 
     scf: StepKpointsOverridesInput | None = None
@@ -315,11 +333,56 @@ class KpointsOverridesInput(BaseModel):
     nscf: StepKpointsOverridesInput | None = None
     """The Gamma-centred mesh the Wannier functions are built from."""
 
-    wannier90: WannierKpointsOverridesInput | None = None
-    """The density wannier90 interpolates its band structure at.
+    wannierize: WannierizeKpointsOverridesInput | None = None
+    """The density every block of the main Wannierization interpolates its bands at.
 
-    Unset takes :attr:`WannierKpointsOverridesInput.path_density`'s default.
+    Unset takes :attr:`WannierizeKpointsOverridesInput.path_density`'s default.
     """
+
+    wannierize_smooth: SmoothWannierizeKpointsOverridesInput | None = None
+    """The denser Wannierization of the smooth-interpolation method.
+
+    Unset runs none: a singlepoint then interpolates its band structure
+    from the Wannier functions of the main Wannierization alone.
+    """
+
+    dielectric: StepKpointsOverridesInput | None = None
+    """The mesh the ``eps_inf: auto`` dielectric-constant step samples.
+
+    Unset, it samples the same mesh as ``scf``. Each attribute an entry
+    leaves unset is taken from ``scf`` where that entry states it, and from
+    the top level otherwise. The dielectric constant converges far more
+    slowly with k-points than the rest of the run, so a coarse ``grid``
+    usually undersamples it.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _wannier90_was_renamed(cls, data: Any) -> Any:
+        """Reject the former ``wannier90`` entry by name."""
+        if isinstance(data, dict) and "wannier90" in data:
+            raise ValueError(
+                "`kpoints.overrides.wannier90` has been renamed "
+                "`kpoints.overrides.wannierize`, after the step it configures. Rename it."
+            )
+        return data
+
+    @model_validator(mode="after")
+    def _dielectric_offset_has_a_grid(self) -> KpointsOverridesInput:
+        """Reject a dielectric offset whose mesh would come from an scf spacing."""
+        dielectric, scf = self.dielectric, self.scf
+        if (
+            dielectric is not None
+            and dielectric.offset is not None
+            and dielectric.grid is None
+            and scf is not None
+            and scf.grid_spacing is not None
+        ):
+            raise ValueError(
+                "`dielectric.offset` needs a grid to shift: `dielectric` takes its mesh "
+                "from `scf`, which states a `grid_spacing`. Give `dielectric.grid` too."
+            )
+        return self
 
     @model_validator(mode="after")
     def _nscf_states_a_mesh_koopmans_builds(self) -> KpointsOverridesInput:
@@ -364,45 +427,18 @@ class GammaOnlyKpointsInput(BaseModel):
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, which a gamma-only calculation cannot have."""
 
-    smooth_interpolation_factor: Annotated[
-        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
-        BeforeValidator(_broadcast_densification_factor),
-    ] = (1, 1, 1)
-    """Per-direction densification for the smooth-interpolation method.
-
-    A gamma-only calculation names no path to interpolate a band structure
-    along, so this must be left at its default; see ``GridKpointsInput``'s
-    field of the same name.
-    """
-
-    eps_inf_factor: Annotated[
-        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
-        BeforeValidator(_broadcast_densification_factor),
-    ] = (1, 1, 1)
-    """Per-direction densification of ``grid`` for the ``eps_inf: auto`` dielectric step.
-
-    A gamma-only calculation runs no k-point grid to densify, so this must
-    be left at its default; see ``GridKpointsInput``'s field of the same name.
-    """
-
     @field_validator("overrides")
     @classmethod
     def check_no_step_is_given_a_mesh(
         cls, overrides: KpointsOverridesInput
     ) -> KpointsOverridesInput:
-        """Reject a per-step mesh: every step of a gamma-only run samples Gamma."""
-        for step in ("scf", "nscf"):
+        """Reject a per-step entry: every step of a gamma-only run samples Gamma."""
+        for step in KpointsOverridesInput.model_fields:
             if getattr(overrides, step) is not None:
                 raise ValueError(
                     f"`overrides.{step}` cannot be used together with `gamma_only`, whose "
                     "every step samples Gamma alone. Give a `grid` instead of `gamma_only`."
                 )
-        if overrides.wannier90 is not None:
-            raise ValueError(
-                "`overrides.wannier90` cannot be used together with `gamma_only`: every "
-                "step samples Gamma alone, so there is no band structure to interpolate. "
-                "Give a `grid` instead of `gamma_only`."
-            )
         return overrides
 
 
@@ -424,38 +460,6 @@ class GridKpointsInput(BaseModel):
 
     overrides: KpointsOverridesInput = Field(default_factory=KpointsOverridesInput)
     """Per-step k-point sampling, in place of ``grid`` and ``offset``."""
-
-    smooth_interpolation_factor: Annotated[
-        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
-        BeforeValidator(_broadcast_densification_factor),
-    ] = (1, 1, 1)
-    """Per-direction densification of ``grid`` for the smooth-interpolation method.
-
-    Above 1 (in any direction), a singlepoint's band-structure
-    interpolation swaps the DFT part of the Koopmans Hamiltonian for one
-    Wannierized on a mesh this many times denser than ``grid``:
-    ``[a, b, c]`` densifies each direction independently, and a bare
-    integer ``a`` is shorthand for ``[a, a, a]``. Needs ``path`` to
-    interpolate along.
-    """
-
-    eps_inf_factor: Annotated[
-        tuple[DensificationFactor, DensificationFactor, DensificationFactor],
-        BeforeValidator(_broadcast_densification_factor),
-    ] = (1, 1, 1)
-    """Per-direction densification of ``grid`` for the ``eps_inf: auto`` dielectric step.
-
-    Above 1 (in any direction), the ``eps_inf: auto`` hook computes
-    the dielectric constant on ``grid`` densified by this factor instead of
-    ``grid`` itself: eps_inf converges far more slowly with k-points than
-    the run itself, so a coarse Koopmans grid usually undersamples it.
-    Always densifies the top-level ``grid`` — never ``overrides.scf``, which
-    may state a spacing instead of a grid. ``[a, b, c]`` densifies each
-    direction independently, and a bare integer ``a`` is shorthand for
-    ``[a, a, a]``. Needs ``workflow.eps_inf: auto`` on a ``singlepoint``
-    task, with ``screening_method: dfpt`` or ``screening_method: dscf`` and
-    a Wannier ``init_orbitals``; set anywhere else, it is refused by name.
-    """
 
 
 KpointsInput = GammaOnlyKpointsInput | GridKpointsInput
@@ -611,7 +615,7 @@ class KoopmansInput(BaseModel):
         """Reject the former ``unfold_and_interpolate`` block outright.
 
         Its one user-facing keyword, ``smooth_int_factor``, moved to
-        ``kpoints.smooth_interpolation_factor``; the other two
+        ``kpoints.overrides.wannierize_smooth.factor``; the other two
         (``use_ws_distance``, ``do_dos``) were never a user's to set.
         """
         if (
@@ -620,8 +624,8 @@ class KoopmansInput(BaseModel):
         ):
             raise ValueError(
                 "`calculator_parameters.unfold_and_interpolate` was replaced by "
-                "`kpoints.smooth_interpolation_factor`; move `smooth_int_factor` there "
-                "and drop the block."
+                "`kpoints.overrides.wannierize_smooth.factor`; move `smooth_int_factor` "
+                "there and drop the block."
             )
         return calculator_parameters
 
@@ -639,6 +643,32 @@ class KoopmansInput(BaseModel):
                 "`density` has been renamed `path_density`: it counts k-points per "
                 "unit length along `path`, and sitting beside `grid` it reads like "
                 "the density of a mesh. Rename it."
+            )
+        return kpoints
+
+    @field_validator("kpoints", mode="before")
+    @classmethod
+    def check_factors_moved_to_overrides(cls, kpoints: Any) -> Any:
+        """Reject the former per-step densification factors by name.
+
+        Each now lives on the ``kpoints.overrides`` entry of the step it
+        shapes. Checked here rather than in either ``KpointsInput`` member,
+        for the reason :meth:`check_density_was_renamed` gives.
+        """
+        if not isinstance(kpoints, dict):
+            return kpoints
+        if "smooth_interpolation_factor" in kpoints:
+            raise ValueError(
+                "`kpoints.smooth_interpolation_factor` has moved to "
+                "`kpoints.overrides.wannierize_smooth.factor`, beside the "
+                "`path_density` of that Wannierization. Move it there."
+            )
+        if "eps_inf_factor" in kpoints:
+            raise ValueError(
+                "`kpoints.eps_inf_factor` has been replaced by "
+                "`kpoints.overrides.dielectric`, which states the dielectric-constant "
+                "step's mesh outright: write `dielectric: {grid: [...]}`, with `grid` "
+                "multiplied by the factor you had."
             )
         return kpoints
 
@@ -663,65 +693,6 @@ class KoopmansInput(BaseModel):
         )
         if message is not None:
             raise ValueError(message)
-        return kpoints
-
-    @field_validator("kpoints", mode="after")
-    @classmethod
-    def check_eps_inf_factor_reaches_a_dielectric_step(
-        cls, kpoints: KpointsInput, info: ValidationInfo
-    ) -> KpointsInput:
-        """Reject a non-default ``kpoints.eps_inf_factor`` wherever no dielectric step runs.
-
-        Only a ``singlepoint`` task with ``workflow.eps_inf: auto`` on a
-        real k-point grid, screened by DFPT or by DSCF from Wannier
-        functions, runs the dielectric-constant step
-        ``eps_inf_factor`` densifies; every other
-        combination is refused by name rather than silently ignored.
-        ``bse`` composes the same DFPT chain and so shares the gap:
-        ``eps_inf_factor`` is not yet threaded through it. Reads
-        ``workflow``, declared ahead of ``kpoints`` and so already
-        validated.
-        """
-        if kpoints.eps_inf_factor == (1, 1, 1):
-            return kpoints
-        workflow = info.data.get("workflow")
-        if workflow is None:
-            return kpoints
-        if workflow.task == Task.DFT_EPS:
-            raise ValueError(
-                "`kpoints.eps_inf_factor` has no effect on task: dft_eps: set "
-                "`kpoints.grid`, which is this task's only mesh."
-            )
-        if workflow.task != Task.SINGLEPOINT:
-            raise ValueError(
-                f"`kpoints.eps_inf_factor` has no effect on task: {workflow.task.value} "
-                "(only task: singlepoint runs the dielectric-constant step "
-                "`eps_inf_factor` densifies; `bse` composes the same chain but does "
-                "not yet thread `eps_inf_factor` through it). Remove it, or switch task."
-            )
-        if getattr(kpoints, "gamma_only", False):
-            raise ValueError(
-                "`kpoints.eps_inf_factor` has no effect together with `gamma_only`: "
-                "the dielectric-constant step needs a k-point grid to densify. "
-                "Give a `grid` instead of "
-                "`gamma_only`, or restore the default `[1, 1, 1]`."
-            )
-        if workflow.screening_method == CalculateScreeningMethod.DSCF and (
-            workflow.init_orbitals
-            not in (VariationalOrbitalType.MLWFS, VariationalOrbitalType.PROJWFS)
-        ):
-            raise ValueError(
-                "`kpoints.eps_inf_factor` has no effect: `workflow.init_orbitals` is "
-                f"{workflow.init_orbitals.value!r}, and the DSCF route only runs a "
-                "dielectric-constant step from Wannier functions ('mlwfs' or "
-                "'projwfs'). Change init_orbitals, or restore the default `[1, 1, 1]`."
-            )
-        if workflow.eps_inf != "auto":
-            raise ValueError(
-                "`kpoints.eps_inf_factor` has no effect: `workflow.eps_inf` is not "
-                "'auto' (it only densifies the dielectric-constant step `eps_inf: "
-                "auto` runs). Set eps_inf to 'auto', or restore the default `[1, 1, 1]`."
-            )
         return kpoints
 
     @field_validator("version")

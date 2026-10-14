@@ -1145,19 +1145,21 @@ class TestPerStepKpointMeshRejected:
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             build_snapshots_workgraph(koopmans_input)
 
-    def test_wannier90_density_raises(self, tmp_path: Path) -> None:
-        """No interpolated band structure exists here for a density to describe."""
-        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
+    def test_wannierize_density_is_kept_with_a_notice(self, tmp_path: Path) -> None:
+        """Nothing here interpolates along a path, so the entry waits for a run that does."""
+        from koopmans.aiida.workflows import advisories_for
 
         d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["kpoints"] = {
             "grid": [2, 2, 2],
-            "overrides": {"wannier90": {"path_density": 25.0}},
+            "overrides": {"wannierize": {"path_density": 25.0}},
         }
         koopmans_input = KoopmansInput.model_validate(d)
 
-        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
-            build_snapshots_workgraph(koopmans_input)
+        assert any(
+            a.startswith("kpoints.overrides.wannierize has no effect")
+            for a in advisories_for(koopmans_input)
+        )
 
     def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:
         """A route reached whatever the method must not name one back at the reader.
