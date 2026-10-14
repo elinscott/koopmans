@@ -404,8 +404,7 @@ LDA part does not — the first figure in this tutorial showed how poorly a
     :start-at: kpoints:
     :end-at: factor:
 
-Each key under ``overrides`` names a step family of the run: the name the output
-directories carry, before any per-block, per-spin or route prefix or suffix.
+Each key under ``overrides`` sets the sampling of one calculation of the run.
 ``wannierize_smooth`` is the second Wannierization, and ``factor: 4`` says to
 replace :math:`H^{\mathrm{LDA}}_{\mathbf{R}}`
 with the same quantity computed on a grid four times denser in each direction, keeping

@@ -325,10 +325,13 @@ class SmoothWannierizeKpointsOverridesInput(WannierizeKpointsOverridesInput):
 class KpointsOverridesInput(BaseModel):
     """K-point sampling for individual steps, in place of the top-level values.
 
-    Each key names a step family: the name the output folders carry, before
-    any per-block, per-spin or route prefix or suffix. Steps left out sample
-    the top-level ``grid`` and ``offset``, and so does every attribute an
-    entry leaves unset, except where an entry says otherwise.
+    Each entry governs one calculation of the run: ``scf`` the ground-state
+    density mesh, ``nscf`` the Wannierization mesh, ``wannierize`` and
+    ``wannierize_smooth`` the band path each Wannierization interpolates
+    along (and the smooth one's densification factor), ``dielectric`` the
+    mesh of the ``eps_inf: auto`` step. Steps left out sample the top-level
+    ``grid`` and ``offset``, and so does every attribute an entry leaves
+    unset, except where an entry says otherwise.
     """
 
     scf: StepKpointsOverridesInput | None = None
