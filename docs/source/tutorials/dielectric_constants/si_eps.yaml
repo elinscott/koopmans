@@ -1,12 +1,12 @@
 # The macroscopic dielectric constant of bulk silicon, from ph.x.
 
 workflow:
-  task: dft_eps                   # scf, then ph.x with epsil = true, trans = false, at q = Gamma
+  task: dft_eps
   pseudo_library: PseudoDojo/0.4/LDA/SR/standard/upf
 
 atoms:
   cell_parameters:
-    periodic: true                 # a crystal, not an isolated molecule
+    periodic: true                # a crystal, not an isolated molecule
     ibrav: 2                      # face-centered cubic
     celldms:
       1: 10.2622                  # the lattice parameter, in bohr

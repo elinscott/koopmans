@@ -3,19 +3,18 @@
 ######################
 
 A Koopmans calculation on a solid needs the material's macroscopic dielectric constant,
-:math:`\varepsilon_\infty`, whichever way it computes its screening parameters. Both
-routes measure how the crystal responds to a localized change in orbital occupation:
+:math:`\varepsilon_\infty` in order to accurately compute the screening parameters. In these
+calculations we measure how the crystal responds to a localized charge:
 :doc:`total-energy differences <../band_structures/silicon_finite_differences/index>`
-do it directly, adding or removing an electron in a periodic supercell;
-:doc:`linear response <../band_structures/silicon_linear_response/index>` does it to
-second order in the primitive cell. Either way the perturbing charge interacts with
-its own periodic images, and the correction that removes this spurious interaction —
-Makov-Payne in the supercell, its linear-response counterpart in ``kcw.x`` — needs
-:math:`\varepsilon_\infty` to scale the leading-order term. Get it wrong and the
-correction is wrong, along with everything downstream of it.
+do it directly by adding or removing an electron in a periodic supercell, while
+:doc:`linear response <../band_structures/silicon_linear_response/index>` measures the same thing to
+second order in the primitive cell. Either way, the perturbing charge interacts with
+its own periodic images, and the corrections that remove this spurious interaction need
+:math:`\varepsilon_\infty` to scale the leading-order term. If you get this parameter wrong, the
+image correction will be wrong, along with everything downstream of it!
 
 This tutorial computes :math:`\varepsilon_\infty` for bulk silicon with density-functional
-perturbation theory (DFPT) :cite:`Baroni2001`, using the ``dft_eps`` task.
+perturbation theory (DFPT) :cite:`Baroni2001`.
 
 ****************
  The input file
@@ -41,9 +40,7 @@ phonon calculation ``ph.x`` would otherwise also do.
     :start-at: kpoints:
     :end-at: grid:
 
-sets the Brillouin-zone sampling for both steps. Unlike a Wannierization or a
-:math:`\Delta`SCF screening calculation, ``dft_eps`` builds no supercell — the whole
-calculation runs in the primitive cell, so ``grid`` is the actual cost knob.
+sets the Brillouin-zone sampling for both steps.
 
 Run it with
 
@@ -81,50 +78,35 @@ calculation wants: the isotropic average of that tensor.
  Convergence with k-grid
 *************************
 
-25.10 is a long way from converged. :math:`\varepsilon_\infty` is a Brillouin-zone
-integral over the whole occupied-to-empty response, and it needs a much denser mesh than
-a ground-state total energy to converge:
+.. question:: How does the dielectric constant converge with respect to the :math:`k`-point grid?
 
-.. list-table::
-    :header-rows: 1
+   25.10 is a long way from converged. :math:`\varepsilon_\infty` is a Brillouin-zone
+   integral over the whole occupied-to-empty response, and it needs a much denser mesh than
+   a ground-state total energy to converge.
 
-    * - :math:`k`-point grid
-      - :math:`\varepsilon_\infty`
-    * - :math:`4\times4\times4`
-      - 25.10
-    * - :math:`8\times8\times8`
-      - 14.59
-    * - :math:`12\times12\times12`
-      - 13.45
-    * - :math:`16\times16\times16`
-      - 13.30
+   .. list-table::
+       :header-rows: 1
 
-.. image:: convergence.svg
-    :align: center
-    :width: 70%
+       * - :math:`k`-point grid
+         - :math:`\varepsilon_\infty`
+       * - :math:`4\times4\times4`
+         - 25.10
+       * - :math:`8\times8\times8`
+         - 14.59
+       * - :math:`12\times12\times12`
+         - 13.45
+       * - :math:`16\times16\times16`
+         - 13.30
 
-The :math:`4\times4\times4` grid this tutorial ran gives a value nearly twice the
-:math:`16\times16\times16` one, and even the last doubling shown here is not fully flat:
-:math:`12\times12\times12` to :math:`16\times16\times16` still moves the answer by 0.15,
-about 1%. 13.30 is the value this tutorial uses from here on, not a converged one — a
-finer grid would move it further, by less. The mesh that converges
-:math:`\varepsilon_\infty` is unrelated to any other :math:`k`-point grid in the
-workflow — a Koopmans calculation converged in every other respect can still carry a
-badly wrong Makov-Payne correction if this grid was never checked on its own.
+   .. image:: convergence.svg
+       :class: responsive-fig
+       :align: center
 
-.. question:: Change ``kpoints.grid`` to ``[8, 8, 8]`` and rerun. How much closer does
-    the answer get?
+*******************************************
+ Using the value in a Koopmans calculation
+*******************************************
 
-    14.59, against 13.30 at :math:`16\times16\times16` and 13.45 at
-    :math:`12\times12\times12`: one doubling of the grid recovers most of the remaining
-    error, but not all of it. Cost grows fast alongside it — this run's ``ph.x`` step
-    took about three times as long as the :math:`4\times4\times4` one.
-
-****************
- Feeding it in
-****************
-
-Set the value you settled on as ``eps_inf`` in the ``workflow`` block of a
+To use this value, set it as ``eps_inf`` in the ``workflow`` block of a
 ``singlepoint`` input:
 
 .. code-block:: yaml
@@ -133,17 +115,16 @@ Set the value you settled on as ``eps_inf`` in the ``workflow`` block of a
       task: singlepoint
       eps_inf: 13.30
 
-Both screening methods read it from there. Only the linear-response one can also compute
-it for itself: for a ``screening_method: dfpt`` run, ``eps_inf: auto`` makes the same
-scf-then-``ph.x`` calculation this tutorial just ran the workflow's own first step, and
-its result is used in place of a number you supply. ``screening_method: dscf`` does not
-yet accept ``auto`` — give it the number, computed as above.
+Both screening methods read it from there.
+
+Alternatively, you can do everything in a single calculation: set ``eps_inf: auto`` and a
+``screening_method: dfpt`` workflow runs the same scf-then-``ph.x`` calculation this
+tutorial just ran alongside the rest of the chain, and ``kcw.x`` waits for its result in
+place of a number you supply. (``screening_method: dscf`` does not accept ``auto`` yet.)
 
 Left to itself, ``auto`` samples the dielectric step on the singlepoint's own scf mesh,
-and that is exactly the trap the table above demonstrates: a mesh dense enough for
-Wannierization and kcw.x is very unlikely to be dense enough for
-:math:`\varepsilon_\infty` — at :math:`4\times4\times4` it is out by a factor of two.
-``kpoints.eps_inf_factor`` densifies ``kpoints.grid`` for the dielectric step alone:
+which as we saw above is unlikely to be dense enough for :math:`\varepsilon_\infty`. Specify
+``kpoints.eps_inf_factor`` to increase the density of ``kpoints.grid`` for the dielectric step:
 
 .. code-block:: yaml
 
@@ -156,13 +137,11 @@ Wannierization and kcw.x is very unlikely to be dense enough for
       eps_inf_factor: 4
 
 runs the rest of the calculation on :math:`4\times4\times4` and the dielectric constant
-on :math:`16\times16\times16`, the grid this tutorial settled on. A list ``[a, b, c]``
-densifies each direction on its own. With the factor left at 1, ``koopmans run`` prints
-an advisory naming the mesh the dielectric step is about to use.
+on :math:`16\times16\times16`.
 
 .. note::
 
     LDA systematically overestimates :math:`\varepsilon_\infty` relative to experiment
-    — silicon's measured value is about 11.7, well below every grid in the table above.
+    — silicon's measured value is about 11.7, below every grid in the table above.
     This is a known shortcoming of the underlying exchange-correlation functional, not a
     convergence problem, and it is not something a denser :math:`k`-point grid fixes.
