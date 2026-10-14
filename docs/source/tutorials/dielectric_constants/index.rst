@@ -76,9 +76,11 @@ calculation wants: the isotropic average of that tensor.
 
 .. question:: How does the dielectric constant converge with respect to the :math:`k`-point grid?
 
-   25.10 is a long way from converged. Doubling the grid to :math:`8\times8\times8` gives
-   14.59, :math:`12\times12\times12` gives 13.45 and :math:`16\times16\times16` gives
-   13.30 — still moving by 0.14 (about 1%) at the last step.
+   .. image:: convergence.svg
+       :class: responsive-fig
+       :align: center
+       :alt: The dielectric constant of silicon against a Gamma-centred k-point grid,
+           from 25.10 at 4x4x4 to 13.30 at 16x16x16
 
 .. tip::
 
@@ -95,19 +97,14 @@ calculation wants: the isotropic average of that tensor.
 
 .. question:: How much does the shifted mesh help?
 
-   A great deal: the half-shifted :math:`4\times4\times4` grid already gives 14.38,
-   better than the :math:`\Gamma`-centred :math:`8\times8\times8`, and the half-shifted
-   :math:`8\times8\times8` gives 13.30, the value the :math:`\Gamma`-centred series only
-   reaches at :math:`16\times16\times16`. The shifted series settles at 13.28
-   (:math:`12\times12\times12` and :math:`16\times16\times16` agree to the third
-   decimal), which is the converged LDA value this tutorial uses from here on.
-
-   .. image:: convergence.svg
+   .. image:: convergence_shifted.svg
        :class: responsive-fig
        :align: center
        :alt: The dielectric constant of silicon against the k-point grid for a
            Gamma-centred and a half-shifted mesh; the shifted series reaches 13.28
            by 12x12x12 where the Gamma-centred one is still at 13.45
+
+   The shifted series settles at 13.28, the value this tutorial uses from here on.
 
 *******************************************
  Using the value in a Koopmans calculation
