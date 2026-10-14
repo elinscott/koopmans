@@ -104,7 +104,11 @@ calculation wants: the isotropic average of that tensor.
            Gamma-centred and a half-shifted mesh; the shifted series reaches 13.28
            by 12x12x12 where the Gamma-centred one is still at 13.45
 
-   The shifted series settles at 13.28, the value this tutorial uses from here on.
+   The integrand behind :math:`\varepsilon_\infty` is sharpest where the direct gap is
+   smallest — at :math:`\Gamma` for silicon — so a mesh that contains :math:`\Gamma` gives
+   that one point far too much weight until the mesh is very dense. A half-shifted mesh
+   never lands on :math:`\Gamma` and samples the average instead, the way a midpoint rule
+   beats an endpoint rule.
 
 *******************************************
  Using the value in a Koopmans calculation
