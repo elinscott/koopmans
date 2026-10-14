@@ -134,16 +134,26 @@ scf-then-``ph.x`` calculation this tutorial just ran becomes the workflow's own 
 step, and its result is used in place of a number you supply. ``screening_method: dscf``
 does not yet accept ``auto`` — give it a number, computed as above.
 
-.. warning::
+Left to itself, ``auto`` samples the dielectric step on the singlepoint's own scf mesh,
+and that is exactly the trap the table above demonstrates: a mesh dense enough for
+Wannierization and kcw.x is very unlikely to be dense enough for
+:math:`\varepsilon_\infty` — at :math:`4\times4\times4` it is out by a factor of two.
+``kpoints.eps_inf_factor`` densifies ``kpoints.grid`` for the dielectric step alone:
 
-    ``auto`` runs that dielectric chain on the *same* ``kpoints`` mesh as the rest of
-    the singlepoint calculation, not on a grid converged for :math:`\varepsilon_\infty`
-    on its own. This is exactly the trap the table above demonstrates: a mesh dense
-    enough for Wannierization and kcw.x is very unlikely to be dense enough for
-    :math:`\varepsilon_\infty` — at :math:`4\times4\times4` it is out by a factor of
-    two. Use ``auto`` only once you know the singlepoint's own grid is also dense
-    enough for the dielectric constant; otherwise converge :math:`\varepsilon_\infty`
-    separately, as this tutorial did, and give ``eps_inf`` the number.
+.. code-block:: yaml
+
+    workflow:
+      task: singlepoint
+      screening_method: dfpt
+      eps_inf: auto
+    kpoints:
+      grid: [4, 4, 4]
+      eps_inf_factor: 4
+
+runs the rest of the calculation on :math:`4\times4\times4` and the dielectric constant
+on :math:`16\times16\times16`, the grid this tutorial settled on. A list ``[a, b, c]``
+densifies each direction on its own. With the factor left at 1, ``koopmans run`` prints
+an advisory naming the mesh the dielectric step is about to use.
 
 .. note::
 
