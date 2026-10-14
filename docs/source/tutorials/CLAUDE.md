@@ -8,13 +8,9 @@ A tutorial shows before it tells: the command the reader types, what they
 see, then why. Write for someone arriving cold with the domain basics, and
 answer their questions in the order they arise.
 
-- Let a figure carry the result where one can: a convergence series is a
-  plot, not a table plus a paragraph restating it, and an exercise is a
-  `question` dropdown whose answer is the figure. A value need not be
-  printed anywhere if the reader can read it off the axes well enough, or
-  if its precise digits teach nothing; quote a number once, in the prose,
-  when the argument depends on it. The plotting commands draw what they
-  draw.
+- Let a figure carry the result where one can, rather than a table or a
+  paragraph restating it. Quote a number once, in the prose, when the
+  argument depends on it; otherwise the axes are enough.
 - Every number comes from a run of the shipped input, read off that run's
   own outputs — never hand-rolled, estimated, or taken from a note. Prose
   quotes to two decimals; program output is quoted verbatim.
