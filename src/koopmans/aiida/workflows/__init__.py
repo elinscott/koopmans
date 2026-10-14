@@ -404,9 +404,8 @@ def eps_inf_kpoints(koopmans_input: KoopmansInput) -> orm.KpointsData | None:
     """Return the mesh the dielectric scf of ``eps_inf: auto`` samples, if it has its own.
 
     Only a ``kpoints.eps_inf_factor`` above 1 in some direction states a
-    mesh of its own; at the default ``(1, 1, 1)`` the dielectric scf keeps
-    sampling exactly what the chain's own scf does, not a freshly built mesh
-    that merely happens to equal it.
+    mesh of its own; at the default ``(1, 1, 1)`` it returns ``None`` and the
+    dielectric scf samples what the chain's own scf does.
     """
     factor = koopmans_input.kpoints.eps_inf_factor
     if not any(f > 1 for f in factor):

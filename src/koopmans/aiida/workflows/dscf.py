@@ -123,11 +123,11 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
     )
-    if not wannier_init and workflow.eps_inf == "auto":
+    if not wannier_init and workflow.eps_inf is not None:
         raise ValueError(
-            "workflow.eps_inf: auto computes the dielectric constant of a periodic crystal "
-            "for the Makov-Payne correction, which only the Wannier-initialised route "
-            "applies. Give eps_inf a number, or set init_orbitals to 'mlwfs' or 'projwfs'."
+            "workflow.eps_inf feeds the Makov-Payne image-charge correction, which only the "
+            "Wannier-initialized route (init_orbitals 'mlwfs' or 'projwfs') applies. No "
+            "correction applies to an isolated molecule: remove eps_inf."
         )
 
     structure = atoms_input_to_structure(koopmans_input.atoms)
