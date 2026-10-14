@@ -117,13 +117,11 @@ calculation wants: the isotropic average of that tensor.
    zone, which the calculation approximates by a sum over the points of the
    :math:`k`-point grid, each with the same weight. The summand is largest where the direct
    gap :math:`\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}` is smallest, which
-   in silicon is at :math:`\Gamma`, so it peaks sharply there. A :math:`\Gamma`-centred
-   mesh has a sample sitting exactly on that peak and counts it like any other point, so
-   the peak is weighted far too heavily until the mesh is dense enough for its neighbours
-   to dilute it. A half-shifted mesh has no sample at :math:`\Gamma`:
-   its nearest points sit half a step away on every side, where the summand has already
-   come down, so the sum sees the peak only through its surroundings and settles with far
-   fewer points.
+   in silicon is at :math:`\Gamma`. A :math:`\Gamma`-centred
+   mesh includes :math:`\Gamma` as one of its samples, so the peak skews the estimate of the
+   Brillouin-zone average until the mesh is dense enough for it to be diluted by other points.
+   In contrast, a half-shifted mesh has no sample at :math:`\Gamma`, so the sum avoids atypical
+   points in the Brillouin zone and therefore converges with far fewer points.
 
 *******************************************
  Using the value in a Koopmans calculation
