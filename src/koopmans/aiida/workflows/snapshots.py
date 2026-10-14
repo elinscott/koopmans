@@ -90,6 +90,12 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     reject_unwired_external_projectors(koopmans_input, "snapshots")
 
+    if workflow.eps_inf == "auto":
+        raise NotImplementedError(
+            "workflow.eps_inf: auto is not wired for atoms.snapshots: it would run one "
+            "dielectric calculation per frame. Give eps_inf a number."
+        )
+
     if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
         raise NotImplementedError(
             "`atoms.snapshots` only fans out the DSCF screening stream (kcp.x); DFPT "

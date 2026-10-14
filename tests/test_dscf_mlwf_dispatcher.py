@@ -446,13 +446,47 @@ class TestPeriodicMlwfsBuild:
         with _pytest.raises(ValueError, match="group_orbitals_tol"):
             KoopmansInput(**d)
 
-    def test_eps_inf_auto_not_wired(
-        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    @pytest.mark.parametrize(("factor", "mesh"), [(None, [2, 2, 2]), (2, [4, 4, 4])])
+    def test_eps_inf_auto_builds_the_dielectric_step(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+        factor: int | None,
+        mesh: list[int],
     ) -> None:
-        """eps_inf='auto' is still NotImplemented for the DSCF stream."""
+        """``eps_inf='auto'`` adds the dielectric chain on ``kpoints.grid`` times the factor.
+
+        A mutant that ignores ``eps_inf_factor`` would leave the second
+        case on the 2x2x2 mesh; a mutant that drops ``auto`` leaves no
+        ``dielectric`` task at all.
+        """
         d = _si_dscf_dict(eps_inf="auto")
-        with pytest.raises(NotImplementedError, match="eps_inf"):
-            _build(d)
+        if factor is not None:
+            d["kpoints"]["eps_inf_factor"] = factor
+        wg = _build(d)
+        dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        assert list(dielectric_kpoints.get_kpoints_mesh()[0]) == mesh
+
+        from aiida_workgraph import WorkGraph
+
+        WorkGraph.from_dict(wg.to_dict())
+
+    @pytest.mark.parametrize(
+        "workflow_updates",
+        [{"eps_inf": 11.7}, {"eps_inf": "auto", "mp_correction": False}],
+    )
+    def test_an_eps_inf_without_a_consumer_runs_no_dielectric_step(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        workflow_updates: dict[str, Any],
+    ) -> None:
+        """Negative control: a number, or an unused ``auto``, builds no ``dielectric`` task."""
+        wg = _build(_si_dscf_dict(**workflow_updates))
+        assert "dielectric" not in [t.name for t in wg.tasks]
 
     def test_w90_keywords_land_flat_in_overrides(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any

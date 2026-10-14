@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from koopmans.aiida.workflows import advisories_for
 from koopmans.aiida.workflows.dscf import (
     _KcpDscfInputs,
     build_singlepoint_workgraph,
@@ -362,6 +363,30 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
 
         with pytest.raises(ValueError, match=r"kpoints: \{path"):
             build_singlepoint_workgraph(inp)
+
+
+class TestEpsInfOnAMolecule:
+    """A molecule applies no Makov-Payne correction, so ``eps_inf`` is kept but inert."""
+
+    @pytest.mark.parametrize("eps_inf", ["auto", 11.7])
+    def test_any_eps_inf_builds_no_dielectric_step_and_is_advised(
+        self,
+        ozone_input: KoopmansInput,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_kcp_code: Any,
+        fake_sg15_pseudo_family: Any,
+        eps_inf: float | str,
+    ) -> None:
+        """The build succeeds without a ``dielectric`` task, and the advisory says why."""
+        d = ozone_input.model_dump()
+        d["workflow"]["eps_inf"] = eps_inf
+        inp = KoopmansInput.model_validate(d)
+
+        wg = build_singlepoint_workgraph(inp)
+
+        assert "dielectric" not in [t.name for t in wg.tasks]
+        assert any("isolated molecule" in a for a in advisories_for(inp))
 
 
 class TestExplicitOrbitalGroupsRejected:

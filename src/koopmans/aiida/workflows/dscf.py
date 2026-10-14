@@ -16,6 +16,7 @@ from koopmans.aiida.conversion import (
 )
 from koopmans.aiida.workflows import (
     collinear_magnetization,
+    eps_inf_kpoints,
     load_codes,
     name_run,
     optional_magnetization,
@@ -117,18 +118,20 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "kcp.x has no noncollinear mode. Use screening_method='dfpt'."
         )
 
+    wannier_init = workflow.init_orbitals in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    )
+
     structure = atoms_input_to_structure(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)
 
     inputs = kcp_dscf_inputs(koopmans_input)
 
-    wannier_init = workflow.init_orbitals in (
-        VariationalOrbitalType.MLWFS,
-        VariationalOrbitalType.PROJWFS,
-    )
     extra_kwargs: dict[str, Any] = {}
     if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
+        extra_kwargs["eps_kpoints"] = eps_inf_kpoints(koopmans_input)
         # On this route the input file's nbnd sizes the pw.x runs — the
         # states the blocks disentangle among — while kcp.x takes one
         # variational orbital per Wannier function the projections
@@ -254,12 +257,6 @@ def dscf_wannier_init_inputs(
     workflow = koopmans_input.workflow
     calc_params = koopmans_input.calculator_parameters
     kpoints_input = koopmans_input.kpoints
-
-    if isinstance(workflow.eps_inf, str):
-        raise NotImplementedError(
-            "eps_inf='auto' is not wired for the DSCF stream yet (the DielectricTask "
-            "exists — hook it up like the DFPT dispatcher); provide a numeric value."
-        )
 
     pseudo_family = workflow.pseudo_library
     pseudos = get_pseudos_from_family(pseudo_family, structure)

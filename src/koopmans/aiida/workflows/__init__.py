@@ -24,12 +24,18 @@ from aiida_quantumespresso.common.types import SpinType
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
     code_parallelization,
+    eps_inf_kpoints_mesh,
     input_to_pw_parameters,
     step_grid_spacing,
     step_kpoints_mesh,
     validate_computer_scheduler_support,
 )
-from koopmans.input_file.workflow import CalculateScreeningMethod, GroupOrbitalsBy, Task
+from koopmans.input_file.workflow import (
+    CalculateScreeningMethod,
+    GroupOrbitalsBy,
+    Task,
+    VariationalOrbitalType,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -389,6 +395,19 @@ def pin_step_kpoints(
     return step_kpoints_mesh(koopmans_input.kpoints, step)
 
 
+def eps_inf_kpoints(koopmans_input: KoopmansInput) -> orm.KpointsData | None:
+    """Return the mesh the dielectric scf of ``eps_inf: auto`` samples, if it has its own.
+
+    Only a ``kpoints.eps_inf_factor`` above 1 in some direction states a
+    mesh of its own; at the default ``(1, 1, 1)`` it returns ``None`` and the
+    dielectric scf samples what the chain's own scf does.
+    """
+    factor = koopmans_input.kpoints.eps_inf_factor
+    if not any(f > 1 for f in factor):
+        return None
+    return eps_inf_kpoints_mesh(koopmans_input.kpoints, factor)
+
+
 def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
     """Return the moment a collinear run splits its electrons by.
 
@@ -660,16 +679,19 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 _TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
 
 
-def _dfpt_default_scf_mesh_description(koopmans_input: KoopmansInput) -> str:
+def _default_eps_inf_mesh_description(koopmans_input: KoopmansInput) -> str:
     """Describe the mesh ``eps_inf: auto`` falls back to at the default factor.
 
-    At ``kpoints.eps_inf_factor == (1, 1, 1)`` the dielectric scf reuses
-    the DFPT chain's own ``scf`` mesh, not ``kpoints.grid`` — the same
+    At ``kpoints.eps_inf_factor == (1, 1, 1)`` the DFPT dielectric scf
+    reuses the chain's own ``scf`` mesh, not ``kpoints.grid`` — the same
     resolution :func:`~koopmans.aiida.conversion.step_kpoints_mesh` /
     :func:`~koopmans.aiida.workflows.pin_step_kpoints` perform for the
     ``"scf"`` step at build time, read here off the parsed model alone so
-    this check never touches the ORM.
+    this check never touches the ORM. The DSCF dielectric scf samples
+    ``kpoints.grid``, the one mesh that route takes.
     """
+    if koopmans_input.workflow.screening_method == CalculateScreeningMethod.DSCF:
+        return f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}"
     scf_override = koopmans_input.kpoints.overrides.scf
     if scf_override is not None and scf_override.grid is not None:
         return f"kpoints.overrides.scf.grid mesh {tuple(scf_override.grid)}"
@@ -680,6 +702,50 @@ def _dfpt_default_scf_mesh_description(koopmans_input: KoopmansInput) -> str:
             "calculation runs)"
         )
     return f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}"
+
+
+def _eps_inf_inert_advisory(koopmans_input: KoopmansInput) -> str | None:
+    """Return the notice for a ``workflow.eps_inf`` that no step of the run consumes.
+
+    The dielectric constant enters the Delta-SCF Makov-Payne term and the
+    DFPT screening step only. It is inert on a singlepoint whose screening
+    does not run, and on the Delta-SCF route for a molecule, with
+    ``mp_correction`` off, or under ``ml.mode: predict``.
+    """
+    workflow = koopmans_input.workflow
+    if workflow.eps_inf is None or workflow.task != Task.SINGLEPOINT:
+        return None
+    prefix = "workflow.eps_inf has no effect"
+    if not workflow.calculate_alpha:
+        return (
+            f"{prefix} with workflow.calculate_alpha: false: the dielectric "
+            "constant enters only the screening step, which this run skips; it is "
+            "kept for when you switch screening back on."
+        )
+    if workflow.screening_method != CalculateScreeningMethod.DSCF:
+        return None
+    if workflow.init_orbitals not in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    ):
+        return (
+            f"{prefix} on an isolated molecule: no image-charge correction "
+            "applies to it; it is kept for when you switch to a periodic cell "
+            "(init_orbitals: mlwfs or projwfs)."
+        )
+    if workflow.mp_correction is False:
+        return (
+            f"{prefix} with workflow.mp_correction: false: the dielectric "
+            "constant enters only the Makov-Payne correction; it is kept for when "
+            "you switch the correction back on."
+        )
+    if koopmans_input.ml.mode == MLMode.PREDICT:
+        return (
+            f"{prefix} with ml.mode: predict: the dielectric constant enters only "
+            "the screening step, which a trained model replaces; it is kept for "
+            "when you switch screening back on."
+        )
+    return None
 
 
 def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
@@ -721,15 +787,17 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 "to singlepoint."
             )
 
-    if (
+    eps_inf_inert = _eps_inf_inert_advisory(koopmans_input)
+    if eps_inf_inert is not None:
+        advisories.append(eps_inf_inert)
+    elif (
         task == Task.SINGLEPOINT
-        and workflow.screening_method == CalculateScreeningMethod.DFPT
         and workflow.eps_inf == "auto"
         and koopmans_input.kpoints.eps_inf_factor == (1, 1, 1)
     ):
         advisories.append(
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            f"{_dfpt_default_scf_mesh_description(koopmans_input)}; it converges "
+            f"{_default_eps_inf_mesh_description(koopmans_input)}; it converges "
             "slowly with k-points, so that mesh may be too coarse. Set "
             "kpoints.eps_inf_factor above 1 to multiply kpoints.grid — not this mesh "
             "— into a denser one for the dielectric-constant step alone."

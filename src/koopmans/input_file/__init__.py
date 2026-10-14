@@ -51,6 +51,7 @@ from koopmans.input_file.workflow import (
     CalculateScreeningMethod,
     GroupOrbitalsBy,
     Task,
+    VariationalOrbitalType,
     WorkflowConfig,
 )
 from koopmans.input_file.yambo import YamboBseParameters
@@ -444,16 +445,16 @@ class GridKpointsInput(BaseModel):
     ] = (1, 1, 1)
     """Per-direction densification of ``grid`` for the ``eps_inf: auto`` dielectric step.
 
-    Above 1 (in any direction), the DFPT ``eps_inf: auto`` hook computes
+    Above 1 (in any direction), the ``eps_inf: auto`` hook computes
     the dielectric constant on ``grid`` densified by this factor instead of
     ``grid`` itself: eps_inf converges far more slowly with k-points than
     the run itself, so a coarse Koopmans grid usually undersamples it.
     Always densifies the top-level ``grid`` — never ``overrides.scf``, which
     may state a spacing instead of a grid. ``[a, b, c]`` densifies each
     direction independently, and a bare integer ``a`` is shorthand for
-    ``[a, a, a]``. Needs ``workflow.eps_inf: auto`` and ``screening_method:
-    dfpt`` on a ``singlepoint`` task; set anywhere else, it is refused by
-    name.
+    ``[a, a, a]``. Needs ``workflow.eps_inf: auto`` on a ``singlepoint``
+    task, with ``screening_method: dfpt`` or ``screening_method: dscf`` and
+    a Wannier ``init_orbitals``; set anywhere else, it is refused by name.
     """
 
 
@@ -669,11 +670,12 @@ class KoopmansInput(BaseModel):
     def check_eps_inf_factor_reaches_a_dielectric_step(
         cls, kpoints: KpointsInput, info: ValidationInfo
     ) -> KpointsInput:
-        """Reject a non-default ``kpoints.eps_inf_factor`` wherever no DFPT dielectric step runs.
+        """Reject a non-default ``kpoints.eps_inf_factor`` wherever no dielectric step runs.
 
-        Only a ``singlepoint`` task with ``screening_method: dfpt`` and
-        ``workflow.eps_inf: auto``, on a real k-point grid, runs the
-        dielectric-constant step ``eps_inf_factor`` densifies; every other
+        Only a ``singlepoint`` task with ``workflow.eps_inf: auto`` on a
+        real k-point grid, screened by DFPT or by DSCF from Wannier
+        functions, runs the dielectric-constant step
+        ``eps_inf_factor`` densifies; every other
         combination is refused by name rather than silently ignored.
         ``bse`` composes the same DFPT chain and so shares the gap:
         ``eps_inf_factor`` is not yet threaded through it. Reads
@@ -693,24 +695,26 @@ class KoopmansInput(BaseModel):
         if workflow.task != Task.SINGLEPOINT:
             raise ValueError(
                 f"`kpoints.eps_inf_factor` has no effect on task: {workflow.task.value} "
-                "(only task: singlepoint runs the DFPT dielectric-constant step "
+                "(only task: singlepoint runs the dielectric-constant step "
                 "`eps_inf_factor` densifies; `bse` composes the same chain but does "
                 "not yet thread `eps_inf_factor` through it). Remove it, or switch task."
             )
         if getattr(kpoints, "gamma_only", False):
             raise ValueError(
                 "`kpoints.eps_inf_factor` has no effect together with `gamma_only`: "
-                "the DFPT dielectric-constant step needs a k-point grid to densify, "
-                "and gamma-only DFPT is not supported. Give a `grid` instead of "
+                "the dielectric-constant step needs a k-point grid to densify. "
+                "Give a `grid` instead of "
                 "`gamma_only`, or restore the default `[1, 1, 1]`."
             )
-        if workflow.screening_method != CalculateScreeningMethod.DFPT:
+        if workflow.screening_method == CalculateScreeningMethod.DSCF and (
+            workflow.init_orbitals
+            not in (VariationalOrbitalType.MLWFS, VariationalOrbitalType.PROJWFS)
+        ):
             raise ValueError(
-                "`kpoints.eps_inf_factor` has no effect: `workflow.screening_method` "
-                f"is not 'dfpt' (got {workflow.screening_method.value!r}), and the "
-                "DSCF route has no dielectric-constant step yet (`eps_inf: auto` is "
-                "not wired there). Set screening_method to 'dfpt', or restore the "
-                "default `[1, 1, 1]`."
+                "`kpoints.eps_inf_factor` has no effect: `workflow.init_orbitals` is "
+                f"{workflow.init_orbitals.value!r}, and the DSCF route only runs a "
+                "dielectric-constant step from Wannier functions ('mlwfs' or "
+                "'projwfs'). Change init_orbitals, or restore the default `[1, 1, 1]`."
             )
         if workflow.eps_inf != "auto":
             raise ValueError(

@@ -655,6 +655,13 @@ raw:
                 child_default_link_limit: 1
                 help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
+            ph:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                help: Needed if the dielectric constant is to be computed automatically.
+                required: false
             projwfc:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -747,6 +754,21 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
+            extras:
+              py_type: typing.Union
+              union:
+              - identifier: <scrubbed:identifier>
+              - identifier: <scrubbed:identifier>
+                py_type: typing.Literal['auto']
+            required: false
+        eps_kpoints:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
         fix_spin_contamination:
           default: false
@@ -2060,6 +2082,13 @@ raw:
                     help: Needed to initialize the variational orbitals as Wannier
                       functions.
                     required: false
+                ph:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    help: Needed if the dielectric constant is to be computed automatically.
+                    required: false
                 projwfc:
                   dynamic: false
                   identifier: <scrubbed:identifier>
@@ -2156,6 +2185,21 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                extras:
+                  py_type: typing.Union
+                  union:
+                  - identifier: <scrubbed:identifier>
+                  - identifier: <scrubbed:identifier>
+                    py_type: typing.Literal['auto']
+                required: false
+            eps_kpoints:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             fix_spin_contamination:
               default: false
