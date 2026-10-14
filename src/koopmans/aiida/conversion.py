@@ -905,10 +905,9 @@ def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, An
     here), or is fixed here: ``KfnQPdb`` (the Koopmans quasiparticle
     database), the BSE momentum-transfer range and the MPI role split are
     the composed graph's own, and refused if stated here (they are not — no
-    field maps to them). The light-polarisation direction (``LongDrXs`` /
-    ``BLongDir``) is emitted only when the input states it; left unset,
-    yambo's own compiled-in default (x-polarized) applies — the `bse`
-    protocol sets neither, so there is no protocol default to fall back to.
+    field maps to them). Optional fields the input leaves unset are not
+    emitted, so yambo's (or the aiida-yambo BSE protocol's) own value applies;
+    flag fields the input sets join the always-on arguments.
     """
     yambo = koopmans_input.calculator_parameters.yambo
     if yambo is None:
@@ -916,7 +915,10 @@ def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, An
             "`yambo_input_to_bse_parameters` needs `koopmans_input.calculator_parameters.yambo` "
             "set; only a `workflow.task: bse` input reaches here."
         )
-    return {"arguments": list(_BSE_ARGUMENTS), "variables": yambo.to_runcard_variables()}
+    return {
+        "arguments": [*_BSE_ARGUMENTS, *yambo.to_runcard_arguments()],
+        "variables": yambo.to_runcard_variables(),
+    }
 
 
 def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:

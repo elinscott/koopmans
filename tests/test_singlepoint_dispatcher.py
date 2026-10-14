@@ -243,6 +243,23 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         with pytest.raises(NotImplementedError, match=f"not wired into the {task} route"):
             build_workgraph(inp)
 
+    @pytest.mark.parametrize("task", ["singlepoint", "dft_bands", "dft_eps"])
+    def test_dfpt_coarse_grid_rejected(self, ozone_input: KoopmansInput, task: str) -> None:
+        """``workflow.dfpt_coarse_grid`` is rejected before dispatch on every task.
+
+        No route reads it, so accepting it would silently run the dense grid
+        alone.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        d = ozone_input.model_dump()
+        d["workflow"]["task"] = task
+        d["workflow"]["dfpt_coarse_grid"] = (2, 2, 2)
+        inp = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match=r"dfpt_coarse_grid.*not wired"):
+            build_workgraph(inp)
+
 
 class TestSmoothInterpolationFactorAdvisedOffDscf:
     """``kpoints.smooth_interpolation_factor`` only shapes the DSCF band interpolation.
