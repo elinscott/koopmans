@@ -69,8 +69,10 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
     .. container:: capability-cell
 
-        .. image:: _static/capabilities/dielectric.svg
-            :alt: Placeholder tile for dielectric constants
+        .. image:: tutorials/dielectric_constants/convergence_shifted.svg
+            :alt: The dielectric constant of silicon against the k-point grid: a
+                Gamma-centred mesh converging from 25.10 at 4x4x4 to 13.30 at
+                16x16x16, and a half-shifted mesh reaching 13.28 by 12x12x12
 
         :doc:`Dielectric constants <tutorials/dielectric_constants/index>`, which a
         Koopmans calculation on a solid needs

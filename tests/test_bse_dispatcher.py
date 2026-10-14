@@ -39,6 +39,8 @@ def _si_bse_dict(**yambo_updates: Any) -> dict[str, Any]:
         "NGsBlkXs": 2,
         "BSEBands": [1, 4],
         "BEnRange": [0, 10],
+        "LongDrXs": [1, 0, 0],
+        "BLongDir": [1, 0, 0],
         **yambo_updates,
     }
     return d
@@ -103,6 +105,8 @@ class TestBuild:
                 "NGsBlkXs": [3, "Ry"],
                 "BSENGBlk": [3, "Ry"],
                 "BSEBands": [[1, 4], ""],
+                "LongDrXs": [[1, 0, 0], ""],
+                "BLongDir": [[1, 0, 0], ""],
                 "BEnRange": [[0, 10], "eV"],
                 "BEnSteps": [200, ""],
                 "BDmRange": [[0.1, 0.1], "eV"],

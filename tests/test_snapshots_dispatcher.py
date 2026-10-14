@@ -309,6 +309,34 @@ class TestSnapshotsDispatcher:
         with pytest.raises(NotImplementedError, match="not wired into the dft_bands task"):
             build_workgraph(koopmans_input)
 
+    @pytest.mark.parametrize("init_orbitals", ["kohn-sham", "mlwfs"])
+    def test_eps_inf_auto_is_refused_on_every_init_route(
+        self,
+        aiida_profile_clean: Any,
+        tmp_path: Path,
+        snapshots_codes: dict[str, Any],
+        fake_sg15_pseudo_family: Any,
+        write_multiframe_xyz: Callable[..., Path],
+        init_orbitals: str,
+    ) -> None:
+        """``eps_inf: auto`` with snapshots raises on the Kohn-Sham route too.
+
+        The Kohn-Sham case would otherwise build with no dielectric
+        constant at all and leave the user a false build-time advisory.
+        """
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
+
+        xyz = write_multiframe_xyz(tmp_path, 2)
+        if init_orbitals == "mlwfs":
+            d = _wannier_snapshots_input_dict(str(xyz))
+        else:
+            d = _snapshots_input_dict(str(xyz))
+        d["workflow"]["eps_inf"] = "auto"
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="eps_inf: auto is not wired"):
+            build_snapshots_workgraph(koopmans_input)
+
     def test_the_single_structure_route_rejects_a_snapshots_block(
         self,
         aiida_profile_clean: Any,

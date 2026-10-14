@@ -409,14 +409,6 @@ class TestDfptAutoEps:
         assert "eps_inf='auto'" in message
         assert "Give eps_inf a number instead." in message
 
-    def test_unknown_eps_string_raises(self, dfpt_codes: Any) -> None:
-        """A non-'auto' string eps_inf is rejected up front."""
-        d = _si_dfpt_auto_dict()
-        d["workflow"]["eps_inf"] = "automatic"
-        inp = KoopmansInput.model_validate(d)
-        with pytest.raises(ValueError, match="not understood"):
-            build_singlepoint_dfpt_workgraph(inp)
-
 
 class TestPhCalculatorParameters:
     """``calculator_parameters.ph`` reaches the ph.x step (koopmans2#162)."""

@@ -45,6 +45,8 @@ def _bse_dict(**workflow_updates: Any) -> dict[str, Any]:
         "NGsBlkXs": 2,
         "BSEBands": [1, 4],
         "BEnRange": [0, 10],
+        "LongDrXs": [1, 0, 0],
+        "BLongDir": [1, 0, 0],
     }
     return d
 
@@ -191,12 +193,82 @@ class TestEpsInfFactorAdvisory:
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == []
 
-    def test_dscf_screening_is_silent(self) -> None:
-        """DSCF never wires eps_inf: auto to a dielectric step, so nothing to advise."""
+    def test_dscf_screening_names_kpoints_grid(self) -> None:
+        """The DSCF dielectric step samples ``kpoints.grid``, the one mesh that route takes."""
         d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
         d["workflow"]["eps_inf"] = "auto"
+        d["kpoints"]["grid"] = [3, 3, 3]
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            "kpoints.grid mesh (3, 3, 3); it converges slowly with k-points, so "
+            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
+            "multiply kpoints.grid — not this mesh — into a denser one for the "
+            "dielectric-constant step alone."
+        ]
+
+    def test_dscf_screening_with_a_factor_is_silent(self) -> None:
+        """The negative control: a densifying factor silences the DSCF advisory too."""
+        d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
+        d["workflow"]["eps_inf"] = "auto"
+        d["kpoints"]["eps_inf_factor"] = 2
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == []
+
+
+class TestEpsInfInertAdvisory:
+    """``workflow.eps_inf`` is kept, with a notice, where no step consumes it."""
+
+    _MESH_ADVISORY = "workflow.eps_inf: auto computes the dielectric constant"
+
+    @staticmethod
+    def _dscf(**workflow_updates: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "screening_method": "dscf",
+            "correction": "ki",
+            "init_orbitals": "mlwfs",
+            "eps_inf": "auto",
+        }
+        return _si_dict("singlepoint", **{**base, **workflow_updates})
+
+    def test_calculate_alpha_off_is_advised_instead_of_the_mesh(self) -> None:
+        """No screening runs, so the dielectric constant is unused and no mesh is named."""
+        inp = KoopmansInput.model_validate(self._dscf(calculate_alpha=False))
+        assert advisories_for(inp) == [
+            "workflow.eps_inf has no effect with workflow.calculate_alpha: false: the "
+            "dielectric constant enters only the screening step, which this run skips; "
+            "it is kept for when you switch screening back on."
+        ]
+
+    def test_calculate_alpha_off_on_dfpt_is_advised(self) -> None:
+        """The DFPT screening step is skipped too, so its dielectric constant is unused."""
+        d = self._dscf(calculate_alpha=False, screening_method="dfpt")
+        inp = KoopmansInput.model_validate(d)
+        assert [a for a in advisories_for(inp) if "calculate_alpha" in a]
+        assert not [a for a in advisories_for(inp) if self._MESH_ADVISORY in a]
+
+    def test_mp_correction_off_is_advised(self) -> None:
+        """Without the Makov-Payne correction the dielectric constant has no consumer."""
+        inp = KoopmansInput.model_validate(self._dscf(mp_correction=False))
+        assert advisories_for(inp) == [
+            "workflow.eps_inf has no effect with workflow.mp_correction: false: the "
+            "dielectric constant enters only the Makov-Payne correction; it is kept "
+            "for when you switch the correction back on."
+        ]
+
+    def test_ml_predict_is_advised(self) -> None:
+        """A trained model replaces the screening step that would use the constant."""
+        d = self._dscf()
+        d["ml"] = {"mode": "predict"}
+        inp = KoopmansInput.model_validate(d)
+        assert [a for a in advisories_for(inp) if "ml.mode: predict" in a]
+        assert not [a for a in advisories_for(inp) if self._MESH_ADVISORY in a]
+
+    def test_a_consumed_eps_inf_gets_the_mesh_advisory_only(self) -> None:
+        """Negative control: with a consumer, the inert notices stay silent."""
+        advisories = advisories_for(KoopmansInput.model_validate(self._dscf()))
+        assert len(advisories) == 1
+        assert advisories[0].startswith(self._MESH_ADVISORY)
 
 
 class TestOrbitalGroupingAdvisory:

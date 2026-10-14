@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from koopmans.aiida.workflows import advisories_for
 from koopmans.aiida.workflows.dscf import (
     _KcpDscfInputs,
     build_singlepoint_workgraph,
@@ -243,6 +244,23 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         with pytest.raises(NotImplementedError, match=f"not wired into the {task} route"):
             build_workgraph(inp)
 
+    @pytest.mark.parametrize("task", ["singlepoint", "dft_bands", "dft_eps"])
+    def test_dfpt_coarse_grid_rejected(self, ozone_input: KoopmansInput, task: str) -> None:
+        """``workflow.dfpt_coarse_grid`` is rejected before dispatch on every task.
+
+        No route reads it, so accepting it would silently run the dense grid
+        alone.
+        """
+        from koopmans.aiida.workflows import build_workgraph
+
+        d = ozone_input.model_dump()
+        d["workflow"]["task"] = task
+        d["workflow"]["dfpt_coarse_grid"] = (2, 2, 2)
+        inp = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match=r"dfpt_coarse_grid.*not wired"):
+            build_workgraph(inp)
+
 
 class TestSmoothInterpolationFactorAdvisedOffDscf:
     """``kpoints.smooth_interpolation_factor`` only shapes the DSCF band interpolation.
@@ -345,6 +363,30 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
 
         with pytest.raises(ValueError, match=r"kpoints: \{path"):
             build_singlepoint_workgraph(inp)
+
+
+class TestEpsInfOnAMolecule:
+    """A molecule applies no Makov-Payne correction, so ``eps_inf`` is kept but inert."""
+
+    @pytest.mark.parametrize("eps_inf", ["auto", 11.7])
+    def test_any_eps_inf_builds_no_dielectric_step_and_is_advised(
+        self,
+        ozone_input: KoopmansInput,
+        aiida_profile: Any,
+        installed_pw_code: Any,
+        installed_kcp_code: Any,
+        fake_sg15_pseudo_family: Any,
+        eps_inf: float | str,
+    ) -> None:
+        """The build succeeds without a ``dielectric`` task, and the advisory says why."""
+        d = ozone_input.model_dump()
+        d["workflow"]["eps_inf"] = eps_inf
+        inp = KoopmansInput.model_validate(d)
+
+        wg = build_singlepoint_workgraph(inp)
+
+        assert "dielectric" not in [t.name for t in wg.tasks]
+        assert any("isolated molecule" in a for a in advisories_for(inp))
 
 
 class TestExplicitOrbitalGroupsRejected:
