@@ -48,4 +48,4 @@ parallelization:
   kcw: {ntasks: 4}
   yambo:
     ntasks: 4
-    bethe_salpeter: {k: 2, eh: 2}   # yambo cannot split a 4-rank BSE run for this system on its own
+    bethe_salpeter: {k: 2, eh: 2}   # 2 ranks over k-points x 2 over electron-hole pairs

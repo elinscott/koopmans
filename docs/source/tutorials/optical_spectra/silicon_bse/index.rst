@@ -9,7 +9,7 @@ from Wannier functions, taught in the :doc:`finite-differences tutorial
 <../../band_structures/silicon_finite_differences/index>`. The screening parameters
 here come from density-functional perturbation theory instead of total-energy
 differences — the same linear-response route as the :doc:`sibling tutorial
-<../../band_structures/silicon_linear_response/index>` — computed in the primitive
+<../../band_structures/silicon_linear_response/index>`, computed in the primitive
 cell rather than a supercell, and this tutorial feeds the resulting quasiparticle
 energies into `yambo <http://www.yambo-code.org/>`_.
 
@@ -32,34 +32,24 @@ kernel: an absorption spectrum built from bare DFT eigenvalues inherits DFT's
 underestimated gap, shifting the whole spectrum to the wrong energy before the
 electron-hole interaction ever enters. yambo BSE calculations usually source their
 input quasiparticle energies from a GW calculation, but this route sources them from a
-Koopmans calculation instead, at a fraction of the cost.
+Koopmans calculation instead.
 
 ***************
  Prerequisites
 ***************
 
-.. warning::
+Have ``p2y`` and ``yambo`` on your ``PATH`` when you run ``koopmans install``, as
+described on the :doc:`installation page <../../../installation>`.
 
-    Everything up to and including the linear-response tutorial installs with
-    ``koopmans install``. This tutorial also needs yambo, which does not:
-    register ``p2y`` and ``yambo`` as AiiDA codes yourself, e.g. with ``verdi code
-    create core.code.installed``, and install the ``k2y`` and ``aiida-yambo``
-    packages that give ``koopmans`` a way to drive them.
+The ``bse`` task runs the DFPT chain from the previous tutorial and then a yambo
+calculation on its eigenvalues. Three rules for the input follow from that, and
+``koopmans`` checks each before it submits anything:
 
-The ``bse`` task composes the DFPT chain from the previous tutorial with a fresh yambo
-run, so every restriction that route documents applies here too, plus a few of its own
-that the code checks before submitting anything:
-
-- ``workflow.screening_method`` must be ``dfpt``: the BSE route seeds yambo's
-  quasiparticle database from a kcw.x ``ham`` run's eigenvalues, which only DFPT
-  screening produces.
-- ``workflow.spin`` must be ``none``: the composed workflow reads a single DFPT
-  channel, and a collinear or spinor run has none.
-- ``kpoints.path`` is rejected outright: the composed DFPT step runs no band-structure
-  interpolation, and yambo reports an exciton spectrum, not a band structure.
-- ``calculator_parameters.yambo.BSEBands`` must not reach past the Wannierized
-  manifold: a Koopmans quasiparticle correction exists only for the bands the DFPT
-  chain Wannierizes.
+- ``workflow.screening_method`` is ``dfpt``, the only screening method that produces
+  the Koopmans eigenvalues yambo reads.
+- ``kpoints.path`` is not set, since a spectrum has no band path.
+- ``calculator_parameters.yambo.BSEBands`` lies inside the Wannierized manifold, since
+  a Koopmans correction exists only for the bands the DFPT chain Wannierizes.
 
 ****************
  The input file
@@ -76,39 +66,31 @@ projections are identical to the linear-response tutorial's silicon input, and
 ``workflow.task`` is the only new keyword in that block.
 
 The new block is ``calculator_parameters.yambo``, which sets yambo's own runcard
-variables under their own names:
+variables under their own names. Six have no default:
 
 .. literalinclude:: si-bse.yaml
     :language: yaml
     :start-at: yambo:
     :end-before: parallelization:
 
-``BndsRnXs`` and ``NGsBlkXs`` converge the static screening, the same way a plane-wave
-cutoff converges a DFT total energy: more bands and a larger G-vector cutoff bring the
-screened Coulomb interaction closer to its exact value. ``BSEBands`` says which bands
-enter the two-particle kernel — here the whole 8-band manifold the DFPT chain
-Wannierizes, since that is where the Koopmans corrections exist. ``BEnRange`` and
-``BEnSteps`` set the energy window and resolution of the spectrum, and ``BDmRange`` an
-artificial linewidth that turns a stick spectrum of discrete transitions into a smooth
-curve. ``LongDrXs`` and ``BLongDir`` fix the light's polarization, for the screening
-and the BSE spectrum respectively.
+- ``BndsRnXs`` is the band range that builds the screened Coulomb interaction. This is a
+  convergence parameter: raise it until the spectrum stops changing.
+- ``NGsBlkXs`` is the G-vector cutoff of that interaction, in Ry. This is also a
+  convergence parameter.
+- ``BSEBands`` is the band range of the two-particle kernel. ``[1, 8]`` is the whole
+  manifold the DFPT chain Wannierizes, four filled and four empty bands.
+- ``BEnRange`` is the energy window of the spectrum, in eV.
+- ``LongDrXs`` is the light polarization used for the screening.
+- ``BLongDir`` is the light polarization used for the spectrum.
 
-.. warning::
+``BEnSteps`` sets the number of energy points in the window and ``BDmRange`` the
+broadening that turns discrete transitions into a smooth curve, in eV. Both have
+defaults, as do the other yambo variables listed in the :doc:`input file documentation
+<../../../input_schema>`.
 
-    ``BSEBands`` narrower than the full manifold can cut a pair of degenerate bands
-    apart at some k-point on the mesh, which yambo refuses with "User bands ... break
-    level degeneracy". Widening ``BSEBands`` back to the full manifold is the fix; this
-    is why the input file above uses ``[1, 8]`` rather than a smaller window.
-
-.. tip::
-
-    ``yambo`` cannot always split its ranks across the calculation on its own. On this
-    small system, running the BSE step on 4 MPI ranks with no split can fail with
-    "Impossible to define an appropriate parallel structure"; the ``bethe_salpeter``
-    role split in the input file above fixes this. Each driver's role counts must
-    multiply to that driver's ``ntasks``, and a role count is capped by what the system
-    actually has of it — here ``k: 2`` is already at the limit, since silicon's
-    :math:`2\times2\times2` mesh reduces to only 3 irreducible k-points.
+The ``parallelization`` block gives yambo 4 MPI ranks. Its ``bethe_salpeter`` entry
+splits them as 2 over k-points and 2 over electron-hole pairs, and the two counts
+multiply to the 4 ranks.
 
 *************
  Running it
@@ -124,29 +106,26 @@ fresh yambo chain: an scf and nscf for yambo's own ground state, ``p2y`` to buil
 SAVE directory, a step that turns the DFPT chain's kcw.x eigenvalues into yambo's own
 quasiparticle database, and finally the BSE calculation itself.
 
-.. question:: Where does the Koopmans correction enter the yambo calculation?
+.. question:: Which step brings the Koopmans correction into the yambo calculation?
 
-    At the step named "Quasiparticle database". ``koopmans`` reads the ``ham`` step's
-    Koopmans eigenvalues and writes them into a yambo ``ndb.QP`` database, in place of
-    the GW quasiparticle database a BSE calculation more commonly reads. Every later
-    step treats it exactly as it would a GW correction.
+    The step named "Quasiparticle database". It writes the ``ham`` step's Koopmans
+    eigenvalues into a yambo ``ndb.QP`` database, in place of the GW database a BSE
+    calculation more commonly reads, so every later yambo step applies the Koopmans
+    correction.
 
 *******************************
  The quasiparticle correction
 *******************************
 
-yambo's own report on the BSE step states the gap before and after applying that
-database. Uncorrected, the :math:`2\times2\times2` grid's indirect gap is 0.62 eV.
-With the Koopmans correction applied it opens to 1.39 eV: a 0.77 eV correction, the
-same qualitative repair of an underestimated DFT gap you saw with a different
-screening method in the finite-differences tutorial.
+yambo's report on the BSE step states the gap before and after applying that database.
+On the :math:`2\times2\times2` grid the indirect gap is 0.62 eV in LDA and 1.39 eV in
+KI@LDA, a correction of 0.77 eV.
 
 .. question:: What is the smallest *direct* transition, and where does it sit?
 
-    3.38 eV, at :math:`\Gamma`. Optical absorption near the fundamental gap is governed
-    by direct transitions, since the light does not deliver enough momentum to bridge
-    an indirect gap the way a phonon can. This 3.38 eV is what the rest of this
-    tutorial compares the exciton spectrum against.
+    3.38 eV, at :math:`\Gamma`. Light carries too little momentum to bridge the indirect
+    gap, so absorption sets in at the direct transitions, and the exciton spectrum below
+    is compared against this 3.38 eV.
 
 **********************
  The optical spectrum
@@ -157,39 +136,28 @@ screening method in the finite-differences tutorial.
     $ koopmans plot spectrum si-bse --label "KI@LDA" --xlim 2 6 -o spectrum.png
 
 This draws the imaginary part of the dielectric function against energy, with the
-run's independent-particle spectrum overlaid as a dashed curve for comparison:
+independent-particle spectrum of the same run as a dashed curve:
 
 .. image:: spectrum.png
     :align: center
     :width: 80%
 
-.. question:: Compare the two curves. What does the electron-hole interaction do to
-    the spectrum?
+.. question:: What does the electron-hole interaction do to the spectrum?
 
-    It red-shifts the main peak from 3.52 eV (independent particle) to 3.12 eV, and
-    roughly doubles its height. Both are the signature of an exciton: the bound
-    electron-hole pair sits below the 3.38 eV direct transition it is built from, and
-    pulls the oscillator strength of nearby transitions into itself as it forms.
+    It moves the main peak from 3.52 eV in the independent-particle spectrum down to
+    3.12 eV and raises its height by a factor of 1.9. The electron and hole attract, so
+    their bound pair lies below the 3.38 eV direct transition it is built from, and
+    it takes oscillator strength from the transitions near it.
 
 .. question:: What is the exciton's binding energy?
 
-    The lowest bound state yambo reports sits at 3.119 eV — close to, but not exactly
-    on, the peak of the broadened curve above: a peak position and a bound-state
-    eigenvalue are not the same thing once several close-lying states overlap under the
-    0.1 eV broadening. Against the 3.385 eV direct transition it is built from, that is
-    a binding energy of 3.385 − 3.119 = 0.27 eV. Take this as illustrative rather than
-    converged: a :math:`2\times2\times2` grid samples the electron-hole pair's relative
-    motion far too coarsely for the binding energy itself to be trustworthy, even though
-    the qualitative red shift is robust.
+    yambo reports the lowest bound state at 3.119 eV. Measured from the 3.385 eV direct
+    transition, the binding energy is 3.385 - 3.119 = 0.27 eV. The :math:`2\times2\times2`
+    grid samples the pair's relative motion too coarsely to converge this value.
 
 *********
  Up next
 *********
 
-Two things were left coarse in this tutorial. The :math:`2\times2\times2` k-point grid
-is far too sparse to converge an exciton binding energy, and ``BndsRnXs``/``NGsBlkXs``
-were not converged against the spectrum the way you would converge a plane-wave cutoff
-against a total energy. Both cost a great deal more to refine here than in a plain DFT
-calculation, for the same reason the earlier silicon tutorials warn about the
-Brillouin-zone sampling: a denser grid means a larger Wannierized manifold to screen
-and a larger yambo calculation to run on top of it.
+To converge the spectrum, raise ``BndsRnXs``, ``NGsBlkXs`` and ``kpoints.grid`` in
+``si-bse.yaml`` and rerun until the main peak stops moving.
