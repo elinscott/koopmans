@@ -65,11 +65,10 @@ def _install_advice_trailer(computer: str, names: Iterable[str] = ()) -> str:
     """Return the sentence(s) telling the user how to configure codes on ``computer``.
 
     ``koopmans install`` only registers the executables
-    :func:`~koopmans.aiida.setup.codes.code_specs` knows about — the bundled
-    QE/Wannier90 backend. A code outside that set (yambo's ``p2y``/``yambo``
-    included) is never touched by it, on ``localhost`` or anywhere else, so
-    it earns its own ``verdi code create core.code.installed`` line naming
-    it, the same wording already used for a named remote computer.
+    :func:`~koopmans.aiida.setup.codes.code_specs` knows about. A code
+    outside that set is never touched by it, on ``localhost`` or anywhere
+    else, so it earns its own ``verdi code create core.code.installed`` line
+    naming it, the same wording already used for a named remote computer.
 
     Args:
         computer: The run's ``computer.name``.
