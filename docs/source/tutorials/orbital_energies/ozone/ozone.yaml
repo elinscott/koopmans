@@ -4,7 +4,7 @@
 workflow:
   task: singlepoint               # spectral properties at fixed geometry
   correction: ki                  # the KI flavor of the correction, not KIPZ
-  screening_method: dscf          # screening from total-energy differences
+  formalism: dscf          # ΔSCF: total-energy differences in a supercell
   init_orbitals: kohn-sham        # the orbitals the correction acts on
   alpha_numsteps: 1               # one pass of the screening-parameter loop
   pseudo_library: SG15/1.2/PBE/SR # scalar-relativistic, generated with PBE

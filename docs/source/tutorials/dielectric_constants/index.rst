@@ -134,9 +134,10 @@ Set the converged value, 13.28, as ``eps_inf`` in the ``workflow`` block of a
 
     workflow:
       task: singlepoint
+      formalism: dfpt
       eps_inf: 13.28
 
-Both screening methods read it from there.
+Either formalism reads it from there.
 
 Alternatively, you can do everything in a single calculation: set ``eps_inf: auto`` and
 the workflow runs the same scf-then-``ph.x`` calculation this tutorial just ran alongside
@@ -151,7 +152,7 @@ the dielectric step its own mesh under ``kpoints.overrides``, as you would any o
 
     workflow:
       task: singlepoint
-      screening_method: dfpt
+      formalism: dfpt
       eps_inf: auto
     kpoints:
       grid: [4, 4, 4]

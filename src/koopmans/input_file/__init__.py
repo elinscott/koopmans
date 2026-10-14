@@ -48,7 +48,7 @@ from koopmans.input_file.pw import PWInputParameters
 from koopmans.input_file.pw2wannier90 import PW2Wannier90InputParameters
 from koopmans.input_file.wannier90 import RestrictedWannier90InputParameters
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
+    Formalism,
     GroupOrbitalsBy,
     Task,
     VariationalOrbitalType,
@@ -453,7 +453,7 @@ class GridKpointsInput(BaseModel):
     may state a spacing instead of a grid. ``[a, b, c]`` densifies each
     direction independently, and a bare integer ``a`` is shorthand for
     ``[a, a, a]``. Needs ``workflow.eps_inf: auto`` on a ``singlepoint``
-    task, with ``screening_method: dfpt`` or ``screening_method: dscf`` and
+    task, with ``formalism: dfpt`` or ``formalism: dscf`` and
     a Wannier ``init_orbitals``; set anywhere else, it is refused by name.
     """
 
@@ -706,7 +706,7 @@ class KoopmansInput(BaseModel):
                 "Give a `grid` instead of "
                 "`gamma_only`, or restore the default `[1, 1, 1]`."
             )
-        if workflow.screening_method == CalculateScreeningMethod.DSCF and (
+        if workflow.formalism == Formalism.DSCF and (
             workflow.init_orbitals
             not in (VariationalOrbitalType.MLWFS, VariationalOrbitalType.PROJWFS)
         ):

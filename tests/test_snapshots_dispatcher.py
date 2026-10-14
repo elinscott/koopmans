@@ -42,7 +42,7 @@ def _snapshots_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str, 
         "workflow": {
             "task": "singlepoint",
             "correction": "ki",
-            "screening_method": "dscf",
+            "formalism": "dscf",
             "init_orbitals": "kohn-sham",
             "alpha_numsteps": 1,
             "pseudo_library": "SG15/1.2/PBE/SR",
@@ -1039,7 +1039,7 @@ class TestBandPathRejected:
         [
             pytest.param({}, True, id="dscf-default"),
             pytest.param(
-                {"screening_method": "dfpt", "calculate_alpha": False},
+                {"formalism": "dfpt", "calculate_alpha": False},
                 True,
                 id="dfpt-without-alpha",
             ),
@@ -1062,7 +1062,7 @@ class TestBandPathRejected:
 
         The ``dfpt-without-alpha`` case pins the fall-through for a DFPT
         singlepoint that is not also computing alphas: the early return
-        ``test_a_dfpt_input_hears_the_screening_method_first`` exercises
+        ``test_a_dfpt_input_hears_the_formalism_first`` exercises
         needs ``calculate_alpha`` true, so this is its negative control.
 
         The ``non-singlepoint-task`` case is a second negative control:
@@ -1085,7 +1085,7 @@ class TestBandPathRejected:
         message = str(excinfo.value)
         assert "`kpoints.path`" in message
         assert "`atoms.snapshots`" in message
-        # `screening_method` does not select this route, so the DFPT
+        # `formalism` does not select this route, so the DFPT
         # alternative the singlepoint route offers must not appear here.
         assert "dfpt" not in message
 
@@ -1102,7 +1102,7 @@ class TestBandPathRejected:
 
         assert koopmans_input.kpoints.path == "G"
 
-    def test_a_dfpt_input_hears_the_screening_method_first(
+    def test_a_dfpt_input_hears_the_formalism_first(
         self, tmp_path: Path, read_input_dict: Any
     ) -> None:
         """Pins the refusal behind the screening-method blocker.
@@ -1113,7 +1113,7 @@ class TestBandPathRejected:
         """
         from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
-        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"), screening_method="dfpt")
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"), formalism="dfpt")
         d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
 
         koopmans_input = read_input_dict(d)
@@ -1159,31 +1159,31 @@ class TestPerStepKpointMeshRejected:
         with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
             build_snapshots_workgraph(koopmans_input)
 
-    def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:
+    def test_the_message_does_not_name_a_formalism(self, tmp_path: Path) -> None:
         """A route reached whatever the method must not name one back at the reader.
 
-        ``screening_method`` does not select this route — every fan-out
+        ``formalism`` does not select this route — every fan-out
         runs kcp.x — so quoting ``'dscf'`` would tell someone who wrote
         ``'dfpt'`` to set what they did not set.
         """
         from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
-        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["formalism"] = "dfpt"
         d["workflow"]["calculate_alpha"] = False
         d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
         koopmans_input = KoopmansInput.model_validate(d)
 
         with pytest.raises(ValueError) as excinfo:
             build_snapshots_workgraph(koopmans_input)
-        assert "screening_method" not in str(excinfo.value)
+        assert "formalism" not in str(excinfo.value)
 
-    def test_an_unsupported_screening_method_is_reported_first(self, tmp_path: Path) -> None:
+    def test_an_unsupported_formalism_is_reported_first(self, tmp_path: Path) -> None:
         """The mesh is the reader's second problem when the method is the first."""
         from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
-        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["formalism"] = "dfpt"
         d["workflow"]["calculate_alpha"] = True
         d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
         koopmans_input = KoopmansInput.model_validate(d)

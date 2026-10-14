@@ -4,7 +4,7 @@
 workflow:
   task: singlepoint             # fans out per snapshot via atoms.snapshots
   correction: ki
-  screening_method: dscf          # screening from total-energy differences
+  formalism: dscf          # ΔSCF: total-energy differences in a supercell
   init_orbitals: mlwfs            # maximally localized Wannier functions
   alpha_numsteps: 1               # one pass of the screening-parameter loop
   pseudo_library: SG15/1.0/PBE/SR

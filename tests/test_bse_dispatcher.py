@@ -21,7 +21,7 @@ import pytest
 
 from koopmans.aiida.workflows.bse import build_bse_workgraph
 from koopmans.input_file import KoopmansInput
-from koopmans.input_file.workflow import CalculateScreeningMethod
+from koopmans.input_file.workflow import Formalism
 from tests.test_dfpt_dispatcher import _si_dfpt_dict
 
 
@@ -35,8 +35,8 @@ def _si_bse_dict(**yambo_updates: Any) -> dict[str, Any]:
     """
     d = _si_dfpt_dict()
     d["workflow"]["task"] = "bse"
-    # `bse` implies DFPT screening, so the input leaves the key out.
-    d["workflow"].pop("screening_method", None)
+    # `bse` is DFPT by construction, so the input leaves `formalism` out.
+    d["workflow"].pop("formalism", None)
     d["calculator_parameters"]["yambo"] = {
         "BndsRnXs": [1, 100],
         "NGsBlkXs": 2,
@@ -92,7 +92,7 @@ class TestBuild:
         assert "bse" in names
 
         explicit = _si_bse_dict()
-        explicit["workflow"]["screening_method"] = "dfpt"
+        explicit["workflow"]["formalism"] = "dfpt"
         assert "dfpt" in _build(explicit).get_task_names()
 
     def test_bse_parameters_match_the_schema_mapping(
@@ -241,18 +241,16 @@ class TestRouteRefusals:
     so in their own docstring.
     """
 
-    def test_dscf_screening_method_is_refused_at_parse(self) -> None:
-        """An explicit ``dscf`` is a parse error; unset or ``dfpt`` parse to ``dfpt``."""
+    def test_dscf_formalism_is_refused_at_parse(self) -> None:
+        """An explicit ``dscf`` is a parse error; ``dfpt`` and unset both parse."""
         d = _si_bse_dict()
-        d["workflow"]["screening_method"] = "dscf"
-        with pytest.raises(ValueError, match="Remove `screening_method`"):
+        d["workflow"]["formalism"] = "dscf"
+        with pytest.raises(ValueError, match=r"Remove `workflow\.formalism`"):
             KoopmansInput.model_validate(d)
-        for stated in (None, "dfpt"):
-            d = _si_bse_dict()
-            if stated is not None:
-                d["workflow"]["screening_method"] = stated
-            parsed = KoopmansInput.model_validate(d)
-            assert parsed.workflow.screening_method == CalculateScreeningMethod.DFPT
+        d["workflow"]["formalism"] = "dfpt"
+        assert KoopmansInput.model_validate(d).workflow.formalism == Formalism.DFPT
+        del d["workflow"]["formalism"]
+        assert KoopmansInput.model_validate(d).workflow.formalism is None
 
     def test_collinear_spin_is_refused(self) -> None:
         """No single channel exists for the composed graph to read.

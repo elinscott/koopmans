@@ -30,7 +30,7 @@ def _si_dscf_dict(**workflow_updates: Any) -> dict[str, Any]:
         "workflow": {
             "task": "singlepoint",
             "correction": "ki",
-            "screening_method": "dscf",
+            "formalism": "dscf",
             "init_orbitals": "mlwfs",
             "calculate_alpha": True,
             "pseudo_library": "SG15/1.2/PBE/SR",
@@ -647,7 +647,7 @@ class TestKcpNbndComesFromTheProjections:
             {
                 "task": "singlepoint",
                 "correction": "ki",
-                "screening_method": "dscf",
+                "formalism": "dscf",
                 "init_orbitals": "mlwfs",
                 "alpha_guess": 0.077,
                 "mp_correction": False,
@@ -866,7 +866,7 @@ class TestBandPathRejected:
         """Pins the refusal behind the initialisation-route check.
 
         kcp.x runs no periodic ``kohn-sham`` route at all, and refusing the
-        band path first would send the reader to ``screening_method =
+        band path first would send the reader to ``formalism =
         'dfpt'`` — which refuses the same input again, for wanting Wannier
         orbitals. So this input must parse, and the blocker must arrive on
         the first hop when it is built.

@@ -28,7 +28,7 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     so every restriction that route documents applies here too.
 
     ``spin`` must be ``'none'``: the composed workflow reads a single DFPT
-    channel. ``screening_method`` is always ``'dfpt'`` (resolved at parse).
+    channel. The route runs the DFPT chain whether ``formalism`` is ``'dfpt'`` or unset.
 
     Left unrefused: ``calculator_parameters.ecutwfc``, if unset, is derived
     from the pseudopotential family's own recommendation (the same call

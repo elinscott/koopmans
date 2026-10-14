@@ -94,7 +94,7 @@ def assemble_dfpt_chain_inputs(
         raise NotImplementedError(
             "The DFPT route (kcw.x) only implements the KI correction; "
             f"correction={workflow.correction.value!r} is not supported. Use "
-            "screening_method = 'dscf' for KIPZ."
+            "formalism = 'dscf' for KIPZ."
         )
     if workflow.init_orbitals not in (
         VariationalOrbitalType.MLWFS,

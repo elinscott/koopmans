@@ -15,8 +15,8 @@ from koopmans.base import BaseModel
 # canonical definitions live in ``aiida_koopmans.functionals`` and
 # ``aiida_koopmans.variational_orbitals``.
 __all__ = [
-    "CalculateScreeningMethod",
     "Correction",
+    "Formalism",
     "GroupOrbitalsBy",
     "Task",
     "VariationalOrbitalType",
@@ -27,6 +27,9 @@ FloatGE1 = Annotated[float, Field(ge=1.0)]
 
 #: Keywords retired from ``workflow``, each with what to write instead.
 _REMOVED_WORKFLOW_KEYWORDS: dict[str, str] = {
+    "screening_method": (
+        "Write `formalism: dscf` (ΔSCF) or `formalism: dfpt` (linear response) instead."
+    ),
     "calculate_bands": (
         "A band structure is computed whenever `kpoints.path` names a path and the "
         "task can interpolate along it; set `kpoints.path`."
@@ -53,8 +56,8 @@ class Task(Enum):
     BSE = "bse"
 
 
-class CalculateScreeningMethod(Enum):
-    """Valid methods for calculating screening parameters."""
+class Formalism(Enum):
+    """How the Koopmans correction is evaluated."""
 
     DSCF = "dscf"
     DFPT = "dfpt"
@@ -82,9 +85,9 @@ class WorkflowConfig(BaseModel):
     pseudo_library: str = Field(
         description="the label of the pseudopotential family to use. Any family you have installed yourself is used as it stands, whatever its label; a label naming no installed family is downloaded, which koopmans can do for the norm-conserving PseudoDojo and SG15 families `koopmans pseudos` lists. A family that publishes no recommended cutoffs takes them from `calculator_parameters.ecutwfc` instead"
     )
-    screening_method: CalculateScreeningMethod = Field(
-        default=CalculateScreeningMethod.DSCF,
-        description="the method to calculate the screening parameters: either with ΔSCF or DFPT. `task: bse` implies `dfpt`, and refuses `dscf`",
+    formalism: Formalism | None = Field(
+        default=None,
+        description="how the Koopmans correction is evaluated: `dscf` — ΔSCF, finite differences in a supercell; `dfpt` — linear response in the primitive cell. Required on `task: singlepoint`; `task: bse` is `dfpt` by construction; other tasks run no Koopmans step",
     )
     init_orbitals: VariationalOrbitalType = Field(
         default=VariationalOrbitalType.PZ,
@@ -149,7 +152,7 @@ class WorkflowConfig(BaseModel):
         description="a list of integers the same length as the total number of bands, denoting which bands to assign the same screening parameter to",
     )
     group_orbitals_by: GroupOrbitalsBy = Field(
-        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the screening method, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Resolved at parse time from init_orbitals/screening_method when unset: "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent), "none" otherwise; the parsed input always carries the resolved value. Resolves to "none" on an ml:mode=\'predict\', ml:descriptor=\'power_spectrum\' run instead, since that route runs no trial KI for any grouping to apply to',
+        description='criterion for grouping orbitals so they share a screening parameter: "self_hartree" (energies within group_orbitals_tol, in eV), "spread" (wannier90 spreads within group_orbitals_tol, in Angstrom^2), or "none". The criterion is independent of the formalism, though not every combination is wired up yet (currently self_hartree on DSCF and spread on DFPT). Resolved at parse time from init_orbitals/formalism when unset: "self_hartree" for Wannier-initialized DSCF runs (supercell images of one primitive orbital are physically equivalent), "none" otherwise; the parsed input always carries the resolved value. Resolves to "none" on an ml:mode=\'predict\', ml:descriptor=\'power_spectrum\' run instead, since that route runs no trial KI for any grouping to apply to',
     )
     group_orbitals_tol: float | None = Field(
         default=None,
@@ -184,7 +187,7 @@ class WorkflowConfig(BaseModel):
     @field_validator(
         "task",
         "correction",
-        "screening_method",
+        "formalism",
         "init_orbitals",
         "init_empty_orbitals",
         mode="before",
@@ -232,6 +235,28 @@ class WorkflowConfig(BaseModel):
         if values.get("init_empty_orbitals", None) is None:
             values["init_empty_orbitals"] = values.get("init_orbitals", VariationalOrbitalType.PZ)
         return values
+
+    @model_validator(mode="after")
+    def check_formalism_matches_task(self) -> Self:
+        """Require ``formalism`` on a singlepoint and refuse ``dscf`` on ``bse``.
+
+        Raises:
+            ValueError: If ``task: singlepoint`` leaves ``formalism`` unset, or
+                ``task: bse`` sets it to ``dscf``.
+        """
+        if self.task == Task.SINGLEPOINT and self.formalism is None:
+            raise ValueError(
+                "`task: singlepoint` needs `workflow.formalism`: `dscf` evaluates the "
+                "Koopmans correction by finite differences in a supercell (ΔSCF), "
+                "`dfpt` by linear response in the primitive cell."
+            )
+        if self.task == Task.BSE and self.formalism == Formalism.DSCF:
+            raise ValueError(
+                "`task: bse` evaluates the Koopmans correction by linear response, whose "
+                "kcw.x eigenvalues on the k-point grid feed yambo. Remove "
+                "`workflow.formalism` or set it to `dfpt`."
+            )
+        return self
 
     @model_validator(mode="after")
     def check_orbital_groups_length(self) -> Self:
@@ -298,10 +323,7 @@ class WorkflowConfig(BaseModel):
                 VariationalOrbitalType.MLWFS.value,
                 VariationalOrbitalType.PROJWFS.value,
             )
-            dscf = (
-                _value(data.get("screening_method"), CalculateScreeningMethod.DSCF.value)
-                == CalculateScreeningMethod.DSCF.value
-            )
+            dscf = _value(data.get("formalism"), "") == Formalism.DSCF.value
             criterion = (
                 GroupOrbitalsBy.SELF_HARTREE.value
                 if (wannier_init and dscf)
@@ -311,32 +333,4 @@ class WorkflowConfig(BaseModel):
 
         if raw_tol is None and criterion in _ORBITAL_GROUPING_DEFAULT_TOLERANCE:
             data["group_orbitals_tol"] = _ORBITAL_GROUPING_DEFAULT_TOLERANCE[criterion]
-        return data
-
-    @model_validator(mode="before")
-    @classmethod
-    def bse_implies_dfpt_screening(cls, data: Any) -> Any:
-        """Resolve an unset ``screening_method`` to ``dfpt`` for ``task: bse``.
-
-        Raises:
-            ValueError: If ``task: bse`` states ``screening_method: dscf``.
-        """
-        # Pydantic runs "before" validators last-defined first: this one is defined
-        # after `resolve_group_orbitals_by` so grouping sees the resolved method.
-        if not isinstance(data, dict):
-            return data
-        task = data.get("task")
-        if (task.value if isinstance(task, Enum) else str(task).lower()) != Task.BSE.value:
-            return data
-        method = data.get("screening_method")
-        if method is None:
-            return {**data, "screening_method": CalculateScreeningMethod.DFPT.value}
-        if (method.value if isinstance(method, Enum) else str(method).lower()) != (
-            CalculateScreeningMethod.DFPT.value
-        ):
-            raise ValueError(
-                "`task: bse` is built on linear-response (DFPT) screening, whose kcw.x "
-                "eigenvalues on the k-point grid feed yambo. Remove `screening_method`, "
-                "or set it to `dfpt`."
-            )
         return data
