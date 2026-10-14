@@ -334,12 +334,7 @@ class TestPreFlightAdvice:
         installed_wannier_codes: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """``p2y`` and ``yambo`` are required in ``BetheSalpeterCodes``, both named at once.
-
-        Both are in the install roster (see
-        ``koopmans.aiida.setup.codes.code_specs``), so the advice points at
-        ``koopmans install``, as for any other missing local code.
-        """
+        """``p2y`` and ``yambo`` are required in ``BetheSalpeterCodes``, both named at once."""
         from tests.test_bse_dispatcher import _si_bse_dict
 
         inp = KoopmansInput.model_validate(_si_bse_dict())
