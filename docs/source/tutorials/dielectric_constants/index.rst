@@ -105,6 +105,9 @@ calculation wants: the isotropic average of that tensor.
    .. image:: convergence.svg
        :class: responsive-fig
        :align: center
+       :alt: The dielectric constant of silicon against the k-point grid for a
+           Gamma-centred and a half-shifted mesh; the shifted series reaches 13.28
+           by 12x12x12 where the Gamma-centred one is still at 13.45
 
 *******************************************
  Using the value in a Koopmans calculation
