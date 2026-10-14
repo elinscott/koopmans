@@ -115,6 +115,18 @@ class TestSchemaValidation:
 
         assert CalculatorParametersInput.model_validate({"nbnd": 10.0}).nbnd == 10
 
+    @pytest.mark.parametrize("eps_inf", ["yes", "Auto"])
+    def test_eps_inf_string_other_than_auto_rejected(self, eps_inf: str) -> None:
+        """Only the exact string ``auto`` or a number parses as ``workflow.eps_inf``."""
+        from koopmans.input_file.workflow import WorkflowConfig
+
+        base = {"task": "singlepoint", "pseudo_library": "X"}
+
+        with pytest.raises(ValueError, match=r"eps_inf\.literal\[.auto.\]"):
+            WorkflowConfig.model_validate({**base, "eps_inf": eps_inf})
+
+        assert WorkflowConfig.model_validate({**base, "eps_inf": "auto"}).eps_inf == "auto"
+
 
 def _minimal_si_input() -> dict[str, object]:
     """Return a minimal, valid silicon ``KoopmansInput`` dict."""

@@ -395,16 +395,6 @@ def pin_step_kpoints(
     return step_kpoints_mesh(koopmans_input.kpoints, step)
 
 
-def validated_eps_inf(eps_inf: float | str | None) -> float | str | None:
-    """Check that ``eps_inf`` is a numeric value, ``'auto'``, or unset."""
-    if isinstance(eps_inf, str) and eps_inf != "auto":
-        raise ValueError(
-            f"eps_inf={eps_inf!r} is not understood: provide a numeric value "
-            "or 'auto' (compute the dielectric constant with ph.x)."
-        )
-    return eps_inf
-
-
 def eps_inf_kpoints(koopmans_input: KoopmansInput) -> orm.KpointsData | None:
     """Return the mesh the dielectric scf of ``eps_inf: auto`` samples, if it has its own.
 

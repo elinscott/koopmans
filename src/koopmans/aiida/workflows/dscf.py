@@ -23,7 +23,6 @@ from koopmans.aiida.workflows import (
     reject_kpoint_overrides,
     require_configured_codes,
     require_cutoffs_for_family,
-    validated_eps_inf,
 )
 from koopmans.aiida.workflows.blocks import (
     create_explicit_blocks,
@@ -363,7 +362,7 @@ def dscf_wannier_init_inputs(
         "gamma_only": bool(getattr(kpoints_input, "gamma_only", False)),
         "wannier_overrides": wannier_overrides,
         "mp_correction": workflow.mp_correction,
-        "eps_inf": validated_eps_inf(workflow.eps_inf),
+        "eps_inf": workflow.eps_inf,
     }
 
 

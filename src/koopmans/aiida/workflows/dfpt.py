@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 
 from aiida_koopmans.spin import SpinChannel
 from aiida_quantumespresso.common.types import SpinType
@@ -16,7 +16,6 @@ from koopmans.aiida.workflows import (
     prepare_common_inputs,
     reject_kpoint_overrides,
     require_configured_codes,
-    validated_eps_inf,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
@@ -54,7 +53,7 @@ class DfptChainInputs(TypedDict):
     eps_kpoints: orm.KpointsData | None
     pseudo_family: str
     overrides: dict[str, Any]
-    eps_inf: float | str | None
+    eps_inf: float | Literal["auto"] | None
     l_vcut: bool | None
     spin: SpinType
     manifolds: dict[str, Any]
@@ -110,7 +109,7 @@ def assemble_dfpt_chain_inputs(
         raise NotImplementedError(
             "Gamma-only DFPT (isolated systems) is not yet supported; provide a k-point grid."
         )
-    eps_inf = validated_eps_inf(workflow.eps_inf)
+    eps_inf = workflow.eps_inf
 
     calc_params = koopmans_input.calculator_parameters
     spin = workflow.spin
