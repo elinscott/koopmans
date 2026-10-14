@@ -375,6 +375,7 @@ class TestInterpolationPathHelper:
         )
 
         def count(path: Any) -> int:
+            """Return the number of points on ``path``."""
             assert path is not None
             return len(path.get_kpoints())
 
@@ -1353,8 +1354,44 @@ class TestStepKpointsMesh:
         kpoints = GridKpointsInput.model_validate(
             {"grid": [2, 2, 2], "overrides": {"scf": {"grid_spacing": 0.2}}}
         )
-        with pytest.raises(ValueError, match=r"carries no offset.*overrides\.scf\.grid`"):
+        with pytest.raises(
+            ValueError, match=r"states a spacing, not a mesh.*overrides\.scf\.grid`"
+        ):
             step_kpoints_mesh(kpoints, "scf")
+
+    @pytest.mark.parametrize("spacing", [0.2, 0.3])
+    def test_a_dielectric_spacing_builds_the_mesh_kpoints_distance_would(
+        self, aiida_profile: Any, spacing: float
+    ) -> None:
+        """The dimensions equal ``create_kpoints_from_distance``'s; the offset is inherited.
+
+        The calcfunction is what ``PwBaseWorkChain.kpoints_distance`` runs, so
+        this also pins the private ``process_class._func`` the mesh is built
+        through.
+        """
+        from aiida import orm
+        from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import (
+            create_kpoints_from_distance,
+        )
+
+        from koopmans.aiida.conversion import step_spacing_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        structure = TestInterpolationPathHelper._fcc_silicon()
+        kpoints = GridKpointsInput.model_validate(
+            {
+                "grid": [2, 2, 2],
+                "offset": [0.5, 0.5, 0.5],
+                "overrides": {"dielectric": {"grid_spacing": spacing}},
+            }
+        )
+        before = orm.QueryBuilder().append(orm.CalcFunctionNode).count()
+        built = step_spacing_mesh(kpoints, "dielectric", structure)
+        assert orm.QueryBuilder().append(orm.CalcFunctionNode).count() == before
+        reference = create_kpoints_from_distance(structure, orm.Float(spacing), orm.Bool(False))  # type: ignore[no-untyped-call]
+        mesh, offset = built.get_kpoints_mesh()  # type: ignore[no-untyped-call]
+        assert [int(n) for n in mesh] == [int(n) for n in reference.get_kpoints_mesh()[0]]
+        assert list(offset) == [0.5, 0.5, 0.5]
 
 
 class TestGridSpacingReachesTheBuilder:

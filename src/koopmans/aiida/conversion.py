@@ -498,14 +498,57 @@ def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
         return kpoints_input_to_kpoints_mesh(kpoints)
     if step_grid_spacing(kpoints, step) is not None:
         raise ValueError(
-            f"`kpoints.overrides.{step}.grid_spacing` states a spacing, and a mesh built "
-            "from a spacing carries no offset, so it cannot stand for the mesh and "
-            f"offset this step needs. Write `kpoints.overrides.{step}.grid` instead."
+            f"`kpoints.overrides.{step}.grid_spacing` states a spacing, not a mesh, and "
+            f"this step needs a mesh. Write `kpoints.overrides.{step}.grid` instead."
         )
     grid = next((e.grid for e in entries if e.grid is not None), kpoints.grid)
-    offset = next((e.offset for e in entries if e.offset is not None), kpoints.offset)
     kpts = orm.KpointsData()
-    kpts.set_kpoints_mesh(list(grid), offset=list(offset))  # type: ignore[no-untyped-call]
+    kpts.set_kpoints_mesh(list(grid), offset=list(_step_offset(kpoints, step)))  # type: ignore[no-untyped-call]
+    return kpts
+
+
+def _step_offset(kpoints: KpointsInput, step: str) -> tuple[float, float, float]:
+    """Return the nearest offset the step reads, else the top level's."""
+    entries = _step_entries(kpoints, step)
+    return next((e.offset for e in entries if e.offset is not None), kpoints.offset)
+
+
+def step_spacing_mesh(
+    kpoints: KpointsInput, step: str, structure: orm.StructureData
+) -> orm.KpointsData:
+    """Build the mesh the named step's ``grid_spacing`` fixes on ``structure``.
+
+    The dimensions are the ones ``PwBaseWorkChain.kpoints_distance`` would
+    build from the same spacing: they come from aiida-quantumespresso's
+    ``create_kpoints_from_distance``, called without its provenance. The
+    offset is the nearest one the step reads (``kpoints.overrides.<step>``,
+    then the entries it falls back to, then the top-level ``offset``),
+    which ``kpoints_distance`` cannot carry.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        step: Name of a ``kpoints.overrides`` entry that states a ``grid_spacing``.
+        structure: The structure whose cell fixes the mesh dimensions.
+
+    Raises:
+        ValueError: If the step states no ``grid_spacing``.
+    """
+    from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import (
+        create_kpoints_from_distance,
+    )
+
+    spacing = step_grid_spacing(kpoints, step)
+    if spacing is None:
+        raise ValueError(f"`kpoints.overrides.{step}` states no `grid_spacing`.")
+    # The calcfunction's own body, so no process node lands in the database.
+    distance = orm.Float(spacing)  # type: ignore[no-untyped-call]
+    force_parity = orm.Bool(False)  # type: ignore[no-untyped-call]
+    spaced = create_kpoints_from_distance.process_class._func(structure, distance, force_parity)
+    kpts = orm.KpointsData()
+    kpts.set_kpoints_mesh(  # type: ignore[no-untyped-call]
+        [int(n) for n in spaced.get_kpoints_mesh()[0]],
+        offset=list(_step_offset(kpoints, step)),
+    )
     return kpts
 
 

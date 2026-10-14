@@ -120,7 +120,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     extra_kwargs: dict[str, Any] = {}
     if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
-        extra_kwargs.update(dielectric_kpoints(koopmans_input))
+        extra_kwargs.update(dielectric_kpoints(koopmans_input, structure))
         # On this route the input file's nbnd sizes the pw.x runs — the
         # states the blocks disentangle among — while kcp.x takes one
         # variational orbital per Wannier function the projections

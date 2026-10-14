@@ -30,6 +30,7 @@ from koopmans.aiida.conversion import (
     smooth_grid,
     step_grid_spacing,
     step_kpoints_mesh,
+    step_spacing_mesh,
     validate_computer_scheduler_support,
 )
 from koopmans.input_file import names_band_path
@@ -403,25 +404,26 @@ class DielectricKpoints(TypedDict):
     """The sampling of the ``eps_inf: auto`` dielectric step, as the route graphs take it."""
 
     eps_kpoints: orm.KpointsData | None
-    eps_kpoints_distance: float | None
 
 
-def dielectric_kpoints(koopmans_input: KoopmansInput) -> DielectricKpoints:
-    """Return the mesh, or spacing, the ``eps_inf: auto`` dielectric step samples.
+def dielectric_kpoints(
+    koopmans_input: KoopmansInput, structure: orm.StructureData
+) -> DielectricKpoints:
+    """Return the mesh the ``eps_inf: auto`` dielectric step samples.
 
-    Both are ``None`` without a ``kpoints.overrides.dielectric`` entry: the
-    step then samples what the route's own scf does. A gamma-only run has
-    no mesh to give it, so the entry is ignored there.
+    ``None`` without a ``kpoints.overrides.dielectric`` entry: the step then
+    samples what the route's own scf does. A ``grid_spacing`` on the entry
+    (or inherited from ``scf``) becomes the mesh ``kpoints_distance`` would
+    build from it on ``structure``, with the offset the entry states or
+    inherits. A gamma-only run has no mesh to give the step, so the entry
+    is ignored there.
     """
     kpoints = koopmans_input.kpoints
     if kpoints.gamma_only or kpoints.overrides.dielectric is None:
-        return DielectricKpoints(eps_kpoints=None, eps_kpoints_distance=None)
-    spacing = step_grid_spacing(kpoints, "dielectric")
-    if spacing is not None:
-        return DielectricKpoints(eps_kpoints=None, eps_kpoints_distance=spacing)
-    return DielectricKpoints(
-        eps_kpoints=step_kpoints_mesh(kpoints, "dielectric"), eps_kpoints_distance=None
-    )
+        return DielectricKpoints(eps_kpoints=None)
+    if step_grid_spacing(kpoints, "dielectric") is not None:
+        return DielectricKpoints(eps_kpoints=step_spacing_mesh(kpoints, "dielectric", structure))
+    return DielectricKpoints(eps_kpoints=step_kpoints_mesh(kpoints, "dielectric"))
 
 
 def collinear_magnetization(koopmans_input: KoopmansInput) -> int:

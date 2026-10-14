@@ -265,23 +265,22 @@ class StepKpointsOverridesInput(BaseModel):
     """Largest spacing between neighbouring k-points, in inverse angstrom.
 
     The cell fixes the mesh dimensions, so a converged value carries from
-    one structure to the next. Excludes ``grid`` and ``offset``: a mesh
-    built from a spacing carries no offset, and takes none from ``scf`` or
-    the top level.
+    one structure to the next. Excludes ``grid``: both state the mesh
+    dimensions. The ``scf`` entry also excludes ``offset``, which
+    ``PwBaseWorkChain.kpoints_distance`` cannot carry; ``dielectric``
+    builds its own mesh from the spacing and shifts it by the offset it
+    states or inherits.
     """
 
     @model_validator(mode="after")
     def _one_statement_of_the_mesh(self) -> StepKpointsOverridesInput:
-        """Require ``grid_spacing`` to be the entry's only statement of the mesh."""
-        if self.grid_spacing is None:
-            return self
-        for name in ("grid", "offset"):
-            if getattr(self, name) is not None:
-                raise ValueError(
-                    f"`grid_spacing` and `{name}` both describe the same mesh: "
-                    "`grid_spacing` lets the cell fix the mesh, so it cannot be "
-                    f"combined with `{name}`. Give one of the two."
-                )
+        """Require ``grid_spacing`` to be the entry's only statement of the dimensions."""
+        if self.grid_spacing is not None and self.grid is not None:
+            raise ValueError(
+                "`grid_spacing` and `grid` both describe the same mesh: "
+                "`grid_spacing` lets the cell fix the mesh, so it cannot be "
+                "combined with `grid`. Give one of the two."
+            )
         return self
 
 
@@ -358,9 +357,10 @@ class KpointsOverridesInput(BaseModel):
 
     Unset, it samples the same mesh as ``scf``. Each attribute an entry
     leaves unset is taken from ``scf`` where that entry states it, and from
-    the top level otherwise. The exception is ``offset`` beside a
-    ``grid_spacing``: a mesh built from a spacing carries no offset, so the
-    ``scf`` and top-level offsets are dropped. The dielectric constant
+    the top level otherwise. A ``grid_spacing`` here is resolved by koopmans
+    into the mesh ``kpoints_distance`` would build from it, and shifted by
+    the offset the entry states or inherits; on ``scf`` a spacing goes to
+    ``kpoints_distance`` itself and takes no offset. The dielectric constant
     converges far more slowly with k-points than the rest of the run, so a
     coarse ``grid`` usually undersamples it.
     """
@@ -630,12 +630,13 @@ class KoopmansInput(BaseModel):
     @field_validator("kpoints", mode="before")
     @classmethod
     def check_factors_moved_to_overrides(cls, kpoints: Any) -> Any:
-        """Reject the former per-step keywords by name, and two contradictory overrides.
+        """Reject the former per-step keywords by name, and an offset on an ``scf`` spacing.
 
         The densification factors now live on the ``kpoints.overrides`` entry
         of the step they shape, and ``overrides.wannier90`` is now
-        ``overrides.wannierize``. A ``dielectric.offset`` beside an ``scf``
-        spacing is refused too. Checked here rather than in either
+        ``overrides.wannierize``. The scf spacing reaches
+        ``PwBaseWorkChain.kpoints_distance``, which builds a Gamma-centred
+        mesh no offset can shift. Checked here rather than in either
         ``KpointsInput`` member, for the reason
         :meth:`check_density_was_renamed` gives.
         """
@@ -662,17 +663,16 @@ class KoopmansInput(BaseModel):
                 "`kpoints.overrides.wannier90` has been renamed "
                 "`kpoints.overrides.wannierize`, after the step it configures. Rename it."
             )
-        scf, dielectric = overrides.get("scf"), overrides.get("dielectric")
+        scf = overrides.get("scf")
         if (
             isinstance(scf, dict)
-            and isinstance(dielectric, dict)
             and scf.get("grid_spacing") is not None
-            and dielectric.get("offset") is not None
-            and dielectric.get("grid") is None
+            and scf.get("offset") is not None
         ):
             raise ValueError(
-                "`dielectric.offset` needs a grid to shift: `dielectric` takes its mesh "
-                "from `scf`, which states a `grid_spacing`. Give `dielectric.grid` too."
+                "`scf.grid_spacing` and `scf.offset` cannot be combined: the mesh a "
+                "spacing builds is Gamma-centred. Give `scf.grid` with the offset, or "
+                "drop the offset."
             )
         return kpoints
 

@@ -929,19 +929,23 @@ class TestDielectricOverride:
         assert step_grid_spacing(inp.kpoints, "dielectric") == 0.1
         assert step_grid_spacing(inp.kpoints, "scf") is None
 
-    def test_an_offset_cannot_shift_an_scf_spacing(self) -> None:
-        """A spacing builds a mesh no offset can be attached to."""
-        with pytest.raises(ValueError, match=r"`dielectric\.offset` needs a grid") as excinfo:
+    def test_an_offset_cannot_shift_an_scf_spacing_but_can_shift_a_dielectric_one(self) -> None:
+        """An scf spacing takes no offset; a dielectric one does."""
+        with pytest.raises(ValueError, match=r"`scf\.grid_spacing` and `scf\.offset`") as excinfo:
             KoopmansInput.model_validate(
                 _si_input_with_kpoints(
                     grid=[2, 2, 2],
-                    overrides={
-                        "scf": {"grid_spacing": 0.2},
-                        "dielectric": {"offset": [0.5, 0.5, 0.5]},
-                    },
+                    overrides={"scf": {"grid_spacing": 0.2, "offset": [0.5, 0.5, 0.5]}},
                 )
             )
         assert excinfo.value.error_count() == 1  # type: ignore[attr-defined]
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(
+                grid=[2, 2, 2],
+                overrides={"dielectric": {"grid_spacing": 0.2, "offset": [0.5, 0.5, 0.5]}},
+            )
+        )
+        assert inp.kpoints.overrides.dielectric is not None
 
     def test_kept_on_gamma_only(self) -> None:
         """A gamma-only run has no mesh to give the step, so the entry is kept inert."""

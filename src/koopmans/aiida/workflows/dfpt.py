@@ -53,7 +53,6 @@ class DfptChainInputs(TypedDict):
     smooth_mp_grid: NotRequired[list[int]]
     smooth_interpolation_kpoints: NotRequired[orm.KpointsData | None]
     eps_kpoints: orm.KpointsData | None
-    eps_kpoints_distance: float | None
     pseudo_family: str
     overrides: dict[str, Any]
     eps_inf: float | Literal["auto"] | None
@@ -168,7 +167,7 @@ def assemble_dfpt_chain_inputs(
     nscf_mesh = step_kpoints_mesh(koopmans_input.kpoints, "nscf")
 
     kcw_overrides = input_to_kcw_overrides(koopmans_input)
-    dielectric = dielectric_kpoints(koopmans_input)
+    dielectric = dielectric_kpoints(koopmans_input, structure)
 
     return (
         DfptChainInputs(
@@ -178,7 +177,6 @@ def assemble_dfpt_chain_inputs(
             bands_kpoints=bands_kpoints,
             interpolation_kpoints=interpolation_kpoints,
             eps_kpoints=dielectric["eps_kpoints"],
-            eps_kpoints_distance=dielectric["eps_kpoints_distance"],
             pseudo_family=pseudo_family,
             overrides=overrides,
             eps_inf=eps_inf,

@@ -213,19 +213,21 @@ class TestDielectricOverride:
         assert list(mesh) == [4, 4, 4]
         assert list(offset) == [0.5, 0.5, 0.5]
 
-    def test_a_spacing_reaches_the_dielectric_scf_as_a_distance(
+    def test_a_spacing_reaches_the_dielectric_scf_as_a_shifted_mesh(
         self,
         aiida_profile: Any,
         dfpt_codes: Any,
         installed_ph_code: Any,
         fake_sg15_pseudo_family: Any,
     ) -> None:
-        """The cell fixes the dimensions, so the step gets a distance and no mesh."""
+        """The cell fixes the dimensions, the offset shifts them, and no distance is passed."""
         d = _si_dfpt_dict(eps_inf="auto")
-        d["kpoints"]["overrides"] = {"dielectric": {"grid_spacing": 0.1}}
+        d["kpoints"]["overrides"] = {"dielectric": {"grid_spacing": 0.1, "offset": [0.5, 0.5, 0.5]}}
         dielectric = _build(d).tasks["dielectric"].inputs
-        assert dielectric["scf_kpoints"].value is None
-        assert dielectric["overrides"].value["scf"]["kpoints_distance"] == pytest.approx(0.1)
+        mesh, offset = dielectric["scf_kpoints"].value.get_kpoints_mesh()
+        assert list(mesh) == [21, 21, 21]
+        assert list(offset) == [0.5, 0.5, 0.5]
+        assert "kpoints_distance" not in dielectric["overrides"].value["scf"]
 
     def test_without_an_entry_the_dielectric_scf_keeps_the_chain_mesh(
         self,
