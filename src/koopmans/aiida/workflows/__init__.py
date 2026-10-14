@@ -30,7 +30,12 @@ from koopmans.aiida.conversion import (
     step_kpoints_mesh,
     validate_computer_scheduler_support,
 )
-from koopmans.input_file.workflow import CalculateScreeningMethod, GroupOrbitalsBy, Task
+from koopmans.input_file.workflow import (
+    CalculateScreeningMethod,
+    GroupOrbitalsBy,
+    Task,
+    VariationalOrbitalType,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -709,6 +714,50 @@ def _default_eps_inf_mesh_description(koopmans_input: KoopmansInput) -> str:
     return f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}"
 
 
+def _eps_inf_inert_advisory(koopmans_input: KoopmansInput) -> str | None:
+    """Return the notice for a ``workflow.eps_inf`` that no step of the run consumes.
+
+    The dielectric constant enters the Delta-SCF Makov-Payne term and the
+    DFPT screening step only. It is inert on a singlepoint whose screening
+    does not run, and on the Delta-SCF route for a molecule, with
+    ``mp_correction`` off, or under ``ml.mode: predict``.
+    """
+    workflow = koopmans_input.workflow
+    if workflow.eps_inf is None or workflow.task != Task.SINGLEPOINT:
+        return None
+    prefix = "workflow.eps_inf has no effect"
+    if not workflow.calculate_alpha:
+        return (
+            f"{prefix} with workflow.calculate_alpha: false: the dielectric "
+            "constant enters only the screening step, which this run skips; it is "
+            "kept for when you switch screening back on."
+        )
+    if workflow.screening_method != CalculateScreeningMethod.DSCF:
+        return None
+    if workflow.init_orbitals not in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    ):
+        return (
+            f"{prefix} on an isolated molecule: no image-charge correction "
+            "applies to it; it is kept for when you switch to a periodic cell "
+            "(init_orbitals: mlwfs or projwfs)."
+        )
+    if workflow.mp_correction is False:
+        return (
+            f"{prefix} with workflow.mp_correction: false: the dielectric "
+            "constant enters only the Makov-Payne correction; it is kept for when "
+            "you switch the correction back on."
+        )
+    if koopmans_input.ml.mode == MLMode.PREDICT:
+        return (
+            f"{prefix} with ml.mode: predict: the dielectric constant enters only "
+            "the screening step, which a trained model replaces; it is kept for "
+            "when you switch screening back on."
+        )
+    return None
+
+
 def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     """Return non-fatal notices about keywords the parsed input sets to no effect.
 
@@ -748,7 +797,10 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 "to singlepoint."
             )
 
-    if (
+    eps_inf_inert = _eps_inf_inert_advisory(koopmans_input)
+    if eps_inf_inert is not None:
+        advisories.append(eps_inf_inert)
+    elif (
         task == Task.SINGLEPOINT
         and workflow.eps_inf == "auto"
         and koopmans_input.kpoints.eps_inf_factor == (1, 1, 1)

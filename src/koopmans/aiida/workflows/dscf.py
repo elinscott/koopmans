@@ -123,12 +123,6 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         VariationalOrbitalType.MLWFS,
         VariationalOrbitalType.PROJWFS,
     )
-    if not wannier_init and workflow.eps_inf is not None:
-        raise ValueError(
-            "workflow.eps_inf feeds the Makov-Payne image-charge correction, which only the "
-            "Wannier-initialized route (init_orbitals 'mlwfs' or 'projwfs') applies. No "
-            "correction applies to an isolated molecule: remove eps_inf."
-        )
 
     structure = atoms_input_to_structure(koopmans_input.atoms)
     ensure_pseudo_family_installed(workflow.pseudo_library)

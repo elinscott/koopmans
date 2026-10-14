@@ -473,11 +473,19 @@ class TestPeriodicMlwfsBuild:
 
         WorkGraph.from_dict(wg.to_dict())
 
-    def test_a_numeric_eps_inf_runs_no_dielectric_step(
-        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    @pytest.mark.parametrize(
+        "workflow_updates",
+        [{"eps_inf": 11.7}, {"eps_inf": "auto", "mp_correction": False}],
+    )
+    def test_an_eps_inf_without_a_consumer_runs_no_dielectric_step(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        workflow_updates: dict[str, Any],
     ) -> None:
-        """Negative control: a number reaches the graph without a ``dielectric`` task."""
-        wg = _build(_si_dscf_dict(eps_inf=11.7))
+        """Negative control: a number, or an unused ``auto``, builds no ``dielectric`` task."""
+        wg = _build(_si_dscf_dict(**workflow_updates))
         assert "dielectric" not in [t.name for t in wg.tasks]
 
     def test_w90_keywords_land_flat_in_overrides(
