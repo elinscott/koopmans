@@ -104,7 +104,8 @@ calculation wants: the isotropic average of that tensor.
            Gamma-centred and a half-shifted mesh; the shifted series reaches 13.28
            by 12x12x12 where the Gamma-centred one is still at 13.45
 
-   Schematically, the electronic dielectric constant is a sum over vertical transitions,
+   Up to a constant factor, and leaving aside the local-field corrections ``ph.x``
+   includes, the electronic dielectric constant is a sum over vertical transitions,
 
    .. math::
 
