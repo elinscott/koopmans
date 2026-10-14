@@ -459,7 +459,7 @@ class TestOrbitalGroupingAdvisory:
 
         ``group_orbitals_tol`` reaches `bse`'s composed DFPT chain
         unchanged (aiida-koopmans#137), so an orphaned tolerance is advised
-        exactly as it would be under ``task: singlepoint`` with the same
+        with the formalism fixed at ``dfpt``, as under ``task: singlepoint`` with the same
         ``formalism``/``init_orbitals`` — not the "switch task"
         message ``wannierize``/``dft_bands``/``dft_eps`` get, since those
         compose no DFPT chain at all.
@@ -473,12 +473,13 @@ class TestOrbitalGroupingAdvisory:
         bse_input = KoopmansInput.model_validate(_bse_dict(**common))
         singlepoint_input = KoopmansInput.model_validate(_si_dict("singlepoint", **common))
         assert bse_input.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
-        bse_advisories = advisories_for(bse_input)
-        singlepoint_advisories = advisories_for(singlepoint_input)
-        assert bse_advisories == [
-            message.replace("task: singlepoint", "task: bse") for message in singlepoint_advisories
+        assert advisories_for(bse_input) == [
+            "workflow.group_orbitals_tol has no effect on task: bse "
+            "(group_orbitals_by resolved to 'none' for init_orbitals: mlwfs, "
+            "formalism: dfpt); it is kept for when you set group_orbitals_by "
+            "to a criterion this run implements (spread)."
         ]
-        assert bse_advisories != []
+        assert advisories_for(singlepoint_input) != []
 
 
 class TestResolveGroupOrbitalsByDoesNotMutateCaller:

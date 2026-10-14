@@ -249,8 +249,8 @@ class WorkflowConfig(BaseModel):
             )
         if self.task == Task.BSE and self.formalism == Formalism.DSCF:
             raise ValueError(
-                "`task: bse` evaluates the Koopmans correction by linear response, whose "
-                "kcw.x eigenvalues on the k-point grid feed yambo. Remove "
+                "`task: bse` evaluates the Koopmans correction by linear response; "
+                "kcw.x's eigenvalues on the k-point grid then feed yambo. Remove "
                 "`workflow.formalism` or set it to `dfpt`."
             )
         return self

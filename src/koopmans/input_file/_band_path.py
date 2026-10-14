@@ -82,7 +82,7 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool, has_snapshots: b
     if has_snapshots:
         if workflow.task != Task.SINGLEPOINT:
             return None
-        if workflow.calculate_alpha and workflow.formalism == Formalism.DFPT:
+        if workflow.formalism == Formalism.DFPT:
             return None
         return NO_BAND_PATH_ON_SNAPSHOTS
 

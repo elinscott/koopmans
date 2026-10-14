@@ -96,10 +96,11 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "dielectric calculation per frame. Give eps_inf a number."
         )
 
-    if workflow.calculate_alpha and workflow.formalism == Formalism.DFPT:
+    if workflow.formalism == Formalism.DFPT:
         raise NotImplementedError(
-            "`atoms.snapshots` only fans out the DSCF screening stream (kcp.x); DFPT "
-            "screening is not yet run per frame."
+            "`atoms.snapshots` only fans out the DSCF stream (kcp.x), so "
+            "`workflow.formalism: dfpt` is not run per frame. Set "
+            "`workflow.formalism: dscf` or drop `atoms.snapshots`."
         )
 
     # A `kpoints.path` under `atoms.snapshots` is refused at parse time

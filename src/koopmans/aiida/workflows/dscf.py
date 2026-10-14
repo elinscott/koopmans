@@ -106,8 +106,6 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     # DFPT routes on the formalism alone: calculate_alpha = False is
     # the alpha_guess path inside the DFPT builder (screen step skipped),
     # not a reason to fall through to the kcp.x/DSCF branch.
-    if workflow.formalism is None:
-        raise ValueError("`task: singlepoint` needs `workflow.formalism`: `dscf` or `dfpt`.")
     if workflow.formalism == Formalism.DFPT:
         return build_singlepoint_dfpt_workgraph(koopmans_input)
 

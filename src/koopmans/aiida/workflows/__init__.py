@@ -821,6 +821,14 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 "computed only within a singlepoint); it is kept for when you switch "
                 "task to singlepoint."
             )
+        elif task == Task.BSE:
+            advisories.append(
+                "workflow.group_orbitals_tol has no effect on task: "
+                f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
+                f"{workflow.init_orbitals.value}, formalism: {Formalism.DFPT.value}); "
+                "it is kept for when you set group_orbitals_by to a criterion this "
+                "run implements (spread)."
+            )
         else:
             advisories.append(
                 "workflow.group_orbitals_tol has no effect on task: "
