@@ -3,10 +3,14 @@
 ######################
 
 A Koopmans calculation on a solid needs the material's macroscopic dielectric constant,
-:math:`\varepsilon_\infty`. In a charged periodic supercell — the setting for
-:doc:`screening parameters from total-energy differences <../band_structures/silicon_finite_differences/index>`
-— the added or removed charge interacts with its own periodic images, and the
-Makov-Payne correction that removes this spurious interaction needs
+:math:`\varepsilon_\infty`, whichever way it computes its screening parameters. Both
+routes measure how the crystal responds to a localized change in orbital occupation:
+:doc:`total-energy differences <../band_structures/silicon_finite_differences/index>`
+do it directly, adding or removing an electron in a periodic supercell;
+:doc:`linear response <../band_structures/silicon_linear_response/index>` does it to
+second order in the primitive cell. Either way the perturbing charge interacts with
+its own periodic images, and the correction that removes this spurious interaction —
+Makov-Payne in the supercell, its linear-response counterpart in ``kcw.x`` — needs
 :math:`\varepsilon_\infty` to scale the leading-order term. Get it wrong and the
 correction is wrong, along with everything downstream of it.
 
@@ -129,10 +133,11 @@ Set the value you settled on as ``eps_inf`` in the ``workflow`` block of a
       task: singlepoint
       eps_inf: 13.30
 
-For a ``screening_method: dfpt`` run, ``eps_inf: auto`` is also accepted: the same
-scf-then-``ph.x`` calculation this tutorial just ran becomes the workflow's own first
-step, and its result is used in place of a number you supply. ``screening_method: dscf``
-does not yet accept ``auto`` — give it a number, computed as above.
+Both screening methods read it from there. Only the linear-response one can also compute
+it for itself: for a ``screening_method: dfpt`` run, ``eps_inf: auto`` makes the same
+scf-then-``ph.x`` calculation this tutorial just ran the workflow's own first step, and
+its result is used in place of a number you supply. ``screening_method: dscf`` does not
+yet accept ``auto`` — give it the number, computed as above.
 
 Left to itself, ``auto`` samples the dielectric step on the singlepoint's own scf mesh,
 and that is exactly the trap the table above demonstrates: a mesh dense enough for
