@@ -113,11 +113,9 @@ calculation wants: the isotropic average of that tensor.
        \frac{|\langle c\mathbf{k} | \hat{\mathbf{r}} | v\mathbf{k} \rangle|^2}
             {\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}}.
 
-   A static field carries no momentum, so each :math:`k`-point couples only its own
-   valence and conduction states; the *indirect* gap of silicon (:math:`\Gamma` to near
-   :math:`X`) never enters. What matters is the *direct* gap
-   :math:`\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}`, and in silicon that is
-   smallest at :math:`\Gamma`, where the summand peaks sharply. A :math:`\Gamma`-centred
+   The summand is largest where the direct gap
+   :math:`\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}` is smallest, which in
+   silicon is at :math:`\Gamma`, so it peaks sharply there. A :math:`\Gamma`-centred
    mesh has a sample sitting exactly on that peak, and the sum gives it the same weight as
    every other point, so the peak is counted far too heavily until the mesh is dense enough
    for its neighbours to dilute it. A half-shifted mesh has no sample at :math:`\Gamma`:
