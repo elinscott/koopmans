@@ -138,6 +138,11 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         # The input file's nbnd sizes the pw.x runs on this route; kcp.x
         # takes one variational orbital per projected Wannier function.
         inputs["nbnd"] = int(extra_kwargs.pop("nbnd"))
+        if extra_kwargs["eps_inf"] == "auto":
+            raise NotImplementedError(
+                "workflow.eps_inf: auto is not wired for atoms.snapshots: it would run one "
+                "dielectric calculation per frame. Give eps_inf a number."
+            )
 
     # load_codes loads every configured member of DscfCodes. Every
     # NotRequired member exists for the Wannier-seeded initialisation;

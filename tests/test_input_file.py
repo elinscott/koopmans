@@ -966,15 +966,23 @@ class TestEpsInfFactor:
         with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
             KoopmansInput.model_validate(d)
 
-    def test_refused_with_dscf_screening(self) -> None:
-        """A mutant that ignores ``screening_method`` would accept this: it must not.
+    def test_accepted_with_dscf_screening_from_wannier_functions(self) -> None:
+        """The DSCF route runs the same dielectric step when it starts from Wannier functions."""
+        d = self._dfpt_input(2)
+        d["workflow"]["screening_method"] = "dscf"  # type: ignore[index]
+        inp = KoopmansInput.model_validate(d)
+        assert inp.kpoints.eps_inf_factor == (2, 2, 2)
 
-        ``eps_inf_factor`` densifies the DFPT dielectric step; DSCF never
-        wires ``eps_inf: auto`` to a dielectric step at all.
+    def test_refused_with_dscf_screening_from_kohn_sham_orbitals(self) -> None:
+        """A mutant that ignores ``init_orbitals`` would accept this: it must not.
+
+        The Kohn-Sham DSCF route is molecular and applies no Makov-Payne
+        correction, so it runs no dielectric step to densify.
         """
         d = self._dfpt_input(2)
         d["workflow"]["screening_method"] = "dscf"  # type: ignore[index]
-        with pytest.raises(ValueError, match="DSCF route has no dielectric-constant step yet"):
+        d["workflow"]["init_orbitals"] = "kohn-sham"  # type: ignore[index]
+        with pytest.raises(ValueError, match="only runs a dielectric-constant step"):
             KoopmansInput.model_validate(d)
 
     def test_refused_on_wannierize(self) -> None:

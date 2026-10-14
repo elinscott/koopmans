@@ -172,6 +172,15 @@ class TestBuildSinglepointWorkgraphScopeGuards:
     without an AiiDA profile or database.
     """
 
+    def test_eps_inf_auto_on_a_molecule_raises(self, ozone_input: KoopmansInput) -> None:
+        """A molecule applies no Makov-Payne correction, so ``auto`` has nothing to feed."""
+        d = ozone_input.model_dump()
+        d["workflow"]["eps_inf"] = "auto"
+        inp = KoopmansInput.model_validate(d)
+
+        with pytest.raises(ValueError, match="periodic crystal"):
+            build_singlepoint_workgraph(inp)
+
     @pytest.mark.parametrize(
         "correction_value",
         ["pkipz", "none", "all"],

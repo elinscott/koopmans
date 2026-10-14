@@ -193,10 +193,25 @@ class TestEpsInfFactorAdvisory:
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == []
 
-    def test_dscf_screening_is_silent(self) -> None:
-        """DSCF never wires eps_inf: auto to a dielectric step, so nothing to advise."""
+    def test_dscf_screening_names_kpoints_grid(self) -> None:
+        """The DSCF dielectric step samples ``kpoints.grid``, the one mesh that route takes."""
         d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
         d["workflow"]["eps_inf"] = "auto"
+        d["kpoints"]["grid"] = [3, 3, 3]
+        inp = KoopmansInput.model_validate(d)
+        assert advisories_for(inp) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            "kpoints.grid mesh (3, 3, 3); it converges slowly with k-points, so "
+            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
+            "multiply kpoints.grid — not this mesh — into a denser one for the "
+            "dielectric-constant step alone."
+        ]
+
+    def test_dscf_screening_with_a_factor_is_silent(self) -> None:
+        """The negative control: a densifying factor silences the DSCF advisory too."""
+        d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
+        d["workflow"]["eps_inf"] = "auto"
+        d["kpoints"]["eps_inf_factor"] = 2
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == []
 

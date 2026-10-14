@@ -24,6 +24,7 @@ from aiida_quantumespresso.common.types import SpinType
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
     code_parallelization,
+    eps_inf_kpoints_mesh,
     input_to_pw_parameters,
     step_grid_spacing,
     step_kpoints_mesh,
@@ -389,6 +390,30 @@ def pin_step_kpoints(
     return step_kpoints_mesh(koopmans_input.kpoints, step)
 
 
+def validated_eps_inf(eps_inf: float | str | None) -> float | str | None:
+    """Check that ``eps_inf`` is a numeric value, ``'auto'``, or unset."""
+    if isinstance(eps_inf, str) and eps_inf != "auto":
+        raise ValueError(
+            f"eps_inf={eps_inf!r} is not understood: provide a numeric value "
+            "or 'auto' (compute the dielectric constant with ph.x)."
+        )
+    return eps_inf
+
+
+def eps_inf_kpoints(koopmans_input: KoopmansInput) -> orm.KpointsData | None:
+    """Return the mesh the dielectric scf of ``eps_inf: auto`` samples, if it has its own.
+
+    Only a ``kpoints.eps_inf_factor`` above 1 in some direction states a
+    mesh of its own; at the default ``(1, 1, 1)`` the dielectric scf keeps
+    sampling exactly what the chain's own scf does, not a freshly built mesh
+    that merely happens to equal it.
+    """
+    factor = koopmans_input.kpoints.eps_inf_factor
+    if not any(f > 1 for f in factor):
+        return None
+    return eps_inf_kpoints_mesh(koopmans_input.kpoints, factor)
+
+
 def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
     """Return the moment a collinear run splits its electrons by.
 
@@ -660,16 +685,19 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 _TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
 
 
-def _dfpt_default_scf_mesh_description(koopmans_input: KoopmansInput) -> str:
+def _default_eps_inf_mesh_description(koopmans_input: KoopmansInput) -> str:
     """Describe the mesh ``eps_inf: auto`` falls back to at the default factor.
 
-    At ``kpoints.eps_inf_factor == (1, 1, 1)`` the dielectric scf reuses
-    the DFPT chain's own ``scf`` mesh, not ``kpoints.grid`` — the same
+    At ``kpoints.eps_inf_factor == (1, 1, 1)`` the DFPT dielectric scf
+    reuses the chain's own ``scf`` mesh, not ``kpoints.grid`` — the same
     resolution :func:`~koopmans.aiida.conversion.step_kpoints_mesh` /
     :func:`~koopmans.aiida.workflows.pin_step_kpoints` perform for the
     ``"scf"`` step at build time, read here off the parsed model alone so
-    this check never touches the ORM.
+    this check never touches the ORM. The DSCF dielectric scf samples
+    ``kpoints.grid``, the one mesh that route takes.
     """
+    if koopmans_input.workflow.screening_method == CalculateScreeningMethod.DSCF:
+        return f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}"
     scf_override = koopmans_input.kpoints.overrides.scf
     if scf_override is not None and scf_override.grid is not None:
         return f"kpoints.overrides.scf.grid mesh {tuple(scf_override.grid)}"
@@ -723,13 +751,12 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
 
     if (
         task == Task.SINGLEPOINT
-        and workflow.screening_method == CalculateScreeningMethod.DFPT
         and workflow.eps_inf == "auto"
         and koopmans_input.kpoints.eps_inf_factor == (1, 1, 1)
     ):
         advisories.append(
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            f"{_dfpt_default_scf_mesh_description(koopmans_input)}; it converges "
+            f"{_default_eps_inf_mesh_description(koopmans_input)}; it converges "
             "slowly with k-points, so that mesh may be too coarse. Set "
             "kpoints.eps_inf_factor above 1 to multiply kpoints.grid — not this mesh "
             "— into a denser one for the dielectric-constant step alone."

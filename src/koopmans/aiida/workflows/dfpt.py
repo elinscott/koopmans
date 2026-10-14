@@ -9,12 +9,14 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
     collinear_magnetization,
+    eps_inf_kpoints,
     load_codes,
     name_run,
     pin_step_kpoints,
     prepare_common_inputs,
     reject_kpoint_overrides,
     require_configured_codes,
+    validated_eps_inf,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
 from koopmans.input_file.workflow import Correction, VariationalOrbitalType
@@ -80,7 +82,6 @@ def assemble_dfpt_chain_inputs(
         ``yambo.BSEBands`` against them.
     """
     from koopmans.aiida.conversion import (
-        eps_inf_kpoints_mesh,
         get_pseudos_from_family,
         input_to_kcw_overrides,
         kpoints_input_to_interpolation_path,
@@ -109,7 +110,7 @@ def assemble_dfpt_chain_inputs(
         raise NotImplementedError(
             "Gamma-only DFPT (isolated systems) is not yet supported; provide a k-point grid."
         )
-    eps_inf = _validated_eps_inf(workflow.eps_inf)
+    eps_inf = validated_eps_inf(workflow.eps_inf)
 
     calc_params = koopmans_input.calculator_parameters
     spin = workflow.spin
@@ -177,16 +178,7 @@ def assemble_dfpt_chain_inputs(
 
     kcw_overrides = input_to_kcw_overrides(koopmans_input)
 
-    # Only when the factor densifies: at the default (1, 1, 1) the
-    # dielectric scf must keep sampling exactly what it did before this
-    # keyword existed (the chain's own scf), not a freshly built mesh that
-    # merely happens to equal it.
-    eps_inf_factor = koopmans_input.kpoints.eps_inf_factor
-    eps_kpoints = (
-        eps_inf_kpoints_mesh(koopmans_input.kpoints, eps_inf_factor)
-        if any(f > 1 for f in eps_inf_factor)
-        else None
-    )
+    eps_kpoints = eps_inf_kpoints(koopmans_input)
 
     return (
         DfptChainInputs(
@@ -292,16 +284,6 @@ def add_smooth_interpolation_inputs(
         )
     chain_inputs["smooth_kpoints"] = smooth_kpoints_mesh(kpoints_input, factor)
     chain_inputs["smooth_mp_grid"] = smooth_grid(kpoints_input, factor)
-
-
-def _validated_eps_inf(eps_inf: float | str | None) -> float | str | None:
-    """Check that ``eps_inf`` is a numeric value, ``'auto'``, or unset."""
-    if isinstance(eps_inf, str) and eps_inf != "auto":
-        raise ValueError(
-            f"eps_inf={eps_inf!r} is not understood: provide a numeric value "
-            "or 'auto' (compute the dielectric constant with ph.x)."
-        )
-    return eps_inf
 
 
 def _single_channel_dfpt_manifolds(

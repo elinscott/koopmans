@@ -452,8 +452,8 @@ def eps_inf_kpoints_mesh(kpoints: KpointsInput, factor: tuple[int, int, int]) ->
     spacing instead of a grid. Returned as a plain, symmetry-reducible mesh
     (unlike :func:`smooth_kpoints_mesh`'s explicit kmesh.pl list, which
     only wannier90 needs): this step is an independent ground state, not
-    part of the Wannierization chain. The offset follows the DFPT chain's
-    own scf (``kpoints.overrides.scf.offset`` if set, else the top-level
+    part of the Wannierization chain. The offset follows the
+    route's own scf (``kpoints.overrides.scf.offset`` if set, else the top-level
     ``offset``), so the two ground states agree on where the mesh sits even
     though their dimensions differ.
 
