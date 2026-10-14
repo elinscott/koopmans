@@ -74,29 +74,33 @@ calculation wants: the isotropic average of that tensor.
 
     25.10, read from ``si_eps/outputs/eps_inf.json``.
 
-*************************
- Convergence with k-grid
-*************************
-
 .. question:: How does the dielectric constant converge with respect to the :math:`k`-point grid?
 
-   25.10 is a long way from converged. :math:`\varepsilon_\infty` is a Brillouin-zone
-   integral over the whole occupied-to-empty response, and it needs a much denser mesh than
-   a ground-state total energy to converge.
+   25.10 is a long way from converged. Doubling the grid to :math:`8\times8\times8` gives
+   14.59, :math:`12\times12\times12` gives 13.45 and :math:`16\times16\times16` gives
+   13.30 — still moving by 0.14 (about 1%) at the last step.
 
-   .. list-table::
-       :header-rows: 1
+.. tip::
 
-       * - :math:`k`-point grid
-         - :math:`\varepsilon_\infty`
-       * - :math:`4\times4\times4`
-         - 25.10
-       * - :math:`8\times8\times8`
-         - 14.59
-       * - :math:`12\times12\times12`
-         - 13.45
-       * - :math:`16\times16\times16`
-         - 13.30
+    Those meshes all contain :math:`\Gamma`, where the occupied-to-empty response of a
+    semiconductor is at its most structured. Add
+
+    .. code-block:: yaml
+
+        kpoints:
+          offset: [0.5, 0.5, 0.5]
+
+    to shift the mesh half a step off :math:`\Gamma` in every direction and rerun the
+    series.
+
+.. question:: How much does the shifted mesh help?
+
+   A great deal: the half-shifted :math:`4\times4\times4` grid already gives 14.38,
+   better than the :math:`\Gamma`-centred :math:`8\times8\times8`, and the half-shifted
+   :math:`8\times8\times8` gives 13.30, the value the :math:`\Gamma`-centred series only
+   reaches at :math:`16\times16\times16`. The shifted series settles at 13.28
+   (:math:`12\times12\times12` and :math:`16\times16\times16` agree to the third
+   decimal), which is the converged LDA value this tutorial uses from here on.
 
    .. image:: convergence.svg
        :class: responsive-fig
@@ -113,7 +117,7 @@ To use this value, set it as ``eps_inf`` in the ``workflow`` block of a
 
     workflow:
       task: singlepoint
-      eps_inf: 13.30
+      eps_inf: 13.28
 
 Both screening methods read it from there.
 
@@ -123,8 +127,8 @@ the rest of the chain, and the screening step waits for its result in place of a
 you supply.
 
 Left to itself, ``auto`` samples the dielectric step on the singlepoint's own scf mesh,
-which as we saw above is unlikely to be dense enough for :math:`\varepsilon_\infty`. Specify
-``kpoints.eps_inf_factor`` to increase the density of ``kpoints.grid`` for the dielectric step:
+which as we saw above is unlikely to be dense enough for :math:`\varepsilon_\infty`. Give
+the dielectric step its own mesh under ``kpoints.overrides``, as you would any other step:
 
 .. code-block:: yaml
 
@@ -134,14 +138,18 @@ which as we saw above is unlikely to be dense enough for :math:`\varepsilon_\inf
       eps_inf: auto
     kpoints:
       grid: [4, 4, 4]
-      eps_inf_factor: 4
+      overrides:
+        dielectric:
+          grid: [8, 8, 8]
+          offset: [0.5, 0.5, 0.5]
 
 runs the rest of the calculation on :math:`4\times4\times4` and the dielectric constant
-on :math:`16\times16\times16`.
+on the half-shifted :math:`8\times8\times8` mesh that the figure above showed to be within
+0.02 of converged.
 
 .. note::
 
     LDA systematically overestimates :math:`\varepsilon_\infty` relative to experiment
-    — silicon's measured value is about 11.7, below every grid in the table above.
+    — silicon's measured value is about 11.7, below every value above.
     This is a known shortcoming of the underlying exchange-correlation functional, not a
     convergence problem, and it is not something a denser :math:`k`-point grid fixes.
