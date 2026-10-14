@@ -755,10 +755,11 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             extras:
-              py_type: float | str | None
+              py_type: typing.Union
               union:
               - identifier: <scrubbed:identifier>
               - identifier: <scrubbed:identifier>
+                py_type: typing.Literal['auto']
             required: false
         eps_kpoints:
           dynamic: false
@@ -2185,10 +2186,11 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 extras:
-                  py_type: float | str | None
+                  py_type: typing.Union
                   union:
                   - identifier: <scrubbed:identifier>
                   - identifier: <scrubbed:identifier>
+                    py_type: typing.Literal['auto']
                 required: false
             eps_kpoints:
               dynamic: false
