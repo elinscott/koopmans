@@ -7,7 +7,7 @@ singlepoint route tests in ``test_dfpt_dispatcher.py`` exercise directly, so
 this file borrows its silicon input dict (``_si_dfpt_dict``) rather than
 duplicating it, and focuses on what the BSE route adds: the
 ``calculator_parameters.yambo`` block's mapping onto the yambo runcard, the
-remaining scope guards (``screening_method``, ``spin``, manifold-reaching
+remaining scope guards (``spin``, manifold-reaching
 ``BSEBands``), that ``eps_inf``/``gb_correction``/``kcw`` overrides and
 orbital grouping pass straight through to the composed DFPT chain, and the
 derived ``ecutwfc``/``ecutrho`` a caller who states neither still gets.
@@ -21,6 +21,7 @@ import pytest
 
 from koopmans.aiida.workflows.bse import build_bse_workgraph
 from koopmans.input_file import KoopmansInput
+from koopmans.input_file.workflow import CalculateScreeningMethod
 from tests.test_dfpt_dispatcher import _si_dfpt_dict
 
 
@@ -234,12 +235,20 @@ class TestRouteRefusals:
     so in their own docstring.
     """
 
-    def test_dscf_screening_method_is_refused(self) -> None:
-        """The route reads kcw.x ``ham`` eigenvalues; a ΔSCF run produces none."""
+    def test_dscf_screening_method_is_refused_at_parse(self) -> None:
+        """An explicit ``dscf`` is a parse error; unset or ``dfpt`` parse to ``dfpt``."""
         d = _si_bse_dict()
         d["workflow"]["screening_method"] = "dscf"
-        with pytest.raises(NotImplementedError, match="screening_method"):
-            _build(d)
+        with pytest.raises(ValueError, match="Remove `screening_method`"):
+            KoopmansInput.model_validate(d)
+        for stated in (None, "dfpt"):
+            d = _si_bse_dict()
+            if stated is None:
+                del d["workflow"]["screening_method"]
+            else:
+                d["workflow"]["screening_method"] = stated
+            parsed = KoopmansInput.model_validate(d)
+            assert parsed.workflow.screening_method == CalculateScreeningMethod.DFPT
 
     def test_collinear_spin_is_refused(self) -> None:
         """No single channel exists for the composed graph to read.

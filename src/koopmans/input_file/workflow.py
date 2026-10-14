@@ -84,7 +84,7 @@ class WorkflowConfig(BaseModel):
     )
     screening_method: CalculateScreeningMethod = Field(
         default=CalculateScreeningMethod.DSCF,
-        description="the method to calculate the screening parameters: either with ΔSCF or DFPT",
+        description="the method to calculate the screening parameters: either with ΔSCF or DFPT. `task: bse` implies `dfpt`, and refuses `dscf`",
     )
     init_orbitals: VariationalOrbitalType = Field(
         default=VariationalOrbitalType.PZ,
@@ -232,6 +232,32 @@ class WorkflowConfig(BaseModel):
         if values.get("init_empty_orbitals", None) is None:
             values["init_empty_orbitals"] = values.get("init_orbitals", VariationalOrbitalType.PZ)
         return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def bse_implies_dfpt_screening(cls, data: Any) -> Any:
+        """Resolve an unset ``screening_method`` to ``dfpt`` for ``task: bse``.
+
+        Raises:
+            ValueError: If ``task: bse`` states ``screening_method: dscf``.
+        """
+        if not isinstance(data, dict):
+            return data
+        task = data.get("task")
+        if (task.value if isinstance(task, Enum) else str(task).lower()) != Task.BSE.value:
+            return data
+        method = data.get("screening_method")
+        if method is None:
+            return {**data, "screening_method": CalculateScreeningMethod.DFPT.value}
+        if (method.value if isinstance(method, Enum) else str(method).lower()) != (
+            CalculateScreeningMethod.DFPT.value
+        ):
+            raise ValueError(
+                "`task: bse` is built on linear-response (DFPT) screening, whose kcw.x "
+                "eigenvalues on the k-point grid feed yambo. Remove `screening_method`, "
+                "or set it to `dfpt`."
+            )
+        return data
 
     @model_validator(mode="after")
     def check_orbital_groups_length(self) -> Self:
