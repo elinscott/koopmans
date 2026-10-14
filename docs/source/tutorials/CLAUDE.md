@@ -8,9 +8,11 @@ A tutorial shows before it tells: the command the reader types, what they
 see, then why. Write for someone arriving cold with the domain basics, and
 answer their questions in the order they arise.
 
-- Figures do the talking. When a figure carries the result, label the
-  values on it and cut prose that repeats them; exercises are `question`
-  dropdowns whose answer is the figure.
+- Let a figure carry the result where one can: a convergence series is a
+  labelled plot, not a table plus a paragraph restating it, and an
+  exercise is a `question` dropdown whose answer is the figure. A number
+  the figure does not show (a peak position on a spectrum) is quoted once
+  in the prose; the plotting commands draw what they draw.
 - Every number comes from a run of the shipped input, read off that run's
   own outputs — never hand-rolled, estimated, or taken from a note. Prose
   quotes to two decimals; program output is quoted verbatim.
