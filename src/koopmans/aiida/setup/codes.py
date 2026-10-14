@@ -21,13 +21,14 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from aiida.orm import AbstractCode, Computer, InstalledCode
 
-# Quantum ESPRESSO and related executables that koopmans needs, mapped to the
-# code's default CalcJob entry point. kcw.x maps to None: the one binary backs
-# three CalcJobs (koopmans.kcw_wann2kc / kcw_screen / kcw_ham, selected via
-# control.calculation), so no single default is honest — the workgraph tasks
-# name their process class explicitly.
+# Executables koopmans runs, mapped to the code's default CalcJob entry point.
+# kcw.x maps to None: the one binary backs three CalcJobs (koopmans.kcw_wann2kc
+# / kcw_screen / kcw_ham, selected via control.calculation), so no single
+# default is honest — the workgraph tasks name their process class explicitly.
+# p2y and yambo share aiida-yambo's one CalcJob, which takes p2y as its
+# preprocessing code.
 
-QE_EXECUTABLES: dict[str, str | None] = {
+EXECUTABLES: dict[str, str | None] = {
     "pw.x": "quantumespresso.pw",
     "ph.x": "quantumespresso.ph",
     "pp.x": "quantumespresso.pp",
@@ -39,6 +40,8 @@ QE_EXECUTABLES: dict[str, str | None] = {
     "merge_evc.x": "koopmans.merge_evc",
     "kcw.x": None,
     "kcp.x": "koopmans.kcp",
+    "p2y": "yambo.yambo",
+    "yambo": "yambo.yambo",
 }
 
 
@@ -46,7 +49,7 @@ def code_specs() -> dict[str, tuple[str, str | None]]:
     """Return every code koopmans registers, as ``{label: (executable, plugin)}``."""
     return {
         executable.replace(".x", ""): (executable, plugin)
-        for executable, plugin in QE_EXECUTABLES.items()
+        for executable, plugin in EXECUTABLES.items()
     }
 
 

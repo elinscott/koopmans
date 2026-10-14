@@ -336,10 +336,9 @@ class TestPreFlightAdvice:
     ) -> None:
         """``p2y`` and ``yambo`` are required in ``BetheSalpeterCodes``, both named at once.
 
-        Neither is one ``koopmans install`` registers (see
-        ``koopmans.aiida.setup.codes.code_specs``), so the advice must not
-        claim that command would fix it — the fix is ``verdi code create``,
-        same as for a code missing on a named remote computer.
+        Both are in the install roster (see
+        ``koopmans.aiida.setup.codes.code_specs``), so the advice points at
+        ``koopmans install``, as for any other missing local code.
         """
         from tests.test_bse_dispatcher import _si_bse_dict
 
@@ -349,8 +348,7 @@ class TestPreFlightAdvice:
         message = str(excinfo.value)
         assert "`p2y@localhost`" in message
         assert "`yambo@localhost`" in message
-        assert "verdi code create" in message
-        assert "koopmans install" not in message
+        assert "koopmans install" in message
 
 
 class TestStructuralAdvice:
