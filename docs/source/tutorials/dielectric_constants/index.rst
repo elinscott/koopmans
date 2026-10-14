@@ -104,11 +104,22 @@ calculation wants: the isotropic average of that tensor.
            Gamma-centred and a half-shifted mesh; the shifted series reaches 13.28
            by 12x12x12 where the Gamma-centred one is still at 13.45
 
-   The integrand behind :math:`\varepsilon_\infty` is sharpest where the direct gap is
-   smallest — at :math:`\Gamma` for silicon — so a mesh that contains :math:`\Gamma` gives
-   that one point far too much weight until the mesh is very dense. A half-shifted mesh
-   never lands on :math:`\Gamma` and samples the average instead, the way a midpoint rule
-   beats an endpoint rule.
+   Schematically, the electronic dielectric constant is a sum over vertical transitions,
+
+   .. math::
+
+       \varepsilon_\infty - 1 \propto \sum_{\mathbf{k}} \sum_{v, c}
+       \frac{|\langle c\mathbf{k} | \hat{\mathbf{r}} | v\mathbf{k} \rangle|^2}
+            {\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}}.
+
+   A static field carries no momentum, so each :math:`k`-point couples only its own
+   valence and conduction states; the *indirect* gap of silicon (:math:`\Gamma` to near
+   :math:`X`) never enters. What matters is the *direct* gap
+   :math:`\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}`, and in silicon that is
+   smallest at :math:`\Gamma`, where the summand peaks sharply. A :math:`\Gamma`-centred
+   mesh puts a sample on that peak and weights it like any other point — far too heavily
+   until the mesh is dense — whereas a half-shifted mesh never samples the peak itself and
+   averages over its surroundings, the way a midpoint rule beats an endpoint rule.
 
 *******************************************
  Using the value in a Koopmans calculation
