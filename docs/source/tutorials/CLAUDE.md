@@ -8,9 +8,9 @@ A tutorial shows before it tells: the command the reader types, what they
 see, then why. Write for someone arriving cold with the domain basics, and
 answer their questions in the order they arise.
 
-- Figures do the talking. When a figure carries the result, label the
-  values on it and cut prose that repeats them; exercises are `question`
-  dropdowns whose answer is the figure.
+- Let a figure carry the result where one can, rather than a table or a
+  paragraph restating it. Quote a number once, in the prose, when the
+  argument depends on it; otherwise the axes are enough.
 - Every number comes from a run of the shipped input, read off that run's
   own outputs — never hand-rolled, estimated, or taken from a note. Prose
   quotes to two decimals; program output is quoted verbatim.
