@@ -117,10 +117,10 @@ To use this value, set it as ``eps_inf`` in the ``workflow`` block of a
 
 Both screening methods read it from there.
 
-Alternatively, you can do everything in a single calculation: set ``eps_inf: auto`` and a
-``screening_method: dfpt`` workflow runs the same scf-then-``ph.x`` calculation this
-tutorial just ran alongside the rest of the chain, and ``kcw.x`` waits for its result in
-place of a number you supply. (``screening_method: dscf`` does not accept ``auto`` yet.)
+Alternatively, you can do everything in a single calculation: set ``eps_inf: auto`` and
+the workflow runs the same scf-then-``ph.x`` calculation this tutorial just ran alongside
+the rest of the chain, and the screening step waits for its result in place of a number
+you supply.
 
 Left to itself, ``auto`` samples the dielectric step on the singlepoint's own scf mesh,
 which as we saw above is unlikely to be dense enough for :math:`\varepsilon_\infty`. Specify
