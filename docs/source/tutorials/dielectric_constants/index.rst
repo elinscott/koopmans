@@ -117,9 +117,12 @@ calculation wants: the isotropic average of that tensor.
    :math:`X`) never enters. What matters is the *direct* gap
    :math:`\varepsilon_{c\mathbf{k}} - \varepsilon_{v\mathbf{k}}`, and in silicon that is
    smallest at :math:`\Gamma`, where the summand peaks sharply. A :math:`\Gamma`-centred
-   mesh puts a sample on that peak and weights it like any other point — far too heavily
-   until the mesh is dense — whereas a half-shifted mesh never samples the peak itself and
-   averages over its surroundings, the way a midpoint rule beats an endpoint rule.
+   mesh has a sample sitting exactly on that peak, and the sum gives it the same weight as
+   every other point, so the peak is counted far too heavily until the mesh is dense enough
+   for its neighbours to dilute it. A half-shifted mesh has no sample at :math:`\Gamma`:
+   its nearest points sit half a step away on every side, where the summand has already
+   come down, so the sum sees the peak only through its surroundings and settles with far
+   fewer points.
 
 *******************************************
  Using the value in a Koopmans calculation
