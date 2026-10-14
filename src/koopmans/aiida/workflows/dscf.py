@@ -33,8 +33,8 @@ from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
 from koopmans.aiida.workflows.grouping import grouping_tol
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
     Correction,
+    Formalism,
     GroupOrbitalsBy,
     VariationalOrbitalType,
     WorkflowConfig,
@@ -71,7 +71,7 @@ _KCP_HAS_NO_INTERPOLATION = (
 KPOINT_OVERRIDES_ON_DSCF = {
     step: _KCP_TAKES_ONE_MESH.format(
         step=step,
-        alternative=" Screening with `screening_method = 'dfpt'` gives the scf a mesh of its own.",
+        alternative=" Screening with `formalism = 'dfpt'` gives the scf a mesh of its own.",
     )
     for step in ("scf", "nscf")
 }
@@ -88,7 +88,7 @@ KPOINT_OVERRIDES_ON_SNAPSHOTS["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
 
-    Dispatches on ``workflow.screening_method`` first (DSCF vs DFPT), then on
+    Dispatches on ``workflow.formalism`` first (DSCF vs DFPT), then on
     ``workflow.correction``:
 
     - DSCF + ``KI``/``KIPZ`` → ``KoopmansDSCFWorkflow`` (kcp.x)
@@ -103,10 +103,10 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     reject_unwired_external_projectors(koopmans_input, "singlepoint")
 
-    # DFPT routes on the screening method alone: calculate_alpha = False is
+    # DFPT routes on the formalism alone: calculate_alpha = False is
     # the alpha_guess path inside the DFPT builder (screen step skipped),
     # not a reason to fall through to the kcp.x/DSCF branch.
-    if workflow.screening_method == CalculateScreeningMethod.DFPT:
+    if workflow.formalism == Formalism.DFPT:
         return build_singlepoint_dfpt_workgraph(koopmans_input)
 
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
@@ -115,7 +115,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
         raise NotImplementedError(
             f"spin={workflow.spin.value!r} is not supported by the DSCF (kcp.x) stream: "
-            "kcp.x has no noncollinear mode. Use screening_method='dfpt'."
+            "kcp.x has no noncollinear mode. Use formalism='dfpt'."
         )
 
     wannier_init = workflow.init_orbitals in (

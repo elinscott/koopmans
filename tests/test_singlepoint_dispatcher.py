@@ -16,8 +16,8 @@ from koopmans.aiida.workflows.dscf import (
 from koopmans.input_file import KoopmansInput, read_input_file
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
     Correction,
+    Formalism,
     Task,
     VariationalOrbitalType,
 )
@@ -65,7 +65,7 @@ class TestOzoneInputParse:
         assert isinstance(ozone_input, KoopmansInput)
         assert ozone_input.workflow.task == Task.SINGLEPOINT
         assert ozone_input.workflow.correction == Correction.KI
-        assert ozone_input.workflow.screening_method == CalculateScreeningMethod.DSCF
+        assert ozone_input.workflow.formalism == Formalism.DSCF
         assert ozone_input.workflow.init_orbitals == VariationalOrbitalType.KOHN_SHAM
         assert ozone_input.workflow.alpha_numsteps == 1
         assert ozone_input.workflow.pseudo_library == "SG15/1.2/PBE/SR"
@@ -195,21 +195,19 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         """The DFPT route (kcw.x) implements KI only; anything else must raise loudly.
 
         Guards against silently running KI physics for a requested KIPZ (etc.)
-        correction: the DFPT branch dispatches on ``screening_method`` before
+        correction: the DFPT branch dispatches on ``formalism`` before
         the DSCF correction guard is reached.
         """
         d = ozone_input.model_dump()
-        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["formalism"] = "dfpt"
         d["workflow"]["correction"] = correction_value
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="only implements the KI correction"):
             build_singlepoint_workgraph(inp)
 
-    @pytest.mark.parametrize("screening_method", ["dscf", "dfpt"])
-    def test_external_projectors_rejected(
-        self, ozone_input: KoopmansInput, screening_method: str
-    ) -> None:
+    @pytest.mark.parametrize("formalism", ["dscf", "dfpt"])
+    def test_external_projectors_rejected(self, ozone_input: KoopmansInput, formalism: str) -> None:
         """``atom_proj_ext`` is rejected on both singlepoint streams.
 
         Neither stream consults the external projector keywords when it
@@ -217,7 +215,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         drop it.
         """
         d = ozone_input.model_dump()
-        d["workflow"]["screening_method"] = screening_method
+        d["workflow"]["formalism"] = formalism
         d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
         inp = KoopmansInput.model_validate(d)
 
@@ -353,7 +351,7 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
         Ozone's own kpoints are gamma-only, so the field must be present
         there for a factor above 1 to reach ``band_interpolation_inputs``'s
         own "no path" refusal, rather than the dispatcher-level guard above
-        (task/screening_method here is singlepoint/DSCF, which does perform
+        (task/formalism here is singlepoint/DSCF, which does perform
         band interpolation) or a missing-attribute error.
         """
         d = ozone_input.model_dump()
@@ -419,7 +417,7 @@ class TestExplicitOrbitalGroupsRejected:
         before any structure conversion or pseudopotential install.
         """
         d = ozone_input.model_dump()
-        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["formalism"] = "dfpt"
         d["workflow"]["correction"] = "ki"
         d["workflow"]["init_orbitals"] = "mlwfs"
         d["workflow"]["init_empty_orbitals"] = "mlwfs"

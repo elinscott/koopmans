@@ -8,7 +8,6 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import load_codes, name_run, require_configured_codes
 from koopmans.aiida.workflows.dfpt import DfptChainInputs, assemble_dfpt_chain_inputs
-from koopmans.input_file.workflow import CalculateScreeningMethod
 
 if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
@@ -28,9 +27,8 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     route (:func:`koopmans.aiida.workflows.dfpt.assemble_dfpt_chain_inputs`),
     so every restriction that route documents applies here too.
 
-    Phase-1 scope, refused explicitly because the composed workflow does not
-    expose a socket for them: ``screening_method`` must be ``'dfpt'``, and
-    ``spin`` must be ``'none'`` (a single DFPT channel to read).
+    ``spin`` must be ``'none'``: the composed workflow reads a single DFPT
+    channel. The route runs the DFPT chain whether ``formalism`` is ``'dfpt'`` or unset.
 
     Left unrefused: ``calculator_parameters.ecutwfc``, if unset, is derived
     from the pseudopotential family's own recommendation (the same call
@@ -55,8 +53,7 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             recommends no cutoffs and `calculator_parameters.ecutwfc` is
             also unset, or `yambo.BSEBands` reaches past the Wannierized
             manifold.
-        NotImplementedError: If the input asks for a `bse`-incompatible
-            `screening_method` or `spin`.
+        NotImplementedError: If the input asks for a `spin` other than `none`.
     """
     from aiida_koopmans.workgraphs.bethe_salpeter import (
         SinglepointBetheSalpeterCodes,
@@ -73,12 +70,6 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
         # skips parsing) sees a validated YamboBseParameters below.
         raise ValueError("`workflow.task: bse` needs a `calculator_parameters.yambo` input block.")
 
-    if workflow.screening_method != CalculateScreeningMethod.DFPT:
-        raise NotImplementedError(
-            "the `bse` task only supports `screening_method: dfpt`: it seeds the yambo "
-            "BSE run off a kcw.x `ham` run's eigenvalues, which only DFPT screening "
-            f"produces; got screening_method={workflow.screening_method.value!r}."
-        )
     if workflow.spin != SpinType.NONE:
         raise NotImplementedError(
             "the `bse` task only supports `spin: none`: aiida-koopmans's "

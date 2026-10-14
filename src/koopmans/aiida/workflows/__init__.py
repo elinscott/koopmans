@@ -31,7 +31,7 @@ from koopmans.aiida.conversion import (
     validate_computer_scheduler_support,
 )
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
+    Formalism,
     GroupOrbitalsBy,
     Task,
     VariationalOrbitalType,
@@ -678,6 +678,10 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 _TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
 
 
+#: Tasks that never evaluate the Koopmans correction.
+_TASKS_WITHOUT_KOOPMANS_STEP = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
+
+
 def _default_eps_inf_mesh_description(koopmans_input: KoopmansInput) -> str:
     """Describe the mesh ``eps_inf: auto`` falls back to at the default factor.
 
@@ -689,7 +693,7 @@ def _default_eps_inf_mesh_description(koopmans_input: KoopmansInput) -> str:
     this check never touches the ORM. The DSCF dielectric scf samples
     ``kpoints.grid``, the one mesh that route takes.
     """
-    if koopmans_input.workflow.screening_method == CalculateScreeningMethod.DSCF:
+    if koopmans_input.workflow.formalism == Formalism.DSCF:
         return f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}"
     scf_override = koopmans_input.kpoints.overrides.scf
     if scf_override is not None and scf_override.grid is not None:
@@ -721,7 +725,7 @@ def _eps_inf_inert_advisory(koopmans_input: KoopmansInput) -> str | None:
             "constant enters only the screening step, which this run skips; it is "
             "kept for when you switch screening back on."
         )
-    if workflow.screening_method != CalculateScreeningMethod.DSCF:
+    if workflow.formalism != Formalism.DSCF:
         return None
     if workflow.init_orbitals not in (
         VariationalOrbitalType.MLWFS,
@@ -777,6 +781,12 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     workflow = koopmans_input.workflow
     task = workflow.task
 
+    if workflow.formalism is not None and task in _TASKS_WITHOUT_KOOPMANS_STEP:
+        advisories.append(
+            f"workflow.formalism has no effect on task: {task.value}, which runs no "
+            "Koopmans step; it is kept for when you switch task to singlepoint."
+        )
+
     if any(f > 1 for f in koopmans_input.kpoints.smooth_interpolation_factor):
         if task != Task.SINGLEPOINT:
             advisories.append(
@@ -811,12 +821,21 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 "computed only within a singlepoint); it is kept for when you switch "
                 "task to singlepoint."
             )
+        elif task == Task.BSE:
+            advisories.append(
+                "workflow.group_orbitals_tol has no effect on task: "
+                f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
+                f"{workflow.init_orbitals.value}, formalism: {Formalism.DFPT.value}); "
+                "it is kept for when you set group_orbitals_by to a criterion this "
+                "run implements (spread)."
+            )
         else:
             advisories.append(
                 "workflow.group_orbitals_tol has no effect on task: "
                 f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
-                f"{workflow.init_orbitals.value}, screening_method: "
-                f"{workflow.screening_method.value}); it is kept for when you set "
+                f"{workflow.init_orbitals.value}, formalism: "
+                f"{workflow.formalism.value if workflow.formalism else 'unset'}); "
+                "it is kept for when you set "
                 "group_orbitals_by to a criterion this run implements (self_hartree for "
                 "DSCF, spread for DFPT)."
             )
