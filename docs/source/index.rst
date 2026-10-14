@@ -81,7 +81,7 @@ New here? :doc:`Install the code <installation>`, then run :doc:`your first calc
 
         .. image:: tutorials/optical_spectra/silicon_bse/spectrum.png
             :alt: The KI@LDA and independent-particle optical absorption spectra of
-                silicon, with the exciton red shift visible in the KI curve
+                silicon, with the exciton red shift visible in the KI@LDA curve
 
         :doc:`Optical spectra <tutorials/optical_spectra/silicon_bse/index>`, from the
         Bethe-Salpeter equation
