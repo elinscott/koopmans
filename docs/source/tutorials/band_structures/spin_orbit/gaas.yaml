@@ -1,0 +1,83 @@
+# The KI band structure of bulk GaAs with spin-orbit coupling, with screening
+# parameters computed by linear response in the primitive cell.
+
+workflow:
+  task: singlepoint
+  correction: ki
+  screening_method: dfpt          # screening from density-functional perturbation theory
+  init_orbitals: mlwfs            # maximally localized Wannier functions
+  spin: spin_orbit                # spinor wavefunctions with spin-orbit coupling
+  pseudo_library: LDA-FR-GaAs     # LDA, fully relativistic, norm-conserving; installed by hand
+  group_orbitals_by: spread       # orbitals with equal Wannier spreads share a screening parameter
+  calculate_alpha: false          # use the screening parameters below instead of computing them
+  alpha_guess:                    # one value per Wannier function, in projection-block order
+    - 0.33523                     # As 3d (orbitals 1-10)
+    - 0.33523
+    - 0.33523
+    - 0.33523
+    - 0.33523
+    - 0.33523
+    - 0.33523
+    - 0.33523
+    - 0.33523
+    - 0.33523
+    - 0.31827                     # Ga 3d (orbitals 11-20; crystal-field split into two groups)
+    - 0.31827
+    - 0.31593
+    - 0.31593
+    - 0.31593
+    - 0.31593
+    - 0.31827
+    - 0.31827
+    - 0.31593
+    - 0.31593
+    - 0.17115                     # As sp3, the four valence bands (orbitals 21-28)
+    - 0.17115
+    - 0.17115
+    - 0.17115
+    - 0.17115
+    - 0.17115
+    - 0.17115
+    - 0.17115
+    - 0.09922                     # Ga sp3, the four lowest conduction bands (orbitals 29-36)
+    - 0.09922
+    - 0.09922
+    - 0.09922
+    - 0.09922
+    - 0.09922
+    - 0.09922
+    - 0.09922
+
+atoms:
+  cell_parameters:
+    periodic: true
+    ibrav: 2                      # face-centered cubic
+    celldms:
+      1: 10.6807                  # the lattice parameter, in bohr
+  atomic_positions:
+    units: crystal
+    positions:                    # the two-atom zincblende basis
+      - [Ga, 0.00, 0.00, 0.00]
+      - [As, 0.25, 0.25, 0.25]
+
+kpoints:
+  grid: [4, 4, 4]                 # the Brillouin-zone sampling
+  path: LGXWLKG                   # the path a band structure is plotted along
+
+calculator_parameters:
+  ecutwfc: 70.0                   # wavefunction cutoff (Ry)
+  nbnd: 60                        # 28 filled spinor bands, and empties to disentangle among
+  wannier90:
+    projections:                  # one entry per block of bands: three filled, then one empty
+      - [{site: As, ang_mtm: "l=2"}]      # As 3d
+      - [{site: Ga, ang_mtm: "l=2"}]      # Ga 3d
+      - [{site: As, ang_mtm: sp3}]        # the four valence bands
+      - [{site: Ga, ang_mtm: sp3}]        # the four lowest conduction bands
+    dis_win_max: 23.0             # the states the empty block may mix
+    dis_froz_max: 14.5            # the states it must keep whole
+    num_iter: 20000               # minimization iterations; the empty block needs more than wannier90's default
+
+parallelization:
+  kcw:
+    ntasks: 4                     # MPI ranks for each kcw.x job
+    npool: 4                      # k-point pools, on the Wannier-gauge and screening steps
