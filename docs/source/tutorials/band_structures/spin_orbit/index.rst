@@ -7,7 +7,8 @@ coupling, with the screening parameters obtained by linear response as in the
 :doc:`linear-response tutorial <../silicon_linear_response/index>`. Compared with that
 tutorial, three things change:
 
-- ``workflow.spin`` is ``spin_orbit``, so the calculation runs on spinor wavefunctions.
+- Spin-orbit coupling is included, which means the calculations run on spinor
+  wavefunctions.
 - The pseudopotentials must include spin-orbit coupling, and no automatically installable
   family does, so you install one by hand first.
 - The screening parameters are supplied in the input file rather than computed, because
