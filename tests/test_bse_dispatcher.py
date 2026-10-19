@@ -115,8 +115,8 @@ class TestBuild:
         expected_bands = chain_inputs["bands_kpoints"]
         expected_wannierize = chain_inputs["wannierize_bands_kpoints"]
         assert expected_bands is not None and expected_wannierize is not None
-        assert n_bands == len(expected_bands.get_kpoints())
-        assert n_wannierize == len(expected_wannierize.get_kpoints())
+        assert n_bands == len(expected_bands.get_kpoints())  # type: ignore[no-untyped-call]
+        assert n_wannierize == len(expected_wannierize.get_kpoints())  # type: ignore[no-untyped-call]
         assert n_bands != n_wannierize
         grid = with_path["kpoints"]["grid"]
         assert list(dfpt_inputs["wannierize_smooth_mp_grid"].value) == [2 * n for n in grid]
