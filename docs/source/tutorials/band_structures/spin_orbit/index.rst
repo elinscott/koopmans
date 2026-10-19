@@ -59,8 +59,7 @@ full:
 
 Most of it reads as a silicon input would. Spin-orbit coupling couples an electron's spin
 to its orbital motion, so spin up and spin down are no longer conserved separately and the
-wavefunctions become spinors, two-component objects in which the two mix. This is asked
-for with
+wavefunctions become spinors, two-component objects in which the two mix. This is enabled with
 
 .. literalinclude:: gaas.yaml
     :language: yaml
@@ -68,8 +67,7 @@ for with
     :end-at: spin: spin_orbit
 
 Spin is then no longer a label on a band, so each band holds one electron rather than two.
-Gallium and arsenic bring 28 valence electrons between them, so there are 28 filled bands,
-and ``nbnd: 60`` leaves empty bands to disentangle among.
+Gallium and arsenic bring 28 valence electrons between them, so there are 28 filled bands.
 
 .. literalinclude:: gaas.yaml
     :language: yaml
