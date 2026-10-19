@@ -58,24 +58,26 @@ full:
 .. literalinclude:: gaas.yaml
     :language: yaml
 
-Most of it reads as a silicon input would. The differences all follow from spin-orbit
-coupling. Spin-orbit coupling couples an electron's spin to its orbital motion. Spin up and
-spin down are then no longer conserved separately, so the wavefunctions become spinors:
-two-component objects in which the two mix. This is enabled with
+Most of it reads like the input for a silicon Koopmans band-structure calculation. The
+differences all follow from spin-orbit coupling, which couples an electron's spin to its
+orbital motion. Spin up and spin down are then no longer conserved separately, so the
+wavefunctions become spinors: two-component objects in which the two mix. This is enabled
+with
 
 .. literalinclude:: gaas.yaml
     :language: yaml
     :start-at: spin: spin_orbit
     :end-at: spin: spin_orbit
 
-Spin is then no longer a label on a band, so each band holds one electron rather than two.
-
 .. question:: How many filled bands does GaAs have in this calculation?
+
+    For spinor wavefunctions, spin is no longer a label on a band. This means that
+    each band holds one electron rather than two.
 
     The gallium and arsenic pseudopotentials have pseudoatomic charges of 13
     (:math:`3d^{10} 4s^2 4p^1`) and 15 (:math:`3d^{10} 4s^2 4p^3`) respectively, so the cell
-    holds 28 valence electrons. Each band holds one electron, so 28 bands are filled.
-    Without spin-orbit coupling the same electrons would fill 14.
+    holds 28 valence electrons. Each band holds one electron, so there are 28 filled bands.
+    Without spin-orbit coupling we would only have 14.
 
 .. literalinclude:: gaas.yaml
     :language: yaml
@@ -86,10 +88,10 @@ names the family installed above.
 
 The ``projections`` list four blocks of bands: the arsenic and gallium :math:`3d` shells,
 the four valence bands, and the four lowest conduction bands. Each projection now yields
-two Wannier functions where it would yield one without spin-orbit coupling, one per spinor
-state. So the four blocks produce 10, 10, 8 and 8 Wannier functions, 36 in all. The
-projections and the disentanglement window themselves are written as for a
-scalar-relativistic calculation.
+two Wannier functions where it would yield one without spin-orbit coupling, so the four
+blocks produce 10, 10, 8 and 8 Wannier functions, 36 in all. The projections and the
+disentanglement window themselves are no different from those for a scalar-relativistic
+calculation.
 
 .. literalinclude:: gaas.yaml
     :language: yaml
@@ -97,16 +99,18 @@ scalar-relativistic calculation.
     :end-at: calculate_alpha
 
 skips the screening calculations. In their place, the 36 values under ``alpha_guess`` are
-used, one per Wannier function, in the order the projection blocks define. They were
+used, one per Wannier function, in the order the projection blocks define. These values were
 computed by linear response from this same input with ``calculate_alpha: true`` and
 ``group_orbitals_by: spread``. Under that setting, Wannier functions whose spreads agree
-within 0.05 Å\ :sup:`2` share one parameter, which is why the values repeat in runs. Spin
-is not a separate label, so there is one set of screening parameters rather than one per
-spin channel as in the :doc:`magnetic solids tutorial <../magnetic/index>`.
+within 0.05 Å\ :sup:`2` share one parameter. Because we don't have two spin channels, there
+is one set of screening parameters rather than one per spin channel as in the
+:doc:`magnetic solids tutorial <../magnetic/index>`.
 
 *************************
  Running the calculation
 *************************
+
+As ever, run the calculation via the command
 
 .. code-block:: console
 
@@ -122,12 +126,12 @@ screening step, because the screening parameters were given.
  The results
 *************
 
-Plot the LDA and KI@LDA bands together, with the KI@LDA gap annotated:
+Plot the LDA and KI@LDA bands together:
 
 .. code-block:: console
 
     $ koopmans plot bandstructure \
-        gaas/02-wannierize/01-bands --label LDA --style k-- \
+        gaas/02-wannierize/01-bands --label LDA --style -- \
         gaas/03-dfpt/03-ham --label "KI@LDA" --style - --gap \
         --ylim -8 10 \
         -o gaas_bandstructure.svg
@@ -138,54 +142,38 @@ Plot the LDA and KI@LDA bands together, with the KI@LDA gap annotated:
 
     The KI@LDA band structure of GaAs with spin-orbit coupling, against LDA.
 
-.. question:: How does the band gap compare with experiment?
+.. question:: What differences do you notice in the band structure that are induced by spin-orbit coupling?
 
-    The direct gap at :math:`\Gamma` is 1.41 eV in KI@LDA. Experiment gives 1.52 eV
-    :cite:`Marrazzo2024`. In contrast, LDA gives 0.16 eV, so the KI correction removes
-    more than ninety percent of LDA's error. The same reference obtains 1.51 eV by the same
-    route, with a denser k-point grid, a higher cutoff and pseudopotentials of its own. So
-    the remaining 0.1 eV comes from convergence rather than from the functional.
+    - **Band gap opening.** The direct gap at :math:`\Gamma` is 1.41 eV in KI@LDA.
+      Experiment gives 1.52 eV :cite:`Marrazzo2024`. In contrast, LDA gives 0.16 eV, so the
+      KI correction removes more than ninety percent of LDA's error. The remaining
+      discrepancy is largely because we are underconverged: with a denser k-point grid, a
+      higher cutoff and pseudopotentials of its own, the KI band gap becomes 1.51 eV
+      :cite:`Marrazzo2024`.
+    - **Broken degeneracies.** Without spin-orbit coupling the three highest valence bands
+      are degenerate at :math:`\Gamma`. With it, two of them, the heavy-hole and light-hole
+      bands, stay degenerate there, and the third, the split-off band, is pushed down. The
+      energy it is pushed down by is the spin-orbit splitting, :math:`\Delta_\text{SO}`. In
+      the spinor count of this calculation, where each band holds one electron, the heavy
+      and light holes are bands 25 to 28 and the split-off band is bands 23 and 24. kcw.x
+      prints the KI eigenvalues at every k-point of the path in
+      ``gaas/03-dfpt/03-ham/outputs/aiida.kho``; at :math:`\Gamma`, bands 17 to 32 read
 
-.. question:: Where is spin-orbit coupling visible in the band structure?
+      .. code-block:: text
 
-    At the top of the valence band at :math:`\Gamma`. Without spin-orbit coupling the three
-    highest valence bands are degenerate there, each holding two electrons. With it, two of
-    them, the heavy-hole and light-hole bands, stay degenerate at :math:`\Gamma`, and the
-    third, the split-off band, is pushed down by :math:`\Delta_\text{SO}`. The KI
-    eigenvalues that kcw.x prints for :math:`\Gamma` in
-    ``gaas/03-dfpt/03-ham/outputs/aiida.kho`` show this directly:
+          KI     -10.0461   -10.0460   -10.0301   -10.0300    -5.1469    -5.1468     7.4170     7.4171
+          KI       7.7639     7.7641     7.7641     7.7643     9.1761     9.1761    12.4146    12.4148
 
-    .. code-block:: text
+      so the split-off band sits at 7.42 eV and the heavy and light holes at 7.76 eV. Their
+      difference, 0.35 eV, is :math:`\Delta_\text{SO}`, and experiment gives 0.35 eV
+      :cite:`Marrazzo2024`. The LDA rows in the same block give the same 0.35 eV, so the KI
+      correction shifts these bands together and leaves the splitting unchanged.
 
-        k = 0.0000 0.0000 0.0000     band energies (ev):
-        ...
-        KI     -10.0461   -10.0460   -10.0301   -10.0300    -5.1469    -5.1468     7.4170     7.4171
-        KI       7.7639     7.7641     7.7641     7.7643     9.1761     9.1761    12.4146    12.4148
-
-    In this calculation each band holds one electron, so the heavy and light holes are
-    bands 25 to 28, at 7.76 eV, and the split-off band is bands 23 and 24, at 7.42 eV.
-    Their difference is the spin-orbit splitting, 0.35 eV, and experiment gives 0.35 eV
-    :cite:`Marrazzo2024`. The LDA lines in the same block give the same 0.35 eV, so the KI
-    correction shifts these bands together and leaves the splitting unchanged.
-
-.. question:: Why do the gallium :math:`3d` orbitals carry two screening parameters while the arsenic ones carry one?
-
-    The run that computed them grouped Wannier functions by spread: functions whose
-    spreads agree within 0.05 Å\ :sup:`2`, the default tolerance of ``group_orbitals_by:
-    spread``, share one parameter. Each Wannierization step writes its spreads to its
-    ``outputs/output_parameters.json``. The ten arsenic :math:`3d` functions all have a
-    spread of 0.24 Å\ :sup:`2`, so they share one parameter. The crystal field splits the
-    gallium :math:`3d` shell into four functions of spread 0.32 Å\ :sup:`2` and six of
-    0.37 Å\ :sup:`2`. These differ by more than the tolerance, so they receive two
-    parameters. The grouping therefore depends on ``group_orbitals_tol`` as much as on the
-    physics: a tolerance above that difference would give all ten gallium functions one
-    parameter.
-
-*********
- Up next
-*********
+*****************
+ Optional extras
+*****************
 
 To compute the screening parameters yourself, set ``calculate_alpha: true``, remove
-``alpha_guess``, and add ``group_orbitals_by: spread``. One linear-response calculation
-then runs per group of equivalent Wannier functions, five in all, each taking about a day
-on four MPI ranks.
+``alpha_guess``, and add ``group_orbitals_by: spread``. The calculation will not be fast:
+it involves five linear-response calculations, one per group of equivalent Wannier
+functions, each taking about a day on four MPI ranks.
