@@ -70,10 +70,10 @@ Spin is then no longer a label on a band, so each band holds one electron rather
 
 .. question:: How many filled bands does GaAs have in this calculation?
 
-    28. The gallium pseudopotential carries 13 valence electrons (:math:`3d^{10} 4s^2 4p^1`)
-    and the arsenic one 15 (:math:`3d^{10} 4s^2 4p^3`), and each band holds one electron,
-    so the 28 electrons fill 28 bands. Without spin-orbit coupling the same electrons
-    would fill 14.
+    The gallium and arsenic pseudopotentials have pseudoatomic charges of 13
+    (:math:`3d^{10} 4s^2 4p^1`) and 15 (:math:`3d^{10} 4s^2 4p^3`) respectively, so the cell
+    holds 28 valence electrons. Each band holds one electron, so 28 bands are filled.
+    Without spin-orbit coupling the same electrons would fill 14.
 
 .. literalinclude:: gaas.yaml
     :language: yaml
