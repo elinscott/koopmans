@@ -10,7 +10,6 @@ from koopmans.aiida.workflows import (
     pin_spin_regime,
     pin_step_kpoints,
     prepare_common_inputs,
-    reject_kpoint_overrides,
     require_configured_codes,
 )
 
@@ -38,18 +37,6 @@ def build_dft_bands_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     from aiida_koopmans.workgraphs.pw import PwBandsCodes, RunPwBands
 
     from koopmans.aiida.conversion import kpoints_input_to_interpolation_path
-
-    reject_kpoint_overrides(
-        koopmans_input,
-        {
-            "nscf": "`kpoints.overrides.nscf` cannot take effect in a `dft_bands` "
-            "calculation: it runs an scf and then samples `kpoints.path`, with no "
-            "nscf mesh in between. Set `kpoints.overrides.scf` or `kpoints.grid`.",
-            "wannier90": "`kpoints.overrides.wannier90.path_density` cannot take effect in "
-            "a `dft_bands` calculation: it runs no Wannierization, so there is no "
-            "wannier90 interpolation to densify. Set `kpoints.path_density` instead.",
-        },
-    )
 
     structure, _pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "bands"])
     spin = pin_spin_regime(koopmans_input, overrides)

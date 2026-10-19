@@ -82,17 +82,19 @@ def _si_dfpt_auto_dict() -> dict[str, Any]:
 
 
 class TestDftEpsNoWannierStep:
-    """`dft_eps` runs no Wannierization: `overrides.wannier90` has nothing to reach."""
+    """`dft_eps` runs no Wannierization: `overrides.wannierize` has nothing to reach."""
 
-    def test_explicit_wannier90_density_raises(
+    def test_explicit_wannierize_density_is_kept_with_a_notice(
         self, aiida_profile: Any, installed_pw_code: Any, installed_ph_code: Any
     ) -> None:
-        """ph.x measures a dielectric constant, not a band structure to interpolate."""
+        """ph.x measures a dielectric constant; the entry waits for a switch of task."""
+        from koopmans.aiida.workflows import advisories_for
+
         d = _si_eps_dict()
-        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        d["kpoints"]["overrides"] = {"wannierize": {"path_density": 25.0}}
         inp = KoopmansInput.model_validate(d)
-        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*dft_eps"):
-            build_workgraph(inp)
+        assert any("overrides.wannierize has no effect" in a for a in advisories_for(inp))
+        build_workgraph(inp)
 
 
 class TestDftEps:
@@ -195,18 +197,21 @@ class TestDftEps:
         assert scf.inputs["kpoints"].value is None
         assert float(scf.inputs["kpoints_distance"].value) == pytest.approx(0.11)
 
-    def test_an_nscf_entry_is_rejected(
+    def test_an_nscf_entry_is_kept_with_a_notice(
         self,
         aiida_profile: Any,
         installed_pw_code: Any,
         installed_ph_code: Any,
         fake_sg15_cutoffs_family: Any,
     ) -> None:
-        """There is no nscf step here for the mesh to reach."""
+        """There is no nscf step here for the mesh to reach, so the build notes it and goes on."""
+        from koopmans.aiida.workflows import advisories_for
+
         d = _si_eps_dict()
         d["kpoints"]["overrides"] = {"nscf": {"grid": [4, 4, 4]}}
-        with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_eps"):
-            build_workgraph(KoopmansInput.model_validate(d))
+        inp = KoopmansInput.model_validate(d)
+        assert any("overrides.nscf has no effect" in a for a in advisories_for(inp))
+        build_workgraph(inp)
 
     def test_a_band_path_is_rejected(self, read_input_dict: Any) -> None:
         """ph.x computes a dielectric constant, so a path here would never be sampled.
