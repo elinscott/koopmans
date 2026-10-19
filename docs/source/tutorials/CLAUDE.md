@@ -11,6 +11,10 @@ answer their questions in the order they arise.
 - Let a figure carry the result where one can, rather than a table or a
   paragraph restating it. Quote a number once, in the prose, when the
   argument depends on it; otherwise the axes are enough.
+- A caption says what the figure is, in one line ("The KI@LDA band structure
+  of GaAs with spin-orbit coupling, against LDA."). It never restates what
+  the axes, the legend or an annotation already show: the path, the colors,
+  the energy zero, the gap.
 - Every number comes from a run of the shipped input, read off that run's
   own outputs — never hand-rolled, estimated, or taken from a note.
 - A number's precision follows its job. One that points at a feature on a
@@ -34,6 +38,10 @@ answer their questions in the order they arise.
   it, or patch the code it describes.
 - Name the value the page settles on where it is used ("Set the converged
   value, 13.28, as …"), never "this value".
+- Describe a change by its physics first and name the keyword that asks for
+  it second: "spin-orbit coupling is included, so the calculations run on
+  spinor wavefunctions", never "`workflow.spin` is `spin_orbit`, so …". A
+  keyword is how the reader asks for something, not what they are doing.
 - Results are labelled correction@base (`KI@LDA`), with the base
   functional dashed in overlays; a `question` prompt stays on one line so
   it reads as the question, not the answer.

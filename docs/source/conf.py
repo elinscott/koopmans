@@ -86,6 +86,7 @@ modindex_common_prefix = ["koopmans."]
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+    "sphinx.ext.autosectionlabel",
     "sphinx.ext.autosummary",
     "sphinx.ext.autodoc",
     "sphinx.ext.coverage",
@@ -376,3 +377,10 @@ def build_tutorial_archives(app):
 def setup(app):
     """Register the documentation's own build steps."""
     app.connect("builder-inited", build_tutorial_archives)
+
+
+# Headings are referenceable as :ref:`document:Heading`.
+autosectionlabel_prefix_document = True
+# Only pages and their top-level sections; the generated CLI reference repeats
+# subsection titles across commands.
+autosectionlabel_maxdepth = 2
