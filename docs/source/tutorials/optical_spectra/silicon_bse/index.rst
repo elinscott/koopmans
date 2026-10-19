@@ -63,25 +63,53 @@ yambo's own ground state, then converts that ground state to yambo's own format,
 the eigenvalues of the Koopmans Hamiltonian into yambo's quasiparticle database, and
 finally runs the BSE calculation itself.
 
-The quasiparticle database is where the Koopmans correction enters yambo. It holds the
-Koopmans eigenvalues in the format that a BSE calculation more commonly takes from a GW
+The quasiparticle database is how the Koopmans correction enters yambo. It stores the
+Koopmans eigenvalues in the format that a BSE calculation expects from a GW
 calculation. The BSE step reads it, so the Koopmans eigenvalues set the transition
-energies and therefore the spectrum. The static screening is built earlier, on the LDA
-energies, and the database covers bands 1 to 8 only while ``BndsRnXs`` runs to band 100.
+energies and therefore the spectrum.
 
 *******************************
  The quasiparticle correction
 *******************************
 
-yambo's report on the BSE step states the gap before and after applying that database.
+yambo's report on the BSE step records the band gaps before and after the Koopmans
+eigenvalues are applied. Open it with
+
+.. code-block:: console
+
+    $ less si-bse/03-bse/03-bse/01-yambo/outputs/r-aiida.out_rim_cut_optics_dipoles_bss_bse_em1s
+
+and find the two ``Gaps and Widths`` blocks. The first, marked ``[X]``, is built on the
+LDA eigenvalues:
+
+.. code-block:: text
+
+    [X] Direct Gap                                    :  2.535045 [eV]
+    [X] Direct Gap localized at k                     :  1
+    [X] Indirect Gap                                  :  0.618534 [eV]
+    [X] Indirect Gap between kpts                     :  1  3
+
+and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
+
+.. code-block:: text
+
+    [K+QP] Direct Gap                                 :  3.384599 [eV]
+    [K+QP] Direct Gap localized at k                  :  1
+    [K+QP] Indirect Gap                               :  1.392000 [eV]
+    [K+QP] Indirect Gap between kpts                  :  1  3
+
 On the :math:`2\times2\times2` grid the indirect gap is 0.62 eV in LDA and 1.39 eV in
 KI@LDA, a correction of 0.77 eV.
 
 .. question:: What is the smallest *direct* transition, and where does it sit?
 
-    3.38 eV, at :math:`\Gamma`. This calculation leaves out phonons, so absorption across
-    the indirect gap, which needs a phonon to supply the missing momentum, is absent. The
-    computed absorption therefore sets in at the lowest direct transition.
+    3.38 eV, at k-point 1. The quasiparticle energies the report lists a little further
+    down, under ``Eqp @ K [1]``, show the three highest filled states degenerate at 0 eV
+    and the three lowest empty states degenerate at 3.38 eV. Those threefold degeneracies
+    are the signature of :math:`\Gamma` in the diamond structure, so the smallest direct
+    transition sits at :math:`\Gamma`. This calculation leaves out phonons, so absorption
+    across the indirect gap, which needs a phonon to supply the missing momentum, is
+    absent. The computed absorption therefore sets in at the lowest direct transition.
 
 **********************
  The optical spectrum
