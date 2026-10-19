@@ -178,6 +178,7 @@ two KI@LDA band structures together:
         gaas-no-soc/03-dfpt/03-ham --label "KI@LDA, no spin-orbit" --style -- \
         gaas/03-dfpt/03-ham --label "KI@LDA, spin-orbit" --style - \
         --ylim -1.5 2.5 \
+        --data soc_comparison.json \
         -o soc_comparison.svg
 
 .. figure:: soc_comparison.svg
@@ -193,30 +194,41 @@ two KI@LDA band structures together:
     third drops below them by the spin-orbit splitting :math:`\Delta_\text{SO}`. These
     bands have standard names: the two that stay degenerate are the so-called heavy-hole
     and light-hole bands, after their curvatures away from :math:`\Gamma`, and the third is
-    the split-off band. In the spinor count of the
-    spin-orbit calculation, where each band holds one electron, the heavy and light holes
-    are bands 25 to 28 and the split-off band is bands 23 and 24. kcw.x prints the KI
-    eigenvalues at every k-point of the path in ``gaas/03-dfpt/03-ham/outputs/aiida.kho``;
-    at :math:`\Gamma`, bands 17 to 32 read
+    the split-off band. To read :math:`\Delta_\text{SO}` off the calculation, use the data
+    behind the figure, which ``--data`` wrote to ``soc_comparison.json``: one entry per
+    series, with the band energies at every k-point of the path and the band gap. Print the
+    highest valence energies at :math:`\Gamma` of each series with
+
+    .. code-block:: python
+
+        import json
+
+        for series in json.load(open("soc_comparison.json"))["series"]:
+            gap = series["gap"]
+            energies = sorted(series["energies"][gap["vbm_kpoint_index"]])
+            print(series["label"], [e for e in energies if e <= gap["vbm"]][-6:])
+
+    which gives
 
     .. code-block:: text
 
-        KI     -10.0461   -10.0460   -10.0301   -10.0300    -5.1469    -5.1468     7.4170     7.4171
-        KI       7.7639     7.7641     7.7641     7.7643     9.1761     9.1761    12.4146    12.4148
+        KI@LDA, no spin-orbit [-10.212, -10.212, -5.1481, 7.6491, 7.6491, 7.6491]
+        KI@LDA, spin-orbit [7.417, 7.4171, 7.7639, 7.7641, 7.7641, 7.7643]
 
-    so the split-off band sits at 7.42 eV and the heavy and light holes at 7.76 eV. Their
+    Without spin-orbit coupling the three highest valence bands sit together at 7.65 eV.
+    With it, in the spinor count where each band holds one electron, the split-off band is
+    the pair at 7.42 eV and the heavy and light holes are the four at 7.76 eV. Their
     difference, 0.35 eV, is :math:`\Delta_\text{SO}`, and experiment gives 0.35 eV
-    :cite:`Marrazzo2024`. The LDA rows in the same block give the same 0.35 eV, so the KI
-    correction shifts these bands together and leaves the splitting unchanged.
+    :cite:`Marrazzo2024`.
 
     Second, it shrinks the gap. The splitting preserves the average energy of the three
     bands: the heavy and light holes rise by :math:`\Delta_\text{SO}/3` and the split-off
     band falls by :math:`2\Delta_\text{SO}/3`. The conduction band minimum, which is built
-    from :math:`s` states, does not move. The figure measures energies from the valence
-    band maximum of the calculation without spin-orbit coupling, and the valence band
-    maximum with it sits 0.12 eV higher while the conduction band minimum is unchanged. So
-    the gap closes by :math:`\Delta_\text{SO}/3`: 1.52 eV without spin-orbit coupling,
-    against 1.41 eV with it.
+    from :math:`s` states, does not move. The ``gap`` entry of each series in the same file
+    shows this: the valence band maximum rises from 7.65 to 7.76 eV while the conduction
+    band minimum stays at 9.17 eV, so the gap closes from 1.52 to 1.41 eV, by
+    :math:`\Delta_\text{SO}/3`. The figure shows the same, with energies measured from the
+    valence band maximum of the calculation without spin-orbit coupling.
 
 *****************
  Optional extras
