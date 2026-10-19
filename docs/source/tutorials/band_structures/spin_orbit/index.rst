@@ -67,7 +67,13 @@ wavefunctions become spinors, two-component objects in which the two mix. This i
     :end-at: spin: spin_orbit
 
 Spin is then no longer a label on a band, so each band holds one electron rather than two.
-Gallium and arsenic bring 28 valence electrons between them, so there are 28 filled bands.
+
+.. question:: How many filled bands does GaAs have in this calculation?
+
+    28. The gallium pseudopotential carries 13 valence electrons (:math:`3d^{10} 4s^2 4p^1`)
+    and the arsenic one 15 (:math:`3d^{10} 4s^2 4p^3`), and each band holds one electron,
+    so the 28 electrons fill 28 bands. Without spin-orbit coupling the same electrons
+    would fill 14.
 
 .. literalinclude:: gaas.yaml
     :language: yaml
