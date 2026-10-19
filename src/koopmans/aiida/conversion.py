@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from aiida import orm
 from aiida.tools import get_kpoints_path
@@ -29,7 +29,12 @@ def _convert_paths_to_strings(obj: Any) -> Any:
 
 
 if TYPE_CHECKING:
-    from koopmans.input_file import AtomsInput, KoopmansInput, KpointsInput
+    from koopmans.input_file import (
+        AtomsInput,
+        KoopmansInput,
+        KpointsInput,
+        StepKpointsOverridesInput,
+    )
     from koopmans.input_file.cell_parameters import (
         CellParametersViaAlat,
         CellParametersViaIbrav,
@@ -444,42 +449,38 @@ def smooth_grid(kpoints: KpointsInput, factor: tuple[int, int, int]) -> list[int
     return [int(g) * int(f) for g, f in zip(kpoints.grid, factor, strict=True)]
 
 
-def eps_inf_kpoints_mesh(kpoints: KpointsInput, factor: tuple[int, int, int]) -> orm.KpointsData:
-    """Return the ``eps_inf: auto`` dielectric step's own Monkhorst-Pack mesh.
+def smooth_factor(kpoints: KpointsInput) -> tuple[int, int, int] | None:
+    """Return the densification the smooth Wannierization runs at, if it runs.
 
-    ``kpoints.grid`` densified per axis by ``factor`` — always the
-    top-level ``grid``, never ``kpoints.overrides.scf``, which may state a
-    spacing instead of a grid. Returned as a plain, symmetry-reducible mesh
-    (unlike :func:`smooth_kpoints_mesh`'s explicit kmesh.pl list, which
-    only wannier90 needs): this step is an independent ground state, not
-    part of the Wannierization chain. The offset follows the DFPT chain's
-    own scf (``kpoints.overrides.scf.offset`` if set, else the top-level
-    ``offset``), so the two ground states agree on where the mesh sits even
-    though their dimensions differ.
-
-    Args:
-        kpoints: The kpoints input from KoopmansInput.
-        factor: Per-direction densification, one entry per lattice vector.
-
-    Returns:
-        AiiDA KpointsData node with the densified k-point mesh.
+    ``None`` unless ``kpoints.overrides.wannierize_smooth`` states a factor
+    above 1 in some direction, and always ``None`` on a gamma-only run.
     """
-    scf_override = kpoints.overrides.scf
-    if scf_override is not None and scf_override.offset is not None:
-        offset = scf_override.offset
-    else:
-        offset = kpoints.offset
-    kpts = orm.KpointsData()
-    kpts.set_kpoints_mesh(smooth_grid(kpoints, factor), offset=list(offset))  # type: ignore[no-untyped-call]
-    return kpts
+    if kpoints.gamma_only:
+        return None
+    entry = kpoints.overrides.wannierize_smooth
+    if entry is None or not any(f > 1 for f in entry.factor):
+        return None
+    return entry.factor
+
+
+#: Maps a step to the entry it reads after its own: an attribute the step's
+#: entry leaves unset comes from this entry before the top level.
+_STEP_FALLBACK = {"dielectric": "scf"}
+
+
+def _step_entries(kpoints: KpointsInput, step: str) -> list[StepKpointsOverridesInput]:
+    """Return the ``kpoints.overrides`` entries the named step reads, nearest first."""
+    names = [step, *([_STEP_FALLBACK[step]] if step in _STEP_FALLBACK else [])]
+    entries = (getattr(kpoints.overrides, name) for name in names)
+    return [entry for entry in entries if entry is not None]
 
 
 def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
     """Convert the mesh the named step samples to AiiDA KpointsData.
 
     ``kpoints.overrides.<step>`` states the mesh for that step alone; every
-    attribute it leaves unset comes from the top-level ``grid`` and
-    ``offset``.
+    attribute it leaves unset comes from the entry it falls back to (``scf``,
+    for ``dielectric``), and then from the top-level ``grid`` and ``offset``.
 
     Args:
         kpoints: The kpoints input from KoopmansInput.
@@ -492,49 +493,104 @@ def step_kpoints_mesh(kpoints: KpointsInput, step: str) -> orm.KpointsData:
         ValueError: If the step's entry states a ``grid_spacing`` instead of
             a mesh.
     """
-    override = getattr(kpoints.overrides, step)
-    if override is None:
+    entries = _step_entries(kpoints, step)
+    if not entries:
         return kpoints_input_to_kpoints_mesh(kpoints)
-    if override.grid_spacing is not None:
+    if step_grid_spacing(kpoints, step) is not None:
         raise ValueError(
-            f"`kpoints.overrides.{step}.grid_spacing` leaves the mesh to the cell, so "
-            f"the {step} mesh is not known before the calculation runs. Write "
-            f"`kpoints.overrides.{step}.grid` instead."
+            f"`kpoints.overrides.{step}.grid_spacing` states a spacing, not a mesh, and "
+            f"this step needs a mesh. Write `kpoints.overrides.{step}.grid` instead."
         )
+    grid = next((e.grid for e in entries if e.grid is not None), kpoints.grid)
     kpts = orm.KpointsData()
-    grid = kpoints.grid if override.grid is None else override.grid
-    offset = kpoints.offset if override.offset is None else override.offset
-    kpts.set_kpoints_mesh(list(grid), offset=list(offset))  # type: ignore[no-untyped-call]
+    kpts.set_kpoints_mesh(list(grid), offset=list(_step_offset(kpoints, step)))  # type: ignore[no-untyped-call]
+    return kpts
+
+
+def _step_offset(kpoints: KpointsInput, step: str) -> tuple[float, float, float]:
+    """Return the nearest offset the step reads, else the top level's."""
+    entries = _step_entries(kpoints, step)
+    return next((e.offset for e in entries if e.offset is not None), kpoints.offset)
+
+
+def step_spacing_mesh(
+    kpoints: KpointsInput, step: str, structure: orm.StructureData
+) -> orm.KpointsData:
+    """Build the mesh the named step's ``grid_spacing`` fixes on ``structure``.
+
+    The dimensions are the ones ``PwBaseWorkChain.kpoints_distance`` would
+    build from the same spacing: they come from aiida-quantumespresso's
+    ``create_kpoints_from_distance``, called without its provenance. The
+    offset is the nearest one the step reads (``kpoints.overrides.<step>``,
+    then the entries it falls back to, then the top-level ``offset``),
+    which ``kpoints_distance`` cannot carry.
+
+    Args:
+        kpoints: The kpoints input from KoopmansInput.
+        step: Name of a ``kpoints.overrides`` entry that states a ``grid_spacing``.
+        structure: The structure whose cell fixes the mesh dimensions.
+
+    Raises:
+        ValueError: If the step states no ``grid_spacing``.
+    """
+    from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import (
+        create_kpoints_from_distance,
+    )
+
+    spacing = step_grid_spacing(kpoints, step)
+    if spacing is None:
+        raise ValueError(f"`kpoints.overrides.{step}` states no `grid_spacing`.")
+    # The calcfunction's own body, so no process node lands in the database.
+    distance = orm.Float(spacing)  # type: ignore[no-untyped-call]
+    force_parity = orm.Bool(False)  # type: ignore[no-untyped-call]
+    spaced = create_kpoints_from_distance.process_class._func(structure, distance, force_parity)
+    kpts = orm.KpointsData()
+    kpts.set_kpoints_mesh(  # type: ignore[no-untyped-call]
+        [int(n) for n in spaced.get_kpoints_mesh()[0]],
+        offset=list(_step_offset(kpoints, step)),
+    )
     return kpts
 
 
 def step_grid_spacing(kpoints: KpointsInput, step: str) -> float | None:
     """Return the largest k-point spacing the named step samples at, if it states one.
 
-    ``None`` where the step states a mesh instead, which is every step the
-    input file does not give a ``grid_spacing``.
+    ``None`` where the step samples a mesh instead: the nearest entry it
+    reads that states either a ``grid`` or a ``grid_spacing`` decides.
 
     Args:
         kpoints: The kpoints input from KoopmansInput.
         step: Name of a ``kpoints.overrides`` entry.
     """
-    override = getattr(kpoints.overrides, step)
-    return None if override is None else override.grid_spacing
+    for entry in _step_entries(kpoints, step):
+        if entry.grid_spacing is not None:
+            return entry.grid_spacing
+        if entry.grid is not None:
+            return None
+    return None
 
 
-def wannier90_path_density(kpoints: KpointsInput) -> float:
-    """Return the density wannier90 interpolates its band structure at.
+def wannierize_interpolation_path(
+    kpoints: KpointsInput,
+    structure: orm.StructureData,
+    step: Literal["wannierize", "wannierize_smooth"],
+) -> orm.KpointsData | None:
+    """Return the path the named Wannierization interpolates its band structure along.
 
-    Falls back to :class:`~koopmans.input_file.WannierKpointsOverridesInput`'s
-    own default where ``kpoints.overrides.wannier90`` is unset.
+    The input's own k-path, sampled at ``kpoints.overrides.<step>.path_density``
+    (:class:`~koopmans.input_file.WannierizeKpointsOverridesInput`'s default
+    where the entry is unset); ``None`` where the input names no path.
 
     Args:
         kpoints: The kpoints input from KoopmansInput.
+        structure: The structure to generate the k-path for.
+        step: ``wannierize`` or ``wannierize_smooth``.
     """
-    from koopmans.input_file import WannierKpointsOverridesInput
+    from koopmans.input_file import WannierizeKpointsOverridesInput
 
-    override = kpoints.overrides.wannier90
-    return (override or WannierKpointsOverridesInput()).path_density
+    override = getattr(kpoints.overrides, step)
+    density = (override or WannierizeKpointsOverridesInput()).path_density
+    return kpoints_input_to_interpolation_path(kpoints, structure, density=density)
 
 
 def _parse_kpoints_path_string(
@@ -905,10 +961,9 @@ def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, An
     here), or is fixed here: ``KfnQPdb`` (the Koopmans quasiparticle
     database), the BSE momentum-transfer range and the MPI role split are
     the composed graph's own, and refused if stated here (they are not — no
-    field maps to them). The light-polarisation direction (``LongDrXs`` /
-    ``BLongDir``) is emitted only when the input states it; left unset,
-    yambo's own compiled-in default (x-polarized) applies — the `bse`
-    protocol sets neither, so there is no protocol default to fall back to.
+    field maps to them). Optional fields the input leaves unset are not
+    emitted, so yambo's (or the aiida-yambo BSE protocol's) own value applies;
+    flag fields the input sets join the always-on arguments.
     """
     yambo = koopmans_input.calculator_parameters.yambo
     if yambo is None:
@@ -916,7 +971,10 @@ def yambo_input_to_bse_parameters(koopmans_input: KoopmansInput) -> dict[str, An
             "`yambo_input_to_bse_parameters` needs `koopmans_input.calculator_parameters.yambo` "
             "set; only a `workflow.task: bse` input reaches here."
         )
-    return {"arguments": list(_BSE_ARGUMENTS), "variables": yambo.to_runcard_variables()}
+    return {
+        "arguments": [*_BSE_ARGUMENTS, *yambo.to_runcard_arguments()],
+        "variables": yambo.to_runcard_variables(),
+    }
 
 
 def input_to_ph_parameters(koopmans_input: KoopmansInput) -> dict[str, dict[str, Any]]:

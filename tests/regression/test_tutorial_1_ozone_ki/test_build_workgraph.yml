@@ -655,6 +655,13 @@ raw:
                 child_default_link_limit: 1
                 help: Needed to initialize the variational orbitals as Wannier functions.
                 required: false
+            ph:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                child_default_link_limit: 1
+                help: Needed if the dielectric constant is to be computed automatically.
+                required: false
             projwfc:
               dynamic: false
               identifier: <scrubbed:identifier>
@@ -747,6 +754,21 @@ raw:
           meta:
             call_role: kwargs
             child_default_link_limit: 1
+            extras:
+              py_type: typing.Union
+              union:
+              - identifier: <scrubbed:identifier>
+              - identifier: <scrubbed:identifier>
+                py_type: typing.Literal['auto']
+            required: false
+        eps_kpoints:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
             required: false
         fix_spin_contamination:
           default: false
@@ -1259,22 +1281,6 @@ raw:
             call_role: kwargs
             child_default_link_limit: 1
             required: false
-        smooth_kpoints:
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            extras:
-              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
-            required: false
-        smooth_mp_grid:
-          dynamic: false
-          identifier: <scrubbed:identifier>
-          meta:
-            call_role: kwargs
-            child_default_link_limit: 1
-            required: false
         spin_polarized:
           default: false
           dynamic: false
@@ -1337,6 +1343,40 @@ raw:
             child_default_link_limit: 1
             required: false
         wannier_protocol:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            required: false
+        wannierize_bands_kpoints:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
+            required: false
+        wannierize_smooth_bands_kpoints:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
+            required: false
+        wannierize_smooth_kpoints:
+          dynamic: false
+          identifier: <scrubbed:identifier>
+          meta:
+            call_role: kwargs
+            child_default_link_limit: 1
+            extras:
+              py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
+            required: false
+        wannierize_smooth_mp_grid:
           dynamic: false
           identifier: <scrubbed:identifier>
           meta:
@@ -2060,6 +2100,13 @@ raw:
                     help: Needed to initialize the variational orbitals as Wannier
                       functions.
                     required: false
+                ph:
+                  dynamic: false
+                  identifier: <scrubbed:identifier>
+                  meta:
+                    child_default_link_limit: 1
+                    help: Needed if the dielectric constant is to be computed automatically.
+                    required: false
                 projwfc:
                   dynamic: false
                   identifier: <scrubbed:identifier>
@@ -2156,6 +2203,21 @@ raw:
               meta:
                 call_role: kwargs
                 child_default_link_limit: 1
+                extras:
+                  py_type: typing.Union
+                  union:
+                  - identifier: <scrubbed:identifier>
+                  - identifier: <scrubbed:identifier>
+                    py_type: typing.Literal['auto']
+                required: false
+            eps_kpoints:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
                 required: false
             fix_spin_contamination:
               default: false
@@ -2668,22 +2730,6 @@ raw:
                 call_role: kwargs
                 child_default_link_limit: 1
                 required: false
-            smooth_kpoints:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                extras:
-                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
-                required: false
-            smooth_mp_grid:
-              dynamic: false
-              identifier: <scrubbed:identifier>
-              meta:
-                call_role: kwargs
-                child_default_link_limit: 1
-                required: false
             spin_polarized:
               default: false
               dynamic: false
@@ -2746,6 +2792,40 @@ raw:
                 child_default_link_limit: 1
                 required: false
             wannier_protocol:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                required: false
+            wannierize_bands_kpoints:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
+                required: false
+            wannierize_smooth_bands_kpoints:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
+                required: false
+            wannierize_smooth_kpoints:
+              dynamic: false
+              identifier: <scrubbed:identifier>
+              meta:
+                call_role: kwargs
+                child_default_link_limit: 1
+                extras:
+                  py_type: aiida.orm.nodes.data.array.kpoints.KpointsData
+                required: false
+            wannierize_smooth_mp_grid:
               dynamic: false
               identifier: <scrubbed:identifier>
               meta:

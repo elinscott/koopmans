@@ -23,7 +23,7 @@ from koopmans.aiida.workflows.dscf import (
     require_supported_correction,
 )
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
-from koopmans.input_file.workflow import CalculateScreeningMethod, Task, VariationalOrbitalType
+from koopmans.input_file.workflow import Formalism, Task, VariationalOrbitalType
 
 if TYPE_CHECKING:
     from aiida import orm
@@ -90,15 +90,22 @@ def build_snapshots_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     reject_unwired_external_projectors(koopmans_input, "snapshots")
 
-    if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
+    if workflow.eps_inf == "auto":
         raise NotImplementedError(
-            "`atoms.snapshots` only fans out the DSCF screening stream (kcp.x); DFPT "
-            "screening is not yet run per frame."
+            "workflow.eps_inf: auto is not wired for atoms.snapshots: it would run one "
+            "dielectric calculation per frame. Give eps_inf a number."
+        )
+
+    if workflow.formalism == Formalism.DFPT:
+        raise NotImplementedError(
+            "`atoms.snapshots` only fans out the DSCF stream (kcp.x), so "
+            "`workflow.formalism: dfpt` is not run per frame. Set "
+            "`workflow.formalism: dscf` or drop `atoms.snapshots`."
         )
 
     # A `kpoints.path` under `atoms.snapshots` is refused at parse time
     # (`check_the_task_can_interpolate_along_the_path`), behind this
-    # function's own task and screening-method refusals above.
+    # function's own task and formalism refusals above.
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_SNAPSHOTS)
 
     require_supported_correction(workflow.correction)

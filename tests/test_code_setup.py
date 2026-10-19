@@ -45,19 +45,18 @@ class TestExecutableCoverage:
     """Every code the dispatcher can load must be registrable."""
 
     def test_dispatched_codes_have_executable_entries(self) -> None:
-        """Each ``load_code`` executable is a key in ``QE_EXECUTABLES``."""
-        from koopmans.aiida.setup.codes import QE_EXECUTABLES
+        """Each ``load_code`` executable is a key in ``EXECUTABLES``."""
+        from koopmans.aiida.setup.codes import EXECUTABLES
 
         source = _workflows_source()
         executables = set(re.findall(r'(?<!\.)\bload_code\(\s*"[^"]+"\s*,\s*"([^"]+)"', source))
 
         assert executables, "regex matched no load_code call sites"
-        # Codes registered outside the QE install scan (their second argument
+        # Codes registered outside the install scan (their second argument
         # is a human-readable name, not an executable on PATH).
-        non_qe = {name for name in executables if not name.endswith(".x")}
-        assert non_qe <= {"julia (Wannier.jl)"}, f"unexpected non-QE load sites: {non_qe}"
-        missing = (executables - non_qe) - set(QE_EXECUTABLES)
-        assert not missing, f"dispatcher loads {missing} with no QE_EXECUTABLES entry"
+        non_scan = {"julia (Wannier.jl)"}
+        missing = (executables - non_scan) - set(EXECUTABLES)
+        assert not missing, f"dispatcher loads {missing} with no EXECUTABLES entry"
 
     def test_dispatched_labels_are_registered(self) -> None:
         """Each ``load_code`` label is a label the installer registers."""

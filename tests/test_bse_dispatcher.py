@@ -7,7 +7,7 @@ singlepoint route tests in ``test_dfpt_dispatcher.py`` exercise directly, so
 this file borrows its silicon input dict (``_si_dfpt_dict``) rather than
 duplicating it, and focuses on what the BSE route adds: the
 ``calculator_parameters.yambo`` block's mapping onto the yambo runcard, the
-remaining scope guards (``screening_method``, ``spin``, manifold-reaching
+remaining scope guards (``spin``, manifold-reaching
 ``BSEBands``), that ``eps_inf``/``gb_correction``/``kcw`` overrides and
 orbital grouping pass straight through to the composed DFPT chain, and the
 derived ``ecutwfc``/``ecutrho`` a caller who states neither still gets.
@@ -21,6 +21,7 @@ import pytest
 
 from koopmans.aiida.workflows.bse import build_bse_workgraph
 from koopmans.input_file import KoopmansInput
+from koopmans.input_file.workflow import Formalism
 from tests.test_dfpt_dispatcher import _si_dfpt_dict
 
 
@@ -34,11 +35,15 @@ def _si_bse_dict(**yambo_updates: Any) -> dict[str, Any]:
     """
     d = _si_dfpt_dict()
     d["workflow"]["task"] = "bse"
+    # `bse` is DFPT by construction, so the input leaves `formalism` out.
+    d["workflow"].pop("formalism", None)
     d["calculator_parameters"]["yambo"] = {
         "BndsRnXs": [1, 100],
         "NGsBlkXs": 2,
         "BSEBands": [1, 4],
         "BEnRange": [0, 10],
+        "LongDrXs": [1, 0, 0],
+        "BLongDir": [1, 0, 0],
         **yambo_updates,
     }
     return d
@@ -86,6 +91,10 @@ class TestBuild:
         assert "select_channel" in names
         assert "bse" in names
 
+        explicit = _si_bse_dict()
+        explicit["workflow"]["formalism"] = "dfpt"
+        assert "dfpt" in _build(explicit).get_task_names()
+
     def test_bse_parameters_match_the_schema_mapping(
         self, aiida_profile: Any, bse_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
@@ -103,6 +112,8 @@ class TestBuild:
                 "NGsBlkXs": [3, "Ry"],
                 "BSENGBlk": [3, "Ry"],
                 "BSEBands": [[1, 4], ""],
+                "LongDrXs": [[1, 0, 0], ""],
+                "BLongDir": [[1, 0, 0], ""],
                 "BEnRange": [[0, 10], "eV"],
                 "BEnSteps": [200, ""],
                 "BDmRange": [[0.1, 0.1], "eV"],
@@ -230,12 +241,16 @@ class TestRouteRefusals:
     so in their own docstring.
     """
 
-    def test_dscf_screening_method_is_refused(self) -> None:
-        """The route reads kcw.x ``ham`` eigenvalues; a ΔSCF run produces none."""
+    def test_dscf_formalism_is_refused_at_parse(self) -> None:
+        """An explicit ``dscf`` is a parse error; ``dfpt`` and unset both parse."""
         d = _si_bse_dict()
-        d["workflow"]["screening_method"] = "dscf"
-        with pytest.raises(NotImplementedError, match="screening_method"):
-            _build(d)
+        d["workflow"]["formalism"] = "dscf"
+        with pytest.raises(ValueError, match=r"Remove `workflow\.formalism`"):
+            KoopmansInput.model_validate(d)
+        d["workflow"]["formalism"] = "dfpt"
+        assert KoopmansInput.model_validate(d).workflow.formalism == Formalism.DFPT
+        del d["workflow"]["formalism"]
+        assert KoopmansInput.model_validate(d).workflow.formalism is None
 
     def test_collinear_spin_is_refused(self) -> None:
         """No single channel exists for the composed graph to read.

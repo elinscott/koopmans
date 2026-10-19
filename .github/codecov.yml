@@ -2,3 +2,10 @@
 ignore:
   - "src/koopmans/__main__.py"
   - "src/koopmans/cli.py"
+coverage:
+  status:
+    project:
+      default:
+        # Coverage on main moves by a few hundredths between identical runs,
+        # which failed this status on text-only pull requests.
+        threshold: 0.1%

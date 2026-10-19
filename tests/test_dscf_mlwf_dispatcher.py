@@ -30,7 +30,7 @@ def _si_dscf_dict(**workflow_updates: Any) -> dict[str, Any]:
         "workflow": {
             "task": "singlepoint",
             "correction": "ki",
-            "screening_method": "dscf",
+            "formalism": "dscf",
             "init_orbitals": "mlwfs",
             "calculate_alpha": True,
             "pseudo_library": "SG15/1.2/PBE/SR",
@@ -446,13 +446,47 @@ class TestPeriodicMlwfsBuild:
         with _pytest.raises(ValueError, match="group_orbitals_tol"):
             KoopmansInput(**d)
 
-    def test_eps_inf_auto_not_wired(
-        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    @pytest.mark.parametrize(("grid", "mesh"), [(None, [2, 2, 2]), ([4, 4, 4], [4, 4, 4])])
+    def test_eps_inf_auto_builds_the_dielectric_step(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        installed_ph_code: Any,
+        fake_sg15_pseudo_family: Any,
+        grid: list[int] | None,
+        mesh: list[int],
     ) -> None:
-        """eps_inf='auto' is still NotImplemented for the DSCF stream."""
+        """``eps_inf='auto'`` adds the dielectric chain on ``overrides.dielectric``, else ``grid``.
+
+        A mutant that ignores ``overrides.dielectric`` would leave the
+        second case on the 2x2x2 mesh; a mutant that drops ``auto`` leaves
+        no ``dielectric`` task at all.
+        """
         d = _si_dscf_dict(eps_inf="auto")
-        with pytest.raises(NotImplementedError, match="eps_inf"):
-            _build(d)
+        if grid is not None:
+            d["kpoints"]["overrides"] = {"dielectric": {"grid": grid}}
+        wg = _build(d)
+        dielectric_kpoints = wg.tasks["dielectric"].inputs["scf_kpoints"].value
+        assert list(dielectric_kpoints.get_kpoints_mesh()[0]) == mesh
+
+        from aiida_workgraph import WorkGraph
+
+        WorkGraph.from_dict(wg.to_dict())
+
+    @pytest.mark.parametrize(
+        "workflow_updates",
+        [{"eps_inf": 11.7}, {"eps_inf": "auto", "mp_correction": False}],
+    )
+    def test_an_eps_inf_without_a_consumer_runs_no_dielectric_step(
+        self,
+        aiida_profile: Any,
+        dscf_codes: Any,
+        fake_sg15_pseudo_family: Any,
+        workflow_updates: dict[str, Any],
+    ) -> None:
+        """Negative control: a number, or an unused ``auto``, builds no ``dielectric`` task."""
+        wg = _build(_si_dscf_dict(**workflow_updates))
+        assert "dielectric" not in [t.name for t in wg.tasks]
 
     def test_w90_keywords_land_flat_in_overrides(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
@@ -613,7 +647,7 @@ class TestKcpNbndComesFromTheProjections:
             {
                 "task": "singlepoint",
                 "correction": "ki",
-                "screening_method": "dscf",
+                "formalism": "dscf",
                 "init_orbitals": "mlwfs",
                 "alpha_guess": 0.077,
                 "mp_correction": False,
@@ -776,16 +810,21 @@ class TestPerStepKpointMeshRejected:
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             _build(d)
 
-    def test_wannier90_density_raises(self) -> None:
-        """No interpolated band structure exists here for a density to describe.
+    def test_wannierize_density_reaches_the_initialization_wannierization(
+        self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
+    ) -> None:
+        """wannier90 interpolates at its own density; the pw.x bands keep the top level's.
 
-        The Wannier initialisation folds Wannier functions to a supercell,
-        not an interpolated band structure along a path.
+        A route that still handed the bands path to wannier90 would give
+        the two sockets the same node.
         """
         d = _si_dscf_dict()
-        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
-        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
-            _build(d)
+        d["kpoints"]["path"] = "GX"
+        d["kpoints"]["overrides"] = {"wannierize": {"path_density": 25.0}}
+        inputs = _build(d).tasks["wannier_initialization"].inputs
+        interpolation = inputs["interpolation_kpoints"].value
+        bands = inputs["bands_kpoints"].value
+        assert len(interpolation.get_kpoints()) > len(bands.get_kpoints())
 
 
 class TestBandPathRejected:
@@ -832,7 +871,7 @@ class TestBandPathRejected:
         """Pins the refusal behind the initialisation-route check.
 
         kcp.x runs no periodic ``kohn-sham`` route at all, and refusing the
-        band path first would send the reader to ``screening_method =
+        band path first would send the reader to ``formalism =
         'dfpt'`` — which refuses the same input again, for wanting Wannier
         orbitals. So this input must parse, and the blocker must arrive on
         the first hop when it is built.
@@ -949,12 +988,12 @@ class TestBandPathBuildsTheInterpolation:
         """The former block is refused outright, naming its replacement."""
         d = self._with_bands()
         d["calculator_parameters"]["unfold_and_interpolate"] = {"do_dos": False}
-        with pytest.raises(ValueError, match=r"kpoints\.smooth_interpolation_factor"):
+        with pytest.raises(ValueError, match=r"kpoints\.overrides\.wannierize_smooth\.factor"):
             KoopmansInput.model_validate(d)
 
 
 class TestSmoothInterpolation:
-    """``kpoints.smooth_interpolation_factor`` above 1 adds a second, denser wannierization.
+    """``kpoints.overrides.wannierize_smooth`` adds a second, denser wannierization.
 
     The smooth-interpolation method swaps each manifold's coarse DFT
     Hamiltonian for one Wannierized on a denser mesh, so the dispatcher
@@ -965,7 +1004,7 @@ class TestSmoothInterpolation:
     def _with_smooth(factor: Any = 4, **workflow_updates: Any) -> dict[str, Any]:
         d = _si_dscf_dict(**workflow_updates)
         d["kpoints"]["path"] = "GXG"
-        d["kpoints"]["smooth_interpolation_factor"] = factor
+        d["kpoints"]["overrides"] = {"wannierize_smooth": {"factor": factor}}
         return d
 
     def test_the_dense_mesh_is_wannierized_off_a_coarse_scf(
@@ -1014,14 +1053,13 @@ class TestSmoothInterpolation:
         assert "interpolate_band_structure" in names
         assert "wannierize_smooth" not in names
 
-    def test_smooth_without_a_path_is_refused(
+    def test_smooth_without_a_path_runs_no_second_wannierization(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
     ) -> None:
-        """No path means no interpolation, so a denser mesh would take no effect."""
+        """No path means no interpolation, so the entry waits (``advisories_for`` names it)."""
         d = _si_dscf_dict()
-        d["kpoints"]["smooth_interpolation_factor"] = 4
-        with pytest.raises(ValueError, match=r"kpoints: \{path"):
-            _build(d)
+        d["kpoints"]["overrides"] = {"wannierize_smooth": {"factor": 4}}
+        assert "wannierize_smooth" not in _build(d).get_task_names()
 
     def test_smooth_on_a_kohn_sham_route_names_init_orbitals(
         self, aiida_profile: Any, dscf_codes: Any, fake_sg15_pseudo_family: Any
