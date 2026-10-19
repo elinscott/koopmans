@@ -41,8 +41,8 @@ The BSE calculation is primarily controlled by the ``yambo`` block, which sets y
 - ``LongDrXs`` is the light polarization used for the screening.
 - ``BLongDir`` is the light polarization used for the spectrum.
 
-For more details, see the :doc:`input file documentation
-<../../../input_schema>`, under :class:`~koopmans.input_file.YamboBseParameters`.
+For the remaining variables and their defaults, see the
+:class:`documentation of the yambo block <koopmans.input_file.YamboBseParameters>`.
 
 The ``parallelization`` block gives yambo 4 MPI ranks.
 
