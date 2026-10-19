@@ -21,6 +21,7 @@ atoms:
 
 kpoints:
   grid: [2, 2, 2]                 # the koopmans nscf mesh; yambo's ground state uses the same
+  path: LGXKG                     # the path the KI band structure is plotted along
 
 calculator_parameters:
   ecutwfc: 60.0                   # wavefunction cutoff (Ry)
