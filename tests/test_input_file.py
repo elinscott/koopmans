@@ -1520,12 +1520,11 @@ class TestYamboSchema:
         with pytest.raises(ValueError, match=r"`calculator_parameters\.yambo` has no effect"):
             KoopmansInput.model_validate(d)
 
-    def test_kpoints_path_is_refused(self) -> None:
-        """A ``bse`` task interpolates no band structure; a stated path is refused."""
+    def test_kpoints_path_is_accepted(self) -> None:
+        """A ``bse`` task interpolates the Koopmans band structure along a stated path."""
         d = _bse_input()
         d["kpoints"]["path"] = "GX"  # type: ignore[index]
-        with pytest.raises(ValueError, match=r"`kpoints\.path` cannot take effect in a `bse`"):
-            KoopmansInput.model_validate(d)
+        assert KoopmansInput.model_validate(d).kpoints.path == "GX"
 
     @pytest.mark.parametrize("bands", [[0, 5], [5, 4]])
     def test_bsebands_must_be_positive_and_ascending(self, bands: list[int]) -> None:
