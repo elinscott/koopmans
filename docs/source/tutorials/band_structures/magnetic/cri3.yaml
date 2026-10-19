@@ -4,7 +4,7 @@
 workflow:
   task: singlepoint
   correction: ki
-  formalism: dfpt                 # screening from linear response (kcw.x)
+  formalism: dfpt                 # linear response in the primitive cell
   init_orbitals: mlwfs            # a crystal needs localized orbitals
   spin: collinear                 # the two spin channels differ
   group_orbitals_by: spread       # orbitals this alike share one parameter
