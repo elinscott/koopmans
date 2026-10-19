@@ -36,7 +36,7 @@ download gallium and arsenic from PseudoDojo:
     $ curl -Lo LDA-FR-GaAs/As-d_r.upf https://raw.githubusercontent.com/PseudoDojo/ONCVPSP-LDA-FR-PDv0.4/main/As/As-d_r.upf
 
 Then install the directory as a family, as described :ref:`on the installation page
-<installing-pseudopotentials>`:
+<installation:Pseudopotentials>`:
 
 .. code-block:: console
 
