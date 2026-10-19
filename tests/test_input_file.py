@@ -120,7 +120,7 @@ class TestSchemaValidation:
         """Only the exact string ``auto`` or a number parses as ``workflow.eps_inf``."""
         from koopmans.input_file.workflow import WorkflowConfig
 
-        base = {"task": "singlepoint", "pseudo_library": "X"}
+        base = {"task": "singlepoint", "formalism": "dscf", "pseudo_library": "X"}
 
         with pytest.raises(ValueError, match=r"eps_inf\.literal\[.auto.\]"):
             WorkflowConfig.model_validate({**base, "eps_inf": eps_inf})
@@ -128,10 +128,23 @@ class TestSchemaValidation:
         assert WorkflowConfig.model_validate({**base, "eps_inf": "auto"}).eps_inf == "auto"
 
 
+class TestFormalism:
+    """``workflow.formalism`` has no default and is required on a singlepoint."""
+
+    def test_singlepoint_without_it_is_refused(self) -> None:
+        """Negative control: the same input with ``formalism`` stated parses."""
+        d = _minimal_si_input()
+        del d["workflow"]["formalism"]  # type: ignore[attr-defined]
+        with pytest.raises(ValueError, match=r"needs `workflow\.formalism`.*`dscf`.*`dfpt`"):
+            KoopmansInput.model_validate(d)
+        d["workflow"]["formalism"] = "dfpt"  # type: ignore[index]
+        KoopmansInput.model_validate(d)
+
+
 def _minimal_si_input() -> dict[str, object]:
     """Return a minimal, valid silicon ``KoopmansInput`` dict."""
     return {
-        "workflow": {"task": "singlepoint", "pseudo_library": "X"},
+        "workflow": {"task": "singlepoint", "formalism": "dscf", "pseudo_library": "X"},
         "atoms": {
             "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.26}},
             "atomic_positions": {
@@ -1466,6 +1479,7 @@ def _bse_input(**yambo_updates: object) -> dict[str, object]:
     """Return the minimal silicon input at ``task: bse`` with a valid ``yambo`` block."""
     d = _si_input_with({"ecutwfc": 20.0})
     d["workflow"]["task"] = "bse"  # type: ignore[index]
+    d["workflow"].pop("formalism", None)  # type: ignore[attr-defined]
     d["calculator_parameters"]["yambo"] = {  # type: ignore[index]
         "BndsRnXs": [1, 100],
         "NGsBlkXs": 2,
@@ -1494,6 +1508,7 @@ class TestYamboSchema:
         """``task: bse`` with no ``yambo`` block is refused, naming the required fields."""
         d = _si_input_with({"ecutwfc": 20.0})
         d["workflow"]["task"] = "bse"  # type: ignore[index]
+        d["workflow"].pop("formalism", None)  # type: ignore[attr-defined]
         with pytest.raises(ValueError, match=r"needs a `calculator_parameters\.yambo` input block"):
             KoopmansInput.model_validate(d)
 
@@ -1501,6 +1516,7 @@ class TestYamboSchema:
         """A ``yambo`` block stated under another task would go unread, and is refused."""
         d = _bse_input()
         d["workflow"]["task"] = "singlepoint"  # type: ignore[index]
+        d["workflow"]["formalism"] = "dfpt"  # type: ignore[index]
         with pytest.raises(ValueError, match=r"`calculator_parameters\.yambo` has no effect"):
             KoopmansInput.model_validate(d)
 
@@ -1584,6 +1600,8 @@ class TestCollinearNeedsAMagnetization:
         """
         d = _collinear_input()
         _set_keyword(d, "workflow", "task", task)
+        if task == "bse":
+            d["workflow"].pop("formalism", None)  # type: ignore[attr-defined]
 
         with pytest.raises(ValueError, match="tot_magnetization"):
             KoopmansInput.model_validate(d)
@@ -1675,6 +1693,8 @@ class TestTheMomentIsWholeElectrons:
         """
         d = _si_input_with({"ecutwfc": 20.0, "tot_magnetization": 0.5})
         _set_keyword(d, "workflow", "task", task)
+        if task == "bse":
+            d["workflow"].pop("formalism", None)  # type: ignore[attr-defined]
 
         with pytest.raises(ValueError, match="whole"):
             KoopmansInput.model_validate(d)

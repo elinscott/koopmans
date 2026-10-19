@@ -2,7 +2,7 @@
     "workflow": {
         "task": "singlepoint",
         "correction": "ki",
-        "screening_method": "dfpt",
+        "formalism": "dfpt",
         "init_orbitals": "mlwfs",
         "calculate_alpha": false,
         "alpha_guess": [0.3580, 0.3641, 0.3640, 0.3641, 0.3571, 0.3577, 0.3577, 0.3573, 0.3573, 0.3580, 0.3641, 0.3640, 0.3641, 0.3571, 0.3577, 0.3577, 0.3573, 0.3573, 0.2158, 0.2323, 0.2344, 0.2343, 0.2158, 0.2323, 0.2344, 0.2343, 0.2231, 0.2231],

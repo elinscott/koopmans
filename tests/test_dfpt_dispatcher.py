@@ -22,7 +22,7 @@ def _si_dfpt_dict(**workflow_updates: Any) -> dict[str, Any]:
         "workflow": {
             "task": "singlepoint",
             "correction": "ki",
-            "screening_method": "dfpt",
+            "formalism": "dfpt",
             "init_orbitals": "mlwfs",
             "calculate_alpha": True,
             "pseudo_library": "SG15/1.2/PBE/SR",
@@ -311,7 +311,7 @@ class TestMultiBlockZnO:
             "workflow": {
                 "task": "singlepoint",
                 "correction": "ki",
-                "screening_method": "dfpt",
+                "formalism": "dfpt",
                 "init_orbitals": "mlwfs",
                 "calculate_alpha": False,
                 # One alpha per orbital: 26 occupied + 2 empty (the flattened

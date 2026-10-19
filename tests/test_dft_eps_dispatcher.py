@@ -54,7 +54,7 @@ def _si_dfpt_auto_dict() -> dict[str, Any]:
         "workflow": {
             "task": "singlepoint",
             "correction": "ki",
-            "screening_method": "dfpt",
+            "formalism": "dfpt",
             "init_orbitals": "mlwfs",
             "calculate_alpha": True,
             "pseudo_library": "SG15/1.2/PBE/SR",

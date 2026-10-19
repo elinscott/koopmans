@@ -51,7 +51,7 @@ for the KI ionization potential and electron affinity of an ozone molecule:
 workflow:
   task: singlepoint
   correction: ki
-  screening_method: dscf
+  formalism: dscf
   init_orbitals: kohn-sham
   alpha_numsteps: 1
   pseudo_library: SG15/1.2/PBE/SR
