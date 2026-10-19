@@ -41,7 +41,7 @@ class DfptChainInputs(TypedDict):
     ``wannierize_smooth_kpoints`` / ``wannierize_smooth_mp_grid`` /
     ``wannierize_smooth_bands_kpoints`` are absent unless the caller adds them
     (:func:`add_smooth_interpolation_inputs`): they shape a band structure,
-    and only the plain DFPT singlepoint publishes one.
+    which only a run with a ``kpoints.path`` publishes.
     """
 
     structure: orm.StructureData
