@@ -22,6 +22,9 @@ atoms:
 kpoints:
   grid: [2, 2, 2]                 # the koopmans nscf mesh; yambo's ground state uses the same
   path: LGXKG                     # the path the KI band structure is plotted along
+  overrides:
+    wannierize_smooth:
+      factor: 4                   # interpolate the KI bands from a 4x denser mesh, as in the silicon tutorials
 
 calculator_parameters:
   ecutwfc: 60.0                   # wavefunction cutoff (Ry)
