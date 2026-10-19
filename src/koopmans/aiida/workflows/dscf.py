@@ -16,7 +16,7 @@ from koopmans.aiida.conversion import (
 )
 from koopmans.aiida.workflows import (
     collinear_magnetization,
-    eps_inf_kpoints,
+    dielectric_kpoints,
     load_codes,
     name_run,
     optional_magnetization,
@@ -33,8 +33,8 @@ from koopmans.aiida.workflows.dfpt import build_singlepoint_dfpt_workgraph
 from koopmans.aiida.workflows.grouping import grouping_tol
 from koopmans.aiida.workflows.projectors import reject_unwired_external_projectors
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
     Correction,
+    Formalism,
     GroupOrbitalsBy,
     VariationalOrbitalType,
     WorkflowConfig,
@@ -59,36 +59,25 @@ _KCP_TAKES_ONE_MESH = (
     "`kpoints.grid`.{alternative}"
 )
 
-#: The Wannier-seeded route folds Wannier functions to a supercell for
-#: kcp.x initialisation, not an interpolated band structure along a path,
-#: so a wannier90 interpolation density has nothing to describe.
-_KCP_HAS_NO_INTERPOLATION = (
-    "`kpoints.overrides.wannier90.path_density` cannot take effect on the kcp.x route: "
-    "its Wannier initialisation folds Wannier functions to a supercell off the one mesh "
-    "`kpoints.grid` describes, not an interpolated band structure along a path."
-)
-
 KPOINT_OVERRIDES_ON_DSCF = {
     step: _KCP_TAKES_ONE_MESH.format(
         step=step,
-        alternative=" Screening with `screening_method = 'dfpt'` gives the scf a mesh of its own.",
+        alternative=" Screening with `formalism = 'dfpt'` gives the scf a mesh of its own.",
     )
     for step in ("scf", "nscf")
 }
-KPOINT_OVERRIDES_ON_DSCF["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 
 #: The same rejection without the DFPT alternative, which the per-frame
 #: ``atoms.snapshots`` fan-out does not offer.
 KPOINT_OVERRIDES_ON_SNAPSHOTS = {
     step: _KCP_TAKES_ONE_MESH.format(step=step, alternative="") for step in ("scf", "nscf")
 }
-KPOINT_OVERRIDES_ON_SNAPSHOTS["wannier90"] = _KCP_HAS_NO_INTERPOLATION
 
 
 def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     """Build a workgraph for a singlepoint Koopmans calculation.
 
-    Dispatches on ``workflow.screening_method`` first (DSCF vs DFPT), then on
+    Dispatches on ``workflow.formalism`` first (DSCF vs DFPT), then on
     ``workflow.correction``:
 
     - DSCF + ``KI``/``KIPZ`` → ``KoopmansDSCFWorkflow`` (kcp.x)
@@ -103,10 +92,10 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     reject_unwired_external_projectors(koopmans_input, "singlepoint")
 
-    # DFPT routes on the screening method alone: calculate_alpha = False is
+    # DFPT routes on the formalism alone: calculate_alpha = False is
     # the alpha_guess path inside the DFPT builder (screen step skipped),
     # not a reason to fall through to the kcp.x/DSCF branch.
-    if workflow.screening_method == CalculateScreeningMethod.DFPT:
+    if workflow.formalism == Formalism.DFPT:
         return build_singlepoint_dfpt_workgraph(koopmans_input)
 
     reject_kpoint_overrides(koopmans_input, KPOINT_OVERRIDES_ON_DSCF)
@@ -115,7 +104,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     if workflow.spin in (SpinType.NON_COLLINEAR, SpinType.SPIN_ORBIT):
         raise NotImplementedError(
             f"spin={workflow.spin.value!r} is not supported by the DSCF (kcp.x) stream: "
-            "kcp.x has no noncollinear mode. Use screening_method='dfpt'."
+            "kcp.x has no noncollinear mode. Use formalism='dfpt'."
         )
 
     wannier_init = workflow.init_orbitals in (
@@ -131,7 +120,7 @@ def build_singlepoint_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     extra_kwargs: dict[str, Any] = {}
     if wannier_init:
         extra_kwargs = dscf_wannier_init_inputs(koopmans_input, structure, inputs["nbnd"])
-        extra_kwargs["eps_kpoints"] = eps_inf_kpoints(koopmans_input)
+        extra_kwargs.update(dielectric_kpoints(koopmans_input, structure))
         # On this route the input file's nbnd sizes the pw.x runs — the
         # states the blocks disentangle among — while kcp.x takes one
         # variational orbital per Wannier function the projections
@@ -375,55 +364,46 @@ def band_interpolation_inputs(
     A ΔSCF run computes on a Γ-point supercell, so its band structure has
     to be recovered by unfolding the Koopmans Hamiltonian in the Wannier
     basis and interpolating it along ``kpoints.path``. An input naming no
-    path asks for no band structure, and must then leave
-    ``kpoints.smooth_interpolation_factor`` at its default.
+    path asks for no band structure. With one, each Wannierization the
+    route runs also interpolates its own band structure along it, at its
+    own ``kpoints.overrides`` entry's ``path_density``.
 
-    A factor above 1 adds the denser mesh the smooth-interpolation method
-    Wannierizes: the explicit k-point list and its Monkhorst-Pack
-    dimensions, both derived from ``kpoints.grid``. ``use_ws_distance`` and
-    ``do_dos`` are not exposed to the input file; the aiida-koopmans graph
-    runs them at its own defaults (both ``True``).
-
-    Raises:
-        ValueError: If the input shapes an interpolation it does not ask for.
-        NotImplementedError: If smooth interpolation is asked for on an
-            initialisation route that builds no Wannier functions.
+    A ``kpoints.overrides.wannierize_smooth.factor`` above 1 adds the
+    denser mesh the smooth-interpolation method Wannierizes: the explicit
+    k-point list and its Monkhorst-Pack dimensions, both derived from
+    ``kpoints.grid``. ``use_ws_distance`` and ``do_dos`` are not exposed to
+    the input file; the aiida-koopmans graph runs them at its own defaults
+    (both ``True``).
     """
-    from koopmans.aiida.conversion import smooth_grid, smooth_kpoints_mesh
+    from koopmans.aiida.conversion import (
+        smooth_factor,
+        smooth_grid,
+        smooth_kpoints_mesh,
+        wannierize_interpolation_path,
+    )
 
-    kpath = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
-    factor = koopmans_input.kpoints.smooth_interpolation_factor
-    do_smooth = any(f > 1 for f in factor)
+    kpoints = koopmans_input.kpoints
+    kpath = kpoints_input_to_interpolation_path(kpoints, structure)
     if kpath is None:
-        if do_smooth:
-            raise ValueError(
-                "`kpoints.smooth_interpolation_factor` shapes the band structure "
-                "interpolation, and this input asks for none. Add the path to "
-                "interpolate along as `kpoints: {path: ...}`, or restore the "
-                "default `[1, 1, 1]`."
-            )
         return {}
+    factor = smooth_factor(kpoints)
     # The DOS keeps the interpolation's own smearing and window: the input
     # file has no block naming them.
     inputs: dict[str, Any] = {
         "kpath": kpath,
+        "wannierize_bands_kpoints": wannierize_interpolation_path(kpoints, structure, "wannierize"),
         "unfold_and_interpolate": {
             "use_ws_distance": True,
             "do_dos": True,
-            "smooth_int_factor": list(factor),
+            "smooth_int_factor": list(factor or (1, 1, 1)),
         },
     }
-    if do_smooth:
-        init_orbitals = koopmans_input.workflow.init_orbitals
-        if init_orbitals not in (VariationalOrbitalType.MLWFS, VariationalOrbitalType.PROJWFS):
-            raise NotImplementedError(
-                f"init_orbitals={init_orbitals.value!r} builds no Wannier functions, and "
-                "the smooth-interpolation method swaps one Wannier-gauge DFT Hamiltonian "
-                "for another. Set init_orbitals to 'mlwfs' or 'projwfs', or set "
-                "`kpoints.smooth_interpolation_factor` to 1."
-            )
-        inputs["smooth_kpoints"] = smooth_kpoints_mesh(koopmans_input.kpoints, factor)
-        inputs["smooth_mp_grid"] = smooth_grid(koopmans_input.kpoints, factor)
+    if factor is not None:
+        inputs["wannierize_smooth_kpoints"] = smooth_kpoints_mesh(kpoints, factor)
+        inputs["wannierize_smooth_mp_grid"] = smooth_grid(kpoints, factor)
+        inputs["wannierize_smooth_bands_kpoints"] = wannierize_interpolation_path(
+            kpoints, structure, "wannierize_smooth"
+        )
     return inputs
 
 

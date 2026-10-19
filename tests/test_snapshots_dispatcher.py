@@ -42,7 +42,7 @@ def _snapshots_input_dict(snapshots: str, **workflow_updates: Any) -> dict[str, 
         "workflow": {
             "task": "singlepoint",
             "correction": "ki",
-            "screening_method": "dscf",
+            "formalism": "dscf",
             "init_orbitals": "kohn-sham",
             "alpha_numsteps": 1,
             "pseudo_library": "SG15/1.2/PBE/SR",
@@ -1039,8 +1039,8 @@ class TestBandPathRejected:
         [
             pytest.param({}, True, id="dscf-default"),
             pytest.param(
-                {"screening_method": "dfpt", "calculate_alpha": False},
-                True,
+                {"formalism": "dfpt", "calculate_alpha": False},
+                False,
                 id="dfpt-without-alpha",
             ),
             pytest.param({"task": "dft_bands"}, False, id="non-singlepoint-task"),
@@ -1060,10 +1060,10 @@ class TestBandPathRejected:
         refusal fires while the input is still being read, not once
         ``koopmans run`` has already built a workgraph out of it.
 
-        The ``dfpt-without-alpha`` case pins the fall-through for a DFPT
-        singlepoint that is not also computing alphas: the early return
-        ``test_a_dfpt_input_hears_the_screening_method_first`` exercises
-        needs ``calculate_alpha`` true, so this is its negative control.
+        The ``dfpt-without-alpha`` case is a negative control: a DFPT input
+        is refused by formalism at build time whatever ``calculate_alpha``
+        says (``test_dfpt_is_refused_whatever_calculate_alpha_says``), so
+        naming the path too would be a second refusal for one input.
 
         The ``non-singlepoint-task`` case is a second negative control:
         ``dft_bands`` with ``atoms.snapshots`` fails elsewhere by name (see
@@ -1085,7 +1085,7 @@ class TestBandPathRejected:
         message = str(excinfo.value)
         assert "`kpoints.path`" in message
         assert "`atoms.snapshots`" in message
-        # `screening_method` does not select this route, so the DFPT
+        # `formalism` does not select this route, so the DFPT
         # alternative the singlepoint route offers must not appear here.
         assert "dfpt" not in message
 
@@ -1102,18 +1102,17 @@ class TestBandPathRejected:
 
         assert koopmans_input.kpoints.path == "G"
 
-    def test_a_dfpt_input_hears_the_screening_method_first(
+    def test_a_dfpt_input_hears_the_formalism_first(
         self, tmp_path: Path, read_input_dict: Any
     ) -> None:
-        """Pins the refusal behind the screening-method blocker.
+        """Pins the refusal behind the formalism blocker.
 
-        The fan-out runs kcp.x whatever the input asks for, so an input
-        asking for DFPT screening has to hear about the method it named
-        rather than about its path.
+        The fan-out runs kcp.x only, so an input asking for DFPT has to
+        hear about the formalism it named rather than about its path.
         """
         from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
-        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"), screening_method="dfpt")
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"), formalism="dfpt")
         d["kpoints"] = {"grid": [2, 2, 2], "path": "GX"}
 
         koopmans_input = read_input_dict(d)
@@ -1122,7 +1121,7 @@ class TestBandPathRejected:
             build_snapshots_workgraph(koopmans_input)
 
         message = str(excinfo.value)
-        assert "only fans out the DSCF screening stream" in message
+        assert "only fans out the DSCF stream" in message
         assert "`kpoints.path`" not in message
 
 
@@ -1145,48 +1144,58 @@ class TestPerStepKpointMeshRejected:
         with pytest.raises(ValueError, match=rf"overrides\.{step}.*`kpoints.grid`"):
             build_snapshots_workgraph(koopmans_input)
 
-    def test_wannier90_density_raises(self, tmp_path: Path) -> None:
-        """No interpolated band structure exists here for a density to describe."""
-        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
+    def test_wannierize_density_is_kept_with_a_notice(self, tmp_path: Path) -> None:
+        """Nothing here interpolates along a path, so the entry waits for a run that does."""
+        from koopmans.aiida.workflows import advisories_for
 
         d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
         d["kpoints"] = {
             "grid": [2, 2, 2],
-            "overrides": {"wannier90": {"path_density": 25.0}},
+            "overrides": {"wannierize": {"path_density": 25.0}},
         }
         koopmans_input = KoopmansInput.model_validate(d)
 
-        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*kcp\.x"):
-            build_snapshots_workgraph(koopmans_input)
+        assert any(
+            a.startswith("kpoints.overrides.wannierize has no effect")
+            for a in advisories_for(koopmans_input)
+        )
 
-    def test_the_message_does_not_name_a_screening_method(self, tmp_path: Path) -> None:
-        """A route reached whatever the method must not name one back at the reader.
-
-        ``screening_method`` does not select this route — every fan-out
-        runs kcp.x — so quoting ``'dscf'`` would tell someone who wrote
-        ``'dfpt'`` to set what they did not set.
-        """
+    @pytest.mark.parametrize("calculate_alpha", [True, False])
+    def test_dfpt_is_refused_whatever_calculate_alpha_says(
+        self, tmp_path: Path, calculate_alpha: bool
+    ) -> None:
+        """The fan-out has only the kcp.x stream, so ``dfpt`` is refused either way."""
         from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
-        d["workflow"]["screening_method"] = "dfpt"
-        d["workflow"]["calculate_alpha"] = False
+        d["workflow"]["formalism"] = "dfpt"
+        d["workflow"]["calculate_alpha"] = calculate_alpha
+        koopmans_input = KoopmansInput.model_validate(d)
+
+        with pytest.raises(NotImplementedError, match="formalism: dscf"):
+            build_snapshots_workgraph(koopmans_input)
+
+    def test_dscf_passes_the_formalism_check(self, tmp_path: Path) -> None:
+        """Positive control: with ``dscf`` the same input reaches the mesh refusal."""
+        from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
+
+        d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
+        d["workflow"]["formalism"] = "dscf"
         d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
         koopmans_input = KoopmansInput.model_validate(d)
 
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(ValueError, match=r"overrides\.scf"):
             build_snapshots_workgraph(koopmans_input)
-        assert "screening_method" not in str(excinfo.value)
 
-    def test_an_unsupported_screening_method_is_reported_first(self, tmp_path: Path) -> None:
-        """The mesh is the reader's second problem when the method is the first."""
+    def test_an_unsupported_formalism_is_reported_first(self, tmp_path: Path) -> None:
+        """The mesh is the reader's second problem when the formalism is the first."""
         from koopmans.aiida.workflows.snapshots import build_snapshots_workgraph
 
         d = _snapshots_input_dict(str(tmp_path / "snapshots.xyz"))
-        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["formalism"] = "dfpt"
         d["workflow"]["calculate_alpha"] = True
         d["kpoints"] = {"grid": [2, 2, 2], "overrides": {"scf": {"grid": [4, 4, 4]}}}
         koopmans_input = KoopmansInput.model_validate(d)
 
-        with pytest.raises(NotImplementedError, match="only fans out the DSCF screening stream"):
+        with pytest.raises(NotImplementedError, match="only fans out the DSCF stream"):
             build_snapshots_workgraph(koopmans_input)

@@ -10,7 +10,6 @@ from koopmans.aiida.workflows import (
     pin_spin_regime,
     pin_step_kpoints,
     prepare_common_inputs,
-    reject_kpoint_overrides,
     require_configured_codes,
 )
 
@@ -48,18 +47,6 @@ def build_dft_eps_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
     from koopmans.aiida.conversion import input_to_ph_parameters
 
     spin = koopmans_input.workflow.spin
-
-    reject_kpoint_overrides(
-        koopmans_input,
-        {
-            "nscf": "`kpoints.overrides.nscf` cannot take effect in a `dft_eps` "
-            "calculation: it runs one scf and then ph.x, with no nscf step. Set "
-            "`kpoints.overrides.scf` or `kpoints.grid`.",
-            "wannier90": "`kpoints.overrides.wannier90.path_density` cannot take effect in "
-            "a `dft_eps` calculation: it runs no Wannierization, so there is no "
-            "wannier90 interpolation to densify.",
-        },
-    )
 
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf"])
     pin_spin_regime(koopmans_input, overrides)

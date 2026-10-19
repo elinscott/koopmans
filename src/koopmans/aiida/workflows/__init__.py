@@ -11,6 +11,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     NotRequired,
+    TypedDict,
     cast,
     get_args,
     get_origin,
@@ -24,14 +25,18 @@ from aiida_quantumespresso.common.types import SpinType
 from koopmans.aiida.conversion import (
     atoms_input_to_structure,
     code_parallelization,
-    eps_inf_kpoints_mesh,
     input_to_pw_parameters,
+    smooth_factor,
+    smooth_grid,
     step_grid_spacing,
     step_kpoints_mesh,
+    step_spacing_mesh,
     validate_computer_scheduler_support,
 )
+from koopmans.input_file import names_band_path
+from koopmans.input_file._band_path import band_path_refusal
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
+    Formalism,
     GroupOrbitalsBy,
     Task,
     VariationalOrbitalType,
@@ -394,17 +399,30 @@ def pin_step_kpoints(
     return step_kpoints_mesh(koopmans_input.kpoints, step)
 
 
-def eps_inf_kpoints(koopmans_input: KoopmansInput) -> orm.KpointsData | None:
-    """Return the mesh the dielectric scf of ``eps_inf: auto`` samples, if it has its own.
+class DielectricKpoints(TypedDict):
+    """The sampling of the ``eps_inf: auto`` dielectric step, as the route graphs take it."""
 
-    Only a ``kpoints.eps_inf_factor`` above 1 in some direction states a
-    mesh of its own; at the default ``(1, 1, 1)`` it returns ``None`` and the
-    dielectric scf samples what the chain's own scf does.
+    eps_kpoints: orm.KpointsData | None
+
+
+def dielectric_kpoints(
+    koopmans_input: KoopmansInput, structure: orm.StructureData
+) -> DielectricKpoints:
+    """Return the mesh the ``eps_inf: auto`` dielectric step samples.
+
+    ``None`` without a ``kpoints.overrides.dielectric`` entry: the step then
+    samples what the route's own scf does. A ``grid_spacing`` on the entry
+    (or inherited from ``scf``) becomes the mesh ``kpoints_distance`` would
+    build from it on ``structure``, with the offset the entry states or
+    inherits. A gamma-only run has no mesh to give the step, so the entry
+    is ignored there.
     """
-    factor = koopmans_input.kpoints.eps_inf_factor
-    if not any(f > 1 for f in factor):
-        return None
-    return eps_inf_kpoints_mesh(koopmans_input.kpoints, factor)
+    kpoints = koopmans_input.kpoints
+    if kpoints.gamma_only or kpoints.overrides.dielectric is None:
+        return DielectricKpoints(eps_kpoints=None)
+    if step_grid_spacing(kpoints, "dielectric") is not None:
+        return DielectricKpoints(eps_kpoints=step_spacing_mesh(kpoints, "dielectric", structure))
+    return DielectricKpoints(eps_kpoints=step_kpoints_mesh(kpoints, "dielectric"))
 
 
 def collinear_magnetization(koopmans_input: KoopmansInput) -> int:
@@ -678,18 +696,19 @@ def advice_for(exc: BaseException, computer: str = "localhost") -> str | None:
 _TASKS_THAT_GROUP_NO_ORBITALS = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
 
 
-def _default_eps_inf_mesh_description(koopmans_input: KoopmansInput) -> str:
-    """Describe the mesh ``eps_inf: auto`` falls back to at the default factor.
+#: Tasks that never evaluate the Koopmans correction.
+_TASKS_WITHOUT_KOOPMANS_STEP = frozenset({Task.DFT_BANDS, Task.WANNIERIZE, Task.DFT_EPS})
 
-    At ``kpoints.eps_inf_factor == (1, 1, 1)`` the DFPT dielectric scf
-    reuses the chain's own ``scf`` mesh, not ``kpoints.grid`` — the same
-    resolution :func:`~koopmans.aiida.conversion.step_kpoints_mesh` /
-    :func:`~koopmans.aiida.workflows.pin_step_kpoints` perform for the
-    ``"scf"`` step at build time, read here off the parsed model alone so
-    this check never touches the ORM. The DSCF dielectric scf samples
-    ``kpoints.grid``, the one mesh that route takes.
+
+def _default_dielectric_mesh_description(koopmans_input: KoopmansInput) -> str:
+    """Describe the mesh ``eps_inf: auto`` samples without a ``dielectric`` entry.
+
+    The DFPT dielectric scf then samples the chain's own ``scf`` mesh, read
+    here off the parsed model alone so this check never touches the ORM.
+    The DSCF dielectric scf samples ``kpoints.grid``, the one mesh that
+    route takes.
     """
-    if koopmans_input.workflow.screening_method == CalculateScreeningMethod.DSCF:
+    if koopmans_input.workflow.formalism == Formalism.DSCF:
         return f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}"
     scf_override = koopmans_input.kpoints.overrides.scf
     if scf_override is not None and scf_override.grid is not None:
@@ -701,6 +720,176 @@ def _default_eps_inf_mesh_description(koopmans_input: KoopmansInput) -> str:
             "calculation runs)"
         )
     return f"kpoints.grid mesh {tuple(koopmans_input.kpoints.grid)}"
+
+
+def _runs_wannierization(koopmans_input: KoopmansInput) -> bool:
+    """Report whether the run Wannierizes the Kohn-Sham states."""
+    workflow = koopmans_input.workflow
+    if workflow.task in (Task.WANNIERIZE, Task.BSE):
+        return True
+    return workflow.task == Task.SINGLEPOINT and workflow.init_orbitals in (
+        VariationalOrbitalType.MLWFS,
+        VariationalOrbitalType.PROJWFS,
+    )
+
+
+def _dielectric_inert_reason(koopmans_input: KoopmansInput) -> str | None:
+    """Say why no ``eps_inf: auto`` dielectric step runs, or return ``None`` if one does."""
+    workflow = koopmans_input.workflow
+    task = workflow.task
+    if task == Task.DFT_EPS:
+        return (
+            "on task: dft_eps, whose dielectric calculation is its own scf: set "
+            "kpoints.overrides.scf or kpoints.grid for it; it is kept for when you switch "
+            "task to singlepoint or bse"
+        )
+    if task not in (Task.SINGLEPOINT, Task.BSE):
+        return (
+            f"on task: {task.value} (it sets the mesh of the eps_inf: auto "
+            "dielectric-constant step, which only singlepoint and bse run); it is kept "
+            "for when you switch task"
+        )
+    if workflow.eps_inf != "auto":
+        return (
+            "with workflow.eps_inf not 'auto' (it sets the mesh of the step that "
+            "computes it); it is kept for when you set eps_inf: auto"
+        )
+    if _eps_inf_inert_advisory(koopmans_input) is not None:
+        return (
+            "because no step of this run consumes workflow.eps_inf, so none computes "
+            "it; it is kept for when one does"
+        )
+    return None
+
+
+def _path_is_refused(koopmans_input: KoopmansInput) -> bool:
+    """Report whether the run refuses a ``kpoints.path``, so none can be added to it."""
+    atoms = koopmans_input.atoms
+    return (
+        band_path_refusal(
+            koopmans_input.workflow,
+            any(atoms.cell_parameters.periodic),
+            atoms.snapshots is not None,
+        )
+        is not None
+    )
+
+
+_PATH_IS_REFUSED = (
+    "because this run refuses a kpoints.path, so it interpolates no band structure; "
+    "it is kept for when you switch to a task that does, such as task: wannierize or a "
+    "singlepoint without atoms.snapshots"
+)
+
+
+def _wannierize_inert_reason(koopmans_input: KoopmansInput) -> str | None:
+    """Say why ``kpoints.overrides.wannierize`` reaches no step, or return ``None``."""
+    workflow = koopmans_input.workflow
+    if not _runs_wannierization(koopmans_input):
+        run = f"task: {workflow.task.value}"
+        if workflow.task == Task.SINGLEPOINT:
+            run += f" with init_orbitals: {workflow.init_orbitals.value}"
+        return (
+            f"on {run}, which runs no Wannierization; it is kept for when you switch to "
+            "a run that does"
+        )
+    if not names_band_path(koopmans_input.kpoints):
+        if _path_is_refused(koopmans_input):
+            return _PATH_IS_REFUSED
+        return (
+            "without a kpoints.path: it sets the density of the band structure "
+            "wannier90 interpolates along that path; it is kept for when you add one"
+        )
+    return None
+
+
+def _wannierize_smooth_inert_reason(koopmans_input: KoopmansInput) -> str | None:
+    """Say why ``kpoints.overrides.wannierize_smooth`` reaches no step, or return ``None``."""
+    if koopmans_input.workflow.task != Task.SINGLEPOINT or not _runs_wannierization(koopmans_input):
+        return (
+            "on this run: only a singlepoint initialized from Wannier functions "
+            "(init_orbitals: mlwfs or projwfs) runs the smooth Wannierization; it is "
+            "kept for when you switch to one"
+        )
+    if not names_band_path(koopmans_input.kpoints):
+        if _path_is_refused(koopmans_input):
+            return _PATH_IS_REFUSED
+        return (
+            "without a kpoints.path: the smooth Wannierization serves only the band "
+            "structure interpolated along it; it is kept for when you add one"
+        )
+    if smooth_factor(koopmans_input.kpoints) is None:
+        return (
+            "at factor [1, 1, 1], which densifies nothing; it is kept for when you raise the factor"
+        )
+    return None
+
+
+def _smooth_mesh_advisory(koopmans_input: KoopmansInput) -> str | None:
+    """Return the notice for a smooth mesh no denser than the Wannier mesh, if it is one.
+
+    Only a direction the factor densifies is checked: a factor of 1 keeps
+    that direction on purpose.
+    """
+    kpoints = koopmans_input.kpoints
+    factor = smooth_factor(kpoints)
+    if factor is None or _wannierize_smooth_inert_reason(koopmans_input) is not None:
+        return None
+    nscf = kpoints.overrides.nscf
+    wannier_mesh = tuple(nscf.grid) if nscf is not None and nscf.grid is not None else kpoints.grid
+    smooth_mesh = tuple(smooth_grid(kpoints, factor))
+    if all(s > w for s, w, f in zip(smooth_mesh, wannier_mesh, factor, strict=True) if f > 1):
+        return None
+    return (
+        "kpoints.overrides.wannierize_smooth densifies kpoints.grid "
+        f"{tuple(kpoints.grid)} to a {smooth_mesh} mesh, which is no denser than the "
+        f"{wannier_mesh} mesh of the main Wannierization in every direction the factor "
+        "densifies; raise the factor or lower kpoints.overrides.nscf.grid."
+    )
+
+
+def _gamma_only_override_advisories(koopmans_input: KoopmansInput) -> list[str]:
+    """Return a notice for each override entry a gamma-only run has no use for."""
+    overrides = koopmans_input.kpoints.overrides
+    return [
+        f"kpoints.overrides.{step} has no effect on a gamma-only run, which samples Gamma "
+        "alone; it is kept for when you switch to a k-point grid."
+        for step in ("wannierize", "wannierize_smooth", "dielectric")
+        if getattr(overrides, step) is not None
+    ]
+
+
+def _kpoint_override_advisories(koopmans_input: KoopmansInput) -> list[str]:
+    """Return a notice for each ``kpoints.overrides`` entry naming a step the run lacks."""
+    if koopmans_input.kpoints.gamma_only:
+        return _gamma_only_override_advisories(koopmans_input)
+    overrides = koopmans_input.kpoints.overrides
+    task = koopmans_input.workflow.task
+    advisories: list[str] = []
+
+    if overrides.nscf is not None and task in (Task.DFT_BANDS, Task.DFT_EPS):
+        advisories.append(
+            f"kpoints.overrides.nscf has no effect on task: {task.value}, which runs no "
+            "nscf step; it is kept for when you switch to a task that Wannierizes."
+        )
+
+    inert_reasons = {
+        "wannierize": _wannierize_inert_reason,
+        "wannierize_smooth": _wannierize_smooth_inert_reason,
+        "dielectric": _dielectric_inert_reason,
+    }
+    for step, inert_reason in inert_reasons.items():
+        if getattr(overrides, step) is None:
+            continue
+        reason = inert_reason(koopmans_input)
+        if reason is not None:
+            advisories.append(f"kpoints.overrides.{step} has no effect {reason}.")
+
+    smooth_mesh = _smooth_mesh_advisory(koopmans_input)
+    if smooth_mesh is not None:
+        advisories.append(smooth_mesh)
+
+    return advisories
 
 
 def _eps_inf_inert_advisory(koopmans_input: KoopmansInput) -> str | None:
@@ -721,7 +910,7 @@ def _eps_inf_inert_advisory(koopmans_input: KoopmansInput) -> str | None:
             "constant enters only the screening step, which this run skips; it is "
             "kept for when you switch screening back on."
         )
-    if workflow.screening_method != CalculateScreeningMethod.DSCF:
+    if workflow.formalism != Formalism.DSCF:
         return None
     if workflow.init_orbitals not in (
         VariationalOrbitalType.MLWFS,
@@ -756,9 +945,7 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     keeping in the input file rather than editing out and back in when the
     task changes.
 
-    The smooth-interpolation check compares the resolved value against its
-    neutral default, since ``kpoints.smooth_interpolation_factor`` has no
-    "unset" state distinct from 1. ``workflow.group_orbitals_by`` is
+    ``workflow.group_orbitals_by`` is
     resolved at parse time (see ``WorkflowConfig.resolve_group_orbitals_by``)
     and so is never unset on the parsed model; the only combination that
     still signals something the input file actually wrote is a resolved
@@ -777,29 +964,28 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
     workflow = koopmans_input.workflow
     task = workflow.task
 
-    if any(f > 1 for f in koopmans_input.kpoints.smooth_interpolation_factor):
-        if task != Task.SINGLEPOINT:
-            advisories.append(
-                "kpoints.smooth_interpolation_factor has no effect on task: "
-                f"{task.value} (it shapes the Koopmans band-structure interpolation, "
-                "which a singlepoint computes); it is kept for when you switch task "
-                "to singlepoint."
-            )
+    if workflow.formalism is not None and task in _TASKS_WITHOUT_KOOPMANS_STEP:
+        advisories.append(
+            f"workflow.formalism has no effect on task: {task.value}, which runs no "
+            "Koopmans step; it is kept for when you switch task to singlepoint."
+        )
+
+    advisories.extend(_kpoint_override_advisories(koopmans_input))
 
     eps_inf_inert = _eps_inf_inert_advisory(koopmans_input)
     if eps_inf_inert is not None:
         advisories.append(eps_inf_inert)
     elif (
-        task == Task.SINGLEPOINT
+        task in (Task.SINGLEPOINT, Task.BSE)
         and workflow.eps_inf == "auto"
-        and koopmans_input.kpoints.eps_inf_factor == (1, 1, 1)
+        and koopmans_input.kpoints.overrides.dielectric is None
     ):
         advisories.append(
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            f"{_default_eps_inf_mesh_description(koopmans_input)}; it converges "
+            f"{_default_dielectric_mesh_description(koopmans_input)}; it converges "
             "slowly with k-points, so that mesh may be too coarse. Set "
-            "kpoints.eps_inf_factor above 1 to multiply kpoints.grid — not this mesh "
-            "— into a denser one for the dielectric-constant step alone."
+            "kpoints.overrides.dielectric to give the dielectric-constant step a "
+            "denser mesh of its own."
         )
 
     grouping_resolved_to_none = workflow.group_orbitals_by == GroupOrbitalsBy.NONE
@@ -811,12 +997,21 @@ def advisories_for(koopmans_input: KoopmansInput) -> list[str]:
                 "computed only within a singlepoint); it is kept for when you switch "
                 "task to singlepoint."
             )
+        elif task == Task.BSE:
+            advisories.append(
+                "workflow.group_orbitals_tol has no effect on task: "
+                f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
+                f"{workflow.init_orbitals.value}, formalism: {Formalism.DFPT.value}); "
+                "it is kept for when you set group_orbitals_by to a criterion this "
+                "run implements (spread)."
+            )
         else:
             advisories.append(
                 "workflow.group_orbitals_tol has no effect on task: "
                 f"{task.value} (group_orbitals_by resolved to 'none' for init_orbitals: "
-                f"{workflow.init_orbitals.value}, screening_method: "
-                f"{workflow.screening_method.value}); it is kept for when you set "
+                f"{workflow.init_orbitals.value}, formalism: "
+                f"{workflow.formalism.value if workflow.formalism else 'unset'}); "
+                "it is kept for when you set "
                 "group_orbitals_by to a criterion this run implements (self_hartree for "
                 "DSCF, spread for DFPT)."
             )

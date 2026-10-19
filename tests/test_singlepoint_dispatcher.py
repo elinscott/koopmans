@@ -16,8 +16,8 @@ from koopmans.aiida.workflows.dscf import (
 from koopmans.input_file import KoopmansInput, read_input_file
 from koopmans.input_file.atomic_positions import AtomicPositionsInput
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
     Correction,
+    Formalism,
     Task,
     VariationalOrbitalType,
 )
@@ -65,7 +65,7 @@ class TestOzoneInputParse:
         assert isinstance(ozone_input, KoopmansInput)
         assert ozone_input.workflow.task == Task.SINGLEPOINT
         assert ozone_input.workflow.correction == Correction.KI
-        assert ozone_input.workflow.screening_method == CalculateScreeningMethod.DSCF
+        assert ozone_input.workflow.formalism == Formalism.DSCF
         assert ozone_input.workflow.init_orbitals == VariationalOrbitalType.KOHN_SHAM
         assert ozone_input.workflow.alpha_numsteps == 1
         assert ozone_input.workflow.pseudo_library == "SG15/1.2/PBE/SR"
@@ -195,21 +195,19 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         """The DFPT route (kcw.x) implements KI only; anything else must raise loudly.
 
         Guards against silently running KI physics for a requested KIPZ (etc.)
-        correction: the DFPT branch dispatches on ``screening_method`` before
+        correction: the DFPT branch dispatches on ``formalism`` before
         the DSCF correction guard is reached.
         """
         d = ozone_input.model_dump()
-        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["formalism"] = "dfpt"
         d["workflow"]["correction"] = correction_value
         inp = KoopmansInput.model_validate(d)
 
         with pytest.raises(NotImplementedError, match="only implements the KI correction"):
             build_singlepoint_workgraph(inp)
 
-    @pytest.mark.parametrize("screening_method", ["dscf", "dfpt"])
-    def test_external_projectors_rejected(
-        self, ozone_input: KoopmansInput, screening_method: str
-    ) -> None:
+    @pytest.mark.parametrize("formalism", ["dscf", "dfpt"])
+    def test_external_projectors_rejected(self, ozone_input: KoopmansInput, formalism: str) -> None:
         """``atom_proj_ext`` is rejected on both singlepoint streams.
 
         Neither stream consults the external projector keywords when it
@@ -217,7 +215,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
         drop it.
         """
         d = ozone_input.model_dump()
-        d["workflow"]["screening_method"] = screening_method
+        d["workflow"]["formalism"] = formalism
         d["calculator_parameters"]["pw2wannier90"] = {"atom_proj_ext": True}
         inp = KoopmansInput.model_validate(d)
 
@@ -262,15 +260,20 @@ class TestBuildSinglepointWorkgraphScopeGuards:
             build_workgraph(inp)
 
 
-class TestSmoothInterpolationFactorAdvisedOffDscf:
-    """``kpoints.smooth_interpolation_factor`` only shapes the DSCF band interpolation.
+class TestSmoothWannierizationAdvisedOffSinglepoint:
+    """``kpoints.overrides.wannierize_smooth`` only shapes a singlepoint's band interpolation.
 
-    Every other route — DFPT screening within a singlepoint included —
-    performs no band interpolation, so the factor takes no effect there.
-    That used to be a build-time refusal; it is now a non-fatal advisory
+    Every other task runs no smooth Wannierization, so the entry takes no
+    effect there. It is a non-fatal advisory
     (:func:`koopmans.aiida.workflows.advisories_for`), so the route builds
-    exactly as it would with the factor left at its default.
+    exactly as it would without the entry.
     """
+
+    _ADVISORY = (
+        "kpoints.overrides.wannierize_smooth has no effect on this run: only a singlepoint "
+        "initialized from Wannier functions (init_orbitals: mlwfs or projwfs) runs the "
+        "smooth Wannierization; it is kept for when you switch to one."
+    )
 
     @staticmethod
     def _si_dict(task: str, **workflow_updates: Any) -> dict[str, Any]:
@@ -286,7 +289,7 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
             "kpoints": {
                 "grid": [2, 2, 2],
                 "offset": [0, 0, 0],
-                "smooth_interpolation_factor": 2,
+                "overrides": {"wannierize_smooth": {"factor": 2}},
             },
             "calculator_parameters": {"ecutwfc": 20.0},
         }
@@ -303,12 +306,7 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
         wg = build_workgraph(inp)
         assert wg is not None
 
-        advisories = advisories_for(inp)
-        assert advisories == [
-            "kpoints.smooth_interpolation_factor has no effect on task: dft_bands "
-            "(it shapes the Koopmans band-structure interpolation, which a "
-            "singlepoint computes); it is kept for when you switch task to singlepoint."
-        ]
+        assert advisories_for(inp) == [self._ADVISORY]
 
     def test_wannierize_builds_and_is_advised(
         self,
@@ -329,40 +327,30 @@ class TestSmoothInterpolationFactorAdvisedOffDscf:
         assert wg is not None
         assert "wannierize_smooth" not in wg.get_task_names()
 
-        advisories = advisories_for(inp)
-        assert advisories == [
-            "kpoints.smooth_interpolation_factor has no effect on task: wannierize "
-            "(it shapes the Koopmans band-structure interpolation, which a "
-            "singlepoint computes); it is kept for when you switch task to singlepoint."
-        ]
+        assert advisories_for(inp) == [self._ADVISORY]
 
-    def test_a_factor_of_one_is_not_advised(self) -> None:
-        """Negative control: the advisory itself is silent at the default factor."""
+    def test_no_entry_is_not_advised(self) -> None:
+        """Negative control: the advisory itself is silent without the entry."""
         from koopmans.aiida.workflows import advisories_for
 
         d = self._si_dict("dft_bands")
-        d["kpoints"]["smooth_interpolation_factor"] = 1
+        del d["kpoints"]["overrides"]
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == []
 
-    def test_gamma_only_dscf_route_reaches_the_no_path_refusal(
-        self, ozone_input: KoopmansInput, aiida_profile: Any, fake_sg15_pseudo_family: Any
-    ) -> None:
-        """A gamma-only run carries the field too, and gets no free pass from it.
+    def test_gamma_only_dscf_route_advises_the_entry(self, ozone_input: KoopmansInput) -> None:
+        """A gamma-only run has no mesh to densify; the entry waits for a k-point grid."""
+        from koopmans.aiida.conversion import smooth_factor
+        from koopmans.aiida.workflows import advisories_for
 
-        Ozone's own kpoints are gamma-only, so the field must be present
-        there for a factor above 1 to reach ``band_interpolation_inputs``'s
-        own "no path" refusal, rather than the dispatcher-level guard above
-        (task/screening_method here is singlepoint/DSCF, which does perform
-        band interpolation) or a missing-attribute error.
-        """
         d = ozone_input.model_dump()
-        d["kpoints"]["smooth_interpolation_factor"] = 2
+        d["kpoints"]["overrides"]["wannierize_smooth"] = {"factor": 2}
         inp = KoopmansInput.model_validate(d)
-        assert inp.kpoints.gamma_only
-
-        with pytest.raises(ValueError, match=r"kpoints: \{path"):
-            build_singlepoint_workgraph(inp)
+        assert smooth_factor(inp.kpoints) is None
+        assert advisories_for(inp) == [
+            "kpoints.overrides.wannierize_smooth has no effect on a gamma-only run, which "
+            "samples Gamma alone; it is kept for when you switch to a k-point grid."
+        ]
 
 
 class TestEpsInfOnAMolecule:
@@ -419,7 +407,7 @@ class TestExplicitOrbitalGroupsRejected:
         before any structure conversion or pseudopotential install.
         """
         d = ozone_input.model_dump()
-        d["workflow"]["screening_method"] = "dfpt"
+        d["workflow"]["formalism"] = "dfpt"
         d["workflow"]["correction"] = "ki"
         d["workflow"]["init_orbitals"] = "mlwfs"
         d["workflow"]["init_empty_orbitals"] = "mlwfs"

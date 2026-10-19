@@ -33,6 +33,8 @@ def _si_dict(task: str, **workflow_updates: Any) -> dict[str, Any]:
         "kpoints": {"grid": [2, 2, 2], "offset": [0, 0, 0]},
         "calculator_parameters": {"ecutwfc": 20.0},
     }
+    if task == "singlepoint":
+        d["workflow"]["formalism"] = "dscf"
     d["workflow"].update(workflow_updates)
     return d
 
@@ -51,74 +53,212 @@ def _bse_dict(**workflow_updates: Any) -> dict[str, Any]:
     return d
 
 
-class TestSmoothInterpolationFactorAdvisory:
-    """``kpoints.smooth_interpolation_factor`` only shapes a singlepoint's band structure."""
+class TestFormalismAdvisory:
+    """``workflow.formalism`` only matters to a task that evaluates the Koopmans correction."""
 
-    def test_default_factor_is_silent(self) -> None:
-        """Negative control: the neutral default names nothing."""
+    @pytest.mark.parametrize("task", ["dft_bands", "dft_eps", "wannierize"])
+    def test_stated_on_a_task_without_a_koopmans_step_is_advised(self, task: str) -> None:
+        """A stated formalism is kept, with a notice naming the task."""
+        inp = KoopmansInput.model_validate(_si_dict(task, formalism="dfpt"))
+        (message,) = advisories_for(inp)
+        assert f"no effect on task: {task}" in message
+
+    def test_unstated_is_silent_and_singlepoint_is_not_advised(self) -> None:
+        """Negative controls: unset on a non-Koopmans task, and set on a singlepoint."""
+        assert advisories_for(KoopmansInput.model_validate(_si_dict("dft_bands"))) == []
+        assert advisories_for(KoopmansInput.model_validate(_si_dict("singlepoint"))) == []
+
+
+_SMOOTH_NOT_HERE = (
+    "kpoints.overrides.wannierize_smooth has no effect on this run: only a singlepoint "
+    "initialized from Wannier functions (init_orbitals: mlwfs or projwfs) runs the smooth "
+    "Wannierization; it is kept for when you switch to one."
+)
+
+
+def _with_overrides(d: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    d["kpoints"]["overrides"] = overrides
+    return d
+
+
+class TestKpointOverrideAdvisory:
+    """A ``kpoints.overrides`` entry naming a step the run lacks is kept, with a notice."""
+
+    def test_no_entries_are_silent(self) -> None:
+        """Negative control: an input with no entries names nothing."""
         inp = KoopmansInput.model_validate(_si_dict("wannierize"))
         assert advisories_for(inp) == []
 
-    def test_wannierize_is_advised(self) -> None:
-        """A wannierize task Wannierizes no smooth-interpolation mesh."""
-        d = _si_dict("wannierize")
-        d["kpoints"]["smooth_interpolation_factor"] = 2
-        inp = KoopmansInput.model_validate(d)
-        assert advisories_for(inp) == [
-            "kpoints.smooth_interpolation_factor has no effect on task: wannierize "
-            "(it shapes the Koopmans band-structure interpolation, which a "
-            "singlepoint computes); it is kept for when you switch task to singlepoint."
-        ]
+    @pytest.mark.parametrize("task", ["wannierize", "dft_bands", "dft_eps"])
+    def test_smooth_wannierization_off_singlepoint_is_advised(self, task: str) -> None:
+        """Only a singlepoint runs the smooth Wannierization."""
+        d = _with_overrides(_si_dict(task), wannierize_smooth={"factor": 2})
+        assert advisories_for(KoopmansInput.model_validate(d)) == [_SMOOTH_NOT_HERE]
 
-    def test_dft_bands_is_advised(self) -> None:
-        """A dft_bands task computes DFT bands directly, with no Koopmans Hamiltonian."""
-        d = _si_dict("dft_bands")
-        d["kpoints"]["smooth_interpolation_factor"] = 3
-        inp = KoopmansInput.model_validate(d)
-        assert advisories_for(inp) == [
-            "kpoints.smooth_interpolation_factor has no effect on task: dft_bands "
-            "(it shapes the Koopmans band-structure interpolation, which a "
-            "singlepoint computes); it is kept for when you switch task to singlepoint."
-        ]
-
-    def test_dft_eps_is_advised(self) -> None:
-        """A dft_eps task runs ph.x, which has no band-structure interpolation."""
-        d = _si_dict("dft_eps")
-        d["kpoints"]["smooth_interpolation_factor"] = 2
-        inp = KoopmansInput.model_validate(d)
-        assert advisories_for(inp) == [
-            "kpoints.smooth_interpolation_factor has no effect on task: dft_eps "
-            "(it shapes the Koopmans band-structure interpolation, which a "
-            "singlepoint computes); it is kept for when you switch task to singlepoint."
-        ]
-
-    @pytest.mark.parametrize("screening_method", ["dscf", "dfpt"])
-    def test_neither_singlepoint_route_is_advised(self, screening_method: str) -> None:
-        """Both routes interpolate a Koopmans band structure, so neither is inert.
-
-        The DFPT route is the discriminating case: it used to be advised
-        here, kcw.x having interpolated off the coarse grid alone.
-        """
+    @pytest.mark.parametrize("formalism", ["dscf", "dfpt"])
+    def test_neither_singlepoint_route_is_advised(self, formalism: str) -> None:
+        """Both routes run the smooth Wannierization, so neither entry is inert."""
         d = _si_dict(
             "singlepoint",
-            screening_method=screening_method,
+            formalism=formalism,
             correction="ki",
             init_orbitals="mlwfs",
         )
-        d["kpoints"]["smooth_interpolation_factor"] = 2
         d["kpoints"]["path"] = "GXG"
-        inp = KoopmansInput.model_validate(d)
-        assert advisories_for(inp) == []
+        _with_overrides(d, wannierize={"path_density": 20.0}, wannierize_smooth={"factor": 2})
+        assert advisories_for(KoopmansInput.model_validate(d)) == []
+
+    def test_smooth_wannierization_without_a_path_is_advised(self) -> None:
+        """Without a path there is no band structure for it to serve."""
+        d = _si_dict("singlepoint", formalism="dfpt", correction="ki", init_orbitals="mlwfs")
+        _with_overrides(d, wannierize_smooth={"factor": 2})
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            "kpoints.overrides.wannierize_smooth has no effect without a kpoints.path: the "
+            "smooth Wannierization serves only the band structure interpolated along it; it "
+            "is kept for when you add one."
+        ]
+
+    def test_smooth_wannierization_at_factor_one_is_advised(self) -> None:
+        """A factor of 1 densifies nothing, so no smooth Wannierization runs."""
+        d = _si_dict("singlepoint", formalism="dfpt", correction="ki", init_orbitals="mlwfs")
+        d["kpoints"]["path"] = "GXG"
+        _with_overrides(d, wannierize_smooth={"factor": 1})
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            "kpoints.overrides.wannierize_smooth has no effect at factor [1, 1, 1], which "
+            "densifies nothing; it is kept for when you raise the factor."
+        ]
+
+    def test_wannierize_density_off_a_wannierization_is_advised(self) -> None:
+        """A dft_bands task Wannierizes nothing."""
+        d = _with_overrides(_si_dict("dft_bands"), wannierize={"path_density": 80.0})
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            "kpoints.overrides.wannierize has no effect on task: dft_bands, which runs no "
+            "Wannierization; it is kept for when you switch to a run that does."
+        ]
+
+    def test_wannierize_density_without_a_path_is_advised(self) -> None:
+        """A wannierize task with no path interpolates no band structure."""
+        d = _with_overrides(_si_dict("wannierize"), wannierize={"path_density": 80.0})
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            "kpoints.overrides.wannierize has no effect without a kpoints.path: it sets the "
+            "density of the band structure wannier90 interpolates along that path; it is "
+            "kept for when you add one."
+        ]
+
+    def test_wannierize_density_on_bse_names_a_task_that_interpolates(self) -> None:
+        """A bse run refuses a kpoints.path, so adding one is not the fix."""
+        d = _with_overrides(
+            _bse_dict(formalism="dfpt", correction="ki", init_orbitals="mlwfs"),
+            wannierize={"path_density": 80.0},
+            wannierize_smooth={"factor": 2},
+        )
+        reason = (
+            "because this run refuses a kpoints.path, so it interpolates no band structure; "
+            "it is kept for when you switch to a task that does, such as task: wannierize or "
+            "a singlepoint without atoms.snapshots."
+        )
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            f"kpoints.overrides.wannierize has no effect {reason}",
+            "kpoints.overrides.wannierize_smooth has no effect on this run: only a "
+            "singlepoint initialized from Wannier functions (init_orbitals: mlwfs or "
+            "projwfs) runs the smooth Wannierization; it is kept for when you switch to one.",
+        ]
+
+    def test_gamma_only_entries_other_than_scf_and_nscf_are_advised(self) -> None:
+        """Gamma-only keeps the entries it can ignore and refuses the ones it cannot."""
+        d = _with_overrides(
+            _si_dict("wannierize"),
+            wannierize={"path_density": 80.0},
+            wannierize_smooth={"factor": 2},
+            dielectric={"grid": [4, 4, 4]},
+        )
+        d["kpoints"] = {"gamma_only": True, "overrides": d["kpoints"]["overrides"]}
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            f"kpoints.overrides.{step} has no effect on a gamma-only run, which samples Gamma "
+            "alone; it is kept for when you switch to a k-point grid."
+            for step in ("wannierize", "wannierize_smooth", "dielectric")
+        ]
+
+    @pytest.mark.parametrize(
+        ("nscf", "factor", "advised"),
+        [
+            ([4, 4, 4], 2, True),
+            ([4, 4, 4], 4, False),
+            (None, 2, False),
+            ([4, 4, 4], [2, 2, 1], True),
+        ],
+    )
+    def test_a_smooth_mesh_no_denser_than_the_wannier_mesh_is_advised(
+        self, nscf: list[int] | None, factor: Any, advised: bool
+    ) -> None:
+        """The smooth mesh is the top-level grid times the factor, whatever nscf states."""
+        d = _si_dict("singlepoint", formalism="dfpt", correction="ki", init_orbitals="mlwfs")
+        d["kpoints"]["grid"] = [2, 2, 2]
+        d["kpoints"]["path"] = "GXG"
+        overrides: dict[str, Any] = {"wannierize_smooth": {"factor": factor}}
+        if nscf is not None:
+            overrides["nscf"] = {"grid": nscf}
+        _with_overrides(d, **overrides)
+        messages = advisories_for(KoopmansInput.model_validate(d))
+        if not advised:
+            assert messages == []
+            return
+        assert len(messages) == 1
+        assert "(2, 2, 2)" in messages[0]
+        assert "(4, 4, 4) mesh of the main Wannierization" in messages[0]
+
+    @pytest.mark.parametrize("task", ["dft_bands", "dft_eps"])
+    def test_nscf_mesh_without_an_nscf_step_is_advised(self, task: str) -> None:
+        """Neither task runs an nscf step."""
+        d = _with_overrides(_si_dict(task), nscf={"grid": [4, 4, 4]})
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            f"kpoints.overrides.nscf has no effect on task: {task}, which runs no nscf "
+            "step; it is kept for when you switch to a task that Wannierizes."
+        ]
+
+    def test_dielectric_mesh_on_dft_eps_names_the_scf_entry(self) -> None:
+        """The task's own dielectric calculation samples ``scf``, not ``dielectric``."""
+        d = _with_overrides(_si_dict("dft_eps"), dielectric={"grid": [4, 4, 4]})
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            "kpoints.overrides.dielectric has no effect on task: dft_eps, whose dielectric "
+            "calculation is its own scf: set kpoints.overrides.scf or kpoints.grid for it; "
+            "it is kept for when you switch task to singlepoint or bse."
+        ]
+
+    def test_dielectric_mesh_with_a_numeric_eps_inf_is_advised(self) -> None:
+        """A numeric ``eps_inf`` runs no dielectric step for the mesh to reach."""
+        d = _si_dict("singlepoint", formalism="dfpt", correction="ki", init_orbitals="mlwfs")
+        d["workflow"]["eps_inf"] = 11.7
+        _with_overrides(d, dielectric={"grid": [4, 4, 4]})
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            "kpoints.overrides.dielectric has no effect with workflow.eps_inf not 'auto' (it "
+            "sets the mesh of the step that computes it); it is kept for when you set "
+            "eps_inf: auto."
+        ]
+
+    def test_dielectric_mesh_on_bse_is_silent(self) -> None:
+        """The bse task runs the same dielectric step the DFPT singlepoint does."""
+        d = _with_overrides(
+            _bse_dict(formalism="dfpt", correction="ki", init_orbitals="mlwfs", eps_inf="auto"),
+            dielectric={"grid": [4, 4, 4]},
+        )
+        assert advisories_for(KoopmansInput.model_validate(d)) == []
 
 
-class TestEpsInfFactorAdvisory:
-    """``workflow.eps_inf: auto`` without ``kpoints.eps_inf_factor`` names the fallback mesh."""
+class TestDielectricMeshAdvisory:
+    """``workflow.eps_inf: auto`` without ``kpoints.overrides.dielectric`` names its mesh."""
+
+    _ADVICE = (
+        "; it converges slowly with k-points, so that mesh may be too coarse. Set "
+        "kpoints.overrides.dielectric to give the dielectric-constant step a denser mesh "
+        "of its own."
+    )
 
     @staticmethod
     def _dfpt_dict(**kpoints_updates: Any) -> dict[str, Any]:
         d = _si_dict(
             "singlepoint",
-            screening_method="dfpt",
+            formalism="dfpt",
             correction="ki",
             init_orbitals="mlwfs",
             eps_inf="auto",
@@ -126,8 +266,8 @@ class TestEpsInfFactorAdvisory:
         d["kpoints"].update(kpoints_updates)
         return d
 
-    def test_auto_at_default_factor_names_kpoints_grid_when_scf_is_unset(self) -> None:
-        """Without an ``overrides.scf`` mesh, the dielectric step falls back to ``kpoints.grid``.
+    def test_names_kpoints_grid_when_scf_is_unset(self) -> None:
+        """Without an ``overrides.scf`` mesh, the dielectric step samples ``kpoints.grid``.
 
         A mutant that drops the mesh from the message, or that fires
         regardless of the actual grid, would still pass a bare "advisory
@@ -136,34 +276,24 @@ class TestEpsInfFactorAdvisory:
         inp = KoopmansInput.model_validate(self._dfpt_dict(grid=[4, 4, 4]))
         assert advisories_for(inp) == [
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            "kpoints.grid mesh (4, 4, 4); it converges slowly with k-points, so "
-            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
-            "multiply kpoints.grid — not this mesh — into a denser one for the "
-            "dielectric-constant step alone."
+            "kpoints.grid mesh (4, 4, 4)" + self._ADVICE
         ]
 
-    def test_auto_at_default_factor_names_the_scf_override_grid(self) -> None:
-        """With ``overrides.scf.grid`` set, the dielectric step falls back to THAT mesh.
+    def test_names_the_scf_override_grid(self) -> None:
+        """With ``overrides.scf.grid`` set, the dielectric step samples THAT mesh.
 
-        At the default factor ``eps_kpoints`` is unset, so the dielectric
-        scf reuses the chain's own ``scf_kpoints`` — which is
-        ``overrides.scf.grid`` when the caller states one, not
-        ``kpoints.grid``. A mutant that always names ``kpoints.grid``
-        would print (2, 2, 2) here while the calculation actually runs on
-        (6, 6, 6).
+        A mutant that always names ``kpoints.grid`` would print (2, 2, 2)
+        here while the calculation actually runs on (6, 6, 6).
         """
         d = self._dfpt_dict(grid=[2, 2, 2])
         d["kpoints"]["overrides"] = {"scf": {"grid": [6, 6, 6]}}
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            "kpoints.overrides.scf.grid mesh (6, 6, 6); it converges slowly with "
-            "k-points, so that mesh may be too coarse. Set kpoints.eps_inf_factor "
-            "above 1 to multiply kpoints.grid — not this mesh — into a denser one "
-            "for the dielectric-constant step alone."
+            "kpoints.overrides.scf.grid mesh (6, 6, 6)" + self._ADVICE
         ]
 
-    def test_auto_at_default_factor_names_the_scf_override_spacing(self) -> None:
+    def test_names_the_scf_override_spacing(self) -> None:
         """With ``overrides.scf.grid_spacing`` set, no concrete mesh is knowable at parse.
 
         A mutant that invents dimensions from ``kpoints.grid`` regardless
@@ -175,45 +305,40 @@ class TestEpsInfFactorAdvisory:
         assert advisories_for(inp) == [
             "workflow.eps_inf: auto computes the dielectric constant on the mesh "
             "kpoints.overrides.scf.grid_spacing = 0.15 builds (dimensions unknown "
-            "until the calculation runs); it converges slowly with k-points, so "
-            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
-            "multiply kpoints.grid — not this mesh — into a denser one for the "
-            "dielectric-constant step alone."
+            "until the calculation runs)" + self._ADVICE
         ]
 
-    def test_auto_with_a_non_default_factor_is_silent(self) -> None:
-        """The negative control: a densifying factor silences the advisory."""
-        inp = KoopmansInput.model_validate(self._dfpt_dict(eps_inf_factor=2))
-        assert advisories_for(inp) == []
+    def test_a_dielectric_entry_is_silent(self) -> None:
+        """The negative control: a mesh of its own silences the advisory."""
+        d = self._dfpt_dict()
+        d["kpoints"]["overrides"] = {"dielectric": {"grid": [4, 4, 4]}}
+        assert advisories_for(KoopmansInput.model_validate(d)) == []
 
     def test_numeric_eps_inf_is_silent(self) -> None:
         """A numeric ``eps_inf`` runs no dielectric step, so no mesh to advise on."""
-        d = _si_dict("singlepoint", screening_method="dfpt", correction="ki", init_orbitals="mlwfs")
+        d = _si_dict("singlepoint", formalism="dfpt", correction="ki", init_orbitals="mlwfs")
         d["workflow"]["eps_inf"] = 11.7
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == []
 
     def test_dscf_screening_names_kpoints_grid(self) -> None:
         """The DSCF dielectric step samples ``kpoints.grid``, the one mesh that route takes."""
-        d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
+        d = _si_dict("singlepoint", formalism="dscf", correction="ki", init_orbitals="mlwfs")
         d["workflow"]["eps_inf"] = "auto"
         d["kpoints"]["grid"] = [3, 3, 3]
         inp = KoopmansInput.model_validate(d)
         assert advisories_for(inp) == [
             "workflow.eps_inf: auto computes the dielectric constant on the "
-            "kpoints.grid mesh (3, 3, 3); it converges slowly with k-points, so "
-            "that mesh may be too coarse. Set kpoints.eps_inf_factor above 1 to "
-            "multiply kpoints.grid — not this mesh — into a denser one for the "
-            "dielectric-constant step alone."
+            "kpoints.grid mesh (3, 3, 3)" + self._ADVICE
         ]
 
-    def test_dscf_screening_with_a_factor_is_silent(self) -> None:
-        """The negative control: a densifying factor silences the DSCF advisory too."""
-        d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
-        d["workflow"]["eps_inf"] = "auto"
-        d["kpoints"]["eps_inf_factor"] = 2
-        inp = KoopmansInput.model_validate(d)
-        assert advisories_for(inp) == []
+    def test_bse_is_advised_like_the_dfpt_singlepoint(self) -> None:
+        """The bse task runs the DFPT chain's dielectric step, so it gets the same notice."""
+        d = _bse_dict(formalism="dfpt", correction="ki", init_orbitals="mlwfs", eps_inf="auto")
+        assert advisories_for(KoopmansInput.model_validate(d)) == [
+            "workflow.eps_inf: auto computes the dielectric constant on the "
+            "kpoints.grid mesh (2, 2, 2)" + self._ADVICE
+        ]
 
 
 class TestEpsInfInertAdvisory:
@@ -224,7 +349,7 @@ class TestEpsInfInertAdvisory:
     @staticmethod
     def _dscf(**workflow_updates: Any) -> dict[str, Any]:
         base: dict[str, Any] = {
-            "screening_method": "dscf",
+            "formalism": "dscf",
             "correction": "ki",
             "init_orbitals": "mlwfs",
             "eps_inf": "auto",
@@ -242,7 +367,7 @@ class TestEpsInfInertAdvisory:
 
     def test_calculate_alpha_off_on_dfpt_is_advised(self) -> None:
         """The DFPT screening step is skipped too, so its dielectric constant is unused."""
-        d = self._dscf(calculate_alpha=False, screening_method="dfpt")
+        d = self._dscf(calculate_alpha=False, formalism="dfpt")
         inp = KoopmansInput.model_validate(d)
         assert [a for a in advisories_for(inp) if "calculate_alpha" in a]
         assert not [a for a in advisories_for(inp) if self._MESH_ADVISORY in a]
@@ -290,15 +415,15 @@ class TestOrbitalGroupingAdvisory:
         assert inp.workflow.group_orbitals_tol is None
         assert advisories_for(inp) == []
 
-    def test_wannierize_with_mlwfs_alone_is_not_advised(self) -> None:
+    def test_singlepoint_with_mlwfs_alone_is_not_advised(self) -> None:
         """Negative control: init_orbitals alone resolves group_orbitals_by on its own.
 
         The criterion resolves to ``self_hartree`` for a Wannier-initialized
-        DSCF run (the default screening method) with the tolerance defaulted
-        alongside it, even though the user typed neither grouping keyword —
-        but the resolved criterion is not ``'none'``, so nothing is flagged.
+        DSCF run with the tolerance defaulted alongside it, even though the
+        user typed neither grouping keyword — but the resolved criterion is
+        not ``'none'``, so nothing is flagged.
         """
-        inp = KoopmansInput.model_validate(_si_dict("wannierize", init_orbitals="mlwfs"))
+        inp = KoopmansInput.model_validate(_si_dict("singlepoint", init_orbitals="mlwfs"))
         assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
         assert inp.workflow.group_orbitals_tol == pytest.approx(1.0e-4)
         assert advisories_for(inp) == []
@@ -352,7 +477,7 @@ class TestOrbitalGroupingAdvisory:
         string before the ``group_orbitals_by`` field validated it,
         raising a bare ``KeyError`` instead of pydantic's enum message.
         """
-        d = _si_dict("singlepoint", screening_method="dscf", correction="ki", init_orbitals="mlwfs")
+        d = _si_dict("singlepoint", formalism="dscf", correction="ki", init_orbitals="mlwfs")
         d["workflow"]["group_orbitals_by"] = "self-hartree"
         if with_tolerance:
             d["workflow"]["group_orbitals_tol"] = 0.05
@@ -363,7 +488,7 @@ class TestOrbitalGroupingAdvisory:
         """``init_orbitals: pz`` resolves grouping to 'none'; the tolerance is orphaned."""
         d = _si_dict(
             "singlepoint",
-            screening_method="dscf",
+            formalism="dscf",
             correction="ki",
             init_orbitals="pz",
             group_orbitals_tol=0.05,
@@ -373,7 +498,7 @@ class TestOrbitalGroupingAdvisory:
         assert advisories_for(inp) == [
             "workflow.group_orbitals_tol has no effect on task: singlepoint "
             "(group_orbitals_by resolved to 'none' for init_orbitals: pz, "
-            "screening_method: dscf); it is kept for when you set group_orbitals_by "
+            "formalism: dscf); it is kept for when you set group_orbitals_by "
             "to a criterion this run implements (self_hartree for DSCF, spread for "
             "DFPT)."
         ]
@@ -382,7 +507,7 @@ class TestOrbitalGroupingAdvisory:
         """DFPT never auto-defaults to 'spread'; a tolerance alone stays orphaned."""
         d = _si_dict(
             "singlepoint",
-            screening_method="dfpt",
+            formalism="dfpt",
             correction="ki",
             init_orbitals="mlwfs",
             group_orbitals_tol=0.05,
@@ -392,7 +517,7 @@ class TestOrbitalGroupingAdvisory:
         assert advisories_for(inp) == [
             "workflow.group_orbitals_tol has no effect on task: singlepoint "
             "(group_orbitals_by resolved to 'none' for init_orbitals: mlwfs, "
-            "screening_method: dfpt); it is kept for when you set group_orbitals_by "
+            "formalism: dfpt); it is kept for when you set group_orbitals_by "
             "to a criterion this run implements (self_hartree for DSCF, spread for "
             "DFPT)."
         ]
@@ -402,7 +527,6 @@ class TestOrbitalGroupingAdvisory:
         [
             ("wannierize", {}),
             ("wannierize", {"init_orbitals": "mlwfs"}),
-            ("wannierize", {"init_orbitals": "mlwfs", "screening_method": "dscf"}),
             ("wannierize", {"init_orbitals": "projwfs"}),
             ("dft_bands", {"init_orbitals": "mlwfs"}),
             ("dft_eps", {"init_orbitals": "mlwfs"}),
@@ -428,7 +552,7 @@ class TestOrbitalGroupingAdvisory:
         """The route this criterion is wired for stays silent, even at its own default."""
         d = _si_dict(
             "singlepoint",
-            screening_method="dscf",
+            formalism="dscf",
             correction="ki",
             init_orbitals="mlwfs",
         )
@@ -442,13 +566,13 @@ class TestOrbitalGroupingAdvisory:
 
         ``group_orbitals_tol`` reaches `bse`'s composed DFPT chain
         unchanged (aiida-koopmans#137), so an orphaned tolerance is advised
-        exactly as it would be under ``task: singlepoint`` with the same
-        ``screening_method``/``init_orbitals`` — not the "switch task"
+        with the formalism fixed at ``dfpt``, as under ``task: singlepoint`` with the same
+        ``formalism``/``init_orbitals`` — not the "switch task"
         message ``wannierize``/``dft_bands``/``dft_eps`` get, since those
         compose no DFPT chain at all.
         """
         common = {
-            "screening_method": "dfpt",
+            "formalism": "dfpt",
             "correction": "ki",
             "init_orbitals": "mlwfs",
             "group_orbitals_tol": 0.05,
@@ -456,12 +580,13 @@ class TestOrbitalGroupingAdvisory:
         bse_input = KoopmansInput.model_validate(_bse_dict(**common))
         singlepoint_input = KoopmansInput.model_validate(_si_dict("singlepoint", **common))
         assert bse_input.workflow.group_orbitals_by == GroupOrbitalsBy.NONE
-        bse_advisories = advisories_for(bse_input)
-        singlepoint_advisories = advisories_for(singlepoint_input)
-        assert bse_advisories == [
-            message.replace("task: singlepoint", "task: bse") for message in singlepoint_advisories
+        assert advisories_for(bse_input) == [
+            "workflow.group_orbitals_tol has no effect on task: bse "
+            "(group_orbitals_by resolved to 'none' for init_orbitals: mlwfs, "
+            "formalism: dfpt); it is kept for when you set group_orbitals_by "
+            "to a criterion this run implements (spread)."
         ]
-        assert bse_advisories != []
+        assert advisories_for(singlepoint_input) != []
 
 
 class TestResolveGroupOrbitalsByDoesNotMutateCaller:
@@ -475,7 +600,7 @@ class TestResolveGroupOrbitalsByDoesNotMutateCaller:
 
     def test_callers_dict_is_untouched(self) -> None:
         """A resolved criterion and tolerance never land back in the caller's dict."""
-        d = _si_dict("wannierize", init_orbitals="mlwfs")
+        d = _si_dict("singlepoint", init_orbitals="mlwfs")
         inp = KoopmansInput.model_validate(d)
         assert inp.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
         assert "group_orbitals_by" not in d["workflow"]
@@ -483,7 +608,7 @@ class TestResolveGroupOrbitalsByDoesNotMutateCaller:
 
     def test_editing_and_revalidating_resolves_afresh(self) -> None:
         """Flipping ``init_orbitals`` and re-validating must not inherit the earlier resolution."""
-        d = _si_dict("wannierize", init_orbitals="mlwfs")
+        d = _si_dict("singlepoint", init_orbitals="mlwfs")
         first = KoopmansInput.model_validate(d)
         assert first.workflow.group_orbitals_by == GroupOrbitalsBy.SELF_HARTREE
 
@@ -521,8 +646,7 @@ class TestBothAdvisoriesTogether:
 
     def test_two_orphaned_keywords_yield_two_messages(self) -> None:
         """One message per keyword left with no effect, not a merged one."""
-        d = _si_dict("wannierize")
-        d["kpoints"]["smooth_interpolation_factor"] = 2
+        d = _with_overrides(_si_dict("wannierize"), wannierize_smooth={"factor": 2})
         d["workflow"]["group_orbitals_tol"] = 0.05
         inp = KoopmansInput.model_validate(d)
         assert len(advisories_for(inp)) == 2
