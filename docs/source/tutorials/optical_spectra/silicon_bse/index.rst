@@ -4,16 +4,7 @@
 
 This tutorial computes the optical absorption spectrum of bulk silicon with the
 Bethe-Salpeter equation (BSE), on top of quasiparticle energies from a Koopmans
-calculation, using `yambo <http://www.yambo-code.org/>`_. It assumes you already know
-how a periodic Koopmans calculation is built from Wannier functions, taught in the
-:doc:`finite-differences tutorial <../../band_structures/silicon_finite_differences/index>`.
-
-***************
- Prerequisites
-***************
-
-Have ``p2y`` and ``yambo`` on your ``PATH`` when you run ``koopmans install``, as
-described on the :doc:`installation page <../../../installation>`.
+calculation, using `yambo <http://www.yambo-code.org/>`_.
 
 ****************
  The input file
@@ -25,18 +16,14 @@ it is in full:
 .. literalinclude:: si-bse.yaml
     :language: yaml
 
-Compared with the finite-differences tutorial's ``si.yaml``, the atoms, the k-point grid,
-the cutoff, ``nbnd`` and the Wannier projections are the same. This input changes four
-things:
-
-- ``workflow.task`` is ``bse``.
-- ``workflow.formalism`` is dropped: a ``bse`` calculation evaluates the Koopmans
-  correction by linear response in the primitive cell, so it needs no choice between
-  the two formalisms. The ``alpha_guess``, ``alpha_numsteps`` and ``group_orbitals_tol``
-  keywords of the finite-differences formalism go with it.
-- ``kpoints.path`` and ``kpoints.overrides.wannierize_smooth`` are dropped, since a
-  spectrum has no band path.
-- A ``calculator_parameters.yambo`` block and a ``parallelization`` block are added.
+The ``workflow`` block asks for a KI calculation of the ``atoms`` below, built from
+maximally localized Wannier functions, followed by a BSE spectrum on its eigenvalues.
+``kpoints`` carries only a grid, since a spectrum has no band path. Under
+``calculator_parameters``, ``nbnd`` and the ``wannier90`` entries build two sets of four
+Wannier functions, one spanning the filled bands and one the lowest empty bands; these
+eight bands are the ones that receive a Koopmans correction. The :doc:`linear-response
+tutorial <../../band_structures/silicon_linear_response/index>` walks through these
+settings. New here are the ``yambo`` block and the ``yambo`` entry of ``parallelization``.
 
 The ``yambo`` block sets yambo's own runcard variables under their own names. Six have
 no default:
@@ -73,7 +60,7 @@ electron-hole pairs of the Bethe-Salpeter kernel.
 
     $ koopmans run si-bse.yaml
 
-The progress table walks through the density-functional perturbation theory chain —
+The progress table walks through the Koopmans calculation —
 scf, nscf, a Wannierization per manifold, then wann2kc, screen and ham — followed by a
 fresh yambo chain: an scf and nscf for yambo's own ground state, ``p2y`` to build its
 SAVE directory, a step that turns the kcw.x eigenvalues of the ``ham`` step into yambo's
@@ -110,15 +97,17 @@ KI@LDA, a correction of 0.77 eV.
 
 .. code-block:: console
 
-    $ koopmans plot spectrum si-bse --label "BSE (KI@LDA)" --xlim 2 6 -o spectrum.png
+    $ koopmans plot spectrum si-bse --label "BSE (KI@LDA)" --xlim 2 5 -o spectrum.png
 
 This draws the imaginary part of the dielectric function against energy. The solid curve
 is the BSE spectrum. The dashed curve is the independent-particle spectrum, in which each
 filled-to-empty transition absorbs on its own, computed from the same KI@LDA energies:
 
 .. image:: spectrum.png
+    :class: responsive-fig
     :align: center
-    :width: 80%
+    :alt: The imaginary part of the dielectric function of silicon between 2 and 5 eV;
+        the BSE curve peaks at 3.12 eV, the independent-particle curve at 3.52 eV
 
 .. question:: What does the electron-hole interaction do to the spectrum?
 

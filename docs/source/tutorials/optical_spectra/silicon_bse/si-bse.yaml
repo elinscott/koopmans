@@ -1,11 +1,10 @@
-# The Bethe-Salpeter absorption spectrum of bulk silicon on KI quasiparticle
-# energies: a DFPT singlepoint supplies the QP corrections, yambo the BSE.
+# The Bethe-Salpeter absorption spectrum of bulk silicon: a Koopmans calculation
+# supplies the quasiparticle energies, yambo the BSE.
 
 workflow:
-  task: bse                       # a DFPT singlepoint, then a yambo BSE run seeded by its eigenvalues
+  task: bse                       # a Koopmans calculation, then a yambo BSE run on its eigenvalues
   correction: ki
   init_orbitals: mlwfs            # maximally localized Wannier functions
-  mp_correction: false            # as in the earlier silicon tutorials
   pseudo_library: PseudoDojo/0.4/LDA/SR/standard/upf
 
 atoms:
