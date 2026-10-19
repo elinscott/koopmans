@@ -120,9 +120,3 @@ section:has(> .landing-logo) > h1 {
     overflow-x: auto;
     overflow-y: hidden;
 }
-
-.responsive-fig img {
-    width: 100%;
-    max-width: 480px; /* 480px or the column width, whichever is smaller */
-    height: auto;
-}

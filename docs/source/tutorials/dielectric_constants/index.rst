@@ -77,7 +77,7 @@ calculation wants: the isotropic average of that tensor.
 .. question:: How does the dielectric constant converge with respect to the :math:`k`-point grid?
 
    .. image:: convergence.svg
-       :class: responsive-fig
+       :width: 480
        :align: center
        :alt: The dielectric constant of silicon against a Gamma-centred k-point grid,
            from 25.10 at 4x4x4 to 13.30 at 16x16x16
@@ -98,7 +98,7 @@ calculation wants: the isotropic average of that tensor.
 .. question:: How much does the shifted mesh help?
 
    .. image:: convergence_shifted.svg
-       :class: responsive-fig
+       :width: 480
        :align: center
        :alt: The dielectric constant of silicon against the k-point grid for a
            Gamma-centred and a half-shifted mesh; the shifted series reaches 13.28
