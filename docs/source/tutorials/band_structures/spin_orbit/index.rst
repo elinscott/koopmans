@@ -2,16 +2,17 @@
  Band structures with spin-orbit coupling
 ##########################################
 
-The KI band structure of bulk GaAs, including spin-orbit coupling. GaAs is a textbook case:
-spin-orbit coupling splits the top of its valence band at :math:`\Gamma` into a
+The KI@LDA band structure of bulk GaAs, including spin-orbit coupling. GaAs is a textbook
+case: spin-orbit coupling splits the top of its valence band at :math:`\Gamma` into a
 heavy-hole/light-hole pair and a split-off band, a splitting large enough
-(:math:`\Delta_\text{SO} \approx 0.34` eV) that a scalar-relativistic calculation misses it
-entirely.
+(:math:`\Delta_\text{SO} = 0.35` eV in experiment :cite:`Marrazzo2024`) that a
+scalar-relativistic calculation misses it entirely.
 
 Spin-orbit coupling changes three things about the calculation. The wavefunctions become
 spinors, mixing what would otherwise be independent spin-up and spin-down states into a
-single two-component object, so every Wannier function doubles into two spinor components
-and a block that Wannierizes :math:`n` bands without spin-orbit now Wannierizes :math:`2n`.
+single two-component object. Each spinless Wannier function therefore becomes two spinor
+Wannier functions, each with two spin components, so a block that Wannierizes :math:`n`
+bands without spin-orbit now Wannierizes :math:`2n`.
 Because spin is no longer a separate label, there is one set of screening parameters rather
 than one per channel, unlike the collinear case in the :doc:`magnetic solids tutorial
 <../../orbital_energies/magnetic/index>`. And ``kcw.x`` runs its noncollinear chain, which
@@ -30,15 +31,15 @@ tutorial.
 ``kcw.x``'s noncollinear implementation only supports the local-density approximation as its
 base functional, and a spin-orbit calculation needs pseudopotentials generated with full
 relativistic effects included. No installable ``aiida-pseudo`` family satisfies both:
-`PseudoDojo <http://www.pseudo-dojo.org/>`_ publishes full-relativistic sets only for PBE
-and PBEsol, and every LDA configuration it exposes through ``aiida-pseudo install
-pseudo-dojo`` is scalar-relativistic. This is the case the :doc:`installation page
+`PseudoDojo <http://www.pseudo-dojo.org/>`_ publishes full-relativistic sets through
+``aiida-pseudo`` only for PBE and PBEsol, and every LDA configuration that ``aiida-pseudo
+install pseudo-dojo`` exposes is scalar-relativistic. This is the case the :doc:`installation page
 <../../../installation>` has in mind when it says some pseudopotentials have to be installed
 by hand.
 
-PseudoDojo does publish LDA full-relativistic pseudopotentials — they are just not wired
-into ``aiida-pseudo``'s automatic installer. They live in a separate repository, one
-directory per element:
+PseudoDojo also publishes LDA full-relativistic pseudopotentials, which ``aiida-pseudo``'s
+automatic installer does not offer. They live in a separate repository, one directory per
+element:
 
 .. code-block:: console
 
@@ -77,8 +78,8 @@ full:
 
 .. literalinclude:: gaas.yaml
     :language: yaml
-    :start-at: spin
-    :end-at: spin
+    :start-at: spin: spin_orbit
+    :end-at: spin: spin_orbit
 
 selects the spinor, spin-orbit-coupled formulation described above.
 
@@ -104,27 +105,23 @@ the projections or the disentanglement window are specified.
 
 skips the screening calculations,
 
-.. literalinclude:: gaas.yaml
-    :language: yaml
-    :start-at: alpha_guess
-    :end-before: atoms
+and feeds the final Hamiltonian the thirty-six screening parameters listed under
+``alpha_guess`` instead, one per spinor Wannier function, in the order the projections
+above define. A linear-response calculation on the same input produced them, with orbitals
+whose wannier90 spreads agree within 0.05 Å\ :sup:`2` sharing one parameter. The values
+therefore repeat within each such group: all ten As :math:`3d` orbitals share one value,
+the ten Ga :math:`3d` orbitals split into a group of four and a group of six, and the
+eight orbitals of each :math:`sp^3` block share one value apiece.
 
-feeding the final Hamiltonian these thirty-six precomputed screening parameters instead —
-one per spinor Wannier function, in the order the projections above define. The values
-repeat within each group of orbitals that ``group_orbitals_by: spread`` treated as
-equivalent: all ten of the As :math:`3d` orbitals share one value, the ten Ga :math:`3d`
-orbitals split into a group of four and a group of six (the crystal field lifts their
-degeneracy), and the eight orbitals of each :math:`sp^3` block share one value apiece.
+.. question:: Why do the As :math:`3d` orbitals form one group while the Ga :math:`3d` orbitals split in two?
 
-.. question:: Why does spin-orbit coupling leave the As :math:`3d` shell as a single
-    group of ten, rather than splitting it the way it splits the Ga :math:`3d` shell?
-
-    Both shells are core-like :math:`d` states, and spin-orbit coupling acts on all of
-    them; grouping instead reflects the crystal field each site sees, which depends on
-    the pseudopotential and the local bonding environment, not on spin-orbit coupling
-    itself. ``group_orbitals_by: spread`` groups by wannier90 spread regardless of the
-    cause, so this is a statement about this particular family and structure, not a
-    general rule about :math:`d` shells.
+    The crystal field splits the Ga :math:`3d` shell into two sets of Wannier functions
+    with spreads of 0.32 and 0.37 Å\ :sup:`2`, which differ by slightly more than the
+    0.05 Å\ :sup:`2` tolerance, so they receive separate screening parameters. In contrast,
+    the As :math:`3d` spreads agree to within 0.001 Å\ :sup:`2`, so all ten share one.
+    The grouping therefore depends on the tolerance as much as on the physics: a tolerance
+    above the Ga :math:`3d` spread difference would put all ten Ga :math:`3d` orbitals in
+    one group.
 
 *************************
  Running the calculation
@@ -143,7 +140,7 @@ Run it with:
 
 With the screening parameters supplied, the workflow skips straight from Wannierization to
 the final Hamiltonian: one shared SCF and NSCF calculation, one Wannierization per
-projection block, ``wann2kcw`` to rotate the DFT Hamiltonian into the Wannier gauge, and
+projection block, ``wann2kc`` to rotate the DFT Hamiltonian into the Wannier gauge, and
 ``ham`` to diagonalize the KI Hamiltonian these screening parameters define. There is no
 ``screen`` step at all — that step only exists when ``koopmans`` has to solve for the
 screening parameters itself.
@@ -151,32 +148,6 @@ screening parameters itself.
 *************
  The results
 *************
-
-The final Hamiltonian step reports the KI band structure at every k-point on the requested
-path, including at :math:`\Gamma`, where the valence band splits into the
-heavy-hole/light-hole pair and the split-off band that spin-orbit coupling produces.
-
-.. question:: What KI band gap does this input produce, and how does it compare with
-    experiment?
-
-    KI@LDA puts the direct gap at :math:`\Gamma` at 1.412 eV, against an LDA gap (no
-    correction) of 0.156 eV — the self-interaction error a semilocal functional carries
-    for GaAs is enormous, and the KI correction recovers most of it. The
-    spin-orbit splitting :math:`\Delta_\text{SO}` at the top of the valence band comes
-    out at 0.347 eV, close to the experimental 0.34 eV. The gap itself is 1.412 eV
-    against an experimental 1.52 eV: closer than LDA gets by more than an order of
-    magnitude, but short of the 1.514 eV that a fully self-consistent noncollinear KI
-    calculation reaches :cite:`Marrazzo2024`. The pseudopotential family's own caveat
-    above is the leading suspect for the remaining gap.
-
-.. question:: What does spin-orbit coupling cost, on top of a scalar-relativistic KI
-    calculation of the same system?
-
-    The scalar-relativistic KI gap for the same structure, screening parameters, and
-    pseudopotential family is 1.523 eV: close to the spin-orbit gap, as it should be for
-    a system whose spin-orbit splitting is much smaller than its band gap. Spin-orbit
-    coupling's effect here is not on the gap so much as on the valence band's shape near
-    :math:`\Gamma`, where the splitting appears.
 
 Plot the LDA and KI@LDA bands together, with the gap annotated, using ``koopmans plot
 bandstructure``:
@@ -195,3 +166,41 @@ bandstructure``:
 
     KI@LDA band structure of GaAs along L-:math:`\Gamma`-X-W-L-K-:math:`\Gamma`, against
     the LDA base functional, with the direct gap at :math:`\Gamma` annotated.
+
+The final Hamiltonian step reports the KI@LDA bands at every k-point on the path. At
+:math:`\Gamma` the valence band splits into the heavy-hole/light-hole pair and the
+split-off band that spin-orbit coupling produces.
+
+.. question:: How does the gap compare with experiment?
+
+    The direct gap at :math:`\Gamma` that the figure annotates lies within 0.1 eV of the
+    experimental 1.52 eV :cite:`Marrazzo2024`. In contrast, the LDA gap of 0.16 eV is too
+    small by 1.36 eV, so KI@LDA removes more than ninety percent of the error. The spin-orbit
+    splitting :math:`\Delta_\text{SO}` between the top of the valence band and the split-off
+    band comes out at 0.35 eV, equal at two decimals to the experimental 0.35 eV.
+
+    The same reference reports a gap of 1.51 eV from the same linear-response
+    Wannier-function route :cite:`Marrazzo2024`. Its setup differs from this tutorial's in
+    four ways:
+
+    - a 12×12×12 k-point and 6×6×6 q-point grid, against 4×4×4 here
+    - a wavefunction cutoff of 80 Ry, against 70 Ry here
+    - a renormalized screening coefficient that includes a correction beyond second order
+    - full-relativistic pseudopotentials generated by the authors from the scalar-relativistic
+      PseudoDojo library
+
+.. question:: How do the gap and the cost change from a scalar-relativistic KI@LDA calculation to a spin-orbit one?
+
+    Spin-orbit coupling lowers the gap by about :math:`\Delta_\text{SO}/3 = 0.12` eV. The
+    scalar-relativistic calculation, with its own screening parameters and the same structure
+    and pseudopotential family, gives a KI@LDA gap of 1.52 eV and an LDA gap of 0.27 eV. The
+    spin-orbit values are 1.41 eV and 0.16 eV, lower by 0.11 eV and 0.12 eV.
+
+    The cause is the textbook shift of the valence-band maximum: spin-orbit coupling raises
+    the :math:`j = 3/2` states at the top of the valence band by :math:`\Delta_\text{SO}/3`,
+    so the gap shrinks by that amount. The ratio of :math:`\Delta_\text{SO}` to the gap plays
+    no part, and the scalar-relativistic KI@LDA gap matches the experimental 1.52 eV only
+    by accident, because it omits a reduction that the experimental gap includes.
+
+    The cost grows too. On four MPI ranks each screening calculation takes about 4 to 5
+    hours without spin-orbit coupling and 22 to 26 hours with it.
