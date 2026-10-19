@@ -89,6 +89,7 @@ class TestBuild:
         and a ``wannierize_smooth`` factor, it gets both, as on the DFPT
         singlepoint route.
         """
+        from koopmans.aiida.workflows.dfpt import assemble_dfpt_chain_inputs
         from tests.fixtures import path_labels
 
         wg = _build(_si_bse_dict())
@@ -106,6 +107,14 @@ class TestBuild:
         dfpt_inputs = _build(with_path).tasks["dfpt"].inputs
         assert path_labels(dfpt_inputs["bands_kpoints"].value) == ["GAMMA", "X"]
         assert path_labels(dfpt_inputs["wannierize_bands_kpoints"].value) == ["GAMMA", "X"]
+        # The two paths sample at different densities, so a swap between the
+        # sockets shows in the point counts.
+        n_bands = len(dfpt_inputs["bands_kpoints"].value.get_kpoints())
+        n_wannierize = len(dfpt_inputs["wannierize_bands_kpoints"].value.get_kpoints())
+        chain_inputs, _ = assemble_dfpt_chain_inputs(KoopmansInput.model_validate(with_path))
+        assert n_bands == len(chain_inputs["bands_kpoints"].get_kpoints())
+        assert n_wannierize == len(chain_inputs["wannierize_bands_kpoints"].get_kpoints())
+        assert n_bands != n_wannierize
         grid = with_path["kpoints"]["grid"]
         assert list(dfpt_inputs["wannierize_smooth_mp_grid"].value) == [2 * n for n in grid]
         assert dfpt_inputs["wannierize_smooth_kpoints"].value is not None
