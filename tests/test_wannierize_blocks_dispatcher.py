@@ -1117,7 +1117,7 @@ class TestInterpolatedBands:
         file's one ``kpoints.path`` — same special points, same labels — but
         as two separate nodes: the detection run keeps the top-level
         ``kpoints.path_density`` (10/Å⁻¹ here), while the interpolation
-        defaults to ``overrides.wannier90.path_density`` (50/Å⁻¹), five
+        defaults to ``overrides.wannierize.path_density`` (50/Å⁻¹), five
         times denser since it costs wannier90 nothing extra to interpolate.
         """
         wg = _build(_si_split_dict())
@@ -1131,12 +1131,12 @@ class TestInterpolatedBands:
 
 
 class TestWannier90PathDensity:
-    """``kpoints.overrides.wannier90.path_density`` sets wannier90's own interpolation.
+    """``kpoints.overrides.wannierize.path_density`` sets wannier90's own interpolation.
 
     Threaded on every wannierize route and mode: the pw.x quality-check /
     split-detection run always keeps the top-level ``kpoints.path_density``;
     wannier90's own interpolation always takes
-    ``overrides.wannier90.path_density`` (default 50/Å⁻¹) instead. The two
+    ``overrides.wannierize.path_density`` (default 50/Å⁻¹) instead. The two
     are built as separate ``KpointsData`` nodes throughout.
     """
 
@@ -1145,7 +1145,7 @@ class TestWannier90PathDensity:
     ) -> None:
         """A stated density changes the interpolation node's point count alone."""
         d = _si_split_dict()
-        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        d["kpoints"]["overrides"] = {"wannierize": {"path_density": 25.0}}
         wg = _build(d)
         split_task = wg.tasks["wannierize_split_block_1"]
         interpolation_path = split_task.inputs["interpolation_kpoints"].value
@@ -1162,14 +1162,14 @@ class TestWannier90PathDensity:
     def test_equal_densities_give_identical_lists(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Matching the top-level density on `overrides.wannier90` reunifies the two lists.
+        """Matching the top-level density on `overrides.wannierize` reunifies the two lists.
 
         The two nodes are still built separately (different node UUIDs),
         but a user who wants the old single-density behaviour back gets it
         exactly, point for point.
         """
         d = _si_split_dict()
-        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 10.0}}
+        d["kpoints"]["overrides"] = {"wannierize": {"path_density": 10.0}}
         wg = _build(d)
         split_task = wg.tasks["wannierize_split_block_1"]
         interpolation_path = split_task.inputs["interpolation_kpoints"].value
@@ -1182,13 +1182,13 @@ class TestWannier90PathDensity:
         """Explicit projections with no threshold — the si tutorial's own shape.
 
         No longer a single-socket route: an explicit
-        ``overrides.wannier90.path_density`` reaches wannier90's
+        ``overrides.wannierize.path_density`` reaches wannier90's
         interpolation alone, while the pw.x quality-check ``bands`` run
         stays on the coarser top-level density.
         """
         d = _si_split_dict()
         del d["workflow"]["block_wannierization_threshold"]
-        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        d["kpoints"]["overrides"] = {"wannierize": {"path_density": 25.0}}
         wg = _build(d)
         detection_path = wg.tasks["bands"].inputs["kpoints"].value
         interpolation_path = wg.tasks["wannierize_block_1"].inputs["interpolation_kpoints"].value
@@ -1200,7 +1200,7 @@ class TestWannier90PathDensity:
     def test_no_split_route_defaults_wannier90_density(
         self, aiida_profile_clean: Any, split_codes: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """Leaving `overrides.wannier90` out still densifies the interpolation.
+        """Leaving `overrides.wannierize` out still densifies the interpolation.
 
         The pw.x quality-check run stays cheap at the top-level density
         (10/Å⁻¹ here); wannier90's interpolation, free once the Wannier
@@ -1221,7 +1221,7 @@ class TestWannier90PathDensity:
         """The auto-projections, no-threshold route also gets the two-density split."""
         d = _si_auto_dict()
         del d["workflow"]["block_wannierization_threshold"]
-        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        d["kpoints"]["overrides"] = {"wannierize": {"path_density": 25.0}}
         inp = KoopmansInput.model_validate(d)
         wg = build_wannierize_workgraph(inp)
         [w90_task] = [t for t in wg.tasks if "annier90WorkChain" in t.name]

@@ -35,7 +35,7 @@ file parser produces:
    from koopmans import KoopmansInput, outputs, submit
 
    inp = KoopmansInput(
-       workflow={"task": "singlepoint", "correction": "ki"},
+       workflow={"task": "singlepoint", "formalism": "dscf", "correction": "ki"},
        # ... the same blocks an input file holds ...
    )
    pk = submit(inp)  # returns immediately; the daemon runs it

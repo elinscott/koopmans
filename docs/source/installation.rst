@@ -27,6 +27,8 @@ Which executables you need depends on what you want to calculate:
 - ``projwfc.x`` is optional, and gives you a projected density of states alongside a
   Wannierization.
 - ``ph.x`` computes dielectric constants.
+- ``p2y`` and ``yambo``, from `yambo <http://www.yambo-code.org/>`_, compute optical
+  spectra from the Bethe-Salpeter equation.
 
 Choosing the blocks of a Wannierization automatically additionally needs `Wannier.jl
 <https://github.com/qiaojunfeng/Wannier.jl>`_ and a Julia interpreter. Everything else
