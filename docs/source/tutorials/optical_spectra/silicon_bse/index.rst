@@ -17,7 +17,9 @@ it is in full:
     :language: yaml
 
 The ``workflow`` block asks for a KI calculation of the ``atoms`` below, built from
-maximally localized Wannier functions, followed by a BSE spectrum on its eigenvalues.
+maximally localized Wannier functions, followed by a BSE spectrum on its eigenvalues. The
+``kpoints`` block also names a path, and a denser mesh to interpolate the KI band structure
+along it, as in the silicon band-structure tutorials. The spectrum itself needs neither.
 
 The BSE calculation is primarily controlled by the ``yambo`` block, which sets yambo's own runcard variables:
 
@@ -54,7 +56,8 @@ The ``parallelization`` block gives yambo 4 MPI ranks.
 
 The progress table first walks through the Koopmans calculation: a self-consistent
 calculation, a non-self-consistent one that adds the empty bands, a Wannierization of
-each manifold, and then three kcw.x steps that convert the Wannier functions to its own
+each manifold, a second Wannierization on the denser mesh for the band-structure
+interpolation, and then three kcw.x steps that convert the Wannier functions to its own
 format, compute the screening parameters, and build and diagonalize the Koopmans
 Hamiltonian. The :doc:`linear-response tutorial
 <../../band_structures/silicon_linear_response/index>` covers this part. A fresh yambo
@@ -67,6 +70,29 @@ The quasiparticle database is how the Koopmans correction enters yambo. It store
 Koopmans eigenvalues in the format that a BSE calculation expects from a GW
 calculation. The BSE step reads it, so the Koopmans eigenvalues set the transition
 energies and therefore the spectrum.
+
+********************
+ The band structure
+********************
+
+The Koopmans part of the run interpolated the KI@LDA band structure along the path. Plot
+it against LDA:
+
+.. code-block:: console
+
+    $ koopmans plot bandstructure \
+        si-bse/01-dfpt/02-wannierize/01-bands --label LDA --style -- \
+        si-bse/01-dfpt/04-dfpt/07-smooth_band_structure/03-build_band_structure --label "KI@LDA" --style - --gap \
+        --ylim -13 10 \
+        -o bandstructure.svg
+
+.. figure:: bandstructure.svg
+    :width: 480
+    :align: center
+
+    The KI@LDA band structure of silicon, against LDA.
+
+These KI@LDA eigenvalues are what the spectrum is built on.
 
 *******************************
  The quasiparticle correction
@@ -107,7 +133,9 @@ KI@LDA, a correction of 0.77 eV.
     down, under ``Eqp @ K [1]``, show the three highest filled states degenerate at 0 eV
     and the three lowest empty states degenerate at 3.38 eV. Those threefold degeneracies
     are the signature of :math:`\Gamma` in the diamond structure, so the smallest direct
-    transition sits at :math:`\Gamma`. This calculation leaves out phonons, so absorption
+    transition sits at :math:`\Gamma`. The figure shows the same: the lowest conduction band
+    at :math:`\Gamma` lies 3.4 eV above the valence band top there, the smallest vertical
+    separation anywhere on the path. This calculation leaves out phonons, so absorption
     across the indirect gap, which needs a phonon to supply the missing momentum, is
     absent. The computed absorption therefore sets in at the lowest direct transition.
 
