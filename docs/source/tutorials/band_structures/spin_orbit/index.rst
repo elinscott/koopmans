@@ -150,17 +150,44 @@ Plot the LDA and KI@LDA bands together:
     because we are underconverged: with a denser k-point grid, a higher cutoff and
     pseudopotentials of its own, the KI band gap becomes 1.51 eV :cite:`Marrazzo2024`.
 
-.. question:: Where is spin-orbit coupling visible in the band structure?
+***********************************
+ Switching off spin-orbit coupling
+***********************************
 
-    At the top of the valence band at :math:`\Gamma`, in both curves. Without spin-orbit
-    coupling the three highest valence bands are degenerate there. With it, two of them,
-    the heavy-hole and light-hole bands, stay degenerate, and the third, the split-off band,
-    is pushed down. The energy it is pushed down by is the spin-orbit splitting,
-    :math:`\Delta_\text{SO}`. Spin-orbit coupling enters through the pseudopotentials, so
-    LDA and KI@LDA both show it. In the spinor count of this calculation, where each band
-    holds one electron, the heavy and light holes are bands 25 to 28 and the split-off band
-    is bands 23 and 24. kcw.x prints the KI eigenvalues at every k-point of the path in
-    ``gaas/03-dfpt/03-ham/outputs/aiida.kho``; at :math:`\Gamma`, bands 17 to 32 read
+To see what spin-orbit coupling does, run the same calculation without it. Download
+:download:`gaas-no-soc.yaml <gaas-no-soc.yaml>` into the same directory. It differs from
+``gaas.yaml`` in three places: ``spin: none``, under which the pseudopotentials are averaged
+over :math:`j`; ``nbnd: 30``, since each band again holds two electrons; and 18 screening
+parameters instead of 36, computed by the same linear-response route without spin-orbit
+coupling. Run it, then plot the two KI@LDA band structures together:
+
+.. code-block:: console
+
+    $ koopmans run gaas-no-soc.yaml
+    $ koopmans plot bandstructure \
+        gaas-no-soc/03-dfpt/03-ham --label "KI@LDA, no spin-orbit" --style -- \
+        gaas/03-dfpt/03-ham --label "KI@LDA, spin-orbit" --style - \
+        --ylim -1.5 2.5 \
+        -o soc_comparison.svg
+
+.. figure:: soc_comparison.svg
+    :width: 480
+    :align: center
+
+    The KI@LDA band structure of GaAs with and without spin-orbit coupling.
+
+.. question:: What does spin-orbit coupling change?
+
+    Two things, both at the top of the valence band at :math:`\Gamma`.
+
+    First, it breaks a degeneracy. Without spin-orbit coupling the three highest valence
+    bands are degenerate at :math:`\Gamma`. With it, two of them, the heavy-hole and
+    light-hole bands, stay degenerate, and the third, the split-off band, drops below them
+    by the spin-orbit splitting :math:`\Delta_\text{SO}`. In the spinor count of the
+    spin-orbit calculation, where each band holds one electron, the heavy and light holes
+    are bands 25 to 28 and the split-off band is bands 23 and 24. kcw.x prints the KI
+    eigenvalues at every k-point of the path in ``gaas/03-dfpt/03-ham/outputs/aiida.kho``;
+    at :math:`\Gamma`, bands 17 to 32 read
 
     .. code-block:: text
 
@@ -172,11 +199,21 @@ Plot the LDA and KI@LDA bands together:
     :cite:`Marrazzo2024`. The LDA rows in the same block give the same 0.35 eV, so the KI
     correction shifts these bands together and leaves the splitting unchanged.
 
+    Second, it shrinks the gap. The splitting preserves the average energy of the three
+    bands: the heavy and light holes rise by :math:`\Delta_\text{SO}/3` and the split-off
+    band falls by :math:`2\Delta_\text{SO}/3`. The conduction band minimum, which is built
+    from :math:`s` states, does not move. The figure measures energies from the valence
+    band maximum of the calculation without spin-orbit coupling, and the valence band
+    maximum with it sits 0.12 eV higher while the conduction band minimum is unchanged. So
+    the gap closes by :math:`\Delta_\text{SO}/3`: 1.52 eV without spin-orbit coupling,
+    against 1.41 eV with it.
+
 *****************
  Optional extras
 *****************
 
 To compute the screening parameters yourself, set ``calculate_alpha: true``, remove
-``alpha_guess``, and add ``group_orbitals_by: spread``. The calculation will not be fast:
-it involves five linear-response calculations, one per group of equivalent Wannier
-functions, each taking about a day on four MPI ranks.
+``alpha_guess``, and add ``group_orbitals_by: spread`` in either input. The spin-orbit
+calculation will not be fast: it involves five linear-response calculations, one per
+group of equivalent Wannier functions, each taking about a day on four MPI ranks. Without
+spin-orbit coupling each takes a few hours.
