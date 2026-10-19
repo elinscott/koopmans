@@ -142,32 +142,35 @@ Plot the LDA and KI@LDA bands together:
 
     The KI@LDA band structure of GaAs with spin-orbit coupling, against LDA.
 
-.. question:: What differences do you notice in the band structure that are induced by spin-orbit coupling?
+.. question:: How does the KI correction change the band structure?
 
-    - **Band gap opening.** The direct gap at :math:`\Gamma` is 1.41 eV in KI@LDA.
-      Experiment gives 1.52 eV :cite:`Marrazzo2024`. In contrast, LDA gives 0.16 eV, so the
-      KI correction removes more than ninety percent of LDA's error. The remaining
-      discrepancy is largely because we are underconverged: with a denser k-point grid, a
-      higher cutoff and pseudopotentials of its own, the KI band gap becomes 1.51 eV
-      :cite:`Marrazzo2024`.
-    - **Broken degeneracies.** Without spin-orbit coupling the three highest valence bands
-      are degenerate at :math:`\Gamma`. With it, two of them, the heavy-hole and light-hole
-      bands, stay degenerate there, and the third, the split-off band, is pushed down. The
-      energy it is pushed down by is the spin-orbit splitting, :math:`\Delta_\text{SO}`. In
-      the spinor count of this calculation, where each band holds one electron, the heavy
-      and light holes are bands 25 to 28 and the split-off band is bands 23 and 24. kcw.x
-      prints the KI eigenvalues at every k-point of the path in
-      ``gaas/03-dfpt/03-ham/outputs/aiida.kho``; at :math:`\Gamma`, bands 17 to 32 read
+    It opens the gap. The direct gap at :math:`\Gamma` is 1.41 eV in KI@LDA. Experiment
+    gives 1.52 eV :cite:`Marrazzo2024`. In contrast, LDA gives 0.16 eV, so the KI correction
+    removes more than ninety percent of LDA's error. The remaining discrepancy is largely
+    because we are underconverged: with a denser k-point grid, a higher cutoff and
+    pseudopotentials of its own, the KI band gap becomes 1.51 eV :cite:`Marrazzo2024`.
 
-      .. code-block:: text
+.. question:: Where is spin-orbit coupling visible in the band structure?
 
-          KI     -10.0461   -10.0460   -10.0301   -10.0300    -5.1469    -5.1468     7.4170     7.4171
-          KI       7.7639     7.7641     7.7641     7.7643     9.1761     9.1761    12.4146    12.4148
+    At the top of the valence band at :math:`\Gamma`, in both curves. Without spin-orbit
+    coupling the three highest valence bands are degenerate there. With it, two of them,
+    the heavy-hole and light-hole bands, stay degenerate, and the third, the split-off band,
+    is pushed down. The energy it is pushed down by is the spin-orbit splitting,
+    :math:`\Delta_\text{SO}`. Spin-orbit coupling enters through the pseudopotentials, so
+    LDA and KI@LDA both show it. In the spinor count of this calculation, where each band
+    holds one electron, the heavy and light holes are bands 25 to 28 and the split-off band
+    is bands 23 and 24. kcw.x prints the KI eigenvalues at every k-point of the path in
+    ``gaas/03-dfpt/03-ham/outputs/aiida.kho``; at :math:`\Gamma`, bands 17 to 32 read
 
-      so the split-off band sits at 7.42 eV and the heavy and light holes at 7.76 eV. Their
-      difference, 0.35 eV, is :math:`\Delta_\text{SO}`, and experiment gives 0.35 eV
-      :cite:`Marrazzo2024`. The LDA rows in the same block give the same 0.35 eV, so the KI
-      correction shifts these bands together and leaves the splitting unchanged.
+    .. code-block:: text
+
+        KI     -10.0461   -10.0460   -10.0301   -10.0300    -5.1469    -5.1468     7.4170     7.4171
+        KI       7.7639     7.7641     7.7641     7.7643     9.1761     9.1761    12.4146    12.4148
+
+    so the split-off band sits at 7.42 eV and the heavy and light holes at 7.76 eV. Their
+    difference, 0.35 eV, is :math:`\Delta_\text{SO}`, and experiment gives 0.35 eV
+    :cite:`Marrazzo2024`. The LDA rows in the same block give the same 0.35 eV, so the KI
+    correction shifts these bands together and leaves the splitting unchanged.
 
 *****************
  Optional extras
