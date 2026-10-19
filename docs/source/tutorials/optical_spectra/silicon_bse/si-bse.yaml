@@ -46,6 +46,4 @@ calculator_parameters:
 parallelization:
   pw: {ntasks: 4, npool: 2}       # pw.x parallelizes well over k-points
   kcw: {ntasks: 4}
-  yambo:
-    ntasks: 4
-    bethe_salpeter: {k: 2, eh: 2}   # 2 ranks over k-points x 2 over electron-hole pairs
+  yambo: {ntasks: 4}

@@ -62,9 +62,8 @@ broadening that turns discrete transitions into a smooth curve, in eV. Both have
 defaults, as do the other yambo variables listed in the :doc:`input file documentation
 <../../../input_schema>`, under :class:`~koopmans.input_file.YamboBseParameters`.
 
-The ``parallelization`` block gives yambo 4 MPI ranks. Its ``bethe_salpeter`` entry
-splits them as 2 over k-points and 2 over electron-hole pairs, and the two counts
-multiply to the 4 ranks.
+The ``parallelization`` block gives yambo 4 MPI ranks, which koopmans places on the
+electron-hole pairs of the Bethe-Salpeter kernel.
 
 *************
  Running it
