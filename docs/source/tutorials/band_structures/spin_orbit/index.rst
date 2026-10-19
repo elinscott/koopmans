@@ -189,9 +189,11 @@ two KI@LDA band structures together:
 .. question:: How does the spin-orbit coupling change the valence band maximum?
 
     First, it breaks a degeneracy. Without spin-orbit coupling the three highest valence
-    bands are degenerate at :math:`\Gamma`. With it, two of them, the heavy-hole and
-    light-hole bands, stay degenerate, and the third, the split-off band, drops below them
-    by the spin-orbit splitting :math:`\Delta_\text{SO}`. In the spinor count of the
+    bands are degenerate at :math:`\Gamma`. With it, two of them stay degenerate and the
+    third drops below them by the spin-orbit splitting :math:`\Delta_\text{SO}`. These
+    bands have standard names: the two that stay degenerate are the so-called heavy-hole
+    and light-hole bands, after their curvatures away from :math:`\Gamma`, and the third is
+    the split-off band. In the spinor count of the
     spin-orbit calculation, where each band holds one electron, the heavy and light holes
     are bands 25 to 28 and the split-off band is bands 23 and 24. kcw.x prints the KI
     eigenvalues at every k-point of the path in ``gaas/03-dfpt/03-ham/outputs/aiida.kho``;
