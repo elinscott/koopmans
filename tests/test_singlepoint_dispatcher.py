@@ -261,7 +261,7 @@ class TestBuildSinglepointWorkgraphScopeGuards:
 
 
 class TestSmoothWannierizationAdvisedOffSinglepoint:
-    """``kpoints.overrides.wannierize_smooth`` only shapes a singlepoint's band interpolation.
+    """``kpoints.overrides.wannierize_smooth`` only shapes a singlepoint or bse band interpolation.
 
     Every other task runs no smooth Wannierization, so the entry takes no
     effect there. It is a non-fatal advisory
@@ -270,9 +270,9 @@ class TestSmoothWannierizationAdvisedOffSinglepoint:
     """
 
     _ADVISORY = (
-        "kpoints.overrides.wannierize_smooth has no effect on this run: only a singlepoint "
-        "initialized from Wannier functions (init_orbitals: mlwfs or projwfs) runs the "
-        "smooth Wannierization; it is kept for when you switch to one."
+        "kpoints.overrides.wannierize_smooth has no effect on this run: only bse and a "
+        "singlepoint initialized from Wannier functions (init_orbitals: mlwfs or projwfs) "
+        "run the smooth Wannierization; it is kept for when you switch to one."
     )
 
     @staticmethod
