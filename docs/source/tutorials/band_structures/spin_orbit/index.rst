@@ -2,44 +2,32 @@
  Band structures with spin-orbit coupling
 ##########################################
 
-The KI@LDA band structure of bulk GaAs, including spin-orbit coupling. GaAs is a textbook
-case: spin-orbit coupling splits the top of its valence band at :math:`\Gamma` into a
-heavy-hole/light-hole pair and a split-off band, a splitting large enough
-(:math:`\Delta_\text{SO} = 0.35` eV in experiment :cite:`Marrazzo2024`) that a
-scalar-relativistic calculation misses it entirely.
+This tutorial computes the KI@LDA band structure of bulk gallium arsenide with spin-orbit
+coupling, with the screening parameters obtained by linear response as in the
+:doc:`linear-response tutorial <../silicon_linear_response/index>`. Compared with that
+tutorial, three things change:
 
-Spin-orbit coupling changes three things about the calculation. The wavefunctions become
-spinors, mixing what would otherwise be independent spin-up and spin-down states into a
-single two-component object. Each spinless Wannier function therefore becomes two spinor
-Wannier functions, each with two spin components, so a block that Wannierizes :math:`n`
-bands without spin-orbit now Wannierizes :math:`2n`.
-Because spin is no longer a separate label, there is one set of screening parameters rather
-than one per channel, unlike the collinear case in the :doc:`magnetic solids tutorial
-<../../orbital_energies/magnetic/index>`. And ``kcw.x`` runs its noncollinear chain, which
-the KCW paper on noncollinear Koopmans functionals derives in full :cite:`Marrazzo2024`.
-
-This tutorial ships its screening parameters precomputed rather than computing them from
-scratch. Linear-response screening solves one constrained problem per group of equivalent
-orbitals, and here that is five problems, each taking on the order of a day on four MPI
-ranks — reproducing them is a production calculation, not something to run while reading a
-tutorial.
+- ``workflow.spin`` is ``spin_orbit``, so the calculation runs on spinor wavefunctions.
+- The pseudopotentials must include spin-orbit coupling, and no automatically installable
+  family does, so you install one by hand first.
+- The screening parameters are supplied in the input file rather than computed, because
+  each linear-response calculation takes about a day on four MPI ranks once the
+  wavefunctions are spinors.
 
 ******************
  Pseudopotentials
 ******************
 
-``kcw.x``'s noncollinear implementation only supports the local-density approximation as its
-base functional, and a spin-orbit calculation needs pseudopotentials generated with full
-relativistic effects included. No installable ``aiida-pseudo`` family satisfies both:
-`PseudoDojo <http://www.pseudo-dojo.org/>`_ publishes full-relativistic sets through
-``aiida-pseudo`` only for PBE and PBEsol, and every LDA configuration that ``aiida-pseudo
-install pseudo-dojo`` exposes is scalar-relativistic. This is the case the :doc:`installation page
-<../../../installation>` has in mind when it says some pseudopotentials have to be installed
-by hand.
+Spin-orbit coupling enters a plane-wave calculation through the pseudopotentials, so they
+must be generated fully relativistically. ``kcw.x`` runs its spin-orbit chain for the
+local-density approximation only, so the pseudopotentials must also be LDA. ``aiida-pseudo``
+installs `PseudoDojo <http://www.pseudo-dojo.org/>`_'s fully relativistic tables for PBE and
+PBEsol but not for LDA, so this is the case the :doc:`installation page
+<../../../installation>` has in mind when it says some pseudopotentials are installed by
+hand.
 
-PseudoDojo also publishes LDA full-relativistic pseudopotentials, which ``aiida-pseudo``'s
-automatic installer does not offer. They live in a separate repository, one directory per
-element:
+PseudoDojo does publish an LDA fully relativistic table, in a repository of its own with one
+directory per element. Download gallium and arsenic:
 
 .. code-block:: console
 
@@ -47,24 +35,17 @@ element:
     $ curl -Lo LDA-FR-GaAs/Ga-d_r.upf https://raw.githubusercontent.com/PseudoDojo/ONCVPSP-LDA-FR-PDv0.4/main/Ga/Ga-d_r.upf
     $ curl -Lo LDA-FR-GaAs/As-d_r.upf https://raw.githubusercontent.com/PseudoDojo/ONCVPSP-LDA-FR-PDv0.4/main/As/As-d_r.upf
 
-Install the directory as a family, naming the pseudopotential type explicitly so that the
-element is read from each file's own header rather than guessed from its filename (which
-here does not follow the ``ELEMENT.EXTENSION`` convention ``aiida-pseudo`` otherwise
-requires):
+and install the directory as a family:
 
 .. code-block:: console
 
     $ aiida-pseudo install family LDA-FR-GaAs LDA-FR-GaAs -P pseudo.upf
 
-A family installed this way publishes no recommended cutoffs, so the input file states
-``ecutwfc`` explicitly, as :doc:`the installation page <../../../installation>` describes.
+.. note::
 
-.. warning::
-
-    The repository's own README notes that this LDA table reuses the PBE full-relativistic
-    generation inputs with only the exchange-correlation functional changed, and asks that
-    it be used carefully. Treat it as adequate for learning the workflow, not as a citable
-    pseudopotential for production spin-orbit work.
+    The repository's README says this LDA table reuses the generation inputs of the PBE
+    table with only the functional changed, and asks that it be used with care. It is
+    adequate for learning the workflow; check it before production work.
 
 ****************
  The input file
@@ -76,81 +57,65 @@ full:
 .. literalinclude:: gaas.yaml
     :language: yaml
 
+Most of it reads as a silicon input would. What is specific to spin-orbit coupling:
+
 .. literalinclude:: gaas.yaml
     :language: yaml
     :start-at: spin: spin_orbit
     :end-at: spin: spin_orbit
 
-selects the spinor, spin-orbit-coupled formulation described above.
+makes the wavefunctions spinors, two-component objects in which spin up and spin down mix.
+Spin is then no longer a label on a band, so each band holds one electron rather than two.
+Gallium and arsenic bring 28 valence electrons between them, so there are 28 filled bands,
+and ``nbnd: 60`` leaves empty bands to disentangle among.
 
 .. literalinclude:: gaas.yaml
     :language: yaml
     :start-at: pseudo_library
     :end-at: pseudo_library
 
-names the family installed above.
+names the family installed above. A family installed by hand publishes no recommended
+cutoffs, so ``ecutwfc`` is stated explicitly.
 
-The ``calculator_parameters.wannier90.projections`` block lists four sets of Wannier
-functions: gallium and arsenic's semicore :math:`3d` shells, the four valence bands
-(arsenic-centered :math:`sp^3` bonds), and the four lowest conduction bands
-(gallium-centered :math:`sp^3` antibonds). ``dis_win_max`` and ``dis_froz_max`` bound the
-disentanglement for the last, empty block, exactly as they would without spin-orbit coupling
-— the doubled orbital count changes how many Wannier functions each block produces, not how
-the projections or the disentanglement window are specified.
+The ``projections`` list four blocks of bands: the arsenic and gallium :math:`3d` shells,
+the four valence bands, and the four lowest conduction bands. Each projection yields twice
+the Wannier functions it would without spin-orbit coupling, one per spinor state, so the
+four blocks produce 10, 10, 8 and 8 Wannier functions, 36 in all. The projections and the
+disentanglement window are written exactly as they would be for a scalar-relativistic
+calculation.
 
 .. literalinclude:: gaas.yaml
     :language: yaml
     :start-at: calculate_alpha
     :end-at: calculate_alpha
 
-skips the screening calculations,
-
-and feeds the final Hamiltonian the thirty-six screening parameters listed under
-``alpha_guess`` instead, one per spinor Wannier function, in the order the projections
-above define. A linear-response calculation on the same input produced them, with orbitals
-whose wannier90 spreads agree within 0.05 Å\ :sup:`2` sharing one parameter. The values
-therefore repeat within each such group: all ten As :math:`3d` orbitals share one value,
-the ten Ga :math:`3d` orbitals split into a group of four and a group of six, and the
-eight orbitals of each :math:`sp^3` block share one value apiece.
-
-.. question:: Why do the As :math:`3d` orbitals form one group while the Ga :math:`3d` orbitals split in two?
-
-    The crystal field splits the Ga :math:`3d` shell into two sets of Wannier functions
-    with spreads of 0.32 and 0.37 Å\ :sup:`2`, which differ by slightly more than the
-    0.05 Å\ :sup:`2` tolerance, so they receive separate screening parameters. In contrast,
-    the As :math:`3d` spreads agree to within 0.001 Å\ :sup:`2`, so all ten share one.
-    The grouping therefore depends on the tolerance as much as on the physics: a tolerance
-    above the Ga :math:`3d` spread difference would put all ten Ga :math:`3d` orbitals in
-    one group.
+skips the screening calculations, and the 36 values under ``alpha_guess`` are used in
+their place, one per Wannier function in the order the projection blocks define. They were
+computed by linear response from this same input with ``calculate_alpha: true`` and
+``group_orbitals_by: spread``, under which Wannier functions whose spreads agree within
+0.05 Å\ :sup:`2` share one parameter, which is why the values repeat in runs. Because spin
+is not a separate label, there is one set of screening parameters, not one per spin channel
+as in the :doc:`magnetic solids tutorial <../magnetic/index>`.
 
 *************************
  Running the calculation
 *************************
 
-.. warning::
-
-    Of all the ``Quantum ESPRESSO`` codes, this workflow needs ``pw.x``, ``wannier90.x``,
-    ``pw2wannier90.x`` and ``kcw.x``.
-
-Run it with:
-
 .. code-block:: console
 
     $ koopmans run gaas.yaml
 
-With the screening parameters supplied, the workflow skips straight from Wannierization to
-the final Hamiltonian: one shared SCF and NSCF calculation, one Wannierization per
-projection block, ``wann2kc`` to rotate the DFT Hamiltonian into the Wannier gauge, and
-``ham`` to diagonalize the KI Hamiltonian these screening parameters define. There is no
-``screen`` step at all — that step only exists when ``koopmans`` has to solve for the
-screening parameters itself.
+The progress table shows a self-consistent calculation, a non-self-consistent one that
+adds the empty bands, one Wannierization per projection block, and then two kcw.x steps:
+one that rotates the Hamiltonian into the Wannier gauge and one that builds and
+diagonalizes the KI Hamiltonian from the supplied screening parameters. There is no
+screening step, since the screening parameters were given.
 
 *************
  The results
 *************
 
-Plot the LDA and KI@LDA bands together, with the gap annotated, using ``koopmans plot
-bandstructure``:
+Plot the LDA and KI@LDA bands together, with the KI@LDA gap annotated:
 
 .. code-block:: console
 
@@ -167,40 +132,53 @@ bandstructure``:
     KI@LDA band structure of GaAs along L-:math:`\Gamma`-X-W-L-K-:math:`\Gamma`, against
     the LDA base functional, with the direct gap at :math:`\Gamma` annotated.
 
-The final Hamiltonian step reports the KI@LDA bands at every k-point on the path. At
-:math:`\Gamma` the valence band splits into the heavy-hole/light-hole pair and the
-split-off band that spin-orbit coupling produces.
+.. question:: How does the band gap compare with experiment?
 
-.. question:: How does the gap compare with experiment?
+    The direct gap at :math:`\Gamma` is 1.41 eV in KI@LDA, against 1.52 eV in experiment
+    :cite:`Marrazzo2024`. In contrast, LDA gives 0.16 eV, so the KI correction removes
+    more than ninety percent of LDA's error. The same reference obtains 1.51 eV by the same
+    route with a denser k-point grid, a higher cutoff, and pseudopotentials of its own, so
+    the remaining 0.1 eV is a matter of convergence rather than of the functional.
 
-    The direct gap at :math:`\Gamma` that the figure annotates lies within 0.1 eV of the
-    experimental 1.52 eV :cite:`Marrazzo2024`. In contrast, the LDA gap of 0.16 eV is too
-    small by 1.36 eV, so KI@LDA removes more than ninety percent of the error. The spin-orbit
-    splitting :math:`\Delta_\text{SO}` between the top of the valence band and the split-off
-    band comes out at 0.35 eV, equal at two decimals to the experimental 0.35 eV.
+.. question:: Where is spin-orbit coupling visible in the band structure?
 
-    The same reference reports a gap of 1.51 eV from the same linear-response
-    Wannier-function route :cite:`Marrazzo2024`. Its setup differs from this tutorial's in
-    four ways:
+    At the top of the valence band at :math:`\Gamma`. Without spin-orbit coupling the three
+    highest valence bands are degenerate there. Spin-orbit coupling splits one of them off
+    and pushes it down: the heavy-hole and light-hole bands stay degenerate at
+    :math:`\Gamma`, and the split-off band lies :math:`\Delta_\text{SO}` below them. The
+    KI eigenvalues kcw.x prints for :math:`\Gamma` in ``gaas/03-dfpt/03-ham/outputs/aiida.kho``
+    show it directly:
 
-    - a 12×12×12 k-point and 6×6×6 q-point grid, against 4×4×4 here
-    - a wavefunction cutoff of 80 Ry, against 70 Ry here
-    - a renormalized screening coefficient that includes a correction beyond second order
-    - full-relativistic pseudopotentials generated by the authors from the scalar-relativistic
-      PseudoDojo library
+    .. code-block:: text
 
-.. question:: How do the gap and the cost change from a scalar-relativistic KI@LDA calculation to a spin-orbit one?
+        k = 0.0000 0.0000 0.0000     band energies (ev):
+        ...
+        KI     -10.0461   -10.0460   -10.0301   -10.0300    -5.1469    -5.1468     7.4170     7.4171
+        KI       7.7639     7.7641     7.7641     7.7643     9.1761     9.1761    12.4146    12.4148
 
-    Spin-orbit coupling lowers the gap by about :math:`\Delta_\text{SO}/3 = 0.12` eV. The
-    scalar-relativistic calculation, with its own screening parameters and the same structure
-    and pseudopotential family, gives a KI@LDA gap of 1.52 eV and an LDA gap of 0.27 eV. The
-    spin-orbit values are 1.41 eV and 0.16 eV, lower by 0.11 eV and 0.12 eV.
+    Bands 25 to 28, the heavy and light holes, sit at 7.76 eV; bands 23 and 24, the
+    split-off band, sit at 7.42 eV. The difference, 0.35 eV, is the spin-orbit splitting,
+    and experiment gives 0.35 eV :cite:`Marrazzo2024`. The LDA lines above it in the same
+    block give the same splitting, so the KI correction moves the valence bands together
+    and leaves the splitting to the pseudopotentials.
 
-    The cause is the textbook shift of the valence-band maximum: spin-orbit coupling raises
-    the :math:`j = 3/2` states at the top of the valence band by :math:`\Delta_\text{SO}/3`,
-    so the gap shrinks by that amount. The ratio of :math:`\Delta_\text{SO}` to the gap plays
-    no part, and the scalar-relativistic KI@LDA gap matches the experimental 1.52 eV only
-    by accident, because it omits a reduction that the experimental gap includes.
+.. question:: Why do the gallium :math:`3d` orbitals carry two screening parameters while the arsenic ones carry one?
 
-    The cost grows too. On four MPI ranks each screening calculation takes about 4 to 5
-    hours without spin-orbit coupling and 22 to 26 hours with it.
+    The run that computed them grouped Wannier functions whose spreads agree within
+    0.05 Å\ :sup:`2`, the default tolerance of ``group_orbitals_by: spread``. Each
+    Wannierization step writes its spreads to its
+    ``outputs/output_parameters.json``. The ten arsenic :math:`3d` functions all have a
+    spread of 0.24 Å\ :sup:`2`, so they share one parameter. The crystal field splits the
+    gallium :math:`3d` shell into four functions of spread 0.32 Å\ :sup:`2` and six of
+    0.37 Å\ :sup:`2`, which differ by more than the tolerance, so they receive two. The
+    grouping therefore depends on ``group_orbitals_tol`` as much as on the physics: a
+    tolerance above that difference would give all ten one parameter.
+
+*********
+ Up next
+*********
+
+To compute the screening parameters yourself, set ``calculate_alpha: true``, remove
+``alpha_guess``, and add ``group_orbitals_by: spread``. One linear-response calculation
+then runs per group of equivalent Wannier functions, five in all, each taking about a day
+on four MPI ranks.
