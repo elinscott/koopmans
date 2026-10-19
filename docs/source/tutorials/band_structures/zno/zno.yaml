@@ -4,7 +4,7 @@
 workflow:
   task: singlepoint               # spectral properties at fixed geometry
   correction: ki                  # the KI flavor of the correction, not KIPZ
-  formalism: dfpt                 # screening from linear response
+  formalism: dfpt                 # linear response in the primitive cell
   init_orbitals: mlwfs            # Wannier functions as the variational orbitals
   calculate_alpha: false          # take the screening parameters below as given
   alpha_guess:                    # one per Wannier function: 26 filled, then 2 empty
