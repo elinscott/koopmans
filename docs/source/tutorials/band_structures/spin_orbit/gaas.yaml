@@ -4,7 +4,7 @@
 workflow:
   task: singlepoint
   correction: ki
-  formalism: dfpt                 # screening from density-functional perturbation theory
+  formalism: dfpt                 # linear response in the primitive cell
   init_orbitals: mlwfs            # maximally localized Wannier functions
   spin: spin_orbit                # spinor wavefunctions with spin-orbit coupling
   pseudo_library: LDA-FR-GaAs     # LDA, fully relativistic, norm-conserving; installed by hand
