@@ -805,10 +805,11 @@ def _wannierize_inert_reason(koopmans_input: KoopmansInput) -> str | None:
 
 def _wannierize_smooth_inert_reason(koopmans_input: KoopmansInput) -> str | None:
     """Say why ``kpoints.overrides.wannierize_smooth`` reaches no step, or return ``None``."""
-    if koopmans_input.workflow.task != Task.SINGLEPOINT or not _runs_wannierization(koopmans_input):
+    task = koopmans_input.workflow.task
+    if task not in (Task.SINGLEPOINT, Task.BSE) or not _runs_wannierization(koopmans_input):
         return (
-            "on this run: only a singlepoint initialized from Wannier functions "
-            "(init_orbitals: mlwfs or projwfs) runs the smooth Wannierization; it is "
+            "on this run: only bse and a singlepoint initialized from Wannier functions "
+            "(init_orbitals: mlwfs or projwfs) run the smooth Wannierization; it is "
             "kept for when you switch to one"
         )
     if not names_band_path(koopmans_input.kpoints):

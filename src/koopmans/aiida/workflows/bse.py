@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any
 from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import load_codes, name_run, require_configured_codes
-from koopmans.aiida.workflows.dfpt import DfptChainInputs, assemble_dfpt_chain_inputs
+from koopmans.aiida.workflows.dfpt import (
+    DfptChainInputs,
+    add_smooth_interpolation_inputs,
+    assemble_dfpt_chain_inputs,
+)
 
 if TYPE_CHECKING:
     from aiida_workgraph import WorkGraph
@@ -29,6 +33,11 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     ``spin`` must be ``'none'``: the composed workflow reads a single DFPT
     channel. The route runs the DFPT chain whether ``formalism`` is ``'dfpt'`` or unset.
+
+    A ``kpoints.path`` and ``kpoints.overrides.wannierize_smooth`` reach the
+    DFPT chain as they do on the DFPT singlepoint route, so the run also
+    emits the Koopmans band structure along the path. The yambo BSE step
+    reads only the grid eigenvalues and is unaffected by either.
 
     Left unrefused: ``calculator_parameters.ecutwfc``, if unset, is derived
     from the pseudopotential family's own recommendation (the same call
@@ -78,6 +87,7 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             "`task: singlepoint` and a standalone BSE workflow separately for those."
         )
     chain_inputs, manifold_band_counts = assemble_dfpt_chain_inputs(koopmans_input)
+    add_smooth_interpolation_inputs(chain_inputs, koopmans_input)
     _ensure_explicit_pw_cutoffs(chain_inputs)
 
     n_orbitals = manifold_band_counts["none"]
@@ -102,6 +112,11 @@ def build_bse_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
             kpoints=chain_inputs["kpoints"],
             bse_parameters=yambo_input_to_bse_parameters(koopmans_input),
             scf_kpoints=chain_inputs["scf_kpoints"],
+            bands_kpoints=chain_inputs["bands_kpoints"],
+            wannierize_bands_kpoints=chain_inputs["wannierize_bands_kpoints"],
+            wannierize_smooth_kpoints=chain_inputs.get("wannierize_smooth_kpoints"),
+            wannierize_smooth_mp_grid=chain_inputs.get("wannierize_smooth_mp_grid"),
+            wannierize_smooth_bands_kpoints=chain_inputs.get("wannierize_smooth_bands_kpoints"),
             pseudo_family=chain_inputs["pseudo_family"],
             overrides=chain_inputs["overrides"],
             # aiida-koopmans#134: no ak2 kcw.x `ham` parser emits `pki_eigenvalues_on_grid`
