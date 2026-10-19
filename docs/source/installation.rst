@@ -182,7 +182,10 @@ directory holding one file per element:
 
 .. code-block:: console
 
-    $ aiida-pseudo install family <directory> my-lda-fr
+    $ aiida-pseudo install family <directory> my-lda-fr -P pseudo.upf
+
+``-P pseudo.upf`` names the pseudopotential type, so ``aiida-pseudo`` reads each element from
+the file's header instead of its name. Drop it when the files are named ``ELEMENT.EXTENSION``.
 
 Then set ``pseudo_library`` to ``my-lda-fr``. A family installed this way publishes no
 recommended cutoffs, so state ``calculator_parameters.ecutwfc`` in your input file;
