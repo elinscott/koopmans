@@ -191,7 +191,7 @@ two KI@LDA band structures together:
 
     First, it breaks a degeneracy. Without spin-orbit coupling the three highest valence
     bands are degenerate at :math:`\Gamma`. With it, two of them (the so-called heavy-hole
-    and light-hole bands) stay degenerate, while the third (the split-off band) drops below
+    and light-hole bands) stay degenerate, while the third (the split-off band) lies below
     them by the spin-orbit splitting :math:`\Delta_\text{SO}`.
 
     To extract the precise spin-orbit splitting, use the data
