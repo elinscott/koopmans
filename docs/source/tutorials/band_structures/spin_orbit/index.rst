@@ -23,12 +23,8 @@ Spin-orbit coupling enters a plane-wave calculation through the pseudopotentials
 must be generated fully relativistically. ``kcw.x`` runs its spin-orbit chain for the
 local-density approximation only, so the pseudopotentials must also be LDA. ``aiida-pseudo``
 installs `PseudoDojo <http://www.pseudo-dojo.org/>`_'s fully relativistic tables for PBE and
-PBEsol but not for LDA, so this is the case the :doc:`installation page
-<../../../installation>` has in mind when it says some pseudopotentials are installed by
-hand.
-
-PseudoDojo does publish an LDA fully relativistic table, in a repository of its own with one
-directory per element. Download gallium and arsenic:
+PBEsol but not for LDA, so this family is installed by hand. PseudoDojo publishes it in a
+repository of its own. Download gallium and arsenic:
 
 .. code-block:: console
 
@@ -36,7 +32,8 @@ directory per element. Download gallium and arsenic:
     $ curl -Lo LDA-FR-GaAs/Ga-d_r.upf https://raw.githubusercontent.com/PseudoDojo/ONCVPSP-LDA-FR-PDv0.4/main/Ga/Ga-d_r.upf
     $ curl -Lo LDA-FR-GaAs/As-d_r.upf https://raw.githubusercontent.com/PseudoDojo/ONCVPSP-LDA-FR-PDv0.4/main/As/As-d_r.upf
 
-and install the directory as a family:
+and install the directory as a family, as the :doc:`installation page
+<../../../installation>` describes:
 
 .. code-block:: console
 
@@ -84,8 +81,7 @@ The ``projections`` list four blocks of bands: the arsenic and gallium :math:`3d
 the four valence bands, and the four lowest conduction bands. Each projection yields twice
 the Wannier functions it would without spin-orbit coupling, one per spinor state, so the
 four blocks produce 10, 10, 8 and 8 Wannier functions, 36 in all. The projections and the
-disentanglement window are written exactly as they would be for a scalar-relativistic
-calculation.
+disentanglement window are written as for a scalar-relativistic calculation.
 
 .. literalinclude:: gaas.yaml
     :language: yaml
@@ -160,9 +156,9 @@ Plot the LDA and KI@LDA bands together, with the KI@LDA gap annotated:
 
     Bands 25 to 28, the heavy and light holes, sit at 7.76 eV; bands 23 and 24, the
     split-off band, sit at 7.42 eV. The difference, 0.35 eV, is the spin-orbit splitting,
-    and experiment gives 0.35 eV :cite:`Marrazzo2024`. The LDA lines above it in the same
-    block give the same splitting, so the KI correction moves the valence bands together
-    and leaves the splitting to the pseudopotentials.
+    and experiment gives 0.35 eV :cite:`Marrazzo2024`. The LDA lines in the same block
+    give the same 0.35 eV, so the KI correction shifts these bands together and leaves
+    the splitting unchanged.
 
 .. question:: Why do the gallium :math:`3d` orbitals carry two screening parameters while the arsenic ones carry one?
 
