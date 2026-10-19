@@ -115,11 +115,36 @@ class TestSchemaValidation:
 
         assert CalculatorParametersInput.model_validate({"nbnd": 10.0}).nbnd == 10
 
+    @pytest.mark.parametrize("eps_inf", ["yes", "Auto"])
+    def test_eps_inf_string_other_than_auto_rejected(self, eps_inf: str) -> None:
+        """Only the exact string ``auto`` or a number parses as ``workflow.eps_inf``."""
+        from koopmans.input_file.workflow import WorkflowConfig
+
+        base = {"task": "singlepoint", "formalism": "dscf", "pseudo_library": "X"}
+
+        with pytest.raises(ValueError, match=r"eps_inf\.literal\[.auto.\]"):
+            WorkflowConfig.model_validate({**base, "eps_inf": eps_inf})
+
+        assert WorkflowConfig.model_validate({**base, "eps_inf": "auto"}).eps_inf == "auto"
+
+
+class TestFormalism:
+    """``workflow.formalism`` has no default and is required on a singlepoint."""
+
+    def test_singlepoint_without_it_is_refused(self) -> None:
+        """Negative control: the same input with ``formalism`` stated parses."""
+        d = _minimal_si_input()
+        del d["workflow"]["formalism"]  # type: ignore[attr-defined]
+        with pytest.raises(ValueError, match=r"needs `workflow\.formalism`.*`dscf`.*`dfpt`"):
+            KoopmansInput.model_validate(d)
+        d["workflow"]["formalism"] = "dfpt"  # type: ignore[index]
+        KoopmansInput.model_validate(d)
+
 
 def _minimal_si_input() -> dict[str, object]:
     """Return a minimal, valid silicon ``KoopmansInput`` dict."""
     return {
-        "workflow": {"task": "singlepoint", "pseudo_library": "X"},
+        "workflow": {"task": "singlepoint", "formalism": "dscf", "pseudo_library": "X"},
         "atoms": {
             "cell_parameters": {"periodic": True, "ibrav": 2, "celldms": {"1": 10.26}},
             "atomic_positions": {
@@ -254,7 +279,7 @@ class TestUnfoldAndInterpolateBlockRemoved:
 
         message = str(excinfo.value)
         assert "`calculator_parameters.unfold_and_interpolate` was replaced" in message
-        assert "`kpoints.smooth_interpolation_factor`" in message
+        assert "`kpoints.overrides.wannierize_smooth.factor`" in message
         assert "is not a valid keyword" not in message
 
     def test_the_block_is_rejected_however_it_is_set(self) -> None:
@@ -828,37 +853,33 @@ class TestKpointsOffset:
             GammaOnlyKpointsInput(offset=(0.5, 0.0, 0.0))
 
 
-class TestSmoothInterpolationFactor:
-    """``smooth_interpolation_factor`` multiplies ``grid`` for the smooth-interpolation method."""
+class TestSmoothWannierizeFactor:
+    """``overrides.wannierize_smooth.factor`` multiplies ``grid`` for the smooth Wannierization."""
 
-    def test_default_is_one_in_every_direction(self) -> None:
-        """Leaving the keyword out asks for no densification."""
-        from koopmans.input_file import GridKpointsInput
-
-        assert GridKpointsInput(grid=(2, 2, 2)).smooth_interpolation_factor == (1, 1, 1)
+    @staticmethod
+    def _factor(factor: object) -> object:
+        return KoopmansInput.model_validate(
+            _si_input_with_kpoints(
+                grid=[2, 2, 2], overrides={"wannierize_smooth": {"factor": factor}}
+            )
+        ).kpoints.overrides.wannierize_smooth
 
     def test_a_bare_integer_broadcasts_to_every_direction(self) -> None:
         """A scalar factor is shorthand for the same factor on every axis."""
-        from koopmans.input_file import GridKpointsInput
-
-        inp = GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=4)
-        assert inp.smooth_interpolation_factor == (4, 4, 4)
+        entry = self._factor(4)
+        assert entry.factor == (4, 4, 4)  # type: ignore[attr-defined]
+        assert entry.path_density == 50.0  # type: ignore[attr-defined]
 
     def test_a_triple_scales_each_direction_independently(self) -> None:
         """A three-entry factor densifies the directions independently."""
-        from koopmans.input_file import GridKpointsInput
-
-        inp = GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 2, 3])
-        assert inp.smooth_interpolation_factor == (1, 2, 3)
+        assert self._factor([1, 2, 3]).factor == (1, 2, 3)  # type: ignore[attr-defined]
 
     def test_a_factor_below_one_is_rejected(self) -> None:
         """The factor multiplies the grid, so it cannot coarsen it."""
-        from koopmans.input_file import GridKpointsInput
-
         with pytest.raises(ValueError, match="greater than or equal to 1"):
-            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=0)
+            self._factor(0)
         with pytest.raises(ValueError, match="greater than or equal to 1"):
-            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=[1, 0, 1])
+            self._factor([1, 0, 1])
 
     def test_a_boolean_is_rejected(self) -> None:
         """A bool is an int in Python, so ``true`` would silently become (1, 1, 1).
@@ -866,157 +887,85 @@ class TestSmoothInterpolationFactor:
         The strict per-axis type check rejects it as not a valid integer,
         rather than accepting it as a factor of 1.
         """
-        from koopmans.input_file import GridKpointsInput
-
         with pytest.raises(ValueError, match="valid integer"):
-            GridKpointsInput(grid=(2, 2, 2), smooth_interpolation_factor=True)
+            self._factor(True)
 
-    def test_gamma_only_carries_the_same_field(self) -> None:
-        """Gamma-only kpoints carry the field too, at the same default.
-
-        A gamma-only run has no path to interpolate a band structure along,
-        so a factor above 1 is refused downstream (by the "no path" rule),
-        not by this field being absent from the model.
-        """
-        from koopmans.input_file import GammaOnlyKpointsInput
-
-        assert GammaOnlyKpointsInput().smooth_interpolation_factor == (1, 1, 1)
-        with pytest.raises(ValueError, match="greater than or equal to 1"):
-            GammaOnlyKpointsInput(smooth_interpolation_factor=0)
+    def test_the_entry_states_its_factor(self) -> None:
+        """An entry without a factor states no smooth Wannierization to run."""
+        with pytest.raises(ValueError, match=r"wannierize_smooth\.factor"):
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(
+                    grid=[2, 2, 2], overrides={"wannierize_smooth": {"path_density": 20.0}}
+                )
+            )
 
 
-class TestEpsInfFactor:
-    """``eps_inf_factor`` densifies ``grid`` for the DFPT ``eps_inf: auto`` dielectric step."""
+class TestRetiredKpointKeywords:
+    """Each retired k-point keyword is refused by name, pointing at where it went."""
 
-    def test_default_is_one_in_every_direction(self) -> None:
-        """Leaving the keyword out asks for no densification."""
-        from koopmans.input_file import GridKpointsInput
+    @pytest.mark.parametrize(
+        ("kpoints", "expected"),
+        [
+            (
+                {"grid": [2, 2, 2], "smooth_interpolation_factor": 4},
+                r"`kpoints\.overrides\.wannierize_smooth\.factor`",
+            ),
+            ({"grid": [2, 2, 2], "eps_inf_factor": 2}, r"`kpoints\.overrides\.dielectric`"),
+            (
+                {"grid": [2, 2, 2], "overrides": {"wannier90": {"path_density": 80.0}}},
+                r"`kpoints\.overrides\.wannierize`",
+            ),
+        ],
+    )
+    def test_names_the_replacement(
+        self, kpoints: dict[str, object], expected: str, tmp_path: Path
+    ) -> None:
+        """The message names the new home, not ``extra_forbidden``."""
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(_si_input_with_kpoints(**kpoints)))
+        with pytest.raises(ValueError, match=expected) as excinfo:
+            read_input_file(input_file)
+        assert "is not a valid keyword" not in str(excinfo.value)
+        assert str(excinfo.value).count("Value error") == 1
 
-        assert GridKpointsInput(grid=(2, 2, 2)).eps_inf_factor == (1, 1, 1)
 
-    def test_a_bare_integer_broadcasts_to_every_direction(self) -> None:
-        """A scalar factor is shorthand for the same factor on every axis."""
-        from koopmans.input_file import GridKpointsInput
+class TestDielectricOverride:
+    """``overrides.dielectric`` states the ``eps_inf: auto`` dielectric step's mesh."""
 
-        inp = GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=4)
-        assert inp.eps_inf_factor == (4, 4, 4)
+    def test_a_spacing_is_kept_as_a_spacing(self) -> None:
+        """The cell fixes the dimensions, so no mesh is built for it."""
+        from koopmans.aiida.conversion import step_grid_spacing
 
-    def test_a_triple_scales_each_direction_independently(self) -> None:
-        """A three-entry factor densifies the directions independently."""
-        from koopmans.input_file import GridKpointsInput
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(grid=[2, 2, 2], overrides={"dielectric": {"grid_spacing": 0.1}})
+        )
+        assert step_grid_spacing(inp.kpoints, "dielectric") == 0.1
+        assert step_grid_spacing(inp.kpoints, "scf") is None
 
-        inp = GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=[1, 2, 3])
-        assert inp.eps_inf_factor == (1, 2, 3)
+    def test_an_offset_cannot_shift_an_scf_spacing_but_can_shift_a_dielectric_one(self) -> None:
+        """An scf spacing takes no offset; a dielectric one does."""
+        with pytest.raises(ValueError, match=r"`scf\.grid_spacing` and `scf\.offset`") as excinfo:
+            KoopmansInput.model_validate(
+                _si_input_with_kpoints(
+                    grid=[2, 2, 2],
+                    overrides={"scf": {"grid_spacing": 0.2, "offset": [0.5, 0.5, 0.5]}},
+                )
+            )
+        assert excinfo.value.error_count() == 1  # type: ignore[attr-defined]
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(
+                grid=[2, 2, 2],
+                overrides={"dielectric": {"grid_spacing": 0.2, "offset": [0.5, 0.5, 0.5]}},
+            )
+        )
+        assert inp.kpoints.overrides.dielectric is not None
 
-    def test_a_factor_below_one_is_rejected(self) -> None:
-        """The factor multiplies the grid, so it cannot coarsen it."""
-        from koopmans.input_file import GridKpointsInput
-
-        with pytest.raises(ValueError, match="greater than or equal to 1"):
-            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=0)
-        with pytest.raises(ValueError, match="greater than or equal to 1"):
-            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=[1, 0, 1])
-
-    def test_a_boolean_is_rejected(self) -> None:
-        """A bool is an int in Python, so ``true`` would silently become (1, 1, 1)."""
-        from koopmans.input_file import GridKpointsInput
-
-        with pytest.raises(ValueError, match="valid integer"):
-            GridKpointsInput(grid=(2, 2, 2), eps_inf_factor=True)
-
-    def test_gamma_only_carries_the_same_field(self) -> None:
-        """Gamma-only kpoints carry the field too, at the same default."""
-        from koopmans.input_file import GammaOnlyKpointsInput
-
-        assert GammaOnlyKpointsInput().eps_inf_factor == (1, 1, 1)
-        with pytest.raises(ValueError, match="greater than or equal to 1"):
-            GammaOnlyKpointsInput(eps_inf_factor=0)
-
-    @staticmethod
-    def _dfpt_input(factor: object = None) -> dict[str, object]:
-        d = _minimal_si_input()
-        d["workflow"]["screening_method"] = "dfpt"  # type: ignore[index]
-        d["workflow"]["correction"] = "ki"  # type: ignore[index]
-        d["workflow"]["init_orbitals"] = "mlwfs"  # type: ignore[index]
-        d["workflow"]["eps_inf"] = "auto"  # type: ignore[index]
-        if factor is not None:
-            d["kpoints"]["eps_inf_factor"] = factor  # type: ignore[index]
-        return d
-
-    def test_reaches_the_dielectric_step(self) -> None:
-        """The one situation where it takes effect: parses and keeps the value."""
-        inp = KoopmansInput.model_validate(self._dfpt_input(2))
-        assert inp.kpoints.eps_inf_factor == (2, 2, 2)
-
-    def test_refused_with_a_numeric_eps_inf(self) -> None:
-        """A mutant that ignores ``eps_inf`` would accept this: it must not.
-
-        ``eps_inf_factor`` densifies a dielectric step that a numeric
-        ``eps_inf`` never runs.
-        """
-        d = self._dfpt_input(2)
-        d["workflow"]["eps_inf"] = 11.7  # type: ignore[index]
-        with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
-            KoopmansInput.model_validate(d)
-
-    def test_refused_without_eps_inf_set(self) -> None:
-        """The unset default (no dielectric run at all) is refused the same way."""
-        d = self._dfpt_input(2)
-        del d["workflow"]["eps_inf"]  # type: ignore[attr-defined]
-        with pytest.raises(ValueError, match=r"eps_inf.*is not 'auto'"):
-            KoopmansInput.model_validate(d)
-
-    def test_refused_with_dscf_screening(self) -> None:
-        """A mutant that ignores ``screening_method`` would accept this: it must not.
-
-        ``eps_inf_factor`` densifies the DFPT dielectric step; DSCF never
-        wires ``eps_inf: auto`` to a dielectric step at all.
-        """
-        d = self._dfpt_input(2)
-        d["workflow"]["screening_method"] = "dscf"  # type: ignore[index]
-        with pytest.raises(ValueError, match="DSCF route has no dielectric-constant step yet"):
-            KoopmansInput.model_validate(d)
-
-    def test_refused_on_wannierize(self) -> None:
-        """A mutant that ignores ``task`` would accept this: it must not.
-
-        ``task: wannierize`` runs no DFPT chain and so no dielectric step.
-        """
-        d = self._dfpt_input(2)
-        d["workflow"]["task"] = "wannierize"  # type: ignore[index]
-        with pytest.raises(ValueError, match="task: wannierize"):
-            KoopmansInput.model_validate(d)
-
-    def test_refused_on_bse(self) -> None:
-        """``bse`` composes the same DFPT chain but does not yet thread ``eps_inf_factor``."""
-        d = self._dfpt_input(2)
-        d["workflow"]["task"] = "bse"  # type: ignore[index]
-        d["calculator_parameters"]["yambo"] = {  # type: ignore[index]
-            "BndsRnXs": [1, 100],
-            "NGsBlkXs": 2,
-            "BSEBands": [1, 4],
-            "BEnRange": [0, 10],
-        }
-        with pytest.raises(ValueError, match="task: bse"):
-            KoopmansInput.model_validate(d)
-
-    def test_refused_on_dft_eps_names_grid_instead(self) -> None:
-        """``task: dft_eps`` already samples its dielectric scf via ``kpoints.grid``.
-
-        The message points at the keyword that actually reaches it, not a
-        generic "no effect" line.
-        """
-        d = self._dfpt_input(2)
-        d["workflow"]["task"] = "dft_eps"  # type: ignore[index]
-        with pytest.raises(ValueError, match=r"task: dft_eps.*`kpoints\.grid`"):
-            KoopmansInput.model_validate(d)
-
-    def test_refused_on_gamma_only(self) -> None:
-        """A gamma-only run has no k-point grid to densify."""
-        d = self._dfpt_input()
-        d["kpoints"] = {"gamma_only": True, "eps_inf_factor": 2}
-        with pytest.raises(ValueError, match=r"eps_inf_factor.*gamma_only"):
-            KoopmansInput.model_validate(d)
+    def test_kept_on_gamma_only(self) -> None:
+        """A gamma-only run has no mesh to give the step, so the entry is kept inert."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(gamma_only=True, overrides={"dielectric": {"grid": [4, 4, 4]}})
+        )
+        assert inp.kpoints.overrides.dielectric is not None
 
 
 def _si_input_with_kpoints(**kpoints: object) -> dict[str, object]:
@@ -1101,46 +1050,32 @@ class TestPerStepKpoints:
         assert inp.kpoints.overrides.scf is not None
         assert inp.kpoints.overrides.scf.offset == (0.5, 0.5, 0.5)
 
-    def test_wannier90_density_is_unset_without_being_stated(self) -> None:
-        """Left out, the entry is unset, like ``scf``/``nscf``: no override to apply."""
-        from koopmans.aiida.conversion import wannier90_path_density
-
-        inp = KoopmansInput.model_validate(_si_input_with_kpoints(grid=[2, 2, 2]))
-        assert inp.kpoints.overrides.wannier90 is None
-        assert wannier90_path_density(inp.kpoints) == 50.0
-
-    def test_wannier90_density_can_be_set_explicitly(self) -> None:
-        """A stated ``overrides.wannier90.path_density`` overrides the default."""
-        from koopmans.aiida.conversion import wannier90_path_density
-
-        inp = KoopmansInput.model_validate(
-            _si_input_with_kpoints(grid=[2, 2, 2], overrides={"wannier90": {"path_density": 80.0}})
-        )
-        assert inp.kpoints.overrides.wannier90 is not None
-        assert inp.kpoints.overrides.wannier90.path_density == 80.0
-        assert wannier90_path_density(inp.kpoints) == 80.0
-
-    def test_wannier90_override_survives_a_dump_and_revalidate_round_trip(self) -> None:
+    def test_wannierize_override_survives_a_dump_and_revalidate_round_trip(self) -> None:
         """An unset entry must not look "stated" after ``model_dump`` re-validates.
 
         ``model_dump`` serializes every field, default or not; if the unset
         sentinel were anything other than ``None`` the round trip used to
         build input variants throughout the test suite would make every
-        input look like it explicitly gave ``overrides.wannier90``.
+        input look like it explicitly gave each entry.
         """
         inp = KoopmansInput.model_validate(_si_input_with_kpoints(gamma_only=True))
         round_tripped = KoopmansInput.model_validate(inp.model_dump())
-        assert round_tripped.kpoints.overrides.wannier90 is None
+        for step in ("wannierize", "wannierize_smooth", "dielectric"):
+            assert getattr(round_tripped.kpoints.overrides, step) is None
 
-    def test_wannier90_entry_has_no_mesh_fields(self, tmp_path: Path) -> None:
-        """The wannier90 entry states a density, not a mesh: it has no `grid` to give."""
+    def test_wannierize_entry_has_no_mesh_fields(self, tmp_path: Path) -> None:
+        """The wannierize entry states a density, not a mesh: it has no `grid` to give."""
         input_file = tmp_path / "input.json"
         input_file.write_text(
             json.dumps(
-                _si_input_with_kpoints(grid=[2, 2, 2], overrides={"wannier90": {"grid": [4, 4, 4]}})
+                _si_input_with_kpoints(
+                    grid=[2, 2, 2], overrides={"wannierize": {"grid": [4, 4, 4]}}
+                )
             )
         )
-        with pytest.raises(ValueError, match=r"overrides\.wannier90\.grid.*is not a valid keyword"):
+        with pytest.raises(
+            ValueError, match=r"overrides\.wannierize\.grid.*is not a valid keyword"
+        ):
             read_input_file(input_file)
 
     def test_gamma_only_has_no_steps_to_override(self) -> None:
@@ -1150,23 +1085,14 @@ class TestPerStepKpoints:
                 _si_input_with_kpoints(gamma_only=True, overrides={"scf": {"grid": [4, 4, 4]}})
             )
 
-    def test_gamma_only_accepts_an_unstated_wannier90_default(self) -> None:
-        """A gamma-only input never mentioning `overrides.wannier90` still validates.
-
-        `wannier90` is unset by default, like `scf`/`nscf`; only an input
-        that states it itself has anything to reject.
-        """
-        inp = KoopmansInput.model_validate(_si_input_with_kpoints(gamma_only=True))
-        assert inp.kpoints.overrides.wannier90 is None
-
-    def test_gamma_only_rejects_a_stated_wannier90_density(self) -> None:
-        """Gamma-only samples one point, so there is no band structure to interpolate."""
-        with pytest.raises(ValueError, match=r"overrides\.wannier90.*gamma_only"):
-            KoopmansInput.model_validate(
-                _si_input_with_kpoints(
-                    gamma_only=True, overrides={"wannier90": {"path_density": 80.0}}
-                )
+    def test_gamma_only_keeps_a_stated_wannierize_density(self) -> None:
+        """Gamma-only interpolates no band structure, so the entry is kept inert."""
+        inp = KoopmansInput.model_validate(
+            _si_input_with_kpoints(
+                gamma_only=True, overrides={"wannierize": {"path_density": 80.0}}
             )
+        )
+        assert inp.kpoints.overrides.wannierize is not None
 
     def test_gamma_only_rejects_a_mesh_built_as_a_model(self) -> None:
         """The rejection belongs to the field, not to one way of reaching it.
@@ -1553,11 +1479,14 @@ def _bse_input(**yambo_updates: object) -> dict[str, object]:
     """Return the minimal silicon input at ``task: bse`` with a valid ``yambo`` block."""
     d = _si_input_with({"ecutwfc": 20.0})
     d["workflow"]["task"] = "bse"  # type: ignore[index]
+    d["workflow"].pop("formalism", None)  # type: ignore[attr-defined]
     d["calculator_parameters"]["yambo"] = {  # type: ignore[index]
         "BndsRnXs": [1, 100],
         "NGsBlkXs": 2,
         "BSEBands": [4, 5],
         "BEnRange": [0, 10],
+        "LongDrXs": [1, 0, 0],
+        "BLongDir": [1, 0, 0],
         **yambo_updates,
     }
     return d
@@ -1579,6 +1508,7 @@ class TestYamboSchema:
         """``task: bse`` with no ``yambo`` block is refused, naming the required fields."""
         d = _si_input_with({"ecutwfc": 20.0})
         d["workflow"]["task"] = "bse"  # type: ignore[index]
+        d["workflow"].pop("formalism", None)  # type: ignore[attr-defined]
         with pytest.raises(ValueError, match=r"needs a `calculator_parameters\.yambo` input block"):
             KoopmansInput.model_validate(d)
 
@@ -1586,6 +1516,7 @@ class TestYamboSchema:
         """A ``yambo`` block stated under another task would go unread, and is refused."""
         d = _bse_input()
         d["workflow"]["task"] = "singlepoint"  # type: ignore[index]
+        d["workflow"]["formalism"] = "dfpt"  # type: ignore[index]
         with pytest.raises(ValueError, match=r"`calculator_parameters\.yambo` has no effect"):
             KoopmansInput.model_validate(d)
 
@@ -1619,7 +1550,7 @@ class TestYamboSchema:
             ("BSEQptR", "optical"),
             ("BS_CPU", "parallelization.yambo"),
             ("BS_ROLEs", "parallelization.yambo"),
-            ("rim_cut", "Coulomb-divergence"),
+            ("rim_cut", "RandQpts"),
             ("WRbsWF", "excitonic wavefunctions"),
             ("NLCC", "non-linear core correction"),
         ],
@@ -1669,6 +1600,8 @@ class TestCollinearNeedsAMagnetization:
         """
         d = _collinear_input()
         _set_keyword(d, "workflow", "task", task)
+        if task == "bse":
+            d["workflow"].pop("formalism", None)  # type: ignore[attr-defined]
 
         with pytest.raises(ValueError, match="tot_magnetization"):
             KoopmansInput.model_validate(d)
@@ -1760,6 +1693,8 @@ class TestTheMomentIsWholeElectrons:
         """
         d = _si_input_with({"ecutwfc": 20.0, "tot_magnetization": 0.5})
         _set_keyword(d, "workflow", "task", task)
+        if task == "bse":
+            d["workflow"].pop("formalism", None)  # type: ignore[attr-defined]
 
         with pytest.raises(ValueError, match="whole"):
             KoopmansInput.model_validate(d)

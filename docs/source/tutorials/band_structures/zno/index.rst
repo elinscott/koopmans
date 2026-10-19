@@ -40,7 +40,7 @@ Two lines in the ``workflow`` block choose the method:
 
 .. literalinclude:: zno.yaml
     :language: yaml
-    :start-at: screening_method
+    :start-at: formalism
     :end-at: init_orbitals
 
 The first asks for the screening parameters to be computed by linear response, with

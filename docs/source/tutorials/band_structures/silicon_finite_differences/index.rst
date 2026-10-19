@@ -396,15 +396,17 @@ Hamiltonian plus a correction:
 
 The Koopmans correction is short-ranged and interpolates well even from a coarse grid. The
 LDA part does not — the first figure in this tutorial showed how poorly a
-:math:`2\times2\times2` Wannier interpolation traces the LDA bands. One line in the
-``kpoints`` block of the input file addresses this:
+:math:`2\times2\times2` Wannier interpolation traces the LDA bands. An entry under
+``overrides`` in the ``kpoints`` block of the input file addresses this:
 
 .. literalinclude:: si.yaml
     :language: yaml
     :start-at: kpoints:
-    :end-at: smooth_interpolation_factor
+    :end-at: factor:
 
-``smooth_interpolation_factor: 4`` says to replace :math:`H^{\mathrm{LDA}}_{\mathbf{R}}`
+Each key under ``overrides`` sets the sampling of one calculation of the run.
+``wannierize_smooth`` is the second Wannierization, and ``factor: 4`` says to
+replace :math:`H^{\mathrm{LDA}}_{\mathbf{R}}`
 with the same quantity computed on a grid four times denser in each direction, keeping
 :math:`\Delta H_{\mathbf{R}}` from the supercell calculation. The denser grid requires a
 non-self-consistent ``pw.x`` calculation and a Wannierization per block on an

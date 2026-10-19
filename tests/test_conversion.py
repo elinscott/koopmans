@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -356,6 +357,38 @@ class TestInterpolationPathHelper:
         assert dict(actual.labels) == dict(expected.labels)
         assert np.allclose(actual.get_kpoints(), expected.get_kpoints())  # type: ignore[no-untyped-call]
 
+    def test_each_wannierization_samples_its_own_density(self, aiida_profile: Any) -> None:
+        """Each Wannierization's path takes its own entry's density, defaulting to 50."""
+        from koopmans.aiida.conversion import (
+            kpoints_input_to_interpolation_path,
+            wannierize_interpolation_path,
+        )
+        from koopmans.input_file import GridKpointsInput
+
+        structure = self._fcc_silicon()
+        kpoints = GridKpointsInput.model_validate(
+            {
+                "grid": [2, 2, 2],
+                "path": "GX",
+                "overrides": {"wannierize_smooth": {"factor": 2, "path_density": 20.0}},
+            }
+        )
+
+        def count(path: Any) -> int:
+            """Return the number of points on ``path``."""
+            assert path is not None
+            return len(path.get_kpoints())
+
+        main = wannierize_interpolation_path(kpoints, structure, "wannierize")
+        smooth = wannierize_interpolation_path(kpoints, structure, "wannierize_smooth")
+        assert count(main) == count(
+            kpoints_input_to_interpolation_path(kpoints, structure, density=50.0)
+        )
+        assert count(smooth) == count(
+            kpoints_input_to_interpolation_path(kpoints, structure, density=20.0)
+        )
+        assert count(main) > count(smooth)
+
 
 class TestInputToPwParameters:
     """The shared pw parameter dict carries no calculation type of its own."""
@@ -458,6 +491,8 @@ def _bse_pw_input(**yambo_updates: Any) -> dict[str, Any]:
         "NGsBlkXs": 2,
         "BSEBands": [4, 5],
         "BEnRange": [0, 10],
+        "LongDrXs": [1, 0, 0],
+        "BLongDir": [1, 0, 0],
         **yambo_updates,
     }
     return d
@@ -477,12 +512,20 @@ class TestYamboInputToBseParameters:
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(
-            _bse_pw_input(LongDrXs=[1.0, 1.0, 1.0], BLongDir=[1.0, 1.0, 1.0])
+            _bse_pw_input(
+                LongDrXs=[1.0, 1.0, 1.0],
+                BLongDir=[1.0, 1.0, 1.0],
+                FFTGvecs=20,
+                BSSmod="h",
+                BSEEhEny=[-1, 5],
+                RandQpts=1000000,
+                BSHayTer=True,
+            )
         )
         parameters = yambo_input_to_bse_parameters(inp)
 
         assert parameters == {
-            "arguments": ["rim_cut", "WRbsWF", "NLCC"],
+            "arguments": ["rim_cut", "WRbsWF", "NLCC", "BSHayTer"],
             "variables": {
                 "BndsRnXs": [[1, 100], ""],
                 "NGsBlkXs": [2, "Ry"],
@@ -493,8 +536,19 @@ class TestYamboInputToBseParameters:
                 "BEnRange": [[0, 10], "eV"],
                 "BEnSteps": [1000, ""],
                 "BDmRange": [[0.1, 0.1], "eV"],
+                "FFTGvecs": [20, "Ry"],
+                "BSSmod": "h",
+                "BSEEhEny": [[-1, 5], "eV"],
+                "RandQpts": [1000000, ""],
             },
         }
+
+        # A string variable must render as a scalar assignment: an array block
+        # (`% BSSmod ... %`) is ignored by yambo, which then keeps its default.
+        from yambopy.io.inputfile import YamboIn
+
+        runcard = str(YamboIn().from_dictionary(parameters))
+        assert re.search(r"^BSSmod\s*=\s*'h'$", runcard, re.MULTILINE)
 
     def test_defaults(self, aiida_profile: Any) -> None:
         """``BEnSteps``, ``BDmRange`` and ``BSENGBlk`` take their documented defaults."""
@@ -539,19 +593,34 @@ class TestYamboInputToBseParameters:
         for keyword in ("KfnQPdb", "BSEQptR", "BS_CPU", "BS_ROLEs"):
             assert keyword not in variables
 
-    def test_unset_light_polarization_is_not_emitted(self, aiida_profile: Any) -> None:
-        """``LongDrXs``/``BLongDir`` are ordinary optional fields, left out when unset.
+    @pytest.mark.parametrize("keyword", ["LongDrXs", "BLongDir"])
+    def test_light_polarization_is_required(self, keyword: str) -> None:
+        """Leaving out a polarization direction is refused: no value is assumed for it."""
+        from koopmans.input_file import KoopmansInput
 
-        Unlike the route-owned keywords above, a caller may set these; the
-        input file default is simply unset, leaving yambo's own compiled-in
-        (x-polarized) default to apply.
-        """
+        d = _bse_pw_input()
+        del d["calculator_parameters"]["yambo"][keyword]
+        with pytest.raises(ValueError, match=keyword):
+            KoopmansInput.model_validate(d)
+
+    def test_bseprop_names_only_spectra_yambo_computes(self, aiida_profile: Any) -> None:
+        """``BSEprop`` takes yambo's spectrum names, space-separated, and refuses any other."""
+        from koopmans.input_file import KoopmansInput
+
+        inp = KoopmansInput.model_validate(_bse_pw_input(BSEprop="abs jdos"))
+        assert yambo_input_to_bse_parameters(inp)["variables"]["BSEprop"] == "abs jdos"
+        with pytest.raises(ValueError, match=r"BSEprop.*'eels'"):
+            KoopmansInput.model_validate(_bse_pw_input(BSEprop="abs eels"))
+
+    def test_unset_optional_keywords_are_not_emitted(self, aiida_profile: Any) -> None:
+        """An optional yambo keyword left unset is left out of the runcard."""
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(_bse_pw_input())
-        variables = yambo_input_to_bse_parameters(inp)["variables"]
-        assert "LongDrXs" not in variables
-        assert "BLongDir" not in variables
+        parameters = yambo_input_to_bse_parameters(inp)
+        for keyword in ("FFTGvecs", "BSSmod", "RandQpts", "BSHayTer"):
+            assert keyword not in parameters["variables"]
+        assert parameters["arguments"] == ["rim_cut", "WRbsWF", "NLCC"]
 
 
 class TestPwNamelistDumpSurvivesDefaultValues:
@@ -1142,11 +1211,11 @@ class TestDftBandsScfMesh:
         assert scf["kpoints"].value is None
         assert float(scf["kpoints_distance"].value) == pytest.approx(0.11)
 
-    def test_an_nscf_entry_is_rejected(
+    def test_an_nscf_entry_is_kept_with_a_notice(
         self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """There is no nscf step here for the mesh to reach."""
-        from koopmans.aiida.workflows import build_workgraph
+        """There is no nscf step here for the mesh to reach, so the build notes it and goes on."""
+        from koopmans.aiida.workflows import advisories_for, build_workgraph
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(
@@ -1155,8 +1224,8 @@ class TestDftBandsScfMesh:
                 kpoints={"grid": [2, 2, 2], "overrides": {"nscf": {"grid": [4, 4, 4]}}},
             )
         )
-        with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_bands"):
-            build_workgraph(inp)
+        assert any("overrides.nscf has no effect" in a for a in advisories_for(inp))
+        build_workgraph(inp)
 
     def test_an_explicit_path_reaches_bands_kpoints(
         self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
@@ -1247,6 +1316,82 @@ class TestStepKpointsMesh:
         mesh, mesh_offset = step_kpoints_mesh(kpoints, "scf").get_kpoints_mesh()  # type: ignore[no-untyped-call]
         assert [int(x) for x in mesh] == (override or {}).get("grid", top_level["grid"])
         assert list(mesh_offset) == (override or {}).get("offset", top_level["offset"])
+
+    @pytest.mark.parametrize(
+        ("dielectric", "expected"),
+        [
+            ({"grid": [8, 8, 8]}, ([8, 8, 8], [0.5, 0.5, 0.5])),
+            ({"offset": [0.0, 0.0, 0.0]}, ([4, 4, 4], [0.0, 0.0, 0.0])),
+        ],
+    )
+    def test_the_dielectric_entry_falls_back_to_the_scf_entry(
+        self,
+        aiida_profile: Any,
+        dielectric: dict[str, Any],
+        expected: tuple[list[int], list[float]],
+    ) -> None:
+        """An attribute the dielectric entry leaves unset comes from ``scf``, not the top level."""
+        from koopmans.aiida.conversion import step_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput.model_validate(
+            {
+                "grid": [2, 2, 2],
+                "overrides": {
+                    "scf": {"grid": [4, 4, 4], "offset": [0.5, 0.5, 0.5]},
+                    "dielectric": dielectric,
+                },
+            }
+        )
+        mesh, mesh_offset = step_kpoints_mesh(kpoints, "dielectric").get_kpoints_mesh()  # type: ignore[no-untyped-call]
+        assert ([int(x) for x in mesh], list(mesh_offset)) == expected
+
+    def test_a_spacing_cannot_stand_for_a_mesh_and_offset(self, aiida_profile: Any) -> None:
+        """A spacing-built mesh carries no offset, so the mesh call refuses it by name."""
+        from koopmans.aiida.conversion import step_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput.model_validate(
+            {"grid": [2, 2, 2], "overrides": {"scf": {"grid_spacing": 0.2}}}
+        )
+        with pytest.raises(
+            ValueError, match=r"states a spacing, not a mesh.*overrides\.scf\.grid`"
+        ):
+            step_kpoints_mesh(kpoints, "scf")
+
+    @pytest.mark.parametrize("spacing", [0.2, 0.3])
+    def test_a_dielectric_spacing_builds_the_mesh_kpoints_distance_would(
+        self, aiida_profile: Any, spacing: float
+    ) -> None:
+        """The dimensions equal ``create_kpoints_from_distance``'s; the offset is inherited.
+
+        The calcfunction is what ``PwBaseWorkChain.kpoints_distance`` runs, so
+        this also pins the private ``process_class._func`` the mesh is built
+        through.
+        """
+        from aiida import orm
+        from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import (
+            create_kpoints_from_distance,
+        )
+
+        from koopmans.aiida.conversion import step_spacing_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        structure = TestInterpolationPathHelper._fcc_silicon()
+        kpoints = GridKpointsInput.model_validate(
+            {
+                "grid": [2, 2, 2],
+                "offset": [0.5, 0.5, 0.5],
+                "overrides": {"dielectric": {"grid_spacing": spacing}},
+            }
+        )
+        before = orm.QueryBuilder().append(orm.CalcFunctionNode).count()
+        built = step_spacing_mesh(kpoints, "dielectric", structure)
+        assert orm.QueryBuilder().append(orm.CalcFunctionNode).count() == before
+        reference = create_kpoints_from_distance(structure, orm.Float(spacing), orm.Bool(False))  # type: ignore[no-untyped-call]
+        mesh, offset = built.get_kpoints_mesh()  # type: ignore[no-untyped-call]
+        assert [int(n) for n in mesh] == [int(n) for n in reference.get_kpoints_mesh()[0]]
+        assert list(offset) == [0.5, 0.5, 0.5]
 
 
 class TestGridSpacingReachesTheBuilder:

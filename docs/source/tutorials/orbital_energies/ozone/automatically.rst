@@ -27,8 +27,8 @@ The ``workflow`` block describes the workflow that will be run.
 
 .. literalinclude:: ozone.yaml
     :language: yaml
-    :start-at: screening_method
-    :end-at: screening_method
+    :start-at: formalism
+    :end-at: formalism
 
 selects the procedure you carried out by hand: constrained calculations at :math:`N`,
 :math:`N-1` or :math:`N+1` electrons, whose energy differences are compared against the

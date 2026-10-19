@@ -12,7 +12,7 @@ from koopmans.aiida.conversion import (
     atoms_input_to_structure,
     input_to_pw_parameters,
     kpoints_input_to_interpolation_path,
-    wannier90_path_density,
+    wannierize_interpolation_path,
 )
 from koopmans.aiida.workflows import (
     load_codes,
@@ -247,10 +247,10 @@ def build_wannierize_workgraph(koopmans_input: KoopmansInput) -> WorkGraph:
 
     # Two independent k-point lists: the pw.x quality-check run keeps the
     # top-level path_density, wannier90's own interpolation takes
-    # overrides.wannier90.path_density.
+    # overrides.wannierize.path_density.
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
-    interpolation_kpoints = kpoints_input_to_interpolation_path(
-        koopmans_input.kpoints, structure, density=wannier90_path_density(koopmans_input.kpoints)
+    interpolation_kpoints = wannierize_interpolation_path(
+        koopmans_input.kpoints, structure, "wannierize"
     )
 
     # load_codes loads projwfc, WannierizeCodes's one NotRequired member,
@@ -409,11 +409,11 @@ def _build_wannierize_blocks_workgraph(koopmans_input: KoopmansInput) -> WorkGra
     # Two independent k-point lists, in every mode: the pw.x quality-check /
     # split-detection run samples the top-level `kpoints.path_density`;
     # wannier90's own interpolation samples
-    # `kpoints.overrides.wannier90.path_density` instead. `WannierizeBlocks`
+    # `kpoints.overrides.wannierize.path_density` instead. `WannierizeBlocks`
     # takes `bands_kpoints` for the former regardless of split mode.
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
-    interpolation_kpoints = kpoints_input_to_interpolation_path(
-        koopmans_input.kpoints, structure, density=wannier90_path_density(koopmans_input.kpoints)
+    interpolation_kpoints = wannierize_interpolation_path(
+        koopmans_input.kpoints, structure, "wannierize"
     )
 
     # load_codes loads every configured member of WannierizeBlocksCodes.

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from koopmans.input_file.workflow import (
-    CalculateScreeningMethod,
+    Formalism,
     Task,
     VariationalOrbitalType,
 )
@@ -35,7 +35,7 @@ NO_BAND_PATH_ON_BSE = (
     "`kpoints.path` cannot take effect in a `bse` calculation: the composed DFPT "
     "screening step runs no Koopmans band-structure interpolation, and the yambo BSE "
     "step reports an exciton spectrum, not a band structure. Remove `kpoints.path`, or "
-    "run `task: singlepoint` with `screening_method: dfpt` to get the interpolated "
+    "run `task: singlepoint` with `formalism: dfpt` to get the interpolated "
     "band structure."
 )
 
@@ -69,9 +69,9 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool, has_snapshots: b
     that refusal instead, or it is sent to fix a keyword and told no again.
 
     ``atoms.snapshots`` fans a task out per frame; the fan-out itself only
-    runs ``task: singlepoint`` with ``screening_method: dscf``, so a path
+    runs ``task: singlepoint`` with ``formalism: dscf``, so a path
     under snapshots is refused only there — everywhere else, the fan-out's
-    own task or screening-method refusal names the actual problem, and
+    own task or formalism refusal names the actual problem, and
     naming the path too would be a second refusal for one input.
 
     Args:
@@ -82,7 +82,7 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool, has_snapshots: b
     if has_snapshots:
         if workflow.task != Task.SINGLEPOINT:
             return None
-        if workflow.calculate_alpha and workflow.screening_method == CalculateScreeningMethod.DFPT:
+        if workflow.formalism == Formalism.DFPT:
             return None
         return NO_BAND_PATH_ON_SNAPSHOTS
 
@@ -90,7 +90,7 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool, has_snapshots: b
         return NO_BAND_PATH_ON_DFT_EPS
 
     if workflow.task == Task.SINGLEPOINT:
-        if workflow.screening_method != CalculateScreeningMethod.DSCF:
+        if workflow.formalism != Formalism.DSCF:
             # kcw.x interpolates along the path.
             return None
         if not dscf_initialization_is_supported(workflow.init_orbitals, periodic):

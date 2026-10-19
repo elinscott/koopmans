@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from koopmans.aiida.workflows import build_workgraph
 from koopmans.input_file import KoopmansInput
 from tests.fixtures import silicon_pw_input
@@ -103,14 +101,16 @@ class TestDftBandsSpin:
 
 
 class TestNoWannierStep:
-    """`dft_bands` runs no Wannierization: `overrides.wannier90` has nothing to reach."""
+    """`dft_bands` runs no Wannierization: `overrides.wannierize` has nothing to reach."""
 
-    def test_explicit_wannier90_density_raises(
+    def test_explicit_wannierize_density_is_kept_with_a_notice(
         self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """The route names its own `kpoints.path_density` as the alternative."""
+        """The entry stays valid for a switch of task, so the route builds and says so."""
+        from koopmans.aiida.workflows import advisories_for
+
         d = silicon_pw_input(pseudo_library="SG15/1.0/PBE/SR")
-        d["kpoints"]["overrides"] = {"wannier90": {"path_density": 25.0}}
+        d["kpoints"]["overrides"] = {"wannierize": {"path_density": 25.0}}
         inp = KoopmansInput.model_validate(d)
-        with pytest.raises(ValueError, match=r"overrides\.wannier90\.path_density.*dft_bands"):
-            build_workgraph(inp)
+        assert any("overrides.wannierize has no effect" in a for a in advisories_for(inp))
+        build_workgraph(inp)
