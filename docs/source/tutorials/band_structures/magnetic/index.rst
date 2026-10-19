@@ -222,10 +222,7 @@ both channels on one set of axes with
     :align: center
     :width: 80%
 
-    The KI band structure of each channel (solid), against the LDA reference (dashed
-    black, both channels together). Up in red, down in blue; the arrows mark each
-    channel's own band gap along the k-path. Energies are relative to the valence band
-    maximum of the first series listed, the KI up channel.
+    The KI@LDA band structure of CrI\ :sub:`3`, one curve per spin channel, against LDA.
 
 All the numbers below are read along this k-path, and the energies of LDA and KI share
 one scale.
