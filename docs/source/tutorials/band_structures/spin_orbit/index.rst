@@ -191,24 +191,22 @@ two KI@LDA band structures together:
 
     First, it breaks a degeneracy. Without spin-orbit coupling the three highest valence
     bands are degenerate at :math:`\Gamma`. With it, two of them stay degenerate and the
-    third drops below them by the spin-orbit splitting :math:`\Delta_\text{SO}`. These
-    bands have standard names: the two that stay degenerate are the so-called heavy-hole
-    and light-hole bands, after their curvatures away from :math:`\Gamma`, and the third is
-    the split-off band. To read :math:`\Delta_\text{SO}` off the calculation, use the data
-    behind the figure, which ``--data`` wrote to ``soc_comparison.json``: one entry per
-    series, with the band energies at every k-point of the path and the band gap. Print the
-    three highest filled bands at :math:`\Gamma` without spin-orbit coupling (bands 12 to
-    14 of 14) and the six highest with it (bands 23 to 28 of 28):
+    third drops below them by the spin-orbit splitting :math:`\Delta_\text{SO}`. Two bands remain degenerate (the so-called heavy-hole
+    and light-hole bands) while the third (the split-off band) does not.
+
+    To extract the precise spin-orbit splitting, use the data
+    behind the figure, which ``--data`` wrote to ``soc_comparison.json``. The following
+    Python script extracts the band energies at :math:`\Gamma`:
 
     .. code-block:: python
 
         import json
 
         no_soc, soc = json.load(open("soc_comparison.json"))["series"]
-        at_gamma = sorted(no_soc["energies"][no_soc["gap"]["vbm_kpoint_index"]])
-        print(at_gamma[11:14])
-        at_gamma = sorted(soc["energies"][soc["gap"]["vbm_kpoint_index"]])
-        print(at_gamma[22:28])
+        no_soc_at_gamma = sorted(no_soc["energies"][no_soc["gap"]["vbm_kpoint_index"]])
+        print(no_soc_at_gamma[11:14])
+        soc_at_gamma = sorted(soc["energies"][soc["gap"]["vbm_kpoint_index"]])
+        print(soc_at_gamma[22:28])
 
     which gives
 
@@ -217,19 +215,14 @@ two KI@LDA band structures together:
         [7.6491, 7.6491, 7.6491]
         [7.417, 7.4171, 7.7639, 7.7641, 7.7641, 7.7643]
 
-    Without spin-orbit coupling the three bands sit together at 7.65 eV. With it, the
-    split-off band is the pair at 7.42 eV and the heavy and light holes are the four at
-    7.76 eV. Their difference, 0.35 eV, is :math:`\Delta_\text{SO}`, and experiment gives
-    0.35 eV :cite:`Marrazzo2024`.
+    Without spin-orbit coupling the three bands are degenerate; with it, we have
+    a spin-orbit splitting of 0.35 eV. This matches the experimental value of
+    0.35 eV :cite:`Marrazzo2024`!
 
     Second, it shrinks the gap. The splitting preserves the average energy of the three
     bands: the heavy and light holes rise by :math:`\Delta_\text{SO}/3` and the split-off
     band falls by :math:`2\Delta_\text{SO}/3`. The conduction band minimum, which is built
-    from :math:`s` states, does not move. The ``gap`` entry of each series in the same file
-    shows this: the valence band maximum rises from 7.65 to 7.76 eV while the conduction
-    band minimum stays at 9.17 eV, so the gap closes from 1.52 to 1.41 eV, by
-    :math:`\Delta_\text{SO}/3`. The figure shows the same, with energies measured from the
-    valence band maximum of the calculation without spin-orbit coupling.
+    from :math:`s` states, does not move.
 
 *****************
  Optional extras
