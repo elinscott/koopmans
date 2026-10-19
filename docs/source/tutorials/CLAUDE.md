@@ -11,6 +11,10 @@ answer their questions in the order they arise.
 - Let a figure carry the result where one can, rather than a table or a
   paragraph restating it. Quote a number once, in the prose, when the
   argument depends on it; otherwise the axes are enough.
+- A caption says what the figure is, in one line ("The KI@LDA band structure
+  of GaAs with spin-orbit coupling, against LDA."). It never restates what
+  the axes, the legend or an annotation already show: the path, the colors,
+  the energy zero, the gap.
 - Every number comes from a run of the shipped input, read off that run's
   own outputs — never hand-rolled, estimated, or taken from a note. Prose
   quotes to two decimals; program output is quoted verbatim.
