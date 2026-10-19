@@ -121,8 +121,7 @@ section:has(> .landing-logo) > h1 {
     overflow-y: hidden;
 }
 
-.responsive-fig img,
-img.responsive-fig {
+.responsive-fig img {
     width: 100%;
     max-width: 600px; /* Changes to 600px or 100%, whichever is smaller */
     height: auto;

@@ -104,7 +104,7 @@ is the BSE spectrum. The dashed curve is the independent-particle spectrum, in w
 filled-to-empty transition absorbs on its own, computed from the same KI@LDA energies:
 
 .. image:: spectrum.png
-    :class: responsive-fig
+    :width: 60%
     :align: center
     :alt: The imaginary part of the dielectric function of silicon between 2 and 5 eV;
         the BSE curve peaks at 3.12 eV, the independent-particle curve at 3.52 eV
