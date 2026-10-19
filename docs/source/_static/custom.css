@@ -123,6 +123,6 @@ section:has(> .landing-logo) > h1 {
 
 .responsive-fig img {
     width: 100%;
-    max-width: 600px; /* Changes to 600px or 100%, whichever is smaller */
+    max-width: 480px; /* 480px or the column width, whichever is smaller */
     height: auto;
 }
