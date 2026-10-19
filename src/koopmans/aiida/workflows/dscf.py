@@ -391,7 +391,7 @@ def band_interpolation_inputs(
     # file has no block naming them.
     inputs: dict[str, Any] = {
         "kpath": kpath,
-        "interpolation_kpoints": wannierize_interpolation_path(kpoints, structure, "wannierize"),
+        "wannierize_bands_kpoints": wannierize_interpolation_path(kpoints, structure, "wannierize"),
         "unfold_and_interpolate": {
             "use_ws_distance": True,
             "do_dos": True,
@@ -399,9 +399,9 @@ def band_interpolation_inputs(
         },
     }
     if factor is not None:
-        inputs["smooth_kpoints"] = smooth_kpoints_mesh(kpoints, factor)
-        inputs["smooth_mp_grid"] = smooth_grid(kpoints, factor)
-        inputs["smooth_interpolation_kpoints"] = wannierize_interpolation_path(
+        inputs["wannierize_smooth_kpoints"] = smooth_kpoints_mesh(kpoints, factor)
+        inputs["wannierize_smooth_mp_grid"] = smooth_grid(kpoints, factor)
+        inputs["wannierize_smooth_bands_kpoints"] = wannierize_interpolation_path(
             kpoints, structure, "wannierize_smooth"
         )
     return inputs

@@ -38,8 +38,8 @@ class DfptChainInputs(TypedDict):
     ``SinglepointDFPTWorkflow.build``'s own parameters so a caller building
     the plain DFPT chain can unpack it directly as ``**chain_inputs``.
 
-    ``smooth_kpoints`` / ``smooth_mp_grid`` / ``smooth_interpolation_kpoints``
-    are absent unless the caller adds them
+    ``wannierize_smooth_kpoints`` / ``wannierize_smooth_mp_grid`` /
+    ``wannierize_smooth_bands_kpoints`` are absent unless the caller adds them
     (:func:`add_smooth_interpolation_inputs`): they shape a band structure,
     and only the plain DFPT singlepoint publishes one.
     """
@@ -48,10 +48,10 @@ class DfptChainInputs(TypedDict):
     kpoints: orm.KpointsData
     scf_kpoints: orm.KpointsData | None
     bands_kpoints: orm.KpointsData | None
-    interpolation_kpoints: orm.KpointsData | None
-    smooth_kpoints: NotRequired[orm.KpointsData]
-    smooth_mp_grid: NotRequired[list[int]]
-    smooth_interpolation_kpoints: NotRequired[orm.KpointsData | None]
+    wannierize_bands_kpoints: orm.KpointsData | None
+    wannierize_smooth_kpoints: NotRequired[orm.KpointsData]
+    wannierize_smooth_mp_grid: NotRequired[list[int]]
+    wannierize_smooth_bands_kpoints: NotRequired[orm.KpointsData | None]
     eps_kpoints: orm.KpointsData | None
     pseudo_family: str
     overrides: dict[str, Any]
@@ -158,7 +158,7 @@ def assemble_dfpt_chain_inputs(
         manifold_band_counts = {SpinChannel.NONE.value: n_orbitals}
 
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
-    interpolation_kpoints = wannierize_interpolation_path(
+    wannierize_bands_kpoints = wannierize_interpolation_path(
         koopmans_input.kpoints, structure, "wannierize"
     )
 
@@ -175,7 +175,7 @@ def assemble_dfpt_chain_inputs(
             kpoints=nscf_mesh,
             scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
             bands_kpoints=bands_kpoints,
-            interpolation_kpoints=interpolation_kpoints,
+            wannierize_bands_kpoints=wannierize_bands_kpoints,
             eps_kpoints=dielectric["eps_kpoints"],
             pseudo_family=pseudo_family,
             overrides=overrides,
@@ -269,9 +269,9 @@ def add_smooth_interpolation_inputs(
     factor = smooth_factor(kpoints_input)
     if factor is None or chain_inputs["bands_kpoints"] is None:
         return
-    chain_inputs["smooth_kpoints"] = smooth_kpoints_mesh(kpoints_input, factor)
-    chain_inputs["smooth_mp_grid"] = smooth_grid(kpoints_input, factor)
-    chain_inputs["smooth_interpolation_kpoints"] = wannierize_interpolation_path(
+    chain_inputs["wannierize_smooth_kpoints"] = smooth_kpoints_mesh(kpoints_input, factor)
+    chain_inputs["wannierize_smooth_mp_grid"] = smooth_grid(kpoints_input, factor)
+    chain_inputs["wannierize_smooth_bands_kpoints"] = wannierize_interpolation_path(
         kpoints_input, chain_inputs["structure"], "wannierize_smooth"
     )
 
