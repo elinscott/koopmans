@@ -70,9 +70,9 @@ class TestFormalismAdvisory:
 
 
 _SMOOTH_NOT_HERE = (
-    "kpoints.overrides.wannierize_smooth has no effect on this run: only a singlepoint "
-    "initialized from Wannier functions (init_orbitals: mlwfs or projwfs) runs the smooth "
-    "Wannierization; it is kept for when you switch to one."
+    "kpoints.overrides.wannierize_smooth has no effect on this run: only bse and a "
+    "singlepoint initialized from Wannier functions (init_orbitals: mlwfs or projwfs) run "
+    "the smooth Wannierization; it is kept for when you switch to one."
 )
 
 
@@ -91,7 +91,7 @@ class TestKpointOverrideAdvisory:
 
     @pytest.mark.parametrize("task", ["wannierize", "dft_bands", "dft_eps"])
     def test_smooth_wannierization_off_singlepoint_is_advised(self, task: str) -> None:
-        """Only a singlepoint runs the smooth Wannierization."""
+        """Only bse and a Wannier-initialized singlepoint run the smooth Wannierization."""
         d = _with_overrides(_si_dict(task), wannierize_smooth={"factor": 2})
         assert advisories_for(KoopmansInput.model_validate(d)) == [_SMOOTH_NOT_HERE]
 
@@ -145,24 +145,23 @@ class TestKpointOverrideAdvisory:
             "kept for when you add one."
         ]
 
-    def test_wannierize_density_on_bse_names_a_task_that_interpolates(self) -> None:
-        """A bse run refuses a kpoints.path, so adding one is not the fix."""
+    def test_bse_band_path_entries_are_advised_like_the_dfpt_singlepoint(self) -> None:
+        """A bse run interpolates along a kpoints.path, so both entries need only the path."""
         d = _with_overrides(
             _bse_dict(formalism="dfpt", correction="ki", init_orbitals="mlwfs"),
             wannierize={"path_density": 80.0},
             wannierize_smooth={"factor": 2},
         )
-        reason = (
-            "because this run refuses a kpoints.path, so it interpolates no band structure; "
-            "it is kept for when you switch to a task that does, such as task: wannierize or "
-            "a singlepoint without atoms.snapshots."
-        )
         assert advisories_for(KoopmansInput.model_validate(d)) == [
-            f"kpoints.overrides.wannierize has no effect {reason}",
-            "kpoints.overrides.wannierize_smooth has no effect on this run: only a "
-            "singlepoint initialized from Wannier functions (init_orbitals: mlwfs or "
-            "projwfs) runs the smooth Wannierization; it is kept for when you switch to one.",
+            "kpoints.overrides.wannierize has no effect without a kpoints.path: it sets the "
+            "density of the band structure wannier90 interpolates along that path; it is "
+            "kept for when you add one.",
+            "kpoints.overrides.wannierize_smooth has no effect without a kpoints.path: the "
+            "smooth Wannierization serves only the band structure interpolated along it; it "
+            "is kept for when you add one.",
         ]
+        d["kpoints"]["path"] = "GXG"
+        assert advisories_for(KoopmansInput.model_validate(d)) == []
 
     def test_gamma_only_entries_other_than_scf_and_nscf_are_advised(self) -> None:
         """Gamma-only keeps the entries it can ignore and refuses the ones it cannot."""

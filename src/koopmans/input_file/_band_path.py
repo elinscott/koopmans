@@ -30,15 +30,6 @@ NO_BAND_PATH_ON_MOLECULAR_DSCF = (
     "Remove `kpoints.path`; the ΔSCF eigenvalues are already the molecule's spectrum."
 )
 
-#: What to write instead of a k-path on the bse task.
-NO_BAND_PATH_ON_BSE = (
-    "`kpoints.path` cannot take effect in a `bse` calculation: the composed DFPT "
-    "screening step runs no Koopmans band-structure interpolation, and the yambo BSE "
-    "step reports an exciton spectrum, not a band structure. Remove `kpoints.path`, or "
-    "run `task: singlepoint` with `formalism: dfpt` to get the interpolated "
-    "band structure."
-)
-
 #: What to write instead of a k-path under ``atoms.snapshots``. The fan-out
 #: reports one set of screening parameters and eigenvalues per frame, and no
 #: step of it interpolates a Koopmans Hamiltonian along a path.
@@ -105,8 +96,5 @@ def band_path_refusal(workflow: WorkflowConfig, periodic: bool, has_snapshots: b
             # and interpolates it along the path.
             return None
         return NO_BAND_PATH_ON_MOLECULAR_DSCF
-
-    if workflow.task == Task.BSE:
-        return NO_BAND_PATH_ON_BSE
 
     return None

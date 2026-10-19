@@ -312,8 +312,8 @@ class SmoothWannierizeKpointsOverridesInput(WannierizeKpointsOverridesInput):
     """Per-direction densification of ``grid`` for the smooth-interpolation method.
 
     Multiplies the top-level ``grid``, whatever ``overrides.nscf`` gives
-    the main Wannierization. Above 1 (in any direction), a singlepoint's
-    band-structure interpolation swaps the DFT part of the Koopmans Hamiltonian for one
+    the main Wannierization. Above 1 (in any direction), the band-structure
+    interpolation of a singlepoint or bse run swaps the DFT part of the Koopmans Hamiltonian for one
     Wannierized on a mesh this many times denser than ``grid``:
     ``[a, b, c]`` densifies each direction independently, and a bare
     integer ``a`` is shorthand for ``[a, a, a]``. Needs ``path`` to
@@ -348,8 +348,8 @@ class KpointsOverridesInput(BaseModel):
     wannierize_smooth: SmoothWannierizeKpointsOverridesInput | None = None
     """The denser Wannierization of the smooth-interpolation method.
 
-    Unset runs none: a singlepoint then interpolates its band structure
-    from the Wannier functions of the main Wannierization alone.
+    Unset runs none: a singlepoint or bse run then interpolates its band
+    structure from the Wannier functions of the main Wannierization alone.
     """
 
     dielectric: StepKpointsOverridesInput | None = None
