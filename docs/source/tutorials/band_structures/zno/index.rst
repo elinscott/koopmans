@@ -299,8 +299,7 @@ bands and the LDA ones to put on the same axes:
     :width: 600
     :align: center
 
-    The KI@LDA band structure of ZnO along the ``ALMGAHK`` path (solid), against the
-    underlying LDA calculation (dashed), with the KI valence band edge at zero.
+    The KI@LDA band structure of ZnO, against LDA.
 
 The five blocks of projections are visible in it. Reading the figure from the bottom:
 two bands at −130 eV, six at −83 eV, two around −19 eV, then the sixteen filling the
