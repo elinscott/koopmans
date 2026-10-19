@@ -19,12 +19,14 @@ tutorial, three things change:
  Pseudopotentials
 ******************
 
-Spin-orbit coupling enters a plane-wave calculation through the pseudopotentials, so they
-must be generated fully relativistically. ``kcw.x`` runs its spin-orbit chain for the
-local-density approximation only, so the pseudopotentials must also be LDA. ``aiida-pseudo``
-installs `PseudoDojo <http://www.pseudo-dojo.org/>`_'s fully relativistic tables for PBE and
-PBEsol but not for LDA, so this family is installed by hand. PseudoDojo publishes it in a
-repository of its own. Download gallium and arsenic:
+A calculation with spin-orbit coupling requires fully relativistic pseudopotentials.
+Furthermore, ``kcw.x`` only supports the LDA when spin-orbit coupling is enabled. But by
+default, ``koopmans`` ships with `PseudoDojo <http://www.pseudo-dojo.org/>`_'s fully
+relativistic pseudopotential families for PBE and PBEsol but not for LDA.
+
+You can install non-default pseudopotentials by hand using ``aiida-pseudo``. PseudoDojo
+publishes a set of fully relativistic LDA pseudopotentials. To begin, download gallium and
+arsenic:
 
 .. code-block:: console
 
@@ -39,11 +41,11 @@ and install the directory as a family, as the :doc:`installation page
 
     $ aiida-pseudo install family LDA-FR-GaAs LDA-FR-GaAs -P pseudo.upf
 
-.. note::
+.. warning::
 
     The repository's README says this LDA table reuses the generation inputs of the PBE
     table with only the functional changed, and asks that it be used with care. It is
-    adequate for learning the workflow; check it before production work.
+    adequate for a tutorial such as this; check it before using it in production.
 
 ****************
  The input file
