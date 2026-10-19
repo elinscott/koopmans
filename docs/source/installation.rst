@@ -153,6 +153,8 @@ flight: a task whose worker disappears may be retried on the next one, in the sa
 directory as the interrupted run. ``koopmans backend uninstall`` removes the whole
 setup, database included.
 
+.. _installing-pseudopotentials:
+
 *******************
  Pseudopotentials
 *******************

@@ -23,11 +23,11 @@ A calculation with spin-orbit coupling needs fully relativistic pseudopotentials
 ``kcw.x`` supports only the LDA when spin-orbit coupling is enabled, so the
 pseudopotentials must also be LDA. ``koopmans`` installs `PseudoDojo
 <http://www.pseudo-dojo.org/>`_'s fully relativistic families automatically for PBE and
-PBEsol, but not for LDA. So this family has to be installed by hand.
+PBEsol, but not for LDA, so this family has to be installed by hand.
 
-PseudoDojo publishes fully relativistic LDA pseudopotentials in a repository of its own,
+Thankfully, PseudoDojo publishes fully relativistic LDA pseudopotentials,
 and ``aiida-pseudo`` can install any directory of pseudopotentials as a family. First
-download gallium and arsenic:
+download gallium and arsenic from PseudoDojo:
 
 .. code-block:: console
 
@@ -35,8 +35,8 @@ download gallium and arsenic:
     $ curl -Lo LDA-FR-GaAs/Ga-d_r.upf https://raw.githubusercontent.com/PseudoDojo/ONCVPSP-LDA-FR-PDv0.4/main/Ga/Ga-d_r.upf
     $ curl -Lo LDA-FR-GaAs/As-d_r.upf https://raw.githubusercontent.com/PseudoDojo/ONCVPSP-LDA-FR-PDv0.4/main/As/As-d_r.upf
 
-Then install the directory as a family, as the :doc:`installation page
-<../../../installation>` describes:
+Then install the directory as a family, as described :ref:`on the installation page
+<installing-pseudopotentials>`:
 
 .. code-block:: console
 
