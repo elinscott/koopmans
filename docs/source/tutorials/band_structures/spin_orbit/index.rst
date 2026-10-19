@@ -156,16 +156,19 @@ Plot the LDA and KI@LDA bands together:
 
 To see what spin-orbit coupling does, run the same calculation without it.
 
-.. question:: Adapt ``gaas.yaml`` to a calculation without spin-orbit coupling. What has to change?
+.. question:: Create ``gaas-no-soc.yaml`` to run the same calculation but without spin-orbit coupling. What has to change from ``gaas.yaml``?
 
-    Three things. Set ``spin: none``, under which the same pseudopotentials are averaged
-    over :math:`j`. Lower ``nbnd`` to 30, since each band again holds two electrons.
-    Replace the 36 screening parameters with 18, one per Wannier function: the four
-    blocks now produce 5, 5, 4 and 4. Those 18 values come from a linear-response
-    calculation without spin-orbit coupling, so you cannot write them down yourself.
+    Three things:
+
+    - Set ``spin: none``, under which the same pseudopotentials are averaged over
+      :math:`j`.
+    - Lower ``nbnd`` to 30, since each band again holds two electrons.
+    - Replace the 36 screening parameters with 18, which come from a linear-response
+      calculation without spin-orbit coupling.
+
     :download:`gaas-no-soc.yaml <gaas-no-soc.yaml>` has all three changes made.
 
-Save the adapted input as ``gaas-no-soc.yaml`` in the same directory, run it, then plot the
+Run this calculation in the same directory, then plot the
 two KI@LDA band structures together:
 
 .. code-block:: console
@@ -183,9 +186,7 @@ two KI@LDA band structures together:
 
     The KI@LDA band structure of GaAs with and without spin-orbit coupling.
 
-.. question:: What does spin-orbit coupling change?
-
-    Two things, both at the top of the valence band at :math:`\Gamma`.
+.. question:: How does the spin-orbit coupling change the valence band maximum?
 
     First, it breaks a degeneracy. Without spin-orbit coupling the three highest valence
     bands are degenerate at :math:`\Gamma`. With it, two of them, the heavy-hole and
