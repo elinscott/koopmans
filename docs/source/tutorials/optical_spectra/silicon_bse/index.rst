@@ -107,12 +107,12 @@ filled-to-empty transition absorbs on its own, computed from the same KI@LDA ene
     :width: 480
     :align: center
     :alt: The imaginary part of the dielectric function of silicon between 2 and 5 eV;
-        the BSE curve peaks at 3.12 eV, the independent-particle curve at 3.52 eV
+        the BSE curve peaks near 3.1 eV, the independent-particle curve near 3.5 eV
 
 .. question:: What does the electron-hole interaction do to the spectrum?
 
-    It moves the main peak from 3.52 eV in the independent-particle spectrum down to
-    3.12 eV and raises its height by a factor of 1.91. Both curves use the same KI@LDA
+    It moves the main peak from about 3.5 eV in the independent-particle spectrum down
+    to about 3.1 eV and roughly doubles its height. Both curves use the same KI@LDA
     energies, so this shift and this gain are the effect of the BSE kernel,
     :math:`2\bar{v} - W` :cite:`Onida2002`, alone. The kernel adds two terms to the
     independent-particle picture. :math:`W` is the screened attraction between the
@@ -122,10 +122,10 @@ filled-to-empty transition absorbs on its own, computed from the same KI@LDA ene
 
 .. question:: What is the exciton's binding energy?
 
-    The lowest direct transition lies at 3.384599 eV, from the yambo report. The lowest
-    exciton lies at 3.118571 eV, from the excitonic states in yambo's BSE database as the
-    aiida-yambo parser reads them. The two differ by 3.384599 - 3.118571 = 0.27 eV, so the
-    lowest exciton lies 0.27 eV below the lowest direct transition. The
+    The lowest direct transition lies at 3.385 eV, from the yambo report. The lowest
+    exciton lies at 3.119 eV, from the excitonic states in yambo's BSE database as the
+    aiida-yambo parser reads them. The difference, 0.27 eV, is how far the lowest exciton
+    lies below the lowest direct transition. The
     :math:`2\times2\times2` grid samples the pair's relative motion too coarsely to
     converge this value.
 
