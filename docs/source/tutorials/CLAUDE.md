@@ -30,6 +30,10 @@ answer their questions in the order they arise.
   it, or patch the code it describes.
 - Name the value the page settles on where it is used ("Set the converged
   value, 13.28, as …"), never "this value".
+- Describe a change by its physics first and name the keyword that asks for
+  it second: "spin-orbit coupling is included, so the calculations run on
+  spinor wavefunctions", never "`workflow.spin` is `spin_orbit`, so …". A
+  keyword is how the reader asks for something, not what they are doing.
 - Results are labelled correction@base (`KI@LDA`), with the base
   functional dashed in overlays; a `question` prompt stays on one line so
   it reads as the question, not the answer.
