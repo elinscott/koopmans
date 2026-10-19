@@ -124,20 +124,32 @@ and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
     [K+QP] Indirect Gap                               :  1.392000 [eV]
     [K+QP] Indirect Gap between kpts                  :  1  3
 
-On the :math:`2\times2\times2` grid the indirect gap is 0.62 eV in LDA and 1.39 eV in
-KI@LDA, a correction of 0.77 eV.
+.. question:: How large is the Koopmans correction to the band gap?
+
+    On the :math:`2\times2\times2` grid the indirect gap is 0.62 eV in LDA and 1.39 eV in
+    KI@LDA, so the correction is 0.77 eV. In both cases the gap is indirect, between
+    k-points 1 and 3 of the grid.
+
+.. warning::
+
+    These are the gaps of the :math:`2\times2\times2` grid, which samples only
+    :math:`\Gamma`, X and L. Silicon's conduction band minimum lies about 85 % of the way
+    from :math:`\Gamma` to X, where the grid has no point, so the grid overestimates the
+    indirect gap: the band structure of the previous section, interpolated along the path,
+    puts the KI@LDA gap at 1.29 eV. A production calculation needs a denser
+    ``kpoints.grid``.
 
 .. question:: What is the smallest *direct* transition, and where does it sit?
 
-    3.38 eV, at k-point 1. The quasiparticle energies the report lists a little further
-    down, under ``Eqp @ K [1]``, show the three highest filled states degenerate at 0 eV
-    and the three lowest empty states degenerate at 3.38 eV. Those threefold degeneracies
-    are the signature of :math:`\Gamma` in the diamond structure, so the smallest direct
-    transition sits at :math:`\Gamma`. The figure shows the same: the lowest conduction band
-    at :math:`\Gamma` lies 3.4 eV above the valence band top there, the smallest vertical
-    separation anywhere on the path. This calculation leaves out phonons, so absorption
-    across the indirect gap, which needs a phonon to supply the missing momentum, is
-    absent. The computed absorption therefore sets in at the lowest direct transition.
+    3.38 eV, at :math:`\Gamma`. The report places it at k-point 1, and the quasiparticle
+    energies it lists a little further down, under ``Eqp @ K [1]``, show the three highest
+    filled states degenerate at 0 eV and the three lowest empty states degenerate at
+    3.38 eV, the threefold degeneracies of :math:`\Gamma` in the diamond structure. The
+    figure shows the same: the lowest conduction band at :math:`\Gamma` lies 3.4 eV above
+    the valence band top there, the smallest vertical separation anywhere on the path.
+    This calculation leaves out phonons, so absorption across the indirect gap, which
+    needs a phonon to supply the missing momentum, is absent. The computed absorption
+    therefore sets in at the lowest direct transition.
 
 **********************
  The optical spectrum
