@@ -52,13 +52,14 @@ The ``parallelization`` block gives yambo 4 MPI ranks.
 
     $ koopmans run si-bse.yaml
 
-The progress table first walks through the Koopmans calculation: an scf and an nscf
-calculation, a Wannierization of each manifold, and then the ``wann2kc``, ``screen`` and
-``ham`` steps of kcw.x, which the :doc:`linear-response tutorial
-<../../band_structures/silicon_linear_response/index>` covers. A fresh yambo chain
-follows. It starts with an scf and an nscf calculation for yambo's own ground state, then
-``p2y`` builds yambo's SAVE directory, a further step turns the ``ham`` step's eigenvalues
-into yambo's quasiparticle database, and finally the BSE calculation itself runs.
+The progress table first walks through the Koopmans calculation: a self-consistent
+calculation, a non-self-consistent one that adds the empty bands, a Wannierization of
+each manifold, and then the ``wann2kc``, ``screen`` and ``ham`` steps of kcw.x, which the
+:doc:`linear-response tutorial <../../band_structures/silicon_linear_response/index>`
+covers. A fresh yambo chain follows. It starts with a self-consistent and a
+non-self-consistent calculation for yambo's own ground state, then ``p2y`` builds yambo's
+SAVE directory, a further step turns the ``ham`` step's eigenvalues into yambo's
+quasiparticle database, and finally the BSE calculation itself runs.
 
 The quasiparticle database is where the Koopmans correction enters yambo. It holds the
 ``ham`` step's Koopmans eigenvalues in the ``ndb.QP`` format that a BSE calculation more
