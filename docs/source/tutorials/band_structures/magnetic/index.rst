@@ -74,8 +74,8 @@ screening parameter, and the correction is applied channel by channel.
 
 .. warning::
 
-    Not every combination of ``spin`` and ``screening_method`` exists. ``kcp.x``, which
-    is what ``screening_method: dscf`` runs, has no spinor mode, so that route supports
+    Not every combination of ``spin`` and ``formalism`` exists. ``kcp.x``, which
+    is what ``formalism: dscf`` runs, has no spinor mode, so that route supports
     ``none`` and ``collinear`` only. ``kcw.x``, used here, supports all four; the
     :doc:`spin-orbit tutorial <../spin_orbit/index>` exercises the other two.
 
@@ -182,8 +182,8 @@ describes.
 
 .. literalinclude:: cri3.yaml
     :language: yaml
-    :start-at: screening_method
-    :end-at: screening_method
+    :start-at: formalism
+    :end-at: formalism
 
 computes the screening parameters from linear response, in the primitive cell. The
 alternative is to compute them from total-energy differences in a supercell, which is
