@@ -30,11 +30,11 @@ the cutoff, ``nbnd`` and the Wannier projections are the same. This input change
 things:
 
 - ``workflow.task`` is ``bse``.
-- ``workflow.screening_method`` is ``dfpt``, so the screening parameters come from
-  density-functional perturbation theory in the primitive cell instead of total-energy
-  differences in a supercell. The ``alpha_guess``, ``alpha_numsteps`` and
-  ``group_orbitals_tol`` keywords of the total-energy route are dropped.
-- ``kpoints.path`` and ``kpoints.smooth_interpolation_factor`` are dropped, since a
+- ``workflow.formalism`` is dropped: a ``bse`` calculation evaluates the Koopmans
+  correction by linear response in the primitive cell, so it needs no choice between
+  the two formalisms. The ``alpha_guess``, ``alpha_numsteps`` and ``group_orbitals_tol``
+  keywords of the finite-differences formalism go with it.
+- ``kpoints.path`` and ``kpoints.overrides.wannierize_smooth`` are dropped, since a
   spectrum has no band path.
 - A ``calculator_parameters.yambo`` block and a ``parallelization`` block are added.
 
