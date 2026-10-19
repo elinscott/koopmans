@@ -18,15 +18,8 @@ it is in full:
 
 The ``workflow`` block asks for a KI calculation of the ``atoms`` below, built from
 maximally localized Wannier functions, followed by a BSE spectrum on its eigenvalues.
-``kpoints`` carries only a grid, since a spectrum has no band path. Under
-``calculator_parameters``, ``nbnd`` and the ``wannier90`` entries build two sets of four
-Wannier functions, one spanning the filled bands and one the lowest empty bands; these
-eight bands are the ones that receive a Koopmans correction. The :doc:`linear-response
-tutorial <../../band_structures/silicon_linear_response/index>` walks through these
-settings. New here are the ``yambo`` block and the ``yambo`` entry of ``parallelization``.
 
-The ``yambo`` block sets yambo's own runcard variables under their own names. Six have
-no default:
+The BSE calculation is primarily controlled by the ``yambo`` block, which sets yambo's own runcard variables:
 
 .. literalinclude:: si-bse.yaml
     :language: yaml
@@ -41,16 +34,15 @@ no default:
   Wannierized manifold, since a Koopmans correction exists only for those bands. ``[1, 8]``
   is the whole manifold, four filled and four empty bands.
 - ``BEnRange`` is the energy window of the spectrum, in eV.
+- ``BEnSteps`` is the number of energy points in that window.
+- ``BDmRange`` is the broadening that turns discrete transitions into a smooth curve, in eV.
 - ``LongDrXs`` is the light polarization used for the screening.
 - ``BLongDir`` is the light polarization used for the spectrum.
 
-``BEnSteps`` sets the number of energy points in the window and ``BDmRange`` the
-broadening that turns discrete transitions into a smooth curve, in eV. Both have
-defaults, as do the other yambo variables listed in the :doc:`input file documentation
+For more details, see the :doc:`input file documentation
 <../../../input_schema>`, under :class:`~koopmans.input_file.YamboBseParameters`.
 
-The ``parallelization`` block gives yambo 4 MPI ranks, which koopmans places on the
-electron-hole pairs of the Bethe-Salpeter kernel.
+The ``parallelization`` block gives yambo 4 MPI ranks.
 
 *************
  Running it
@@ -68,14 +60,12 @@ own quasiparticle database, and finally the BSE calculation itself. The
 :doc:`linear-response tutorial <../../band_structures/silicon_linear_response/index>`
 covers the first part.
 
-.. question:: Which step brings the Koopmans correction into the yambo calculation?
-
-    The step named "Quasiparticle database". It writes the ``ham`` step's Koopmans
-    eigenvalues into a yambo ``ndb.QP`` database, in place of the GW database a BSE
-    calculation more commonly reads. The BSE step reads that database, so the Koopmans
-    eigenvalues set its transition energies and therefore the spectra. The static
-    screening is built earlier on the LDA energies, and the database covers bands 1 to 8
-    only while ``BndsRnXs`` runs to band 100.
+The quasiparticle database is where the Koopmans correction enters yambo. It holds the
+``ham`` step's Koopmans eigenvalues in the ``ndb.QP`` format that a BSE calculation more
+commonly takes from a GW calculation. The BSE step reads it, so the Koopmans eigenvalues
+set the transition energies and therefore the spectrum. The static screening is built
+earlier, on the LDA energies, and the database covers bands 1 to 8 only while
+``BndsRnXs`` runs to band 100.
 
 *******************************
  The quasiparticle correction
