@@ -225,7 +225,7 @@ class TestRunAnchor:
 class TestAdvisoryWarnings:
     """`run` prints one `Warning:` line per keyword `advisories_for` flags."""
 
-    def test_smooth_interpolation_factor_on_dft_bands_is_warned(
+    def test_smooth_wannierization_on_dft_bands_is_warned(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -238,7 +238,11 @@ class TestAdvisoryWarnings:
 
         input_path = tmp_path / "si.yaml"
         d = silicon_pw_input(
-            kpoints={"grid": [2, 2, 2], "offset": [0, 0, 0], "smooth_interpolation_factor": 4}
+            kpoints={
+                "grid": [2, 2, 2],
+                "offset": [0, 0, 0],
+                "overrides": {"wannierize_smooth": {"factor": 4}},
+            }
         )
         input_path.write_text(yaml.safe_dump(d))
         process = _process_with_model_output(None)
@@ -247,8 +251,8 @@ class TestAdvisoryWarnings:
 
         assert result.exit_code == 0, result.output + result.stderr
         assert (
-            "Warning: kpoints.smooth_interpolation_factor has no effect on task: "
-            "dft_bands" in result.stderr
+            "Warning: kpoints.overrides.wannierize_smooth has no effect on this run"
+            in result.stderr
         )
         assert "Warning:" not in result.output
 

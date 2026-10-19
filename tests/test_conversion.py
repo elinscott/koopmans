@@ -357,6 +357,38 @@ class TestInterpolationPathHelper:
         assert dict(actual.labels) == dict(expected.labels)
         assert np.allclose(actual.get_kpoints(), expected.get_kpoints())  # type: ignore[no-untyped-call]
 
+    def test_each_wannierization_samples_its_own_density(self, aiida_profile: Any) -> None:
+        """Each Wannierization's path takes its own entry's density, defaulting to 50."""
+        from koopmans.aiida.conversion import (
+            kpoints_input_to_interpolation_path,
+            wannierize_interpolation_path,
+        )
+        from koopmans.input_file import GridKpointsInput
+
+        structure = self._fcc_silicon()
+        kpoints = GridKpointsInput.model_validate(
+            {
+                "grid": [2, 2, 2],
+                "path": "GX",
+                "overrides": {"wannierize_smooth": {"factor": 2, "path_density": 20.0}},
+            }
+        )
+
+        def count(path: Any) -> int:
+            """Return the number of points on ``path``."""
+            assert path is not None
+            return len(path.get_kpoints())
+
+        main = wannierize_interpolation_path(kpoints, structure, "wannierize")
+        smooth = wannierize_interpolation_path(kpoints, structure, "wannierize_smooth")
+        assert count(main) == count(
+            kpoints_input_to_interpolation_path(kpoints, structure, density=50.0)
+        )
+        assert count(smooth) == count(
+            kpoints_input_to_interpolation_path(kpoints, structure, density=20.0)
+        )
+        assert count(main) > count(smooth)
+
 
 class TestInputToPwParameters:
     """The shared pw parameter dict carries no calculation type of its own."""
@@ -1179,11 +1211,11 @@ class TestDftBandsScfMesh:
         assert scf["kpoints"].value is None
         assert float(scf["kpoints_distance"].value) == pytest.approx(0.11)
 
-    def test_an_nscf_entry_is_rejected(
+    def test_an_nscf_entry_is_kept_with_a_notice(
         self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
     ) -> None:
-        """There is no nscf step here for the mesh to reach."""
-        from koopmans.aiida.workflows import build_workgraph
+        """There is no nscf step here for the mesh to reach, so the build notes it and goes on."""
+        from koopmans.aiida.workflows import advisories_for, build_workgraph
         from koopmans.input_file import KoopmansInput
 
         inp = KoopmansInput.model_validate(
@@ -1192,8 +1224,8 @@ class TestDftBandsScfMesh:
                 kpoints={"grid": [2, 2, 2], "overrides": {"nscf": {"grid": [4, 4, 4]}}},
             )
         )
-        with pytest.raises(ValueError, match=r"overrides\.nscf.*dft_bands"):
-            build_workgraph(inp)
+        assert any("overrides.nscf has no effect" in a for a in advisories_for(inp))
+        build_workgraph(inp)
 
     def test_an_explicit_path_reaches_bands_kpoints(
         self, aiida_profile: Any, installed_pw_code: Any, fake_sg15_cutoffs_family: Any
@@ -1284,6 +1316,82 @@ class TestStepKpointsMesh:
         mesh, mesh_offset = step_kpoints_mesh(kpoints, "scf").get_kpoints_mesh()  # type: ignore[no-untyped-call]
         assert [int(x) for x in mesh] == (override or {}).get("grid", top_level["grid"])
         assert list(mesh_offset) == (override or {}).get("offset", top_level["offset"])
+
+    @pytest.mark.parametrize(
+        ("dielectric", "expected"),
+        [
+            ({"grid": [8, 8, 8]}, ([8, 8, 8], [0.5, 0.5, 0.5])),
+            ({"offset": [0.0, 0.0, 0.0]}, ([4, 4, 4], [0.0, 0.0, 0.0])),
+        ],
+    )
+    def test_the_dielectric_entry_falls_back_to_the_scf_entry(
+        self,
+        aiida_profile: Any,
+        dielectric: dict[str, Any],
+        expected: tuple[list[int], list[float]],
+    ) -> None:
+        """An attribute the dielectric entry leaves unset comes from ``scf``, not the top level."""
+        from koopmans.aiida.conversion import step_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput.model_validate(
+            {
+                "grid": [2, 2, 2],
+                "overrides": {
+                    "scf": {"grid": [4, 4, 4], "offset": [0.5, 0.5, 0.5]},
+                    "dielectric": dielectric,
+                },
+            }
+        )
+        mesh, mesh_offset = step_kpoints_mesh(kpoints, "dielectric").get_kpoints_mesh()  # type: ignore[no-untyped-call]
+        assert ([int(x) for x in mesh], list(mesh_offset)) == expected
+
+    def test_a_spacing_cannot_stand_for_a_mesh_and_offset(self, aiida_profile: Any) -> None:
+        """A spacing-built mesh carries no offset, so the mesh call refuses it by name."""
+        from koopmans.aiida.conversion import step_kpoints_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        kpoints = GridKpointsInput.model_validate(
+            {"grid": [2, 2, 2], "overrides": {"scf": {"grid_spacing": 0.2}}}
+        )
+        with pytest.raises(
+            ValueError, match=r"states a spacing, not a mesh.*overrides\.scf\.grid`"
+        ):
+            step_kpoints_mesh(kpoints, "scf")
+
+    @pytest.mark.parametrize("spacing", [0.2, 0.3])
+    def test_a_dielectric_spacing_builds_the_mesh_kpoints_distance_would(
+        self, aiida_profile: Any, spacing: float
+    ) -> None:
+        """The dimensions equal ``create_kpoints_from_distance``'s; the offset is inherited.
+
+        The calcfunction is what ``PwBaseWorkChain.kpoints_distance`` runs, so
+        this also pins the private ``process_class._func`` the mesh is built
+        through.
+        """
+        from aiida import orm
+        from aiida_quantumespresso.calculations.functions.create_kpoints_from_distance import (
+            create_kpoints_from_distance,
+        )
+
+        from koopmans.aiida.conversion import step_spacing_mesh
+        from koopmans.input_file import GridKpointsInput
+
+        structure = TestInterpolationPathHelper._fcc_silicon()
+        kpoints = GridKpointsInput.model_validate(
+            {
+                "grid": [2, 2, 2],
+                "offset": [0.5, 0.5, 0.5],
+                "overrides": {"dielectric": {"grid_spacing": spacing}},
+            }
+        )
+        before = orm.QueryBuilder().append(orm.CalcFunctionNode).count()
+        built = step_spacing_mesh(kpoints, "dielectric", structure)
+        assert orm.QueryBuilder().append(orm.CalcFunctionNode).count() == before
+        reference = create_kpoints_from_distance(structure, orm.Float(spacing), orm.Bool(False))  # type: ignore[no-untyped-call]
+        mesh, offset = built.get_kpoints_mesh()  # type: ignore[no-untyped-call]
+        assert [int(n) for n in mesh] == [int(n) for n in reference.get_kpoints_mesh()[0]]
+        assert list(offset) == [0.5, 0.5, 0.5]
 
 
 class TestGridSpacingReachesTheBuilder:

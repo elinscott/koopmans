@@ -9,12 +9,11 @@ from aiida_quantumespresso.common.types import SpinType
 
 from koopmans.aiida.workflows import (
     collinear_magnetization,
-    eps_inf_kpoints,
+    dielectric_kpoints,
     load_codes,
     name_run,
     pin_step_kpoints,
     prepare_common_inputs,
-    reject_kpoint_overrides,
     require_configured_codes,
 )
 from koopmans.aiida.workflows.grouping import dfpt_grouping_tol
@@ -39,17 +38,20 @@ class DfptChainInputs(TypedDict):
     ``SinglepointDFPTWorkflow.build``'s own parameters so a caller building
     the plain DFPT chain can unpack it directly as ``**chain_inputs``.
 
-    ``smooth_kpoints`` / ``smooth_mp_grid`` are absent unless the caller
-    adds them (:func:`add_smooth_interpolation_inputs`): they shape a band
-    structure, and only the plain DFPT singlepoint publishes one.
+    ``wannierize_smooth_kpoints`` / ``wannierize_smooth_mp_grid`` /
+    ``wannierize_smooth_bands_kpoints`` are absent unless the caller adds them
+    (:func:`add_smooth_interpolation_inputs`): they shape a band structure,
+    and only the plain DFPT singlepoint publishes one.
     """
 
     structure: orm.StructureData
     kpoints: orm.KpointsData
     scf_kpoints: orm.KpointsData | None
     bands_kpoints: orm.KpointsData | None
-    smooth_kpoints: NotRequired[orm.KpointsData]
-    smooth_mp_grid: NotRequired[list[int]]
+    wannierize_bands_kpoints: orm.KpointsData | None
+    wannierize_smooth_kpoints: NotRequired[orm.KpointsData]
+    wannierize_smooth_mp_grid: NotRequired[list[int]]
+    wannierize_smooth_bands_kpoints: NotRequired[orm.KpointsData | None]
     eps_kpoints: orm.KpointsData | None
     pseudo_family: str
     overrides: dict[str, Any]
@@ -85,6 +87,7 @@ def assemble_dfpt_chain_inputs(
         input_to_kcw_overrides,
         kpoints_input_to_interpolation_path,
         step_kpoints_mesh,
+        wannierize_interpolation_path,
     )
 
     workflow = koopmans_input.workflow
@@ -122,21 +125,6 @@ def assemble_dfpt_chain_inputs(
                 "``calculator_parameters.w90.down.projections``."
             )
 
-    # Checked last among the pure-Python guards, after every workflow-scope
-    # rejection above (correction, init_orbitals, gamma_only, spin): an
-    # explicit override paired with one of those should surface the scope
-    # blocker first, not send the reader to fix the override and only then
-    # learn the run is unsupported regardless.
-    reject_kpoint_overrides(
-        koopmans_input,
-        {
-            "wannier90": "`kpoints.overrides.wannier90.path_density` is not yet wired "
-            "into the DFPT route: its own wannierization step interpolates along "
-            "`kpoints.path` at the top-level `kpoints.path_density`, with no socket "
-            "of its own yet for a denser interpolation."
-        },
-    )
-
     structure, pseudo_family, overrides = prepare_common_inputs(koopmans_input, ["scf", "nscf"])
 
     # User wannier90 keywords (disentanglement windows, iteration counts, ...)
@@ -170,14 +158,16 @@ def assemble_dfpt_chain_inputs(
         manifold_band_counts = {SpinChannel.NONE.value: n_orbitals}
 
     bands_kpoints = kpoints_input_to_interpolation_path(koopmans_input.kpoints, structure)
+    wannierize_bands_kpoints = wannierize_interpolation_path(
+        koopmans_input.kpoints, structure, "wannierize"
+    )
 
     # The nscf mesh is the one the Wannier functions and kcw.x count in
     # (``CONTROL.mp1-3``); the scf may converge the density on another.
     nscf_mesh = step_kpoints_mesh(koopmans_input.kpoints, "nscf")
 
     kcw_overrides = input_to_kcw_overrides(koopmans_input)
-
-    eps_kpoints = eps_inf_kpoints(koopmans_input)
+    dielectric = dielectric_kpoints(koopmans_input, structure)
 
     return (
         DfptChainInputs(
@@ -185,7 +175,8 @@ def assemble_dfpt_chain_inputs(
             kpoints=nscf_mesh,
             scf_kpoints=pin_step_kpoints(overrides, "scf", koopmans_input),
             bands_kpoints=bands_kpoints,
-            eps_kpoints=eps_kpoints,
+            wannierize_bands_kpoints=wannierize_bands_kpoints,
+            eps_kpoints=dielectric["eps_kpoints"],
             pseudo_family=pseudo_family,
             overrides=overrides,
             eps_inf=eps_inf,
@@ -216,9 +207,9 @@ def build_singlepoint_dfpt_workgraph(koopmans_input: KoopmansInput) -> WorkGraph
 
     A ``kpoints.path`` in the input reaches the kcw.x ham step as its bands
     path, so the run also emits the Koopmans band structure interpolated
-    along it. A ``kpoints.smooth_interpolation_factor`` above 1 interpolates
-    that band structure with the DFT Hamiltonian from a mesh ``factor``
-    times denser instead of kcw.x's own coarse-grid one
+    along it. A ``kpoints.overrides.wannierize_smooth.factor`` above 1
+    interpolates that band structure with the DFT Hamiltonian from a mesh
+    ``factor`` times denser instead of kcw.x's own coarse-grid one
     (:func:`add_smooth_interpolation_inputs`).
 
     Remaining restrictions (mirroring the ``SinglepointDFPTWorkflow`` scope):
@@ -256,33 +247,33 @@ def add_smooth_interpolation_inputs(
     kcw.x interpolates the whole Koopmans Hamiltonian from the grid the
     Wannier functions were built on, DFT part and all, so on a coarse grid
     its band structure is only as good as a Wannier interpolation of the
-    DFT bands. A ``kpoints.smooth_interpolation_factor`` above 1 replaces
-    that DFT part with the same quantity from a Wannierization on a mesh
-    ``factor`` times denser, stated as the explicit k-point list and its
-    Monkhorst-Pack dimensions. The neutral default adds nothing.
+    DFT bands. A ``kpoints.overrides.wannierize_smooth.factor`` above 1
+    replaces that DFT part with the same quantity from a Wannierization on
+    a mesh ``factor`` times denser, stated as the explicit k-point list and
+    its Monkhorst-Pack dimensions, along with the path that Wannierization
+    interpolates its own bands along. Without a factor above 1, or without
+    a path to interpolate along, it adds nothing.
 
     Args:
         chain_inputs: The assembled chain inputs, mutated in place.
         koopmans_input: The parsed koopmans input.
-
-    Raises:
-        ValueError: If the factor shapes an interpolation the input does
-            not ask for.
     """
-    from koopmans.aiida.conversion import smooth_grid, smooth_kpoints_mesh
+    from koopmans.aiida.conversion import (
+        smooth_factor,
+        smooth_grid,
+        smooth_kpoints_mesh,
+        wannierize_interpolation_path,
+    )
 
     kpoints_input = koopmans_input.kpoints
-    factor = kpoints_input.smooth_interpolation_factor
-    if not any(f > 1 for f in factor):
+    factor = smooth_factor(kpoints_input)
+    if factor is None or chain_inputs["bands_kpoints"] is None:
         return
-    if chain_inputs["bands_kpoints"] is None:
-        raise ValueError(
-            "`kpoints.smooth_interpolation_factor` shapes the band structure "
-            "interpolation, and this input asks for none. Add the path to interpolate "
-            "along as `kpoints: {path: ...}`, or restore the default `[1, 1, 1]`."
-        )
-    chain_inputs["smooth_kpoints"] = smooth_kpoints_mesh(kpoints_input, factor)
-    chain_inputs["smooth_mp_grid"] = smooth_grid(kpoints_input, factor)
+    chain_inputs["wannierize_smooth_kpoints"] = smooth_kpoints_mesh(kpoints_input, factor)
+    chain_inputs["wannierize_smooth_mp_grid"] = smooth_grid(kpoints_input, factor)
+    chain_inputs["wannierize_smooth_bands_kpoints"] = wannierize_interpolation_path(
+        kpoints_input, chain_inputs["structure"], "wannierize_smooth"
+    )
 
 
 def _single_channel_dfpt_manifolds(
