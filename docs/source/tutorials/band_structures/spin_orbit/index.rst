@@ -197,29 +197,30 @@ two KI@LDA band structures together:
     the split-off band. To read :math:`\Delta_\text{SO}` off the calculation, use the data
     behind the figure, which ``--data`` wrote to ``soc_comparison.json``: one entry per
     series, with the band energies at every k-point of the path and the band gap. Print the
-    highest valence energies at :math:`\Gamma` of each series with
+    three highest filled bands at :math:`\Gamma` without spin-orbit coupling (bands 12 to
+    14 of 14) and the six highest with it (bands 23 to 28 of 28):
 
     .. code-block:: python
 
         import json
 
-        for series in json.load(open("soc_comparison.json"))["series"]:
-            gap = series["gap"]
-            energies = sorted(series["energies"][gap["vbm_kpoint_index"]])
-            print(series["label"], [e for e in energies if e <= gap["vbm"]][-6:])
+        no_soc, soc = json.load(open("soc_comparison.json"))["series"]
+        at_gamma = sorted(no_soc["energies"][no_soc["gap"]["vbm_kpoint_index"]])
+        print(at_gamma[11:14])
+        at_gamma = sorted(soc["energies"][soc["gap"]["vbm_kpoint_index"]])
+        print(at_gamma[22:28])
 
     which gives
 
     .. code-block:: text
 
-        KI@LDA, no spin-orbit [-10.212, -10.212, -5.1481, 7.6491, 7.6491, 7.6491]
-        KI@LDA, spin-orbit [7.417, 7.4171, 7.7639, 7.7641, 7.7641, 7.7643]
+        [7.6491, 7.6491, 7.6491]
+        [7.417, 7.4171, 7.7639, 7.7641, 7.7641, 7.7643]
 
-    Without spin-orbit coupling the three highest valence bands sit together at 7.65 eV.
-    With it, in the spinor count where each band holds one electron, the split-off band is
-    the pair at 7.42 eV and the heavy and light holes are the four at 7.76 eV. Their
-    difference, 0.35 eV, is :math:`\Delta_\text{SO}`, and experiment gives 0.35 eV
-    :cite:`Marrazzo2024`.
+    Without spin-orbit coupling the three bands sit together at 7.65 eV. With it, the
+    split-off band is the pair at 7.42 eV and the heavy and light holes are the four at
+    7.76 eV. Their difference, 0.35 eV, is :math:`\Delta_\text{SO}`, and experiment gives
+    0.35 eV :cite:`Marrazzo2024`.
 
     Second, it shrinks the gap. The splitting preserves the average energy of the three
     bands: the heavy and light holes rise by :math:`\Delta_\text{SO}/3` and the split-off
