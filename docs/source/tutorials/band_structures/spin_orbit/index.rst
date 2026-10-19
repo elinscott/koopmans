@@ -150,16 +150,23 @@ Plot the LDA and KI@LDA bands together:
     because we are underconverged: with a denser k-point grid, a higher cutoff and
     pseudopotentials of its own, the KI band gap becomes 1.51 eV :cite:`Marrazzo2024`.
 
-***********************************
- Switching off spin-orbit coupling
-***********************************
+************************************
+ The effects of spin-orbit coupling
+************************************
 
-To see what spin-orbit coupling does, run the same calculation without it. Download
-:download:`gaas-no-soc.yaml <gaas-no-soc.yaml>` into the same directory. It differs from
-``gaas.yaml`` in three places: ``spin: none``, under which the pseudopotentials are averaged
-over :math:`j`; ``nbnd: 30``, since each band again holds two electrons; and 18 screening
-parameters instead of 36, computed by the same linear-response route without spin-orbit
-coupling. Run it, then plot the two KI@LDA band structures together:
+To see what spin-orbit coupling does, run the same calculation without it.
+
+.. question:: Adapt ``gaas.yaml`` to a calculation without spin-orbit coupling. What has to change?
+
+    Three things. Set ``spin: none``, under which the same pseudopotentials are averaged
+    over :math:`j`. Lower ``nbnd`` to 30, since each band again holds two electrons.
+    Replace the 36 screening parameters with 18, one per Wannier function: the four
+    blocks now produce 5, 5, 4 and 4. Those 18 values come from a linear-response
+    calculation without spin-orbit coupling, so you cannot write them down yourself.
+    :download:`gaas-no-soc.yaml <gaas-no-soc.yaml>` has all three changes made.
+
+Save the adapted input as ``gaas-no-soc.yaml`` in the same directory, run it, then plot the
+two KI@LDA band structures together:
 
 .. code-block:: console
 
