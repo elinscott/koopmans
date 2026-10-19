@@ -132,8 +132,7 @@ Plot the LDA and KI@LDA bands together, with the KI@LDA gap annotated:
     :width: 480
     :align: center
 
-    KI@LDA band structure of GaAs along L-:math:`\Gamma`-X-W-L-K-:math:`\Gamma`, against
-    the LDA base functional, with the direct gap at :math:`\Gamma` annotated.
+    The KI@LDA band structure of GaAs with spin-orbit coupling, against LDA.
 
 .. question:: How does the band gap compare with experiment?
 
