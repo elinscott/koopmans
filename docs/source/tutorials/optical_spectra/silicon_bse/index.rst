@@ -84,6 +84,7 @@ it against LDA:
         si-bse/01-dfpt/02-wannierize/01-bands --label LDA --style -- \
         si-bse/01-dfpt/04-dfpt/07-smooth_band_structure/03-build_band_structure --label "KI@LDA" --style - --gap \
         --ylim -13 10 \
+        --data bandstructure.json \
         -o bandstructure.svg
 
 .. figure:: bandstructure.svg
@@ -92,7 +93,9 @@ it against LDA:
 
     The KI@LDA band structure of silicon, against LDA.
 
-These KI@LDA eigenvalues are what the spectrum is built on.
+These KI@LDA eigenvalues are what the spectrum is built on. ``--data`` wrote the energies
+behind the figure to ``bandstructure.json``, one entry per series with the band energies at
+every k-point of the path and the band gap; the questions below read from it.
 
 *******************************
  The quasiparticle correction
@@ -134,22 +137,38 @@ and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
 
     These are the gaps as the :math:`2\times2\times2` grid sees them, not the band
     structure's. The grid samples only :math:`\Gamma`, X and L, so it misses silicon's
-    conduction band minimum, which lies between :math:`\Gamma` and X; the band structure
-    of the previous section, interpolated along the path, puts the KI@LDA indirect gap at
-    1.29 eV. The spectrum does not suffer from this. Without phonons, absorption sets in
+    conduction band minimum, which lies between :math:`\Gamma` and X: the ``gap`` entry of
+    the KI@LDA series in ``bandstructure.json`` puts the indirect gap at 1.29 eV, from
+    :math:`\Gamma` to a point about 80 % of the way to X. The spectrum does not suffer
+    from this. Without phonons, absorption sets in
     at the direct gap, and the grid converges the spectrum through how finely it samples
     the vertical transitions across the Brillouin zone, not through whether it contains
     the band minimum.
 
 .. question:: What is the smallest *direct* transition, and where does it sit?
 
-    3.38 eV, at :math:`\Gamma`. The report places it at k-point 1, and the quasiparticle
-    energies it lists a little further down, under ``Eqp @ K [1]``, show the three highest
-    filled states degenerate at 0 eV and the three lowest empty states degenerate at
-    3.38 eV, the threefold degeneracies of :math:`\Gamma` in the diamond structure. The
-    figure shows the same: the lowest conduction band at :math:`\Gamma` lies 3.4 eV above
-    the valence band top there, the smallest vertical separation anywhere on the path.
-    This calculation leaves out phonons, so absorption across the indirect gap, which
+    3.38 eV, at :math:`\Gamma`. In the figure, the lowest conduction band at
+    :math:`\Gamma` lies 3.4 eV above the valence band top there, the smallest vertical
+    separation anywhere on the path. For the exact value, print the KI@LDA energies of the
+    highest filled and lowest empty bands at :math:`\Gamma`, which is where that series'
+    valence band maximum sits:
+
+    .. code-block:: python
+
+        import json
+
+        lda, ki = json.load(open("bandstructure.json"))["series"]
+        at_gamma = sorted(ki["energies"][ki["gap"]["vbm_kpoint_index"]])
+        print(at_gamma[3:5])
+
+    which gives
+
+    .. code-block:: text
+
+        [5.466375, 8.850952]
+
+    a direct transition of 3.38 eV, the value yambo's report calls the ``[K+QP] Direct
+    Gap``. This calculation leaves out phonons, so absorption across the indirect gap, which
     needs a phonon to supply the missing momentum, is absent. The computed absorption
     therefore sets in at the lowest direct transition.
 
