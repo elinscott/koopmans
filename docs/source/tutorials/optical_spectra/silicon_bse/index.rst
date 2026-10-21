@@ -149,9 +149,13 @@ and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
 
     3.38 eV, at :math:`\Gamma`. In the figure, the lowest conduction band at
     :math:`\Gamma` lies 3.4 eV above the valence band top there, the smallest vertical
-    separation anywhere on the path. For the exact value, print the KI@LDA energies of the
-    highest filled and lowest empty bands at :math:`\Gamma`, which is where that series'
-    valence band maximum sits:
+    separation anywhere on the path. There are two ways to pin the value down. yambo's
+    report places the direct gap at k-point 1, and the quasiparticle energies it lists a
+    little further down, under ``Eqp @ K [1]``, show the three highest filled states
+    degenerate at 0 eV and the three lowest empty states degenerate at 3.38 eV, the
+    threefold degeneracies of :math:`\Gamma` in the diamond structure. Alternatively, use
+    the data behind the figure: print the KI@LDA energies of the highest filled and lowest
+    empty bands at :math:`\Gamma`, which is where that series' valence band maximum sits,
 
     .. code-block:: python
 
@@ -167,8 +171,8 @@ and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
 
         [5.466375, 8.850952]
 
-    a direct transition of 3.38 eV, the value yambo's report calls the ``[K+QP] Direct
-    Gap``. This calculation leaves out phonons, so absorption across the indirect gap, which
+    a direct transition of 3.38 eV, the same value. This calculation leaves out phonons, so
+    absorption across the indirect gap, which
     needs a phonon to supply the missing momentum, is absent. The computed absorption
     therefore sets in at the lowest direct transition.
 
