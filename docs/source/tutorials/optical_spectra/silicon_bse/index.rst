@@ -172,9 +172,9 @@ and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
         [5.466375, 8.850952]
 
     a direct transition of 3.38 eV, the same value. This calculation leaves out phonons, so
-    absorption across the indirect gap, which
-    needs a phonon to supply the missing momentum, is absent. The computed absorption
-    therefore sets in at the lowest direct transition.
+    absorption across the indirect gap, which needs a phonon to supply the missing
+    momentum, is absent. The computed absorption therefore sets in at the lowest direct
+    transition.
 
 **********************
  The optical spectrum
