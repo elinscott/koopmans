@@ -16,8 +16,12 @@ answer their questions in the order they arise.
   the axes, the legend or an annotation already show: the path, the colors,
   the energy zero, the gap.
 - Every number comes from a run of the shipped input, read off that run's
-  own outputs — never hand-rolled, estimated, or taken from a note. Prose
-  quotes to two decimals; program output is quoted verbatim.
+  own outputs — never hand-rolled, estimated, or taken from a note.
+- A number's precision follows its job. One that points at a feature on a
+  figure takes the precision the reader gets from the axes ("about 3.5 eV",
+  "roughly doubles"), since a reader checks it by eye. One the argument
+  computes with takes the decimals the arithmetic needs. Program output is
+  quoted verbatim.
 - Explain a mechanism with its logic signposted: each sentence is cause →
   consequence with the connective written ("so … until …", "therefore");
   contrasting cases stand in stated opposition ("In contrast, …");
