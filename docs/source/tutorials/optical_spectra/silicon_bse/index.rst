@@ -132,12 +132,14 @@ and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
 
 .. warning::
 
-    These are the gaps of the :math:`2\times2\times2` grid, which samples only
-    :math:`\Gamma`, X and L. Silicon's conduction band minimum lies about 85 % of the way
-    from :math:`\Gamma` to X, where the grid has no point, so the grid overestimates the
-    indirect gap: the band structure of the previous section, interpolated along the path,
-    puts the KI@LDA gap at 1.29 eV. A production calculation needs a denser
-    ``kpoints.grid``.
+    These are the gaps as the :math:`2\times2\times2` grid sees them, not the band
+    structure's. The grid samples only :math:`\Gamma`, X and L, so it misses silicon's
+    conduction band minimum, which lies between :math:`\Gamma` and X; the band structure
+    of the previous section, interpolated along the path, puts the KI@LDA indirect gap at
+    1.29 eV. The spectrum does not suffer from this. Without phonons, absorption sets in
+    at the direct gap, and the grid converges the spectrum through how finely it samples
+    the vertical transitions across the Brillouin zone, not through whether it contains
+    the band minimum.
 
 .. question:: What is the smallest *direct* transition, and where does it sit?
 
