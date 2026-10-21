@@ -93,88 +93,82 @@ it against LDA:
 
     The KI@LDA band structure of silicon, against LDA.
 
-These KI@LDA eigenvalues are what the spectrum is built on. ``--data`` wrote the energies
-behind the figure to ``bandstructure.json``, one entry per series with the band energies at
-every k-point of the path and the band gap; the questions below read from it.
+These KI@LDA eigenvalues are what the spectrum is built on. ``--data`` also wrote the
+energies behind the figure to ``bandstructure.json``.
 
 *******************************
  The quasiparticle correction
 *******************************
 
-yambo's report on the BSE step records the band gaps before and after the Koopmans
-eigenvalues are applied. Open it with
-
-.. code-block:: console
-
-    $ less si-bse/03-bse/03-bse/01-yambo/outputs/r-aiida.out_rim_cut_optics_dipoles_bss_bse_em1s
-
-and find the two ``Gaps and Widths`` blocks. The first, marked ``[X]``, is built on the
-LDA eigenvalues:
+Two files record the band gaps of this calculation: yambo's report on the BSE step,
 
 .. code-block:: text
 
-    [X] Direct Gap                                    :  2.535045 [eV]
-    [X] Direct Gap localized at k                     :  1
-    [X] Indirect Gap                                  :  0.618534 [eV]
-    [X] Indirect Gap between kpts                     :  1  3
+    si-bse/03-bse/03-bse/01-yambo/outputs/r-aiida.out_rim_cut_optics_dipoles_bss_bse_em1s
 
-and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
+and the data behind the band structure, ``bandstructure.json``.
 
-.. code-block:: text
+.. question:: Inspect both files. What are the indirect and direct band gaps, and where do they sit?
 
-    [K+QP] Direct Gap                                 :  3.384599 [eV]
-    [K+QP] Direct Gap localized at k                  :  1
-    [K+QP] Indirect Gap                               :  1.392000 [eV]
-    [K+QP] Indirect Gap between kpts                  :  1  3
+    The report has two ``Gaps and Widths`` blocks. The first, marked ``[X]``, is built on
+    the LDA eigenvalues:
 
-.. question:: How large is the Koopmans correction to the band gap?
+    .. code-block:: text
 
-    On the :math:`2\times2\times2` grid the indirect gap is 0.62 eV in LDA and 1.39 eV in
-    KI@LDA, so the correction is 0.77 eV. In both cases the gap is indirect, between
-    k-points 1 and 3 of the grid.
+        [X] Direct Gap                                    :  2.535045 [eV]
+        [X] Direct Gap localized at k                     :  1
+        [X] Indirect Gap                                  :  0.618534 [eV]
+        [X] Indirect Gap between kpts                     :  1  3
 
-.. warning::
+    and the second, marked ``[K+QP]``, on the Koopmans eigenvalues:
 
-    These are the gaps as the :math:`2\times2\times2` grid sees them, not the band
-    structure's. The grid samples only :math:`\Gamma`, X and L, so it misses silicon's
-    conduction band minimum, which lies between :math:`\Gamma` and X: the ``gap`` entry of
-    the KI@LDA series in ``bandstructure.json`` puts the indirect gap at 1.29 eV, from
-    :math:`\Gamma` to a point about 80 % of the way to X. The spectrum does not suffer
-    from this. Without phonons, absorption sets in
-    at the direct gap, and the grid converges the spectrum through how finely it samples
-    the vertical transitions across the Brillouin zone, not through whether it contains
-    the band minimum.
+    .. code-block:: text
 
-.. question:: What is the smallest *direct* transition, and where does it sit?
+        [K+QP] Direct Gap                                 :  3.384599 [eV]
+        [K+QP] Direct Gap localized at k                  :  1
+        [K+QP] Indirect Gap                               :  1.392000 [eV]
+        [K+QP] Indirect Gap between kpts                  :  1  3
 
-    3.38 eV, at :math:`\Gamma`. In the figure, the lowest conduction band at
-    :math:`\Gamma` lies 3.4 eV above the valence band top there, the smallest vertical
-    separation anywhere on the path. There are two ways to pin the value down. yambo's
-    report places the direct gap at k-point 1, and the quasiparticle energies it lists a
-    little further down, under ``Eqp @ K [1]``, show the three highest filled states
-    degenerate at 0 eV and the three lowest empty states degenerate at 3.38 eV, the
-    threefold degeneracies of :math:`\Gamma` in the diamond structure. Alternatively, use
-    the data behind the figure: print the KI@LDA energies of the highest filled and lowest
-    empty bands at :math:`\Gamma`, which is where that series' valence band maximum sits,
+    So on the :math:`2\times2\times2` grid the indirect gap is 0.62 eV in LDA and 1.39 eV
+    in KI@LDA, a correction of 0.77 eV, and the direct gap goes from 2.54 to 3.38 eV.
+    k-point 1 is :math:`\Gamma`: the quasiparticle energies listed a little further down,
+    under ``Eqp @ K [1]``, show the three highest filled states degenerate at 0 eV and the
+    three lowest empty states degenerate at 3.38 eV, the threefold degeneracies of
+    :math:`\Gamma` in the diamond structure.
+
+    ``bandstructure.json`` holds one entry per plotted series, with the band energies at
+    every k-point of the path and a ``gap`` entry that gives the gap, its two edges and
+    their k-points. For the KI@LDA series,
 
     .. code-block:: python
 
         import json
 
         lda, ki = json.load(open("bandstructure.json"))["series"]
-        at_gamma = sorted(ki["energies"][ki["gap"]["vbm_kpoint_index"]])
-        print(at_gamma[3:5])
+        gap = ki["gap"]
+        print(gap["value"], ki["kpoints"][gap["vbm_kpoint_index"]], ki["kpoints"][gap["cbm_kpoint_index"]])
+        print(sorted(ki["energies"][gap["vbm_kpoint_index"]])[3:5])
 
-    which gives
+    gives
 
     .. code-block:: text
 
+        1.2919646722852 [0.0, 0.0, 0.0] [0.4090909090909091, 0.0, 0.4090909090909091]
         [5.466375, 8.850952]
 
-    a direct transition of 3.38 eV, the same value. This calculation leaves out phonons, so
-    absorption across the indirect gap, which needs a phonon to supply the missing
-    momentum, is absent. The computed absorption therefore sets in at the lowest direct
-    transition.
+    Along the path the indirect gap is 1.29 eV, from :math:`\Gamma` to a point about 80 %
+    of the way to X, and the highest filled and lowest empty bands at :math:`\Gamma` are
+    3.38 eV apart, the same direct gap the report gives.
+
+.. warning::
+
+    The report's gaps are those of the :math:`2\times2\times2` grid, which samples only
+    :math:`\Gamma`, X and L and so misses the conduction band minimum between
+    :math:`\Gamma` and X; that is why its indirect gap, 1.39 eV, exceeds the band
+    structure's 1.29 eV. The spectrum does not suffer from this. Without phonons,
+    absorption sets in at the direct gap, and the grid converges the spectrum through how
+    finely it samples the vertical transitions across the Brillouin zone, not through
+    whether it contains the band minimum.
 
 **********************
  The optical spectrum
